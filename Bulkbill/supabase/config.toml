@@ -1,0 +1,45 @@
+# Supabase project configuration.
+#
+# The settings in this file are used by the Supabase CLI to manage your
+# local development environment. For more information, please refer to
+# the official documentation: https://supabase.com/docs/guides/cli
+
+# The project ID is a unique identifier for your Supabase project.
+# It is recommended to keep this value as a private secret.
+project_id = "aawsa-billing-portal"
+
+[api]
+# The port on which the local Supabase API will be exposed.
+port = 54321
+# The schemas that will be exposed in the auto-generated API.
+schemas = ["public", "storage"]
+# The extra schemas that will be included in the database.
+extra_schemas = ["extensions"]
+# The maximum number of rows that can be returned in a single API request.
+max_rows = 1000
+
+[db]
+# The port on which the local Supabase database will be exposed.
+port = 54322
+# The password for the local database.
+# It is recommended to keep this value as a private secret.
+# NOTE: This is the default password for local development and is not used in production.
+password = "your-super-secret-and-long-database-password"
+# The major version of Postgres to use for the local database.
+major_version = 15
+
+[studio]
+# The port on which the local Supabase Studio will be exposed.
+port = 54323
+
+# The following settings are for deploying your project to the Supabase cloud.
+# [auth]
+# enable_signup = true
+#
+# [auth.email]
+# enable_signup = true
+# double_confirm_changes = true
+# enable_confirmations = false
+#
+# [auth.external.apple.enabled]
+# ...

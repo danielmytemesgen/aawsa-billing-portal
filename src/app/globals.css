@@ -1,0 +1,289 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer base {
+  :root {
+    --background: 210 20% 98%; /* Light Gray */
+    --background: 0 0% 100%; /* White */
+    --foreground: 0 0% 10%; /* Black */    
+    --card: 0 0% 100%; /* White */
+    --card-foreground: 210 50% 10%;
+    --popover: 0 0% 100%; /* White */
+    --popover-foreground: 210 50% 10%;
+    --primary: 211 100% 50%; /* Blue */
+    --primary-foreground: 0 0% 100%;
+    --primary-hover-bg: 211 100% 50%; /* Blue (Same as primary) */
+    --secondary: 210 20% 96.1%; /* Lighter Gray */
+    --secondary-foreground: 210 50% 10%;
+    --muted: 210 20% 96.1%; /* Lighter Gray */
+    --muted-foreground: 210 30% 45.1%;
+    --accent: 211 100% 50%; /* Blue - Changed from Green */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 20% 89.8%;
+    --input: 210 20% 89.8%;
+    --ring: 211 100% 50%; /* Blue */
+    --chart-1: 205 70% 60%; /* Light Blue */
+    --chart-2: 210 15% 65%; /* Gray */
+    --chart-3: 30 80% 55%; /* Orange */
+    --chart-4: 280 65% 60%; /* Purple */
+    --chart-5: 340 75% 55%; /* Pink */
+    --radius: 0.5rem;
+    --sidebar-background: 210 20% 94%; /* Slightly darker gray for sidebar */
+    --sidebar-foreground: 211 50% 10%; /* Dark Blue/Black for text */
+    --sidebar-primary: 211 100% 50%; /* Blue */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 211 100% 50%; /* Blue (Changed from Green) */
+    --sidebar-accent-foreground: 0 0% 100%; /* White (Text for Blue) */
+    --sidebar-border: 210 20% 85%;
+    --sidebar-ring: 211 100% 50%; /* Blue */
+  }
+  .dark {
+    --background: 210 20% 5%;
+    --foreground: 210 20% 98%;
+    --card: 220 13% 15%; /* Darker version of user selected color */
+    --card-foreground: 210 20% 98%;
+    --popover: 210 20% 5%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 211 100% 60%; /* Lighter Blue for dark mode */
+    --primary-foreground: 210 50% 10%;
+    --primary-hover-bg: 211 100% 60%; /* Lighter Blue (Same as primary) */
+    --secondary: 210 20% 14.9%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 210 20% 14.9%;
+    --muted-foreground: 210 20% 63.9%;
+    --accent: 211 100% 60%; /* Lighter Blue - Changed from Green */
+    --accent-foreground: 210 50% 10%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 20% 14.9%;
+    --input: 210 20% 14.9%;
+    --ring: 211 100% 60%; /* Lighter Blue */
+    --chart-1: 205 70% 65%; /* Light Blue - slightly lighter for dark mode */
+    --chart-2: 210 15% 50%; /* Gray - slightly darker/more visible for dark mode */
+    --chart-3: 30 80% 60%; /* Orange - slightly lighter for dark mode */
+    --chart-4: 280 65% 65%; /* Purple - slightly lighter for dark mode */
+    --chart-5: 340 75% 60%; /* Pink - slightly lighter for dark mode */
+    --sidebar-background: 210 20% 10%;
+    --sidebar-foreground: 210 20% 98%; /* White text */
+    --sidebar-primary: 211 100% 60%; /* Lighter Blue */
+    --sidebar-primary-foreground: 210 50% 10%;
+    --sidebar-accent: 211 100% 60%; /* Lighter Blue (Changed from Lighter Green) */
+    --sidebar-accent-foreground: 210 50% 10%; /* Dark text for Lighter Blue */
+    --sidebar-border: 210 20% 15.9%;
+    --sidebar-ring: 211 100% 60%; /* Lighter Blue */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  aside[data-collapsible] a svg,
+  aside[data-collapsible] button svg {
+    color: hsl(211 100% 50%); /* Blue */
+  }
+
+  .dark aside[data-collapsible] a svg,
+  .dark aside[data-collapsible] button svg {
+    color: hsl(211 100% 60%); /* Lighter Blue for dark mode */
+  }
+  
+  /* Color for icon when its link is active */
+  aside[data-collapsible] a.bg-sidebar-accent svg,
+  aside[data-collapsible] button.bg-sidebar-accent svg {
+    color: hsl(var(--sidebar-accent-foreground)); 
+  }
+}
+
+/* Custom styles for Quick Access buttons */
+.quick-access-btn {
+  /* Normal state: Ensure text and icons are primary for outline variant */
+  color: hsl(var(--primary)) !important; /* Text color */
+}
+.quick-access-btn svg {
+  color: hsl(var(--primary)) !important; /* Icon color */
+}
+
+.quick-access-btn:hover {
+  background-color: hsl(211 100% 95%) !important; /* Light blue background */
+  color: hsl(var(--primary)) !important; /* Keep blue text */
+  border-color: hsl(var(--primary)) !important;
+}
+.quick-access-btn:hover svg {
+  color: hsl(var(--primary)) !important;
+}
+
+/* Dark mode overrides for Quick Access buttons */
+.dark .quick-access-btn {
+  color: hsl(var(--primary)) !important; /* Primary (lighter blue in dark mode) */
+}
+.dark .quick-access-btn svg {
+  color: hsl(var(--primary)) !important;
+}
+
+.dark .quick-access-btn:hover {
+  background-color: hsl(211 100% 15%) !important; /* Darker blue for light theme effect in dark mode */
+  color: hsl(var(--primary)) !important;
+  border-color: hsl(var(--primary)) !important;
+}
+.dark .quick-access-btn:hover svg {
+  color: hsl(var(--primary)) !important;
+}
+
+/* Print specific styles */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0; /* Remove browser-controlled margins */
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background: #fff !important;
+    font-size: 10pt;
+    font-family: 'Times New Roman', Times, serif;
+    margin: 1cm; /* Apply margin to the body for content padding */
+  }
+  
+  header, nav, aside, footer, .non-printable {
+    display: none !important;
+  }
+
+  main, main > div {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: none !important;
+  }
+
+  .printable-bill-card-wrapper {
+    padding: 0 !important;
+  }
+  
+  .printable-bill-card {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0.5rem !important;
+    border: 2px solid #000 !important;
+    box-shadow: none !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  
+  .printable-bill-card * {
+    color: #000 !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .print-header-top {
+      display: flex !important;
+      justify-content: space-between !important;
+      font-size: 9pt;
+      padding: 0.25rem 0.5rem;
+      border-bottom: 1px solid #ccc;
+      margin-bottom: 0.5rem;
+  }
+  
+  .print-header-main {
+      text-align: center;
+      margin-bottom: 1rem;
+      padding: 0.5rem;
+  }
+
+  .print-header-main hr {
+    border-color: #000 !important;
+  }
+  
+  .print-header-main h1 {
+    font-size: 14pt;
+    font-weight: bold;
+    letter-spacing: 0.05em;
+  }
+  
+  .print-header-main h2 {
+      font-size: 12pt;
+      font-weight: 600;
+  }
+  
+  .print-header-main img {
+      margin-right: 0.75rem;
+      vertical-align: middle;
+      display: inline-block !important;
+  }
+
+  .print-body {
+      margin: 0 auto;
+      max-width: 100%;
+      padding: 0.5rem;
+  }
+
+  .print-section {
+    margin-bottom: 1rem;
+  }
+
+  .print-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.1rem 0;
+    line-height: 1.4;
+  }
+
+  .print-row > span:first-child {
+      padding-right: 1rem;
+      font-weight: bold;
+  }
+
+  .print-hr {
+      border: 0 !important;
+      height: 1px !important;
+      background-color: #000 !important;
+      margin: 0.25rem 0;
+  }
+
+  .print-hr-dashed {
+      border: 0 !important;
+      border-top: 1px dashed #999 !important;
+      margin: 1.5rem 0;
+  }
+  
+  .print-signature-section {
+    margin-top: 2rem;
+  }
+
+  .print-signature-item {
+      margin-top: 1.5rem;
+      font-size: 11pt;
+  }
+
+  .print-signature-item span:first-child {
+      display: inline-block;
+      min-width: 120px;
+      font-weight: bold;
+  }
+
+  .print-signature-item span:last-child {
+      font-family: monospace;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

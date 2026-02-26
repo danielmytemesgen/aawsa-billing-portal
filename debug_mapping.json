@@ -1,0 +1,127 @@
+{
+  "latestMonth": "2026-02",
+  "branchPerformance": [
+    {
+      "branch_name": "head office",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "gullele",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "megenagna",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "lemikura",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "nifasilk",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "addis ketema\t",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "kolfe",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "gurdshola",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "mekanisa",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "Akaki",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "arada",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    },
+    {
+      "branch_name": "kolfe 1",
+      "paid": "0",
+      "unpaid": "0",
+      "total_bills": "0"
+    }
+  ],
+  "sampleBills": [
+    {
+      "CUSTOMERBRANCH": null,
+      "payment_status": "Unpaid",
+      "month_year": "2026-02"
+    },
+    {
+      "CUSTOMERBRANCH": null,
+      "payment_status": "Unpaid",
+      "month_year": "2026-02"
+    }
+  ],
+  "branches": [
+    {
+      "name": "kolfe"
+    },
+    {
+      "name": "Akaki"
+    },
+    {
+      "name": "mekanisa"
+    },
+    {
+      "name": "gullele"
+    },
+    {
+      "name": "addis ketema\t"
+    },
+    {
+      "name": "nifasilk"
+    },
+    {
+      "name": "arada"
+    },
+    {
+      "name": "gurdshola"
+    },
+    {
+      "name": "lemikura"
+    },
+    {
+      "name": "head office"
+    },
+    {
+      "name": "kolfe 1"
+    },
+    {
+      "name": "megenagna"
+    }
+  ]
+}
