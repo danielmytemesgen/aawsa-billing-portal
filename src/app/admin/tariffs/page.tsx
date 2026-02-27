@@ -24,6 +24,7 @@ import { Alert, AlertTitle } from "@/components/ui/alert";
 import { FeeEditDialog } from "./fee-edit-dialog";
 import { AdditionalFeeDialog } from "./additional-fee-dialog";
 import { AdditionalFee } from "@/lib/billing-calculations";
+import { PenaltyDialog } from "./penalty-dialog";
 
 const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, prevTier?: TariffTier | SewerageTier): DisplayTariffRate => {
   // Coerce tier.limit to a numeric value or numeric Infinity for display logic.
@@ -180,6 +181,7 @@ export default function TariffManagementPage() {
     defaultValue: number;
     isPercentage: boolean;
   } | null>(null);
+  const [isPenaltyDialogOpen, setIsPenaltyDialogOpen] = React.useState(false);
 
   // Get unique effective dates for the current tariff type
   const availableDates = React.useMemo(() => {
@@ -437,6 +439,23 @@ export default function TariffManagementPage() {
     }
   };
 
+  const handleUpdatePenalty = async (values: {
+    penalty_month_threshold: number;
+    bank_lending_rate: number;
+    penalty_tiered_rates: { month: number; rate: number }[];
+  }) => {
+    if (!activeTariffInfo) return;
+
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, values as any);
+
+    if (result.success) {
+      toast({ title: "Penalty Configuration Updated", description: "The new penalty rates have been saved successfully." });
+      setIsPenaltyDialogOpen(false);
+    } else {
+      toast({ variant: "destructive", title: "Update Failed", description: result.message });
+    }
+  };
+
   const handleCreateNewVersion = async () => {
     if (!activeTariffInfo) return;
 
@@ -614,6 +633,18 @@ export default function TariffManagementPage() {
                         </Button>
                       )}
                     </div>
+                    <div className="flex justify-between items-center p-2 rounded-md bg-muted/50">
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground text-sm">Penalty Calculation</span>
+                        <span className="font-semibold">Starts at Month {activeTariffInfo.penalty_month_threshold || 3}</span>
+                        <span className="text-xs text-muted-foreground">Rate: {((activeTariffInfo.bank_lending_rate || 0.15) * 100).toFixed(0)}% bank + tiered rates</span>
+                      </div>
+                      {canUpdateTariffs && (
+                        <Button size="sm" variant="outline" className="h-8" onClick={() => setIsPenaltyDialogOpen(true)}>
+                          Configure
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-2 mt-4">
@@ -774,6 +805,23 @@ export default function TariffManagementPage() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+
+          <PenaltyDialog
+            open={isPenaltyDialogOpen}
+            onOpenChange={setIsPenaltyDialogOpen}
+            onSubmit={handleUpdatePenalty}
+            defaultValues={{
+              penalty_month_threshold: activeTariffInfo.penalty_month_threshold || 3,
+              bank_lending_rate: activeTariffInfo.bank_lending_rate || 0.15,
+              penalty_tiered_rates: activeTariffInfo.penalty_tiered_rates || [
+                { month: 3, rate: 0.00 },
+                { month: 4, rate: 0.10 },
+                { month: 5, rate: 0.15 },
+                { month: 6, rate: 0.20 }
+              ]
+            }}
+            canUpdate={canUpdateTariffs}
+          />
         </>
       )}
     </div>

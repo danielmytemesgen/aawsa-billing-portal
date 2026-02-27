@@ -786,7 +786,7 @@ export const dbDeleteSecurityLog = async (id: string) => {
     return true;
 };
 
-export const dbLogSecurityEvent = async (event: string, staff_email?: string, branch_name?: string, ipAddress?: string, severity: 'Info' | 'Warning' | 'Critical' = 'Info', details: any = {}, customer_key_number?: string) => {
+export const dbLogSecurityEvent = async (event: string, staff_email?: string, branch_name?: string, ipAddress?: string, severity: 'info' | 'warning' | 'critical' = 'info', details: any = {}, customer_key_number?: string) => {
     try {
         let ip_address = ipAddress ?? 'unknown';
 

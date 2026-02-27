@@ -75,6 +75,7 @@ const initialMemoizedDetails = {
     prevReading: 0, currReading: 0, usage: 0, baseWaterCharge: 0,
     maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0,
     vatAmount: 0, totalDifferenceBill: 0, differenceUsage: 0,
+    penaltyAmt: 0,
     outstandingBill: 0, totalPayable: 0, paymentStatus: 'Unpaid' as PaymentStatus,
     month: 'N/A',
   },
@@ -238,8 +239,9 @@ export default function BulkMeterDetailsPage() {
         vatAmount: historicalBillDetails.vatAmount,
         totalDifferenceBill: billToRender.TOTALBILLAMOUNT,
         differenceUsage: billToRender.differenceUsage ?? 0,
+        penaltyAmt: Number(billToRender.PENALTYAMT || 0),
         outstandingBill: reconstructedOutstanding,
-        totalPayable: reconstructedOutstanding + billToRender.TOTALBILLAMOUNT,
+        totalPayable: reconstructedOutstanding + billToRender.TOTALBILLAMOUNT + Number(billToRender.PENALTYAMT || 0),
         paymentStatus: (billToRender.paymentStatus as PaymentStatus) || 'Unpaid',
         month: billToRender.monthYear,
       };
@@ -261,6 +263,43 @@ export default function BulkMeterDetailsPage() {
         currentReconstructedOutstanding = outStandingBillValue;
       }
 
+      // Calculate potential live penalty
+      const { getTariff } = await import('@/lib/data-store');
+      const activeTariff = await getTariff(effectiveBulkMeterCustomerType, billingMonth);
+
+      let livePenaltyAmt = 0;
+      if (activeTariff && currentBillingHistory.length > 0) {
+        const threshold = activeTariff.penalty_month_threshold ?? 3;
+        const bankRate = activeTariff.bank_lending_rate ?? 0.15;
+        const tieredRates = activeTariff.penalty_tiered_rates || [
+          { month: 3, rate: 0.00 },
+          { month: 4, rate: 0.10 }
+        ];
+
+        let maxAge = 0;
+        let cumulativeBase = 0;
+        let remaining = currentReconstructedOutstanding;
+
+        for (let i = 0; i < currentBillingHistory.length; i++) {
+          if (remaining <= 0.01) break;
+          const b = currentBillingHistory[i];
+          const monthlyPrincipal = b.THISMONTHBILLAMT !== undefined && b.THISMONTHBILLAMT !== null ? Number(b.THISMONTHBILLAMT) : Number(b.TOTALBILLAMOUNT);
+          const unpaid = Math.max(0, monthlyPrincipal - Number(b.amountPaid || 0));
+          const aged = Math.min(remaining, unpaid);
+          if (aged > 0) {
+            maxAge = Math.max(maxAge, i + 1);
+            cumulativeBase += Number(b.TOTALBILLAMOUNT || 0);
+            remaining -= aged;
+          }
+        }
+
+        if (maxAge >= threshold) {
+          const applicableTier = [...tieredRates].sort((a, b) => b.month - a.month).find(t => maxAge >= t.month);
+          const totalRate = bankRate + (applicableTier?.rate || 0);
+          livePenaltyAmt = cumulativeBase * totalRate;
+        }
+      }
+
       finalBillCardDetails = {
         prevReading: bmPreviousReading,
         currReading: bmCurrentReading,
@@ -268,8 +307,9 @@ export default function BulkMeterDetailsPage() {
         ...differenceBillBreakdown,
         totalDifferenceBill: differenceBill,
         differenceUsage: differenceUsage,
-        outstandingBill: currentReconstructedOutstanding,
-        totalPayable: currentReconstructedOutstanding + differenceBill,
+        penaltyAmt: Number(livePenaltyAmt.toFixed(2)),
+        outstandingBill: Number(currentReconstructedOutstanding.toFixed(2)),
+        totalPayable: Number((currentReconstructedOutstanding + differenceBill + livePenaltyAmt).toFixed(2)),
         paymentStatus: paymentStatus,
         month: currentBulkMeter.month || 'N/A'
       };
@@ -678,6 +718,8 @@ export default function BulkMeterDetailsPage() {
                 <hr className="print-hr" />
                 <div className="print-row"><span>Total Difference bill:</span> <span>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</span></div>
                 <hr className="print-hr" />
+                <div className="print-row"><span>Penalty (ETB):</span> <span>ETB {billCardDetails.penaltyAmt.toFixed(2)}</span></div>
+                <hr className="print-hr" />
                 <div className="print-row"><span>Outstanding (ETB):</span> <span>ETB {billCardDetails.outstandingBill.toFixed(2)}</span></div>
                 <hr className="print-hr" />
                 <div className="print-row font-bold text-lg"><span>Total Amount Payable:</span> <span>ETB {billCardDetails.totalPayable.toFixed(2)}</span></div>
@@ -801,9 +843,10 @@ export default function BulkMeterDetailsPage() {
                     </p>
                   </div>
                 )}
-                <p className="text-base pt-1 border-t mt-1 font-semibold">Current Bill (ETB): ETB {differenceBill.toFixed(2)}</p>
-                <p className={cn("text-base font-semibold", currentBulkMeter.outStandingbill > 0 ? "text-destructive" : "text-muted-foreground")}>Outstanding (ETB): ETB {currentBulkMeter.outStandingbill.toFixed(2)}</p>
-                <p className="text-xl font-bold text-primary pt-1 border-t mt-1">Total Amount Payable: ETB {totalPayable.toFixed(2)}</p>
+                <p className="text-base pt-1 border-t mt-1 font-semibold">Current Bill (ETB): ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</p>
+                <p className="text-base font-semibold text-destructive">Penalty (ETB): ETB {billCardDetails.penaltyAmt.toFixed(2)}</p>
+                <p className={cn("text-base font-semibold", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>Outstanding (ETB): ETB {billCardDetails.outstandingBill.toFixed(2)}</p>
+                <p className="text-xl font-bold text-primary pt-1 border-t mt-1">Total Amount Payable: ETB {billCardDetails.totalPayable.toFixed(2)}</p>
 
               </CardContent>
             </Card>
@@ -899,6 +942,7 @@ export default function BulkMeterDetailsPage() {
                           <TableHead className="text-right">DEBIT_30</TableHead>
                           <TableHead className="text-right">DEBIT_30_60</TableHead>
                           <TableHead className="text-right">DEBIT_60</TableHead>
+                          <TableHead className="text-right">Penalty</TableHead>
                           <TableHead className="text-right">Outstanding (ETB)</TableHead>
                           <TableHead className="text-right">Current Bill (ETB)</TableHead>
                           <TableHead className="text-right">Total Payable (ETB)</TableHead>
@@ -964,9 +1008,10 @@ export default function BulkMeterDetailsPage() {
                               <TableCell className="text-right">{debit30 > 0 ? debit30.toFixed(2) : '-'}</TableCell>
                               <TableCell className="text-right">{debit60 > 0 ? debit60.toFixed(2) : '-'}</TableCell>
                               <TableCell className="text-right">{debit90 > 0 ? debit90.toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-right">{(debit30 + debit60 + debit90).toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-medium">{bill.TOTALBILLAMOUNT.toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-bold">{(debit30 + debit60 + debit90 + bill.TOTALBILLAMOUNT).toFixed(2)}</TableCell>
+                              <TableCell className="text-right text-destructive font-medium">{Number(bill.PENALTYAMT || 0) > 0 ? Number(bill.PENALTYAMT || 0).toFixed(2) : '-'}</TableCell>
+                              <TableCell className="text-right">{(debit30 + debit60 + debit90 + Number(bill.PENALTYAMT || 0)).toFixed(2)}</TableCell>
+                              <TableCell className="text-right font-medium">{bill.THISMONTHBILLAMT ? Number(bill.THISMONTHBILLAMT).toFixed(2) : bill.TOTALBILLAMOUNT.toFixed(2)}</TableCell>
+                              <TableCell className="text-right font-bold">{(debit30 + debit60 + debit90 + Number(bill.PENALTYAMT || 0) + (bill.THISMONTHBILLAMT ? Number(bill.THISMONTHBILLAMT) : bill.TOTALBILLAMOUNT)).toFixed(2)}</TableCell>
                               <TableCell><Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'}>{bill.paymentStatus}</Badge></TableCell>
                               <TableCell className="text-right">
                                 <DropdownMenu>

@@ -1027,6 +1027,6 @@ export type SecurityLog = {
   branch_name: string | null;
   staff_email: string | null;
   ip_address: string | null;
-  severity: "Info" | "Warning" | "Critical";
+  severity: "info" | "warning" | "critical";
   details: any | null;
 };

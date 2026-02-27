@@ -291,7 +291,7 @@ export async function deleteBranchAction(id: string) {
   return await wrap(async () => {
     const session = await checkPermission('branches_delete');
     await dbDeleteBranch(id, session.id);
-    await logSecurityEventAction({ event: 'Delete Branch', severity: 'Warning', details: { id } });
+    await logSecurityEventAction({ event: 'Delete Branch', severity: 'warning', details: { id } });
   });
 }
 
@@ -348,7 +348,7 @@ export async function deleteCustomerAction(customerKeyNumber: string) {
     await dbDeleteCustomer(customerKeyNumber, session.id);
     await logSecurityEventAction({
       event: 'Delete Customer',
-      severity: 'Warning',
+      severity: 'warning',
       customerKeyNumber
     });
   });
@@ -375,7 +375,7 @@ export async function rejectCustomerAction(customerKeyNumber: string) {
       approved_by: session.id,
       approved_at: new Date().toISOString()
     });
-    await logSecurityEventAction({ event: 'Reject Customer', severity: 'Warning', customerKeyNumber });
+    await logSecurityEventAction({ event: 'Reject Customer', severity: 'warning', customerKeyNumber });
     return result;
   });
 }
@@ -435,7 +435,7 @@ export async function deleteBulkMeterAction(customerKeyNumber: string) {
     await dbDeleteBulkMeter(customerKeyNumber, session.id);
     await logSecurityEventAction({
       event: 'Delete Bulk Meter',
-      severity: 'Warning',
+      severity: 'warning',
       customerKeyNumber
     });
   });
@@ -467,7 +467,7 @@ export async function rejectBulkMeterAction(customerKeyNumber: string) {
     });
     await logSecurityEventAction({
       event: 'Reject Bulk Meter',
-      severity: 'Warning',
+      severity: 'warning',
       customerKeyNumber
     });
     return result;
@@ -520,7 +520,7 @@ export async function deleteStaffMemberAction(email: string) {
     await dbDeleteStaffMember(email, session.id);
     await logSecurityEventAction({
       event: 'Delete Staff Member',
-      severity: 'Warning',
+      severity: 'warning',
       details: { email }
     });
   });
@@ -690,17 +690,23 @@ export async function runBillingCycleAction(payload: {
     );
 
     const balanceFromPreviousPeriods = bulkMeter.outStandingbill || 0;
-    const totalPayableForCycle = billBreakdown.totalBill + balanceFromPreviousPeriods;
 
-    // 4. Aging Calculation (FIFO based on historical bills, considering partial payments)
+    // 4. Aging & Penalty Calculation (FIFO based on historical bills, considering partial payments)
     const { calculateDebtAging } = await import('./billing-utils');
     const historicalBills = await dbGetBillsByBulkMeterId(payload.bulkMeterId);
-    const { debit30, debit30_60, debit60 } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills);
 
+    // Fetch current tariff to get penalty settings. Note: calculateBill above already uses it internally,
+    // but here we need the full TariffInfo object for penalty rules.
+    const { getTariff } = await import('./data-store');
+    const activeTariff = await getTariff(chargeGroup, payload.monthYear);
+
+    const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, activeTariff);
 
     const periodStartDate = getBillingPeriodStartDate(payload.monthYear);
     const periodEndDate = getBillingPeriodEndDate(payload.monthYear);
     const dueDate = calculateDueDate(periodEndDate);
+
+    const totalPayableForCycle = billBreakdown.totalBill + balanceFromPreviousPeriods + penaltyAmt;
 
     // 5. Create Bill
     const billInsert: BillInsert = {
@@ -714,7 +720,8 @@ export async function runBillingCycleAction(payload: {
       difference_usage: differenceUsageForCycle,
       THISMONTHBILLAMT: billBreakdown.totalBill,
       OUTSTANDINGAMT: balanceFromPreviousPeriods,
-      TOTALBILLAMOUNT: totalPayableForCycle, // totalBill + balanceFromPreviousPeriods
+      PENALTYAMT: penaltyAmt,
+      TOTALBILLAMOUNT: totalPayableForCycle,
       base_water_charge: billBreakdown.baseWaterCharge,
       maintenance_fee: billBreakdown.maintenanceFee,
       sanitation_fee: billBreakdown.sanitationFee,
@@ -779,7 +786,7 @@ export async function deleteBillAction(id: string) {
     await dbDeleteBill(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Bill',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -872,7 +879,7 @@ export async function rejectBillAction(id: string, reason: string) {
     });
     await logSecurityEventAction({
       event: 'Reject Bill',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id, reason, from: currentStatus }
     });
     return bill;
@@ -920,7 +927,7 @@ export async function correctBillAction(id: string, reason: string) {
     });
     await logSecurityEventAction({
       event: 'Correct Bill',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id, reason }
     });
     return bill;
@@ -982,7 +989,7 @@ export async function deleteIndividualCustomerReadingAction(id: string) {
     await dbDeleteIndividualCustomerReading(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Indiv. Reading',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1039,7 +1046,7 @@ export async function deleteBulkMeterReadingAction(id: string) {
     await dbDeleteBulkMeterReading(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Bulk Reading',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1143,7 +1150,7 @@ export async function deletePaymentAction(id: string) {
 
     await logSecurityEventAction({
       event: 'Delete Payment',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1176,7 +1183,7 @@ export async function deleteReportLogAction(id: string) {
     await dbDeleteReportLog(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Report',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1189,7 +1196,7 @@ export async function deleteNotificationAction(id: string) {
     await dbDeleteNotification(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Notification',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1239,7 +1246,7 @@ export async function createRoleAction(role: RoleInsert) {
     const result = await dbCreateRole(role);
     await logSecurityEventAction({
       event: 'Create Role',
-      severity: 'Warning',
+      severity: 'warning',
       details: { role }
     });
     return result;
@@ -1268,7 +1275,7 @@ export const createPermissionAction = async (permission: PermissionInsert) => aw
   const result = await dbCreatePermission(permission);
   await logSecurityEventAction({
     event: 'Create Permission',
-    severity: 'Warning',
+    severity: 'warning',
     details: { permission }
   });
   return result;
@@ -1278,7 +1285,7 @@ export const updatePermissionAction = async (id: number, permission: PermissionU
   const result = await dbUpdatePermission(id, permission);
   await logSecurityEventAction({
     event: 'Update Permission',
-    severity: 'Warning',
+    severity: 'warning',
     details: { id, updates: permission }
   });
   return result;
@@ -1288,7 +1295,7 @@ export const deletePermissionAction = async (id: number) => await wrap(async () 
   await dbDeletePermission(id);
   await logSecurityEventAction({
     event: 'Delete Permission',
-    severity: 'Critical',
+    severity: 'critical',
     details: { id }
   });
 });
@@ -1322,7 +1329,7 @@ export async function rpcUpdateRolePermissionsAction(roleId: number, permissionI
     // 3. Log security event
     await logSecurityEventAction({
       event: 'Update Role Permissions',
-      severity: 'Warning',
+      severity: 'warning',
       details: { roleId, permissionIds }
     });
 
@@ -1359,7 +1366,7 @@ export async function createTariffAction(tariff: TariffInsert) {
     const result = await dbCreateTariff(tariff);
     await logSecurityEventAction({
       event: 'Create Tariff',
-      severity: 'Critical',
+      severity: 'critical',
       details: { tariff }
     });
     return result;
@@ -1375,7 +1382,7 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
 
     await logSecurityEventAction({
       event: 'Update Tariff',
-      severity: 'Critical',
+      severity: 'critical',
       details: {
         customerType,
         effectiveDate,
@@ -1421,7 +1428,7 @@ export async function deleteKnowledgeBaseArticleAction(id: number) {
     await dbDeleteKnowledgeBaseArticle(id, session.id);
     await logSecurityEventAction({
       event: 'Delete KB Article',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1444,7 +1451,7 @@ import { dbLogSecurityEvent } from './db-queries';
 
 export interface LogOptions {
   event: string;
-  severity?: 'Info' | 'Warning' | 'Critical';
+  severity?: 'info' | 'warning' | 'critical';
   customerKeyNumber?: string;
   details?: any;
 }
@@ -1454,7 +1461,7 @@ export async function logSecurityEventAction(options: LogOptions | string) {
     const session = await getSession();
 
     let event: string;
-    let severity: 'Info' | 'Warning' | 'Critical' = 'Info';
+    let severity: 'info' | 'warning' | 'critical' = 'info';
     let details: any = {};
     let customerKeyNumber: string | undefined;
 
@@ -1462,7 +1469,7 @@ export async function logSecurityEventAction(options: LogOptions | string) {
       event = options;
     } else {
       event = options.event;
-      severity = options.severity || 'Info';
+      severity = (options.severity?.toLowerCase() as any) || 'info';
       details = options.details || {};
       customerKeyNumber = options.customerKeyNumber;
     }
@@ -1612,7 +1619,7 @@ export async function deleteRouteAction(routeKey: string) {
       throw new Error('Unauthorized: Insufficient permissions to delete routes.');
     }
     await dbDeleteRoute(routeKey, session.id);
-    await logSecurityEventAction({ event: 'Delete Route', severity: 'Warning', details: { routeKey } });
+    await logSecurityEventAction({ event: 'Delete Route', severity: 'warning', details: { routeKey } });
   });
 }
 
@@ -1681,7 +1688,7 @@ export async function revokeCustomerSessionAction(sessionId: string) {
     const result = await dbRevokeCustomerSession(sessionId);
     await logSecurityEventAction({
       event: 'Customer Session Revoked',
-      severity: 'Warning',
+      severity: 'warning',
       details: { sessionId }
     });
     return result;
@@ -1754,7 +1761,7 @@ export async function deleteFaultCodeAction(id: string) {
     await dbDeleteFaultCode(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Fault Code',
-      severity: 'Warning',
+      severity: 'warning',
       details: { id }
     });
   });
@@ -1766,14 +1773,22 @@ export async function deleteFaultCodeAction(id: string) {
 
 export async function getRecycleBinItemsAction() {
   return await wrap(async () => {
-    await checkPermission('settings_view');
+    const session = await getSession();
+    const perms = session?.permissions || [];
+    if (!perms.includes('settings_view') && !perms.includes('bill:manage_all')) {
+      await checkPermission('settings_view');
+    }
     return await dbGetRecycleBinItems();
   });
 }
 
 export async function restoreFromRecycleBinAction(recycleBinId: string) {
   return await wrap(async () => {
-    const session = await checkPermission('settings_manage');
+    const session = await getSession();
+    const perms = session?.permissions || [];
+    if (!perms.includes('settings_manage') && !perms.includes('bill:manage_all')) {
+      await checkPermission('settings_manage');
+    }
     const result = await dbRestoreFromRecycleBin(recycleBinId);
     await logSecurityEventAction({
       event: 'Restore from Recycle Bin',
@@ -1786,11 +1801,15 @@ export async function restoreFromRecycleBinAction(recycleBinId: string) {
 
 export async function permanentlyDeleteFromRecycleBinAction(recycleBinId: string) {
   return await wrap(async () => {
-    const session = await checkPermission('settings_manage');
+    const session = await getSession();
+    const perms = session?.permissions || [];
+    if (!perms.includes('settings_manage') && !perms.includes('bill:manage_all')) {
+      await checkPermission('settings_manage');
+    }
     const result = await dbPermanentlyDeleteFromRecycleBin(recycleBinId);
     await logSecurityEventAction({
       event: 'Permanently Delete from Recycle Bin',
-      severity: 'Critical',
+      severity: 'critical',
       details: { recycleBinId }
     });
     revalidatePath('/admin/recycle-bin');
@@ -1894,13 +1913,14 @@ export async function syncAllBillsAgingDebtAction() {
         return sum + unpaid;
       }, 0);
 
-      const { debit30, debit30_60, debit60 } = calculateDebtAging(reconstructedOutstanding, olderBills);
+      const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(reconstructedOutstanding, olderBills);
 
       // Prepare updates
       const updates: any = {
         debit_30: debit30,
         debit_30_60: debit30_60,
         debit_60: debit60,
+        PENALTYAMT: penaltyAmt,
         OUTSTANDINGAMT: reconstructedOutstanding
       };
 
@@ -1914,7 +1934,7 @@ export async function syncAllBillsAgingDebtAction() {
       }
 
       // Update TOTALBILLAMOUNT to reflect the sum (Total Payable)
-      updates.TOTALBILLAMOUNT = currentMonthBill + reconstructedOutstanding;
+      updates.TOTALBILLAMOUNT = currentMonthBill + reconstructedOutstanding + penaltyAmt;
 
       await dbUpdateBill(bill.id, updates);
       count++;

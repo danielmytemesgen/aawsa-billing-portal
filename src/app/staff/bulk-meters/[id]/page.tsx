@@ -56,6 +56,7 @@ const initialMemoizedDetails = {
     prevReading: 0, currReading: 0, usage: 0, baseWaterCharge: 0,
     maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0,
     vatAmount: 0, totalDifferenceBill: 0, differenceUsage: 0,
+    penaltyAmt: 0,
     outstandingBill: 0, totalPayable: 0, paymentStatus: 'Unpaid' as PaymentStatus,
     month: 'N/A',
   },
@@ -210,9 +211,10 @@ export default function StaffBulkMeterDetailsPage() {
         vatAmount: historicalBillDetails.vatAmount,
         totalDifferenceBill: billToRender.TOTALBILLAMOUNT,
         differenceUsage: billToRender.differenceUsage ?? 0,
+        penaltyAmt: Number(billToRender.PENALTYAMT || 0),
         outstandingBill: reconstructedOutstanding,
-        totalPayable: reconstructedOutstanding + billToRender.TOTALBILLAMOUNT,
-        paymentStatus: billToRender.paymentStatus,
+        totalPayable: reconstructedOutstanding + billToRender.TOTALBILLAMOUNT + Number(billToRender.PENALTYAMT || 0),
+        paymentStatus: (billToRender.paymentStatus as PaymentStatus) || 'Unpaid',
         month: billToRender.monthYear,
       };
     } else {
@@ -233,6 +235,43 @@ export default function StaffBulkMeterDetailsPage() {
         currentReconstructedOutstanding = outStandingBillValue;
       }
 
+      // Calculate potential live penalty
+      const { getTariff } = await import('@/lib/data-store');
+      const activeTariff = await getTariff(effectiveBulkMeterCustomerType, billingMonth);
+
+      let livePenaltyAmt = 0;
+      if (activeTariff && currentBillingHistory.length > 0) {
+        const threshold = activeTariff.penalty_month_threshold ?? 3;
+        const bankRate = activeTariff.bank_lending_rate ?? 0.15;
+        const tieredRates = activeTariff.penalty_tiered_rates || [
+          { month: 3, rate: 0.00 },
+          { month: 4, rate: 0.10 }
+        ];
+
+        let maxAge = 0;
+        let cumulativeBase = 0;
+        let remaining = currentReconstructedOutstanding;
+
+        for (let i = 0; i < currentBillingHistory.length; i++) {
+          if (remaining <= 0.01) break;
+          const b = currentBillingHistory[i];
+          const monthlyPrincipal = b.THISMONTHBILLAMT !== undefined && b.THISMONTHBILLAMT !== null ? Number(b.THISMONTHBILLAMT) : Number(b.TOTALBILLAMOUNT);
+          const unpaid = Math.max(0, monthlyPrincipal - Number(b.amountPaid || 0));
+          const aged = Math.min(remaining, unpaid);
+          if (aged > 0) {
+            maxAge = Math.max(maxAge, i + 1);
+            cumulativeBase += Number(b.TOTALBILLAMOUNT || 0);
+            remaining -= aged;
+          }
+        }
+
+        if (maxAge >= threshold) {
+          const applicableTier = [...tieredRates].sort((a, b) => b.month - a.month).find(t => maxAge >= t.month);
+          const totalRate = bankRate + (applicableTier?.rate || 0);
+          livePenaltyAmt = cumulativeBase * totalRate;
+        }
+      }
+
       finalBillCardDetails = {
         prevReading: bmPreviousReading,
         currReading: bmCurrentReading,
@@ -240,8 +279,9 @@ export default function StaffBulkMeterDetailsPage() {
         ...differenceBillBreakdown,
         totalDifferenceBill: differenceBill,
         differenceUsage: differenceUsage,
-        outstandingBill: currentReconstructedOutstanding,
-        totalPayable: currentReconstructedOutstanding + differenceBill,
+        penaltyAmt: Number(livePenaltyAmt.toFixed(2)),
+        outstandingBill: Number(currentReconstructedOutstanding.toFixed(2)),
+        totalPayable: Number((currentReconstructedOutstanding + differenceBill + livePenaltyAmt).toFixed(2)),
         paymentStatus: paymentStatus,
         month: currentBulkMeter.month || 'N/A'
       };
@@ -836,9 +876,10 @@ export default function StaffBulkMeterDetailsPage() {
                 <p><strong className="font-semibold">Sewerage Fee:</strong> ETB {differenceBillBreakdown?.sewerageCharge?.toFixed(2) ?? '0.00'}</p>
                 <p><strong className="font-semibold">Meter Rent:</strong> ETB {differenceBillBreakdown?.meterRent?.toFixed(2) ?? '0.00'}</p>
                 <p><strong className="font-semibold">VAT (15%):</strong> ETB {differenceBillBreakdown?.vatAmount?.toFixed(2) ?? '0.00'}</p>
-                <p className="text-base pt-1 border-t mt-1 font-semibold">Current Bill (ETB): ETB {differenceBill.toFixed(2)}</p>
-                <p className={cn("text-base font-semibold", bulkMeter.outStandingbill > 0 ? "text-destructive" : "text-muted-foreground")}>Outstanding (ETB): ETB {bulkMeter.outStandingbill.toFixed(2)}</p>
-                <p className="text-xl font-bold text-primary pt-1 border-t mt-1">Total Amount Payable: ETB {totalPayable.toFixed(2)}</p>
+                <p className="text-base pt-1 border-t mt-1 font-semibold">Current Bill (ETB): ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</p>
+                <p className="text-base font-semibold text-destructive">Penalty (ETB): ETB {billCardDetails.penaltyAmt.toFixed(2)}</p>
+                <p className={cn("text-base font-semibold", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>Outstanding (ETB): ETB {billCardDetails.outstandingBill.toFixed(2)}</p>
+                <p className="text-xl font-bold text-primary pt-1 border-t mt-1">Total Amount Payable: ETB {billCardDetails.totalPayable.toFixed(2)}</p>
                 <Separator className="my-4" />
               </CardContent>
             </Card>
@@ -982,7 +1023,7 @@ export default function StaffBulkMeterDetailsPage() {
               </div>
 
               {/* Desktop View: Table */}
-              <div className="overflow-x-auto hidden md:block">{billingHistory.length > 0 ? (<Table><TableHeader><TableRow><TableHead>Month</TableHead><TableHead>Date Billed</TableHead><TableHead className="text-right">Prev. Reading</TableHead><TableHead className="text-right">Curr. Reading</TableHead><TableHead>Usage (m³)</TableHead><TableHead>Diff. Usage (m³)</TableHead><TableHead className="text-right">DEBIT_30</TableHead><TableHead className="text-right">DEBIT_30_60</TableHead><TableHead className="text-right">DEBIT_&gt;60</TableHead><TableHead className="text-right">Outstanding (ETB)</TableHead>
+              <div className="overflow-x-auto hidden md:block">{billingHistory.length > 0 ? (<Table><TableHeader><TableRow><TableHead>Month</TableHead><TableHead>Date Billed</TableHead><TableHead className="text-right">Prev. Reading</TableHead><TableHead className="text-right">Curr. Reading</TableHead><TableHead>Usage (m³)</TableHead><TableHead>Diff. Usage (m³)</TableHead><TableHead className="text-right">DEBIT_30</TableHead><TableHead className="text-right">DEBIT_30_60</TableHead><TableHead className="text-right">DEBIT_60</TableHead><TableHead className="text-right">Penalty</TableHead><TableHead className="text-right">Outstanding (ETB)</TableHead>
                 <TableHead className="text-right">Current Bill (ETB)</TableHead><TableHead className="text-right">Total Payable (ETB)</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{paginatedBillingHistory.map((bill, _billIndex) => {
                   const usageForBill = bill.CONS ?? (bill.CURRREAD - bill.PREVREAD);
                   const displayUsage = !isNaN(usageForBill) ? usageForBill.toFixed(2) : "N/A";
@@ -1049,9 +1090,10 @@ export default function StaffBulkMeterDetailsPage() {
                             <TableCell className="text-right text-xs text-muted-foreground">{debit30 > 0 ? debit30.toFixed(2) : '-'}</TableCell>
                             <TableCell className="text-right text-xs text-muted-foreground">{debit60 > 0 ? debit60.toFixed(2) : '-'}</TableCell>
                             <TableCell className="text-right text-xs text-muted-foreground">{debit90 > 0 ? debit90.toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right">{currentOutstanding.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-destructive font-medium">{Number(bill.PENALTYAMT || 0) > 0 ? Number(bill.PENALTYAMT || 0).toFixed(2) : '-'}</TableCell>
+                            <TableCell className="text-right">{(currentOutstanding + Number(bill.PENALTYAMT || 0)).toFixed(2)}</TableCell>
                             <TableCell className="text-right font-medium">{bill.TOTALBILLAMOUNT.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-bold">{(currentOutstanding + bill.TOTALBILLAMOUNT).toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-bold">{(currentOutstanding + Number(bill.PENALTYAMT || 0) + bill.TOTALBILLAMOUNT).toFixed(2)}</TableCell>
                           </>
                         );
                       })()}

@@ -35,6 +35,9 @@ export interface TariffInfo {
     vat_rate: number;
     domestic_vat_threshold_m3: number;
     additional_fees: AdditionalFee[];
+    penalty_month_threshold?: number;
+    bank_lending_rate?: number;
+    penalty_tiered_rates?: { month: number; rate: number }[];
 }
 
 export interface BillCalculationResult {
