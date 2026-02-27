@@ -1375,6 +1375,18 @@ export async function createTariffAction(tariff: TariffInsert) {
 export async function updateTariffAction(customerType: string, effectiveDate: string, tariff: TariffUpdate) {
   return await wrap(async () => {
     await checkPermission('tariffs_edit');
+
+    // Check if the tariff is the latest version. Historical versions are read-only.
+    const allCustomerTariffs = await dbGetAllTariffs();
+    const relevantTariffs = allCustomerTariffs
+      .filter(t => t.customer_type === customerType && t.effective_date)
+      .map(t => t.effective_date!)
+      .sort((a, b) => b.localeCompare(a)); // Descending order
+
+    if (relevantTariffs.length > 0 && effectiveDate < relevantTariffs[0]) {
+      throw new Error('Forbidden: Cannot modify a historical tariff version. Only the latest active tariff can be edited.');
+    }
+
     // Capture current tariff for audit comparison
     const oldTariff = await dbGetTariffByTypeAndDate(customerType, effectiveDate);
 

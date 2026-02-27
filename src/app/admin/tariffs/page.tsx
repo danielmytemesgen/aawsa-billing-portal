@@ -18,6 +18,7 @@ import { TariffRateTable, type DisplayTariffRate } from "./tariff-rate-table";
 import { TariffFormDialog, type TariffFormValues } from "./tariff-form-dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { MeterRentDialog } from "./meter-rent-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -208,7 +209,8 @@ export default function TariffManagementPage() {
   const activeWaterTiers = activeTariffInfo ? getDisplayTiersFromData(activeTariffInfo, 'water') : [];
   const activeSewerageTiers = activeTariffInfo ? getDisplayTiersFromData(activeTariffInfo, 'sewerage') : [];
 
-  const canUpdateTariffs = hasPermission('tariffs_update');
+  const isLatestTariff = availableDates.length > 0 && currentEffectiveDate === availableDates[0];
+  const canUpdateTariffs = hasPermission('tariffs_update') && isLatestTariff;
 
   React.useEffect(() => {
     setIsDataLoading(true);
@@ -495,34 +497,45 @@ export default function TariffManagementPage() {
           <LibraryBig className="h-8 w-8 text-primary" />
           <h1 className="text-2xl md:text-3xl font-bold">Tariff Management</h1>
         </div>
-        {canUpdateTariffs && (
+        {(hasPermission('tariffs_update') || hasPermission('tariffs_create')) && (
           <div className="flex gap-2 flex-wrap">
-            <Button onClick={handleCreateNewVersion} variant="outline" disabled={!activeTariffInfo}>
-              <PlusCircle className="mr-2 h-4 w-4" /> New Version
-            </Button>
-            <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo}>
-              <DollarSign className="mr-2 h-4 w-4" /> Manage Meter Rent
-            </Button>
+            {hasPermission('tariffs_create') && (
+              <Button onClick={handleCreateNewVersion} variant="outline" disabled={!activeTariffInfo || !isLatestTariff}>
+                <PlusCircle className="mr-2 h-4 w-4" /> New Version
+              </Button>
+            )}
+            {hasPermission('tariffs_update') && (
+              <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo || !isLatestTariff}>
+                <DollarSign className="mr-2 h-4 w-4" /> Manage Meter Rent
+              </Button>
+            )}
           </div>
         )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="tariff-date">Select Effective Date</Label>
-          <Select
-            value={currentEffectiveDate}
-            onValueChange={setCurrentEffectiveDate}
-          >
-            <SelectTrigger id="tariff-date" className="w-full md:w-[200px]">
-              <SelectValue placeholder="Select a date" />
-            </SelectTrigger>
-            <SelectContent>
-              {availableDates.map(date => (
-                <SelectItem key={`tariff-date-${date}`} value={date}>{date}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Label htmlFor="tariff-date">Tariff Version (Effective Date)</Label>
+          <div className="flex items-center gap-2">
+            <Select
+              value={currentEffectiveDate}
+              onValueChange={setCurrentEffectiveDate}
+            >
+              <SelectTrigger id="tariff-date" className="w-full md:w-[200px]">
+                <SelectValue placeholder="Select a version" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableDates.map(date => (
+                  <SelectItem key={`tariff-date-${date}`} value={date}>{date}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {isLatestTariff ? (
+              <Badge variant="default" className="text-xs">Active (Latest)</Badge>
+            ) : (
+              <Badge variant="secondary" className="text-xs">Historical (Read-Only)</Badge>
+            )}
+          </div>
         </div>
         <div className="space-y-2">
           <Label htmlFor="customer-category">Select Customer Category</Label>
