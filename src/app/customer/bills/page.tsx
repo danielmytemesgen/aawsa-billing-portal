@@ -46,6 +46,9 @@ interface Bill {
     debit_30_60?: number;
     debit_60?: number;
     balance_carried_forward?: number;
+    PENALTYAMT?: number;
+    THISMONTHBILLAMT?: number;
+    OUTSTANDINGAMT?: number;
 }
 
 export default function CustomerBillsPage() {
@@ -211,9 +214,10 @@ export default function CustomerBillsPage() {
                     "Meter Rent": b.meter_rent,
                     "VAT": b.vat_amount || 0,
                     "Additional": b.additional_fees_charge || 0,
-                    "Current Bill": b.TOTALBILLAMOUNT,
-                    "Outstanding": b.balance_carried_forward || 0,
-                    "Total Amount Payable": (b.TOTALBILLAMOUNT + (b.balance_carried_forward || 0)),
+                    "Current Bill": b.THISMONTHBILLAMT ?? b.TOTALBILLAMOUNT,
+                    "Penalty": b.PENALTYAMT || 0,
+                    "Outstanding": (Number(b.debit_30 || 0) + Number(b.debit_30_60 || 0) + Number(b.debit_60 || 0)),
+                    "Total Amount Payable": (Number(b.PENALTYAMT || 0) + Number(b.debit_30 || 0) + Number(b.debit_30_60 || 0) + Number(b.debit_60 || 0) + Number(b.THISMONTHBILLAMT ?? b.TOTALBILLAMOUNT ?? 0)),
                     "Status": b.payment_status,
                     "Due Date": formatDate(b.due_date)
                 }));
@@ -338,16 +342,22 @@ export default function CustomerBillsPage() {
                                                 ? format(new Date(bill.created_at || bill.bill_period_end_date!), "MMM yyyy")
                                                 : "N/A"
                                         );
-                                        const totalAmount = Number(bill.TOTALBILLAMOUNT ?? bill.total_amount_due ?? 0);
+                                        const currentBillAmt = Number(bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT ?? bill.total_amount_due ?? 0);
                                         const consumption = Number(bill.CONS ?? bill.usage_m3 ?? 0);
+                                        const d30 = Number(bill.debit_30 ?? 0);
+                                        const d30_60 = Number(bill.debit_30_60 ?? 0);
+                                        const d60 = Number(bill.debit_60 ?? 0);
+                                        const outstanding = d30 + d30_60 + d60;
+                                        const penalty = Number(bill.PENALTYAMT ?? 0);
+                                        const totalPayable = penalty + outstanding + currentBillAmt;
 
                                         return (
                                             <TableRow key={bill.id}>
                                                 <TableCell className="font-medium">{monthYear}</TableCell>
                                                 <TableCell>{consumption.toFixed(2)}</TableCell>
-                                                <TableCell className="font-semibold">ETB {totalAmount.toFixed(2)}</TableCell>
-                                                <TableCell className="text-amber-700">ETB {Number(bill.balance_carried_forward || 0).toFixed(2)}</TableCell>
-                                                <TableCell className="font-bold text-blue-700">ETB {(totalAmount + Number(bill.balance_carried_forward || 0)).toFixed(2)}</TableCell>
+                                                <TableCell className="font-semibold">ETB {currentBillAmt.toFixed(2)}</TableCell>
+                                                <TableCell className="text-amber-700">ETB {outstanding > 0 ? outstanding.toFixed(2) : '—'}</TableCell>
+                                                <TableCell className="font-bold text-blue-700">ETB {totalPayable.toFixed(2)}</TableCell>
                                                 <TableCell>
                                                     {formatDate(bill.due_date)}
                                                 </TableCell>
@@ -415,13 +425,17 @@ export default function CustomerBillsPage() {
                                             {getStatusBadge(selectedBill.payment_status)}
                                         </div>
                                         <div className="flex justify-between py-1 border-b border-gray-100 italic">
-                                            <span className="text-gray-600">Outstanding (ETB):</span>
-                                            <span className="font-medium text-amber-700">ETB {Number(selectedBill.balance_carried_forward || 0).toFixed(2)}</span>
+                                            <span className="text-gray-600">Penalty (ETB):</span>
+                                            <span className="font-medium text-red-600">ETB {Number(selectedBill.PENALTYAMT || 0).toFixed(2)}</span>
                                         </div>
-                                        {Number(selectedBill.balance_carried_forward || 0) > 0 && (
+                                        <div className="flex justify-between py-1 border-b border-gray-100 italic">
+                                            <span className="text-gray-600">Outstanding (ETB):</span>
+                                            <span className="font-medium text-amber-700">ETB {(Number(selectedBill.debit_30 || 0) + Number(selectedBill.debit_30_60 || 0) + Number(selectedBill.debit_60 || 0)).toFixed(2)}</span>
+                                        </div>
+                                        {(Number(selectedBill.debit_30 || 0) + Number(selectedBill.debit_30_60 || 0) + Number(selectedBill.debit_60 || 0)) > 0 && (
                                             <div className="pl-4 text-[10px] text-gray-500 space-y-1 bg-gray-50 p-2 rounded">
-                                                <div className="flex justify-between"><span>30 Days:</span> <span>ETB {Number(selectedBill.debit_30 || 0).toFixed(2)}</span></div>
-                                                <div className="flex justify-between"><span>60 Days:</span> <span>ETB {Number(selectedBill.debit_30_60 || 0).toFixed(2)}</span></div>
+                                                <div className="flex justify-between"><span>Debit 30 Days:</span> <span>ETB {Number(selectedBill.debit_30 || 0).toFixed(2)}</span></div>
+                                                <div className="flex justify-between"><span>Debit 30-60 Days:</span> <span>ETB {Number(selectedBill.debit_30_60 || 0).toFixed(2)}</span></div>
                                                 <div className="flex justify-between"><span>&gt;60 Days:</span> <span>ETB {Number(selectedBill.debit_60 || 0).toFixed(2)}</span></div>
                                             </div>
                                         )}
@@ -469,7 +483,7 @@ export default function CustomerBillsPage() {
                                         )}
                                         <div className="flex justify-between pt-3 mt-2 border-t-2 border-gray-200 font-bold text-lg bg-gray-50 p-2 rounded">
                                             <span>Total Amount Payable:</span>
-                                            <span className="text-blue-600">ETB {(Number(selectedBill.TOTALBILLAMOUNT ?? selectedBill.total_amount_due ?? 0) + Number(selectedBill.balance_carried_forward || 0)).toFixed(2)}</span>
+                                            <span className="text-blue-600">ETB {(Number(selectedBill.PENALTYAMT || 0) + Number(selectedBill.debit_30 || 0) + Number(selectedBill.debit_30_60 || 0) + Number(selectedBill.debit_60 || 0) + Number(selectedBill.THISMONTHBILLAMT ?? selectedBill.TOTALBILLAMOUNT ?? selectedBill.total_amount_due ?? 0)).toFixed(2)}</span>
                                         </div>
                                     </div>
                                 </div>

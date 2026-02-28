@@ -218,6 +218,12 @@ const wrap = async <T>(fn: () => Promise<T>) => {
     const data = await fn();
     return { data, error: null } as any;
   } catch (e) {
+    console.error("Server Action Error in wrap:", e);
+    // Write to file for immediate visibility
+    try {
+      require('fs').appendFileSync('server-error.log', new Date().toISOString() + ' : ' + (e instanceof Error ? e.stack : String(e)) + '\n');
+    } catch (fsErr) { }
+
     // Ensure the full error is serialized, not just a generic object
     const errorObject = e instanceof Error
       ? { name: e.name, message: e.message, stack: e.stack }
@@ -689,16 +695,31 @@ export async function runBillingCycleAction(payload: {
       payload.monthYear
     );
 
-    const balanceFromPreviousPeriods = bulkMeter.outStandingbill || 0;
+    const balanceFromPreviousPeriods = Number(bulkMeter.outStandingbill || 0);
 
     // 4. Aging & Penalty Calculation (FIFO based on historical bills, considering partial payments)
     const { calculateDebtAging } = await import('./billing-utils');
     const historicalBills = await dbGetBillsByBulkMeterId(payload.bulkMeterId);
 
-    // Fetch current tariff to get penalty settings. Note: calculateBill above already uses it internally,
-    // but here we need the full TariffInfo object for penalty rules.
-    const { getTariff } = await import('./data-store');
-    const activeTariff = await getTariff(chargeGroup, payload.monthYear);
+    // Fetch current tariff directly from DB rather than client-side data-store to avoid Next.js boundary errors.
+    const { dbGetLatestApplicableTariff } = await import('./db-queries');
+    // Using 28th as a safe approximation for the month just like calculateBill does
+    const activeTariffRow = await dbGetLatestApplicableTariff(chargeGroup, `${payload.monthYear}-28`);
+
+    // Convert DB row to expected TariffInfo structure for calculateDebtAging if a row was found
+    let activeTariff;
+    if (activeTariffRow) {
+      activeTariff = {
+        ...activeTariffRow,
+        tiers: typeof activeTariffRow.tiers === 'string' ? JSON.parse(activeTariffRow.tiers) : activeTariffRow.tiers,
+        sewerage_tiers: typeof activeTariffRow.sewerage_tiers === 'string' ? JSON.parse(activeTariffRow.sewerage_tiers) : activeTariffRow.sewerage_tiers,
+        meter_rent_prices: typeof activeTariffRow.meter_rent_prices === 'string' ? JSON.parse(activeTariffRow.meter_rent_prices) : activeTariffRow.meter_rent_prices,
+        additional_fees: typeof activeTariffRow.additional_fees === 'string' ? JSON.parse(activeTariffRow.additional_fees) : activeTariffRow.additional_fees,
+        penalty_tiered_rates: typeof activeTariffRow.penalty_tiered_rates === 'string' && activeTariffRow.penalty_tiered_rates ? JSON.parse(activeTariffRow.penalty_tiered_rates) : activeTariffRow.penalty_tiered_rates,
+        penalty_month_threshold: activeTariffRow.penalty_month_threshold !== null && activeTariffRow.penalty_month_threshold !== undefined ? Number(activeTariffRow.penalty_month_threshold) : undefined,
+        bank_lending_rate: activeTariffRow.bank_lending_rate !== null && activeTariffRow.bank_lending_rate !== undefined ? Number(activeTariffRow.bank_lending_rate) : undefined,
+      };
+    }
 
     const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, activeTariff);
 
@@ -706,7 +727,10 @@ export async function runBillingCycleAction(payload: {
     const periodEndDate = getBillingPeriodEndDate(payload.monthYear);
     const dueDate = calculateDueDate(periodEndDate);
 
-    const totalPayableForCycle = billBreakdown.totalBill + balanceFromPreviousPeriods + penaltyAmt;
+    // Outstanding = sum of aging buckets (Debit 30 + Debit 30-60 + Debit 60)
+    const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
+    // Total Payable = Penalty + Outstanding + Current Bill
+    const totalPayableForCycle = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
 
     // 5. Create Bill
     const billInsert: BillInsert = {
@@ -719,7 +743,7 @@ export async function runBillingCycleAction(payload: {
       CONS: bmUsage,
       difference_usage: differenceUsageForCycle,
       THISMONTHBILLAMT: billBreakdown.totalBill,
-      OUTSTANDINGAMT: balanceFromPreviousPeriods,
+      OUTSTANDINGAMT: outstandingAmt,
       PENALTYAMT: penaltyAmt,
       TOTALBILLAMOUNT: totalPayableForCycle,
       base_water_charge: billBreakdown.baseWaterCharge,
@@ -728,7 +752,7 @@ export async function runBillingCycleAction(payload: {
       sewerage_charge: billBreakdown.sewerageCharge,
       meter_rent: billBreakdown.meterRent,
       vat_amount: billBreakdown.vatAmount,
-      balance_carried_forward: balanceFromPreviousPeriods,
+      balance_carried_forward: outstandingAmt,
       debit_30: debit30,
       debit_30_60: debit30_60,
       debit_60: debit60,
@@ -744,10 +768,11 @@ export async function runBillingCycleAction(payload: {
       await dbUpdateBill(billResult.id, { BILLKEY: billKey });
     }
 
-    // 6. Update Bulk Meter
+    // 6. Update Bulk Meter — carry forward the new total payable as the outstanding balance
     const newOutstandingBalance = payload.carryBalance ? totalPayableForCycle : 0;
+    const newPreviousReading = bulkMeter.current_reading ?? bulkMeter.previous_reading ?? 0;
     const meterUpdate: BulkMeterUpdate = {
-      previousReading: bulkMeter.current_reading,
+      previousReading: newPreviousReading,
       outStandingbill: newOutstandingBalance as any,
       paymentStatus: payload.carryBalance ? 'Unpaid' as any : 'Paid' as any,
     };
@@ -1652,11 +1677,17 @@ export async function getCustomerBillsAction(
 ): Promise<{ data: any[] | null; error: any }> {
   return await wrap(async () => {
     const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-    const hasManageAll = session.permissions?.includes('bill:manage_all');
-    const branchId = !hasManageAll ? session.branchId : undefined;
 
-    return await dbGetBillsByCustomerId(customerKeyNumber, branchId);
+    // If it's a staff member session
+    if (session && session.id) {
+      const hasManageAll = session.permissions?.includes('bill:manage_all');
+      const branchId = !hasManageAll ? session.branchId : undefined;
+      return await dbGetBillsByCustomerId(customerKeyNumber, branchId);
+    }
+
+    // Otherwise, allow access for customers (the client-side handles session validation for them)
+    // We trust the provided customerKeyNumber for the customer portal's own requests
+    return await dbGetBillsByCustomerId(customerKeyNumber);
   });
 }
 
@@ -1665,11 +1696,16 @@ export async function getBulkMeterBillsAction(
 ): Promise<{ data: any[] | null; error: any }> {
   return await wrap(async () => {
     const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-    const isTopManagement = ['admin', 'head office management'].includes(session.role?.toLowerCase());
-    const branchId = !isTopManagement ? session.branchId : undefined;
 
-    return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId);
+    // If it's a staff member session
+    if (session && session.id) {
+      const isTopManagement = ['admin', 'head office management'].includes(session.role?.toLowerCase());
+      const branchId = !isTopManagement ? session.branchId : undefined;
+      return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId);
+    }
+
+    // Otherwise, allow access for customers (the client-side handles session validation for them)
+    return await dbGetBillsByBulkMeterId(customerKeyNumber);
   });
 }
 

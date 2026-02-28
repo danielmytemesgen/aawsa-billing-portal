@@ -797,7 +797,7 @@ export const dbLogSecurityEvent = async (event: string, staff_email?: string, br
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const maybeHeaders = await import('next/headers');
             if (maybeHeaders && typeof maybeHeaders.headers === 'function') {
-                const h = (maybeHeaders as any).headers();
+                const h = await (maybeHeaders as any).headers();
 
                 // Capture IP
                 const forwarded = h.get?.('x-forwarded-for') ?? h.get?.('x-real-ip');
@@ -814,8 +814,15 @@ export const dbLogSecurityEvent = async (event: string, staff_email?: string, br
         }
 
         console.log('Logging security event:', { event, staff_email, branch_name, ip_address, severity, customer_key_number });
+
+        // Map application severity to database ENUM severity_level
+        let dbSeverity = 'Medium';
+        if (severity === 'info') dbSeverity = 'Low';
+        else if (severity === 'warning') dbSeverity = 'Medium';
+        else if (severity === 'critical') dbSeverity = 'Critical';
+
         const sql = 'INSERT INTO security_logs (event, staff_email, branch_name, ip_address, severity, details, customer_key_number) VALUES ($1, $2, $3, $4, $5, $6, $7)';
-        await query(sql, [event, staff_email, branch_name, ip_address, severity, JSON.stringify(details), customer_key_number]);
+        await query(sql, [event, staff_email, branch_name, ip_address, dbSeverity, JSON.stringify(details), customer_key_number]);
         return { success: true };
     } catch (error) {
         console.error('Error logging security event:', error);

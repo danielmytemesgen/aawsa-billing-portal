@@ -178,12 +178,12 @@ export interface DomainBill {
   createdAt?: string | null;
   updatedAt?: string | null;
   BILLKEY?: string | null;
+  PENALTYAMT?: number | null;
+  THISMONTHBILLAMT?: number | null;
   CUSTOMERNAME?: string | null;
   CUSTOMERTIN?: string | null;
   CUSTOMERBRANCH?: string | null;
   REASON?: string | null;
-  THISMONTHBILLAMT?: number | null;
-  PENALTYAMT?: number | null;
   DRACCTNO?: string | null;
   CRACCTNO?: string | null;
 }
@@ -873,6 +873,8 @@ const mapDbBillToDomain = (dbBill: Bill): DomainBill => ({
   dueDate: dbBill.due_date,
   paymentStatus: dbBill.payment_status,
   billNumber: dbBill.bill_number,
+  PENALTYAMT: dbBill.PENALTYAMT ? Number(dbBill.PENALTYAMT) : null,
+  THISMONTHBILLAMT: dbBill.THISMONTHBILLAMT ? Number(dbBill.THISMONTHBILLAMT) : null,
   notes: dbBill.notes,
   createdAt: dbBill.created_at,
   updatedAt: dbBill.updated_at,
@@ -881,8 +883,6 @@ const mapDbBillToDomain = (dbBill: Bill): DomainBill => ({
   CUSTOMERTIN: dbBill.CUSTOMERTIN,
   CUSTOMERBRANCH: dbBill.CUSTOMERBRANCH,
   REASON: dbBill.REASON,
-  THISMONTHBILLAMT: dbBill.THISMONTHBILLAMT ? Number(dbBill.THISMONTHBILLAMT) : null,
-  PENALTYAMT: dbBill.PENALTYAMT ? Number(dbBill.PENALTYAMT) : null,
   DRACCTNO: dbBill.DRACCTNO,
   CRACCTNO: dbBill.CRACCTNO,
 });

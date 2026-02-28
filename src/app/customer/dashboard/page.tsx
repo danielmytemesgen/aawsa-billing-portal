@@ -22,6 +22,11 @@ interface Bill {
     bill_period_end_date?: string;
     CONS?: number;
     usage_m3?: number;
+    PENALTYAMT?: number;
+    THISMONTHBILLAMT?: number;
+    debit_30?: number;
+    debit_30_60?: number;
+    debit_60?: number;
 }
 
 interface CustomerAccount {
@@ -83,7 +88,14 @@ export default function CustomerDashboardPage() {
                     const paidBills = processedBills.filter((b: any) => b.payment_status === "Paid").length;
                     const outstandingAmount = processedBills
                         .filter((b: any) => b.payment_status !== "Paid")
-                        .reduce((sum: number, b: any) => sum + b.TOTALBILLAMOUNT, 0);
+                        .reduce((sum: number, b: any) => {
+                            const d30 = Number(b.debit_30 || 0);
+                            const d30_60 = Number(b.debit_30_60 || 0);
+                            const d60 = Number(b.debit_60 || 0);
+                            const penalty = Number(b.PENALTYAMT || 0);
+                            const current = Number(b.THISMONTHBILLAMT ?? b.TOTALBILLAMOUNT ?? 0);
+                            return sum + d30 + d30_60 + d60 + penalty + current;
+                        }, 0);
 
                     setStats({ totalBills, paidBills, outstandingAmount });
                 }
@@ -112,7 +124,14 @@ export default function CustomerDashboardPage() {
                     const paidBills = processedBills.filter((b: any) => b.payment_status === "Paid").length;
                     const outstandingAmount = processedBills
                         .filter((b: any) => b.payment_status !== "Paid")
-                        .reduce((sum: number, b: any) => sum + b.TOTALBILLAMOUNT, 0);
+                        .reduce((sum: number, b: any) => {
+                            const d30 = Number(b.debit_30 || 0);
+                            const d30_60 = Number(b.debit_30_60 || 0);
+                            const d60 = Number(b.debit_60 || 0);
+                            const penalty = Number(b.PENALTYAMT || 0);
+                            const current = Number(b.THISMONTHBILLAMT ?? b.TOTALBILLAMOUNT ?? 0);
+                            return sum + d30 + d30_60 + d60 + penalty + current;
+                        }, 0);
 
                     setStats({ totalBills, paidBills, outstandingAmount });
                 }
@@ -170,7 +189,13 @@ export default function CustomerDashboardPage() {
                             </div>
                             <div className="p-3 bg-white/40 rounded-lg">
                                 <p className="text-xs text-amber-800/70 font-bold uppercase mb-1">Amount Due</p>
-                                <p className="text-2xl font-black text-amber-700">ETB {Number(currentBill.TOTALBILLAMOUNT ?? currentBill.total_amount_due ?? 0).toFixed(2)}</p>
+                                <p className="text-2xl font-black text-amber-700">ETB {(
+                                    Number(currentBill.PENALTYAMT || 0) +
+                                    Number(currentBill.debit_30 || 0) +
+                                    Number(currentBill.debit_30_60 || 0) +
+                                    Number(currentBill.debit_60 || 0) +
+                                    Number(currentBill.THISMONTHBILLAMT ?? currentBill.TOTALBILLAMOUNT ?? currentBill.total_amount_due ?? 0)
+                                ).toFixed(2)}</p>
                             </div>
                             <div className="p-3 bg-white/40 rounded-lg">
                                 <p className="text-xs text-amber-800/70 font-bold uppercase mb-1">Due Date</p>
@@ -431,7 +456,13 @@ export default function CustomerDashboardPage() {
                                     </div>
                                     <div className="text-left sm:text-right w-full sm:w-auto">
                                         <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 sm:gap-0">
-                                            <p className="font-semibold">ETB {Number(bill.TOTALBILLAMOUNT ?? bill.total_amount_due ?? 0).toFixed(2)}</p>
+                                            <p className="font-semibold">ETB {(
+                                                Number(bill.PENALTYAMT || 0) +
+                                                Number(bill.debit_30 || 0) +
+                                                Number(bill.debit_30_60 || 0) +
+                                                Number(bill.debit_60 || 0) +
+                                                Number(bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT ?? bill.total_amount_due ?? 0)
+                                            ).toFixed(2)}</p>
                                             <Badge variant={bill.payment_status === "Paid" ? "default" : "destructive"} className="mt-0 sm:mt-1">
                                                 {bill.payment_status}
                                             </Badge>

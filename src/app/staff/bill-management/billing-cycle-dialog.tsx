@@ -79,7 +79,12 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                         carryBalance,
                         monthYear
                     });
-                    if (res.data?.success) successCount++; else failCount++;
+                    if (res.data?.success) {
+                        successCount++;
+                    } else {
+                        failCount++;
+                        console.error(`Bulk meter ${meter.customerKeyNumber} failed:`, res.error);
+                    }
                 }
 
                 toast({

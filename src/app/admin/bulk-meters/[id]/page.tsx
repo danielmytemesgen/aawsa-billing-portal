@@ -957,45 +957,24 @@ export default function BulkMeterDetailsPage() {
                           const diffUsageValue = bill.differenceUsage ?? 0;
                           const displayDiffUsage = !isNaN(diffUsageValue) ? diffUsageValue.toFixed(2) : 'N/A';
 
-                          // Aging Debt: Use persisted values if available, otherwise calculate on the fly (FIFO)
-                          // Dynamic Aging Debt Reconstruction: 
-                          // Instead of relying on persisted buckets (which might be wrong/stale),
-                          // we calculate them by looking at the unpaid amounts of older bills in the current history.
-                          const fullIndex = billingHistory.findIndex(b => b.id === bill.id);
+                          // Use persisted debit aging buckets saved when the billing cycle ran
+                          const d30 = Number(bill.debit30 ?? 0);
+                          const d30_60 = Number(bill.debit30_60 ?? 0);
+                          const d60 = Number(bill.debit60 ?? 0);
 
-                          let debit30 = 0;
-                          let debit60 = 0;
-                          let debit90 = 0;
+                          // Outstanding = sum of the three debit buckets (penalty is separate)
+                          const outstandingAmt = d30 + d30_60 + d60;
 
-                          // Unpaid amount helper function
-                          const getUnpaidAmount = (b: any) => {
-                            if (b.paymentStatus === 'Paid') return 0;
-                            return Number(b.TOTALBILLAMOUNT) - Number(b.amountPaid || 0);
-                          };
+                          // Penalty stored separately from debit buckets
+                          const penaltyAmt = Number(bill.PENALTYAMT || 0);
 
-                          // Row i+1 is the candidate for DEBIT_30
-                          if (fullIndex < billingHistory.length - 1) {
-                            debit30 = getUnpaidAmount(billingHistory[fullIndex + 1]);
-                          }
+                          // Current Bill = this month's bill amount only
+                          const currentBillAmt = bill.THISMONTHBILLAMT ? Number(bill.THISMONTHBILLAMT) : bill.TOTALBILLAMOUNT;
 
-                          // Row i+2 is the candidate for DEBIT_30_60
-                          if (fullIndex < billingHistory.length - 2) {
-                            debit60 = getUnpaidAmount(billingHistory[fullIndex + 2]);
-                          }
+                          // Total Payable = Penalty + Outstanding + Current Bill
+                          const totalPayable = penaltyAmt + outstandingAmt + currentBillAmt;
 
-                          // Row i+3 and beyond are the candidate for DEBIT_60
-                          if (fullIndex < billingHistory.length - 3) {
-                            for (let j = fullIndex + 3; j < billingHistory.length; j++) {
-                              debit90 += getUnpaidAmount(billingHistory[j]);
-                            }
-                          }
-
-                          // Also add any "balanceCarriedForward" from the oldest bill in the list if it has any unexplained debt
-                          const oldestBill = billingHistory[billingHistory.length - 1];
-                          if (fullIndex === billingHistory.length - 1) {
-                            // For the oldest bill itself, we show its persisted balance carried forward as debit90
-                            debit90 = oldestBill.balanceCarriedForward ?? 0;
-                          }
+                          const fmt = (val: number) => val > 0 ? val.toFixed(2) : '—';
 
                           return (
                             <TableRow key={bill.id + bill.monthYear}>
@@ -1005,13 +984,13 @@ export default function BulkMeterDetailsPage() {
                               <TableCell className="text-right">{bill.CURRREAD.toFixed(2)}</TableCell>
                               <TableCell>{displayUsage}</TableCell>
                               <TableCell className={cn("text-right", diffUsageValue < 0 ? "text-amber-600" : "text-green-600")}>{displayDiffUsage}</TableCell>
-                              <TableCell className="text-right">{debit30 > 0 ? debit30.toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-right">{debit60 > 0 ? debit60.toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-right">{debit90 > 0 ? debit90.toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-right text-destructive font-medium">{Number(bill.PENALTYAMT || 0) > 0 ? Number(bill.PENALTYAMT || 0).toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-right">{(debit30 + debit60 + debit90 + Number(bill.PENALTYAMT || 0)).toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-medium">{bill.THISMONTHBILLAMT ? Number(bill.THISMONTHBILLAMT).toFixed(2) : bill.TOTALBILLAMOUNT.toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-bold">{(debit30 + debit60 + debit90 + Number(bill.PENALTYAMT || 0) + (bill.THISMONTHBILLAMT ? Number(bill.THISMONTHBILLAMT) : bill.TOTALBILLAMOUNT)).toFixed(2)}</TableCell>
+                              <TableCell className="text-right">{fmt(d30)}</TableCell>
+                              <TableCell className="text-right">{fmt(d30_60)}</TableCell>
+                              <TableCell className="text-right">{fmt(d60)}</TableCell>
+                              <TableCell className="text-right text-destructive font-medium">{fmt(penaltyAmt)}</TableCell>
+                              <TableCell className="text-right font-medium">{outstandingAmt > 0 ? outstandingAmt.toFixed(2) : '0.00'}</TableCell>
+                              <TableCell className="text-right font-medium">{currentBillAmt.toFixed(2)}</TableCell>
+                              <TableCell className={cn("text-right font-bold", totalPayable > currentBillAmt ? "text-primary" : "")}>{totalPayable.toFixed(2)}</TableCell>
                               <TableCell><Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'}>{bill.paymentStatus}</Badge></TableCell>
                               <TableCell className="text-right">
                                 <DropdownMenu>
@@ -1039,28 +1018,40 @@ export default function BulkMeterDetailsPage() {
 
                   {/* Billing History Cards - Mobile */}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:hidden gap-4 p-4">
-                    {paginatedBillingHistory.map(bill => (
-                      <Card key={bill.id} className="border shadow-sm overflow-hidden bg-slate-50/30">
-                        <div className="px-4 py-2 bg-slate-100/50 border-b flex justify-between items-center">
-                          <span className="font-bold text-sm">{bill.monthYear}</span>
-                          <Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'} className="text-[10px] h-4.5 px-1">{bill.paymentStatus}</Badge>
-                        </div>
-                        <CardContent className="p-4 space-y-2">
-                          <div className="grid grid-cols-2 gap-2 text-[11px]">
-                            <div><span className="text-muted-foreground font-semibold uppercase">Usage:</span> {bill.CONS?.toFixed(2)} m³</div>
-                            <div><span className="text-muted-foreground font-semibold uppercase">Diff:</span> {bill.differenceUsage?.toFixed(2)} m³</div>
-                            <div className="col-span-2 flex justify-between border-t pt-1 mt-1 font-bold text-primary">
-                              <span>Total Payable:</span>
-                              <span>ETB {((bill.balanceCarriedForward ?? 0) + bill.TOTALBILLAMOUNT).toFixed(2)}</span>
+                    {paginatedBillingHistory.map(bill => {
+                      const penaltyAmt = Number(bill.PENALTYAMT || 0);
+                      const currentBillAmt = Number(bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT ?? 0);
+                      const d30 = Number(bill.debit30 || 0);
+                      const d30_60 = Number(bill.debit30_60 || 0);
+                      const d60 = Number(bill.debit60 || 0);
+                      const outstandingAmt = d30 + d30_60 + d60;
+                      const totalPayable = penaltyAmt + outstandingAmt + currentBillAmt;
+
+                      return (
+                        <Card key={bill.id} className="border shadow-sm overflow-hidden bg-slate-50/30">
+                          <div className="px-4 py-2 bg-slate-100/50 border-b flex justify-between items-center">
+                            <span className="font-bold text-sm">{bill.monthYear}</span>
+                            <Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'} className="text-[10px] h-4.5 px-1">{bill.paymentStatus}</Badge>
+                          </div>
+                          <CardContent className="p-4 space-y-2">
+                            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                              <div><span className="text-muted-foreground font-semibold uppercase">Usage:</span> {bill.CONS?.toFixed(2)} m³</div>
+                              <div><span className="text-muted-foreground font-semibold uppercase">Current:</span> ETB {currentBillAmt.toFixed(2)}</div>
+                              <div><span className="text-muted-foreground font-semibold uppercase">Outstanding:</span> ETB {outstandingAmt > 0 ? outstandingAmt.toFixed(2) : '—'}</div>
+                              <div><span className="text-muted-foreground font-semibold uppercase">Penalty:</span> ETB {penaltyAmt > 0 ? penaltyAmt.toFixed(2) : '—'}</div>
+                              <div className="col-span-2 flex justify-between border-t pt-1 mt-1 font-bold text-primary">
+                                <span>Total Payable:</span>
+                                <span>ETB {totalPayable.toFixed(2)}</span>
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex justify-end gap-2 pt-2 border-t mt-1">
-                            <Button variant="outline" size="sm" className="h-7 text-[10px] px-2" onClick={() => handlePrintSlip(bill)}><Printer className="h-3 w-3 mr-1" />Print</Button>
-                            <Button variant="ghost" size="sm" className="h-7 text-[10px] px-2" onClick={() => handleUpdateBillStatus(bill)}><RefreshCcw className="h-3 w-3 mr-1" />Status</Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                            <div className="flex justify-end gap-2 pt-2 border-t mt-1">
+                              <Button variant="outline" size="sm" className="h-7 text-[10px] px-2" onClick={() => handlePrintSlip(bill)}><Printer className="h-3 w-3 mr-1" />Print</Button>
+                              <Button variant="ghost" size="sm" className="h-7 text-[10px] px-2" onClick={() => handleUpdateBillStatus(bill)}><RefreshCcw className="h-3 w-3 mr-1" />Status</Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 </>
               )}
