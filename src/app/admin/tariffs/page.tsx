@@ -26,6 +26,7 @@ import { FeeEditDialog } from "./fee-edit-dialog";
 import { AdditionalFeeDialog } from "./additional-fee-dialog";
 import { AdditionalFee } from "@/lib/billing-calculations";
 import { PenaltyDialog } from "./penalty-dialog";
+import { NewVersionDialog, type NewVersionFormValues } from "./new-version-dialog";
 
 const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, prevTier?: TariffTier | SewerageTier): DisplayTariffRate => {
   // Coerce tier.limit to a numeric value or numeric Infinity for display logic.
@@ -183,6 +184,7 @@ export default function TariffManagementPage() {
     isPercentage: boolean;
   } | null>(null);
   const [isPenaltyDialogOpen, setIsPenaltyDialogOpen] = React.useState(false);
+  const [isNewVersionDialogOpen, setIsNewVersionDialogOpen] = React.useState(false);
 
   // Get unique effective dates for the current tariff type
   const availableDates = React.useMemo(() => {
@@ -458,13 +460,16 @@ export default function TariffManagementPage() {
     }
   };
 
-  const handleCreateNewVersion = async () => {
+  const handleCreateNewVersion = async (data: NewVersionFormValues) => {
     if (!activeTariffInfo) return;
 
-    // Default to next month's 1st
-    const nextDate = new Date(currentEffectiveDate);
-    nextDate.setMonth(nextDate.getMonth() + 1);
-    const newEffectiveDate = nextDate.toISOString().split('T')[0];
+    const newEffectiveDate = data.effectiveDate;
+
+    // Optional: Check if the selected date already exists for this category
+    if (availableDates.includes(newEffectiveDate)) {
+      toast({ variant: "destructive", title: "Creation Failed", description: `A tariff version already exists for ${newEffectiveDate}.` });
+      return;
+    }
 
     const result = await addTariff({
       ...activeTariffInfo,
@@ -500,7 +505,7 @@ export default function TariffManagementPage() {
         {(hasPermission('tariffs_update') || hasPermission('tariffs_create')) && (
           <div className="flex gap-2 flex-wrap">
             {hasPermission('tariffs_create') && (
-              <Button onClick={handleCreateNewVersion} variant="outline" disabled={!activeTariffInfo || !isLatestTariff}>
+              <Button onClick={() => setIsNewVersionDialogOpen(true)} variant="outline" disabled={!activeTariffInfo || !isLatestTariff}>
                 <PlusCircle className="mr-2 h-4 w-4" /> New Version
               </Button>
             )}
@@ -834,6 +839,12 @@ export default function TariffManagementPage() {
               ]
             }}
             canUpdate={canUpdateTariffs}
+          />
+
+          <NewVersionDialog
+            open={isNewVersionDialogOpen}
+            onOpenChange={setIsNewVersionDialogOpen}
+            onSubmit={handleCreateNewVersion}
           />
         </>
       )}
