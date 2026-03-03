@@ -24,7 +24,12 @@ DECLARE
         ARRAY['settings_manage', 'Settings', 'Full management access for settings routes fault codes and recycle bin'],
         ARRAY['bulk_meters_approve', 'Bulk Meter Management', 'Approve or reject bulk meter registrations'],
         ARRAY['bill:manage_all', 'Billing Workflow', 'Full access to all bills across all branches'],
-        ARRAY['staff_view_branch', 'Staff Management', 'View staff members in the users branch']
+        ARRAY['staff_view_branch', 'Staff Management', 'View staff members in the users branch'],
+        ARRAY['permissions_view', 'User Management', 'View roles and permissions'],
+        ARRAY['tariffs_view', 'Tariff Management', 'View existing tariffs'],
+        ARRAY['dashboard_view_all', 'Dashboard', 'View dashboard with all branches'],
+        ARRAY['dashboard_view_branch', 'Dashboard', 'View dashboard for own branch'],
+        ARRAY['settings_view', 'Settings', 'View system settings']
     ];
 BEGIN
     FOR i IN 1..array_length(v_perms, 1) LOOP
@@ -55,6 +60,7 @@ BEGIN
         'Admin|knowledge_base_view', 'Admin|knowledge_base_manage',
         'Admin|billing:close_cycle',
         'Admin|settings_manage', 'Admin|bulk_meters_approve', 'Admin|bill:manage_all', 'Admin|staff_view_branch',
+        'Admin|permissions_view', 'Admin|tariffs_view', 'Admin|dashboard_view_all', 'Admin|dashboard_view_branch', 'Admin|settings_view',
         -- Staff Management
         'Staff Management|meter_readings_delete', 'Staff Management|meter_readings_bulk_delete',
         'Staff Management|payments_view', 'Staff Management|payments_create', 'Staff Management|payments_delete',
@@ -63,15 +69,18 @@ BEGIN
         'Staff Management|knowledge_base_view', 'Staff Management|knowledge_base_manage',
         'Staff Management|billing:close_cycle',
         'Staff Management|bulk_meters_approve', 'Staff Management|staff_view_branch',
+        'Staff Management|permissions_view', 'Staff Management|tariffs_view', 'Staff Management|dashboard_view_branch', 'Staff Management|settings_view',
         -- Staff
         'Staff|payments_view', 'Staff|payments_create',
         'Staff|knowledge_base_view',
         'Staff|billing:close_cycle',
+        'Staff|dashboard_view_branch', 'Staff|settings_view',
         -- Head Office Management
         'Head Office Management|payments_view',
         'Head Office Management|reports_view',
         'Head Office Management|knowledge_base_view',
-        'Head Office Management|bill:manage_all'
+        'Head Office Management|bill:manage_all',
+        'Head Office Management|dashboard_view_all', 'Head Office Management|settings_view'
     ];
 
     FOR i IN 1..array_length(role_perm_pairs, 1) LOOP

@@ -984,48 +984,62 @@ export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
     });
 };
 
-export const dbGetDashboardMetrics = async () => {
+export const dbGetDashboardMetrics = async (branchId?: string) => {
     // Detect the latest month with billing data
     const latestMonthRes: any = await query('SELECT month_year FROM bills ORDER BY month_year DESC LIMIT 1');
     const latestMonth = latestMonthRes[0]?.month_year || new Date().toISOString().substring(0, 7);
+
+    const params = [latestMonth];
+    let branchFilter = '';
+    if (branchId) {
+        branchFilter = ' AND branch_id = $2';
+        params.push(branchId);
+    }
 
     // 1. Get Bill Statuses Aggregation for the latest month (Only for POSTED bills)
     const billStatusSql = `
         SELECT payment_status as status, COUNT(*) as count 
         FROM bills 
-        WHERE month_year = $1 AND status = 'Posted'
+        WHERE month_year = $1 AND status = 'Posted' ${branchFilter}
         GROUP BY payment_status
     `;
-    const billStatuses = await query(billStatusSql, [latestMonth]);
+    const billStatuses = await query(billStatusSql, params);
 
     // 2. Get Revenue Aggregation for the latest month (Only for POSTED bills)
-    // Collected = Sum of Total Bill Amount for bills marked as 'Paid'
     const revenueSql = `
         SELECT 
             SUM("TOTALBILLAMOUNT") as total_billed,
             SUM(CASE WHEN payment_status = 'Paid' THEN "TOTALBILLAMOUNT" ELSE 0 END) as total_collected
         FROM bills
-        WHERE status = 'Posted' AND month_year = $1
+        WHERE status = 'Posted' AND month_year = $1 ${branchFilter}
     `;
-    const revenueData: any = await query(revenueSql, [latestMonth]);
+    const revenueData: any = await query(revenueSql, params);
     const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
 
     // 3. Meter Reading Progress (Bulk Meters)
-    const totalCustomersSql = `SELECT COUNT(*) as count FROM bulk_meters`;
-    const totalCustomersData: any = await query(totalCustomersSql);
+    let meterFilter = '';
+    if (branchId) {
+        meterFilter = ' WHERE branch_id = $1';
+    }
+    const totalCustomersSql = `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter}`;
+    const totalCustomersData: any = await query(totalCustomersSql, branchId ? [branchId] : []);
     const totalCustomers = parseInt(totalCustomersData[0].count || 0);
 
     // Count bulk meter readings for the latest month
-    const currentReadingsSql = `
-        SELECT COUNT(DISTINCT "CUST_KEY") as count 
-        FROM bulk_meter_readings 
-        WHERE TO_CHAR("READING_DATE", 'YYYY-MM') = $1
+    let currentReadingsSql = `
+        SELECT COUNT(DISTINCT bmr."CUST_KEY") as count 
+        FROM bulk_meter_readings bmr
+        JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber"
+        WHERE TO_CHAR(bmr."READING_DATE", 'YYYY-MM') = $1
     `;
-    const currentReadingsData: any = await query(currentReadingsSql, [latestMonth]);
+    if (branchId) {
+        currentReadingsSql += ' AND bm.branch_id = $2';
+    }
+    const currentReadingsData: any = await query(currentReadingsSql, params);
     const currentReadings = parseInt(currentReadingsData[0].count || 0);
 
     // 4. Counts
-    const bulkMeterCountData: any = await query('SELECT COUNT(*) as count FROM bulk_meters');
+    const bulkMeterCountData: any = await query(`SELECT COUNT(*) as count FROM bulk_meters ${meterFilter}`, branchId ? [branchId] : []);
     const branchCountData: any = await query('SELECT COUNT(*) as count FROM branches');
 
     // 5. Top Delinquent Accounts (Filtered by latest month as requested)
@@ -1043,13 +1057,17 @@ export const dbGetDashboardMetrics = async () => {
                 ELSE 'Individual' 
             END as type
         FROM bills
-        WHERE month_year = $1 AND payment_status = 'Unpaid' AND status = 'Posted'
+        WHERE month_year = $1 AND payment_status = 'Unpaid' AND status = 'Posted' ${branchFilter}
         ORDER BY "TOTALBILLAMOUNT" DESC
         LIMIT 5
     `;
-    const topDelinquent: any = await query(delinquentSql, [latestMonth]);
+    const topDelinquent: any = await query(delinquentSql, params);
 
-    // 6. Branch Performance (Linking bills to branches via meter tables branch_id if CUSTOMERBRANCH is null - ONLY POSTED)
+    // 6. Branch Performance
+    let perfBranchFilter = "WHERE b.name != 'Head Office'";
+    if (branchId) {
+        perfBranchFilter += " AND b.id = $2";
+    }
     const branchPerformanceSql = `
         SELECT 
             b.name as branch_name,
@@ -1068,10 +1086,10 @@ export const dbGetDashboardMetrics = async () => {
             FROM bills
             WHERE month_year = $1 AND status = 'Posted'
         ) bi ON TRIM(BOTH '\t' FROM TRIM(bi.inferred_branch)) = TRIM(BOTH '\t' FROM TRIM(b.name))
-        WHERE b.name != 'Head Office'
+        ${perfBranchFilter}
         GROUP BY b.name
     `;
-    const branchPerformance: any = await query(branchPerformanceSql, [latestMonth]);
+    const branchPerformance: any = await query(branchPerformanceSql, params);
 
     // 7. Overall Water Usage Trend (Last 6 months from POSTED bills)
     const usageTrendSql = `
@@ -1079,12 +1097,12 @@ export const dbGetDashboardMetrics = async () => {
             "month_year" as month,
             SUM("CONS") as usage
         FROM bills
-        WHERE "CONS" IS NOT NULL AND status = 'Posted'
+        WHERE "CONS" IS NOT NULL AND status = 'Posted' ${branchFilter}
         GROUP BY month
         ORDER BY month DESC
         LIMIT 6
     `;
-    const usageTrend: any = await query(usageTrendSql);
+    const usageTrend: any = await query(usageTrendSql, params);
 
     return {
         latestMonth,
@@ -1118,6 +1136,8 @@ export const dbGetDashboardMetrics = async () => {
         }))
     };
 };
+
+
 
 // =====================================================
 // Recycle Bin Queries

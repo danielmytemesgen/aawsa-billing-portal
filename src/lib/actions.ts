@@ -1273,19 +1273,7 @@ export async function createNotificationAction(notification: NotificationInsert)
 
 export async function getAllRolesAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
-
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
-
-    if (!isManagement && !perms.includes('permissions_view') && !['reader', 'staff'].includes(role)) {
-      throw new Error('Forbidden: Missing permission permissions_view');
-    }
-
+    await checkPermission('permissions_view');
     return await dbGetAllRoles();
   });
 }
@@ -1303,19 +1291,7 @@ export async function createRoleAction(role: RoleInsert) {
 }
 export async function getAllPermissionsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
-
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
-
-    if (!isManagement && !perms.includes('permissions_view') && !['reader', 'staff'].includes(role)) {
-      throw new Error('Forbidden: Missing permission permissions_view');
-    }
-
+    await checkPermission('permissions_view');
     return await dbGetAllPermissions();
   });
 }
@@ -1350,19 +1326,7 @@ export const deletePermissionAction = async (id: number) => await wrap(async () 
 });
 export async function getAllRolePermissionsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
-
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
-
-    if (!isManagement && !perms.includes('permissions_view') && !['reader', 'staff'].includes(role)) {
-      throw new Error('Forbidden: Missing permission permissions_view');
-    }
-
+    await checkPermission('permissions_view');
     return await dbGetAllRolePermissions();
   });
 }
@@ -1393,19 +1357,7 @@ export async function rpcUpdateRolePermissionsAction(roleId: number, permissionI
 
 export async function getAllTariffsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
-
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
-
-    if (!isManagement && !perms.includes('tariffs_view') && !['reader', 'staff'].includes(role)) {
-      throw new Error('Forbidden: Missing permission tariffs_view');
-    }
-
+    await checkPermission('tariffs_view');
     return await dbGetAllTariffs();
   });
 }
@@ -1704,7 +1656,8 @@ export async function getCustomerBillsAction(
 
     // If it's a staff member session
     if (session && session.id) {
-      const hasManageAll = session.permissions?.includes('bill:manage_all');
+      const perms = session.permissions || [];
+      const hasManageAll = perms.includes('bill:manage_all');
       const branchId = !hasManageAll ? session.branchId : undefined;
       return await dbGetBillsByCustomerId(customerKeyNumber, branchId);
     }
@@ -1723,8 +1676,9 @@ export async function getBulkMeterBillsAction(
 
     // If it's a staff member session
     if (session && session.id) {
-      const isTopManagement = ['admin', 'head office management'].includes(session.role?.toLowerCase());
-      const branchId = !isTopManagement ? session.branchId : undefined;
+      const perms = session.permissions || [];
+      const hasManageAll = perms.includes('bill:manage_all') || perms.includes('bulk_meters_view_all');
+      const branchId = !hasManageAll ? session.branchId : undefined;
       return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId);
     }
 
@@ -1785,19 +1739,7 @@ export async function logCustomerPageViewAction(sessionId: string, pageName: str
 
 export async function getAllFaultCodesAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
-
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
-
-    if (!isManagement && !perms.includes('settings_view') && !['reader', 'staff'].includes(role)) {
-      throw new Error('Forbidden: Missing permission settings_view');
-    }
-
+    await checkPermission('settings_view');
     return await dbGetAllFaultCodes();
   });
 }
@@ -1845,22 +1787,14 @@ export async function deleteFaultCodeAction(id: string) {
 
 export async function getRecycleBinItemsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    const perms = session?.permissions || [];
-    if (!perms.includes('settings_view') && !perms.includes('bill:manage_all')) {
-      await checkPermission('settings_view');
-    }
+    await checkPermission('settings_view');
     return await dbGetRecycleBinItems();
   });
 }
 
 export async function restoreFromRecycleBinAction(recycleBinId: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    const perms = session?.permissions || [];
-    if (!perms.includes('settings_manage') && !perms.includes('bill:manage_all')) {
-      await checkPermission('settings_manage');
-    }
+    await checkPermission('settings_manage');
     const result = await dbRestoreFromRecycleBin(recycleBinId);
     await logSecurityEventAction({
       event: 'Restore from Recycle Bin',
@@ -1873,11 +1807,7 @@ export async function restoreFromRecycleBinAction(recycleBinId: string) {
 
 export async function permanentlyDeleteFromRecycleBinAction(recycleBinId: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    const perms = session?.permissions || [];
-    if (!perms.includes('settings_manage') && !perms.includes('bill:manage_all')) {
-      await checkPermission('settings_manage');
-    }
+    await checkPermission('settings_manage');
     const result = await dbPermanentlyDeleteFromRecycleBin(recycleBinId);
     await logSecurityEventAction({
       event: 'Permanently Delete from Recycle Bin',
@@ -1897,10 +1827,17 @@ export async function getDashboardMetricsAction() {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    if (!perms.includes('dashboard_view_all') && !perms.includes('dashboard_view_branch')) {
+    const canViewAll = perms.includes('dashboard_view_all');
+    const canViewBranch = perms.includes('dashboard_view_branch');
+
+    if (!canViewAll && !canViewBranch) {
       throw new Error('Forbidden: Missing dashboard permissions');
     }
-    return await dbGetDashboardMetrics();
+
+    // Pass branchId if they can only see their branch
+    const branchId = !canViewAll ? session.branchId : undefined;
+
+    return await dbGetDashboardMetrics(branchId);
   });
 }
 
@@ -1927,10 +1864,9 @@ export async function getDistinctBillingMonthsAction() {
 
 export async function getBillsByMonthAction(monthYear: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-    const isTopManagement = ['admin', 'head office management'].includes(session.role?.toLowerCase());
-    const branchId = !isTopManagement ? session.branchId : undefined;
+    const session = await checkPermission('reports_view');
+    const hasManageAll = session.permissions?.includes('bill:manage_all');
+    const branchId = !hasManageAll ? session.branchId : undefined;
 
     return await dbGetBillsWithBulkMeterInfoByMonth(monthYear, branchId);
   });
@@ -1940,9 +1876,9 @@ export async function getMostRecentBillsForBulkMetersAction(customerKeys: string
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
-    const role = session.role?.toLowerCase();
-    const isTopManagement = ['admin', 'head office management'].includes(role);
-    const branchId = !isTopManagement ? session.branchId : undefined;
+    const perms = session.permissions || [];
+    const hasManageAll = perms.includes('bill:manage_all');
+    const branchId = !hasManageAll ? session.branchId : undefined;
 
     return await dbGetMostRecentBillsForBulkMeters(customerKeys, branchId);
   });
@@ -1951,9 +1887,9 @@ export async function getMostRecentBillsForBulkMetersAction(customerKeys: string
 export async function syncAllBillsAgingDebtAction() {
   return await wrap(async () => {
     const session = await checkPermission('billing:close_cycle');
-    const role = session.role?.toLowerCase();
-    const isTopManagement = ['admin', 'head office management'].includes(role);
-    const branchId = !isTopManagement ? session.branchId : undefined;
+    const perms = session.permissions || [];
+    const hasManageAll = perms.includes('bill:manage_all');
+    const branchId = !hasManageAll ? session.branchId : undefined;
 
     const bills = await dbGetAllBills(branchId);
     const { calculateDebtAging } = await import('./billing-utils');
