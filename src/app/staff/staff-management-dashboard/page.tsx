@@ -33,6 +33,7 @@ import {
 } from 'recharts';
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getBulkMeters, subscribeToBulkMeters, initializeBulkMeters, getCustomers, subscribeToCustomers, initializeCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
+import { format } from 'date-fns';
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import type { IndividualCustomer } from "@/app/admin/individual-customers/individual-customer-types";
 import type { Branch } from "@/app/admin/branches/branch-types";
@@ -140,18 +141,27 @@ export default function StaffManagementDashboardPage() {
   // Derived state with useMemo
   const processedStats = React.useMemo(() => {
     if (authStatus !== 'authorized' || !staffBranchId) {
-      return { totalBulkMeters: 0, totalCustomers: 0, totalBills: 0, paidBills: 0, unpaidBills: 0, billsData: [], branchPerformanceData: [], waterUsageTrendData: [], paidPercentage: "0%" };
+      return { totalBulkMeters: 0, totalCustomers: 0, totalBills: 0, paidBills: 0, unpaidBills: 0, billsData: [], branchPerformanceData: [], waterUsageTrendData: [], paidPercentage: "0%", currentMonthYear: format(new Date(), 'yyyy-MM') };
     }
 
-    // --- Data for top cards (filtered by staff manager's branch) ---
+    const currentMonthYear = format(new Date(), 'yyyy-MM');
+
+    // --- Data for top cards (filtered by staff manager's branch, current month) ---
     const branchBMs = allBulkMeters.filter(bm => bm.branchId === staffBranchId);
     const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
     const branchCustomers = allCustomers.filter(customer =>
       customer.branchId === staffBranchId ||
       (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
     );
-    const paidCount = branchBMs.filter(bm => bm.paymentStatus === 'Paid').length + branchCustomers.filter(c => c.paymentStatus === 'Paid').length;
-    const unpaidCount = branchBMs.filter(bm => bm.paymentStatus === 'Unpaid').length + branchCustomers.filter(c => c.paymentStatus === 'Unpaid' || c.paymentStatus === 'Pending').length;
+
+    // Filter for current month for KPI cards
+    const currentMonthBMs = branchBMs.filter(bm => bm.month === currentMonthYear);
+    const currentMonthCustomers = branchCustomers.filter(c => c.month === currentMonthYear && c.status === 'Active');
+
+    const paidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length
+      + currentMonthCustomers.filter(c => c.paymentStatus === 'Paid').length;
+    const unpaidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length
+      + currentMonthCustomers.filter(c => c.paymentStatus === 'Unpaid' || c.paymentStatus === 'Pending').length;
     const totalBillsCount = paidCount + unpaidCount;
     const billsData = [
       { name: 'Paid', value: paidCount, fill: 'hsl(var(--chart-1))' },
@@ -159,7 +169,7 @@ export default function StaffManagementDashboardPage() {
     ];
     const paidPercentage = totalBillsCount > 0 ? `${((paidCount / totalBillsCount) * 100).toFixed(0)}%` : "0%";
 
-    // --- Data for Branch Performance Chart (ALL branches, excluding Head Office) ---
+    // --- Data for Branch Performance Chart (ALL branches, current month, excluding Head Office) ---
     const performanceMap = new Map<string, { branchName: string, paid: number, unpaid: number }>();
     const displayableBranches = allBranches.filter(b => b.name.toLowerCase() !== 'head office');
 
@@ -167,7 +177,7 @@ export default function StaffManagementDashboardPage() {
       performanceMap.set(branch.id, { branchName: branch.name, paid: 0, unpaid: 0 });
     });
 
-    allBulkMeters.forEach(bm => {
+    allBulkMeters.filter(bm => bm.month === currentMonthYear).forEach(bm => {
       if (bm.branchId && performanceMap.has(bm.branchId)) {
         const entry = performanceMap.get(bm.branchId)!;
         if (bm.paymentStatus === 'Paid') entry.paid++;
@@ -177,7 +187,7 @@ export default function StaffManagementDashboardPage() {
     });
     const branchPerformanceData = Array.from(performanceMap.values()).map(p => ({ branch: p.branchName.replace(/ Branch$/i, ""), paid: p.paid, unpaid: p.unpaid }));
 
-    // --- Data for Water Usage Trend Chart (filtered by staff manager's branch) ---
+    // --- Data for Water Usage Trend Chart (filtered by staff manager's branch, historical) ---
     const usageMap = new Map<string, number>();
     branchBMs.forEach(bm => {
       if (bm.month) {
@@ -212,6 +222,7 @@ export default function StaffManagementDashboardPage() {
       branchPerformanceData,
       waterUsageTrendData,
       paidPercentage,
+      currentMonthYear,
     };
   }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches]);
 
@@ -330,7 +341,7 @@ export default function StaffManagementDashboardPage() {
         <Card className="shadow-lg">
           <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <div>
-              <CardTitle>Branch Performance (Bulk Meters)</CardTitle>
+              <CardTitle>Branch Performance (Bulk Meters - {processedStats.currentMonthYear})</CardTitle>
               <CardDescription>Paid vs. Unpaid status for bulk meters across branches.</CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')}>

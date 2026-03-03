@@ -197,6 +197,8 @@ export default function StaffDashboardPage() {
     initializeData();
   }, [authStatus]);
 
+  const currentMonthYear = format(new Date(), 'yyyy-MM');
+
   // Derived state with useMemo
   const processedStats = React.useMemo(() => {
     if (authStatus !== 'authorized' || !staffBranchId) {
@@ -224,9 +226,11 @@ export default function StaffDashboardPage() {
     const totalPendingApprovals = pendingCustomers + pendingBulkMeters;
 
 
-    // Calculation for the "Bills Status" card (Total Outstanding vs Paid for the branch)
-    const paidCount = branchBMs.filter(bm => bm.paymentStatus === 'Paid').length;
-    const unpaidCount = branchBMs.filter(bm => bm.paymentStatus === 'Unpaid').length;
+    // Calculation for the "Bills Status" card (Current month only for the branch)
+    const paidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length
+      + currentMonthCustomers.filter(c => c.paymentStatus === 'Paid').length;
+    const unpaidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length
+      + currentMonthCustomers.filter(c => c.paymentStatus === 'Unpaid' || c.paymentStatus === 'Pending').length;
     const totalBillsCount = paidCount + unpaidCount;
     const billsData = [
       { name: 'Paid', value: paidCount, fill: '#10b981' },
@@ -409,7 +413,7 @@ export default function StaffDashboardPage() {
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm hover:shadow-2xl transition-all hover:-translate-y-1">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Bills Status</CardTitle>
+            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Bills Status ({currentMonthYear})</CardTitle>
             <div className="p-1.5 bg-blue-100 rounded-lg">
               <FileText className="h-4 w-4 text-blue-600" />
             </div>

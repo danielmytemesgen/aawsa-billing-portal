@@ -985,9 +985,8 @@ export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
 };
 
 export const dbGetDashboardMetrics = async (branchId?: string) => {
-    // Detect the latest month with billing data
-    const latestMonthRes: any = await query('SELECT month_year FROM bills ORDER BY month_year DESC LIMIT 1');
-    const latestMonth = latestMonthRes[0]?.month_year || new Date().toISOString().substring(0, 7);
+    // Always use the current calendar month (YYYY-MM)
+    const latestMonth = new Date().toISOString().substring(0, 7);
 
     const params = [latestMonth];
     let branchFilter = '';

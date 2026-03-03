@@ -34,6 +34,7 @@ import {
 } from 'recharts';
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getBulkMeters, subscribeToBulkMeters, initializeBulkMeters, getCustomers, subscribeToCustomers, initializeCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
+import { format } from 'date-fns';
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import type { IndividualCustomer } from "@/app/admin/individual-customers/individual-customer-types";
 import type { Branch } from "@/app/admin/branches/branch-types";
@@ -144,6 +145,8 @@ export default function StaffManagementDashboardPage() {
       return { totalBulkMeters: 0, totalCustomers: 0, totalBills: 0, paidBills: 0, unpaidBills: 0, billsData: [], branchPerformanceData: [], waterUsageTrendData: [], paidPercentage: "0%", pendingApprovals: 0 };
     }
 
+    const currentMonthYear = format(new Date(), 'yyyy-MM');
+
     const branchBMs = allBulkMeters.filter(bm => bm.branchId === staffBranchId);
     const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
     const branchCustomers = allCustomers.filter(customer =>
@@ -157,8 +160,14 @@ export default function StaffManagementDashboardPage() {
     const pendingBulkMetersCount = branchBMs.filter(bm => bm.status === 'Pending Approval').length;
     const totalPendingApprovals = pendingCustomersCount + pendingBulkMetersCount;
 
-    const paidCount = branchBMs.filter(bm => bm.paymentStatus === 'Paid').length;
-    const unpaidCount = branchBMs.filter(bm => bm.paymentStatus === 'Unpaid').length;
+    // Filter for current month for KPI cards
+    const currentMonthBMs = branchBMs.filter(bm => bm.month === currentMonthYear);
+    const currentMonthCustomers = branchCustomers.filter(c => c.month === currentMonthYear && c.status === 'Active');
+
+    const paidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length
+      + currentMonthCustomers.filter(c => c.paymentStatus === 'Paid').length;
+    const unpaidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length
+      + currentMonthCustomers.filter(c => c.paymentStatus === 'Unpaid' || c.paymentStatus === 'Pending').length;
     const totalBillsCount = paidCount + unpaidCount;
     const billsData = [
       { name: 'Paid', value: paidCount, fill: 'hsl(var(--chart-1))' },
@@ -173,7 +182,8 @@ export default function StaffManagementDashboardPage() {
       performanceMap.set(branch.id, { branchName: branch.name, paid: 0, unpaid: 0 });
     });
 
-    allBulkMeters.forEach(bm => {
+    // Filter branch performance to current month
+    allBulkMeters.filter(bm => bm.month === currentMonthYear).forEach(bm => {
       if (bm.branchId && performanceMap.has(bm.branchId)) {
         const entry = performanceMap.get(bm.branchId)!;
         if (bm.paymentStatus === 'Paid') entry.paid++;
@@ -218,6 +228,7 @@ export default function StaffManagementDashboardPage() {
       waterUsageTrendData,
       paidPercentage,
       pendingApprovals: totalPendingApprovals,
+      currentMonthYear,
     };
   }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches]);
 
@@ -264,7 +275,7 @@ export default function StaffManagementDashboardPage() {
 
         <Card className="shadow-lg">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Bills Status (Active)</CardTitle>
+            <CardTitle className="text-sm font-medium">Bills Status ({processedStats.currentMonthYear ?? format(new Date(), 'yyyy-MM')})</CardTitle>
             <FileText className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -323,7 +334,7 @@ export default function StaffManagementDashboardPage() {
         <Card className="shadow-lg">
           <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <div>
-              <CardTitle>Branch Performance (Bulk Meters)</CardTitle>
+              <CardTitle>Branch Performance (Bulk Meters - {processedStats.currentMonthYear ?? format(new Date(), 'yyyy-MM')})</CardTitle>
               <CardDescription>Paid vs. Unpaid status for bulk meters across branches.</CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')}>
