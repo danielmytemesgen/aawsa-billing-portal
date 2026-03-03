@@ -1092,17 +1092,19 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
     const branchPerformance: any = await query(branchPerformanceSql, params);
 
     // 7. Overall Water Usage Trend (Last 6 months from POSTED bills)
+    const usageBranchFilter = branchId ? 'AND branch_id = $1' : '';
     const usageTrendSql = `
         SELECT 
             "month_year" as month,
             SUM("CONS") as usage
         FROM bills
-        WHERE "CONS" IS NOT NULL AND status = 'Posted' ${branchFilter}
+        WHERE "CONS" IS NOT NULL AND status = 'Posted' ${usageBranchFilter}
         GROUP BY month
         ORDER BY month DESC
         LIMIT 6
     `;
-    const usageTrend: any = await query(usageTrendSql, params);
+    const usageTrend: any = await query(usageTrendSql, branchId ? [branchId] : []);
+
 
     return {
         latestMonth,
