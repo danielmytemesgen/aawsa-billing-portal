@@ -71,6 +71,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
       bookNumber: "",
       ordinal: undefined,
       meterSize: undefined,
+      NUMBER_OF_DIALS: undefined,
       meterNumber: "",
       previousReading: undefined,
       currentReading: undefined,
@@ -149,6 +150,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
         bookNumber: "",
         ordinal: undefined,
         meterSize: undefined,
+        NUMBER_OF_DIALS: undefined,
         meterNumber: "",
         previousReading: undefined,
         currentReading: undefined,
@@ -259,6 +261,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                 </FormItem>
               )}
             />
+            <FormField control={form.control} name="NUMBER_OF_DIALS" render={({ field }) => (<FormItem><FormLabel>Number of Dials</FormLabel><FormControl><Input type="number" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
             <FormField control={form.control} name="meterNumber" render={({ field }) => (<FormItem><FormLabel>METER_KEY *</FormLabel><FormControl><Input {...field} placeholder="e.g., MET-2822965" disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
             <FormField control={form.control} name="previousReading" render={({ field }) => (<FormItem><FormLabel>Previous Reading *</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
 

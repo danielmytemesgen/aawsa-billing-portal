@@ -711,7 +711,7 @@ const mapDomainBulkMeterToInsert = async (bm: Partial<BulkMeter>): Promise<BulkM
     woreda: bm.woreda!,
     NUMBER_OF_DIALS: bm.NUMBER_OF_DIALS, // New Mapping
     branch_id: bm.branchId,
-    ROUTE_KEY: bm.routeKey,
+    ROUTE_KEY: bm.routeKey || null,
     phoneNumber: bm.phoneNumber,
     status: bm.status || 'Active',
     // tolerate an extra 'Pending' status coming from older data; DB types may allow it
@@ -745,7 +745,7 @@ const mapDomainBulkMeterToUpdate = async (bulkMeterWithUpdates: BulkMeter): Prom
     woreda: bulkMeterWithUpdates.woreda,
     NUMBER_OF_DIALS: bulkMeterWithUpdates.NUMBER_OF_DIALS, // New Mapping
     branch_id: bulkMeterWithUpdates.branchId,
-    ROUTE_KEY: bulkMeterWithUpdates.routeKey,
+    ROUTE_KEY: bulkMeterWithUpdates.routeKey || null,
     phoneNumber: bulkMeterWithUpdates.phoneNumber,
     status: bulkMeterWithUpdates.status,
     paymentStatus: (bulkMeterWithUpdates.paymentStatus as any),
@@ -1381,7 +1381,13 @@ async function fetchAllBulkMeters() {
 
       const { data: updatedRow, error: updateError } = await updateBulkMeterAction(dbBulkMeter.customerKeyNumber, updatePayload);
       if (updateError) {
-        console.error(`DataStore: Failed to backfill bulk meter ${dbBulkMeter.customerKeyNumber}. Error:`, JSON.stringify(updateError, null, 2));
+        // Handle permission errors gracefully during automatic backfill
+        const isForbidden = typeof updateError === 'object' && updateError !== null &&
+          ('message' in updateError && String(updateError.message).includes('Forbidden'));
+
+        if (!isForbidden) {
+          console.error(`DataStore: Failed to backfill bulk meter ${dbBulkMeter.customerKeyNumber}. Error:`, JSON.stringify(updateError, null, 2));
+        }
         updatedRowsFromBackfill.push(dbBulkMeter);
       } else if (updatedRow) {
         updatedRowsFromBackfill.push(updatedRow);

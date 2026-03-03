@@ -58,8 +58,10 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
     defaultValues: {
       name: "",
       customerKeyNumber: "",
+      instKey: "",
       contractNumber: "",
       meterSize: undefined,
+      NUMBER_OF_DIALS: undefined,
       meterNumber: "",
       previousReading: undefined,
       currentReading: undefined,
@@ -91,8 +93,10 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
       form.reset({
         name: "",
         customerKeyNumber: "",
+        instKey: "",
         contractNumber: "",
         meterSize: undefined,
+        NUMBER_OF_DIALS: undefined,
         meterNumber: "",
         previousReading: undefined,
         currentReading: undefined,
@@ -157,6 +161,20 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
+            <FormField
+              control={form.control}
+              name="instKey"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>INST_KEY <span className="text-destructive">*</span></FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g., INST-123456" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
 
 
             <FormField
@@ -195,6 +213,29 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                       ))}
                     </SelectContent>
                   </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="NUMBER_OF_DIALS"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Number of Dials</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      placeholder="Enter number of dials"
+                      {...field}
+                      value={field.value ?? ""}
+                      onChange={e => {
+                        const val = e.target.value;
+                        field.onChange(val === "" ? undefined : parseInt(val, 10));
+                      }}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

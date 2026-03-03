@@ -287,7 +287,7 @@ export async function createBranchAction(branch: BranchInsert) {
 }
 export async function updateBranchAction(id: string, branch: BranchUpdate) {
   return await wrap(async () => {
-    await checkPermission('branches_edit');
+    await checkPermission('branches_update');
     const result = await dbUpdateBranch(id, branch);
     await logSecurityEventAction({ event: 'Update Branch', details: { id, updates: branch } });
     return result;
@@ -338,7 +338,7 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
 }
 export async function updateCustomerAction(customerKeyNumber: string, customer: IndividualCustomerUpdate) {
   return await wrap(async () => {
-    await checkPermission('customers_edit');
+    await checkPermission('customers_update');
     const result = await dbUpdateCustomer(customerKeyNumber, customer);
     await logSecurityEventAction({
       event: 'Update Customer',
@@ -425,7 +425,7 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
 }
 export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter: BulkMeterUpdate) {
   return await wrap(async () => {
-    await checkPermission('bulk_meters_edit');
+    await checkPermission('bulk_meters_update');
     const result = await dbUpdateBulkMeter(customerKeyNumber, bulkMeter);
     await logSecurityEventAction({
       event: 'Update Bulk Meter',
@@ -511,7 +511,7 @@ export async function createStaffMemberAction(staffMember: StaffMemberInsert) {
 }
 export async function updateStaffMemberAction(email: string, staffMember: StaffMemberUpdate) {
   return await wrap(async () => {
-    await checkPermission('staff_edit');
+    await checkPermission('staff_update');
     const result = await dbUpdateStaffMember(email, staffMember);
     await logSecurityEventAction({
       event: 'Update Staff Member',
@@ -989,6 +989,7 @@ export async function getAllIndividualCustomerReadingsAction() {
 }
 export async function createIndividualCustomerReadingAction(reading: IndividualCustomerReadingInsert) {
   return await wrap(async () => {
+    await checkPermission('meter_readings_create');
     const result = await dbCreateIndividualCustomerReading(reading);
     await logSecurityEventAction({
       event: 'Create Indiv. Reading',
@@ -1000,6 +1001,7 @@ export async function createIndividualCustomerReadingAction(reading: IndividualC
 }
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
+    await checkPermission('meter_readings_create'); // Same permission for now
     const result = await dbUpdateIndividualCustomerReading(id, reading);
     await logSecurityEventAction({
       event: 'Update Indiv. Reading',
@@ -1046,6 +1048,7 @@ export async function getAllBulkMeterReadingsAction() {
 }
 export async function createBulkMeterReadingAction(reading: BulkMeterReadingInsert) {
   return await wrap(async () => {
+    await checkPermission('meter_readings_create');
     const result = await dbCreateBulkMeterReading(reading);
     await logSecurityEventAction({
       event: 'Create Bulk Reading',
@@ -1057,6 +1060,7 @@ export async function createBulkMeterReadingAction(reading: BulkMeterReadingInse
 }
 export async function updateBulkMeterReadingAction(id: string, reading: BulkMeterReadingUpdate) {
   return await wrap(async () => {
+    await checkPermission('meter_readings_create');
     const result = await dbUpdateBulkMeterReading(id, reading);
     await logSecurityEventAction({
       event: 'Update Bulk Reading',
@@ -1077,9 +1081,15 @@ export async function deleteBulkMeterReadingAction(id: string) {
   });
 }
 
-export async function getAllPaymentsAction() { return await wrap(() => dbGetAllPayments()); }
+export async function getAllPaymentsAction() {
+  return await wrap(async () => {
+    await checkPermission('payments_view');
+    return await dbGetAllPayments();
+  });
+}
 export async function createPaymentAction(payment: PaymentInsert) {
   return await wrap(async () => {
+    await checkPermission('payments_create');
     // 1. Create Payment
     const result = await dbCreatePayment(payment);
 
@@ -1124,6 +1134,7 @@ export async function createPaymentAction(payment: PaymentInsert) {
 }
 export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
   return await wrap(async () => {
+    await checkPermission('payments_create');
     const result = await dbUpdatePayment(id, payment);
     await logSecurityEventAction({
       event: 'Update Payment',
@@ -1181,7 +1192,12 @@ export async function deletePaymentAction(id: string) {
   });
 }
 
-export async function getAllReportLogsAction() { return await wrap(() => dbGetAllReportLogs()); }
+export async function getAllReportLogsAction() {
+  return await wrap(async () => {
+    await checkPermission('reports_view');
+    return await dbGetAllReportLogs();
+  });
+}
 export async function createReportLogAction(log: ReportLogInsert) {
   return await wrap(async () => {
     const result = await dbCreateReportLog(log);
@@ -1194,6 +1210,7 @@ export async function createReportLogAction(log: ReportLogInsert) {
 }
 export async function updateReportLogAction(id: string, log: ReportLogUpdate) {
   return await wrap(async () => {
+    await checkPermission('reports_view');
     const result = await dbUpdateReportLog(id, log);
     await logSecurityEventAction({
       event: 'Update Report',
@@ -1214,7 +1231,12 @@ export async function deleteReportLogAction(id: string) {
   });
 }
 
-export async function getAllNotificationsAction() { return await wrap(() => dbGetAllNotifications()); }
+export async function getAllNotificationsAction() {
+  return await wrap(async () => {
+    await checkPermission('notifications_view');
+    return await dbGetAllNotifications();
+  });
+}
 export async function deleteNotificationAction(id: string) {
   return await wrap(async () => {
     const session = await checkPermission('notifications_delete');
@@ -1228,6 +1250,7 @@ export async function deleteNotificationAction(id: string) {
 }
 export async function updateNotificationAction(id: string, notification: NotificationUpdate) {
   return await wrap(async () => {
+    await checkPermission('notifications_view'); // Typically send/manage if it's update?
     const result = await dbUpdateNotification(id, notification);
     await logSecurityEventAction({
       event: 'Update Notification',
@@ -1238,6 +1261,7 @@ export async function updateNotificationAction(id: string, notification: Notific
 }
 export async function createNotificationAction(notification: NotificationInsert) {
   return await wrap(async () => {
+    await checkPermission('notifications_create');
     const result = await dbCreateNotification(notification);
     await logSecurityEventAction({
       event: 'Create Notification',
@@ -1267,7 +1291,7 @@ export async function getAllRolesAction() {
 }
 export async function createRoleAction(role: RoleInsert) {
   return await wrap(async () => {
-    await checkPermission('permissions_edit');
+    await checkPermission('permissions_update');
     const result = await dbCreateRole(role);
     await logSecurityEventAction({
       event: 'Create Role',
@@ -1296,7 +1320,7 @@ export async function getAllPermissionsAction() {
   });
 }
 export const createPermissionAction = async (permission: PermissionInsert) => await wrap(async () => {
-  await checkPermission('permissions_edit');
+  await checkPermission('permissions_update');
   const result = await dbCreatePermission(permission);
   await logSecurityEventAction({
     event: 'Create Permission',
@@ -1306,7 +1330,7 @@ export const createPermissionAction = async (permission: PermissionInsert) => aw
   return result;
 });
 export const updatePermissionAction = async (id: number, permission: PermissionUpdate) => await wrap(async () => {
-  await checkPermission('permissions_edit');
+  await checkPermission('permissions_update');
   const result = await dbUpdatePermission(id, permission);
   await logSecurityEventAction({
     event: 'Update Permission',
@@ -1316,7 +1340,7 @@ export const updatePermissionAction = async (id: number, permission: PermissionU
   return result;
 });
 export const deletePermissionAction = async (id: number) => await wrap(async () => {
-  await checkPermission('permissions_edit');
+  await checkPermission('permissions_update');
   await dbDeletePermission(id);
   await logSecurityEventAction({
     event: 'Delete Permission',
@@ -1346,7 +1370,7 @@ export async function getAllRolePermissionsAction() {
 export async function rpcUpdateRolePermissionsAction(roleId: number, permissionIds: number[]) {
   return await wrap(async () => {
     // 1. Check permission
-    await checkPermission('permissions_edit');
+    await checkPermission('permissions_update');
 
     // 2. Perform DB update
     const result = await dbRpcUpdateRolePermissions(roleId, permissionIds);
@@ -1399,7 +1423,7 @@ export async function createTariffAction(tariff: TariffInsert) {
 }
 export async function updateTariffAction(customerType: string, effectiveDate: string, tariff: TariffUpdate) {
   return await wrap(async () => {
-    await checkPermission('tariffs_edit');
+    await checkPermission('tariffs_update');
 
     // Check if the tariff is the latest version. Historical versions are read-only.
     const allCustomerTariffs = await dbGetAllTariffs();
