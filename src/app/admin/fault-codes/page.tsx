@@ -42,6 +42,8 @@ export default function FaultCodesPage() {
     const [data, setData] = React.useState<DomainFaultCode[]>([]);
     const [filteredData, setFilteredData] = React.useState<DomainFaultCode[]>([]);
     const [searchQuery, setSearchQuery] = React.useState("");
+    const [currentPage, setCurrentPage] = React.useState(1);
+    const itemsPerPage = 10;
 
     const [isDialogOpen, setIsDialogOpen] = React.useState(false);
     const [editingFaultCode, setEditingFaultCode] = React.useState<DomainFaultCode | null>(null);
@@ -67,7 +69,14 @@ export default function FaultCodesPage() {
                 (item.category && item.category.toLowerCase().includes(lowerQuery))
             ));
         }
+        setCurrentPage(1);
     }, [data, searchQuery]);
+
+    const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+    const paginatedData = filteredData.slice(
+        (currentPage - 1) * itemsPerPage,
+        currentPage * itemsPerPage
+    );
 
     const handleCreate = () => {
         setEditingFaultCode(null);
@@ -157,14 +166,14 @@ export default function FaultCodesPage() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {filteredData.length === 0 ? (
+                                {paginatedData.length === 0 ? (
                                     <TableRow>
                                         <TableCell colSpan={4} className="h-24 text-center">
                                             No results found.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    filteredData.map((item) => (
+                                    paginatedData.map((item) => (
                                         <TableRow key={item.id}>
                                             <TableCell className="font-medium">
                                                 <Badge variant="outline" className="font-mono">{item.code}</Badge>
@@ -200,8 +209,28 @@ export default function FaultCodesPage() {
                             </TableBody>
                         </Table>
                     </div>
-                    <div className="mt-4 text-sm text-muted-foreground">
-                        Total Records: {filteredData.length}
+                    <div className="flex items-center justify-between mt-4">
+                        <div className="text-sm text-muted-foreground">
+                            Showing {filteredData.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} entries
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                disabled={currentPage === 1}
+                            >
+                                Previous
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                disabled={currentPage === totalPages || totalPages === 0}
+                            >
+                                Next
+                            </Button>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

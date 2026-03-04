@@ -1039,6 +1039,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
 
     // 4. Counts
     const bulkMeterCountData: any = await query(`SELECT COUNT(*) as count FROM bulk_meters ${meterFilter}`, branchId ? [branchId] : []);
+    const individualCustomerCountData: any = await query(`SELECT COUNT(*) as count FROM individual_customers ${meterFilter}`, branchId ? [branchId] : []);
     const branchCountData: any = await query('SELECT COUNT(*) as count FROM branches');
 
     // 5. Top Delinquent Accounts (Filtered by latest month as requested)
@@ -1120,7 +1121,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         },
         counts: {
             bulkMeters: parseInt(bulkMeterCountData[0].count || 0),
-            individualCustomers: totalCustomers,
+            individualCustomers: parseInt(individualCustomerCountData[0].count || 0),
             branches: parseInt(branchCountData[0].count || 0)
         },
         delinquent: {
