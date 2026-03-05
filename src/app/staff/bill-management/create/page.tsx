@@ -9,10 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, Search, Loader2, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Search, Loader2 } from 'lucide-react';
 import { getBulkMeterByIdAction, calculateBillAction, createBillAction, closeBillingCycleAction } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
-import { usePermissions } from '@/hooks/use-permissions';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate } from '@/lib/billing-config';
 
 const billSchema = z.object({
@@ -27,29 +26,11 @@ type BillFormValues = z.infer<typeof billSchema>;
 export default function CreateBillPage() {
     const router = useRouter();
     const { toast } = useToast();
-    const { hasPermission } = usePermissions();
     const [customer, setCustomer] = useState<any>(null);
     const [isLoadingCustomer, setIsLoadingCustomer] = useState(false);
     const [isCalculating, setIsCalculating] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [calculationResult, setCalculationResult] = useState<any>(null);
-
-    // Permission guard
-    const canCreate = hasPermission('bill:create') || hasPermission('billing:close_cycle') || hasPermission('bill:manage_all');
-    if (!canCreate) {
-        return (
-            <div className="p-8 flex flex-col items-center justify-center gap-4 min-h-[50vh]">
-                <ShieldAlert className="h-12 w-12 text-red-400" />
-                <h2 className="text-xl font-bold text-gray-700">Access Denied</h2>
-                <p className="text-gray-500 text-sm">You do not have permission to create bills.</p>
-                <Button variant="outline" onClick={() => router.back()}>
-                    <ArrowLeft className="mr-2 h-4 w-4" /> Go Back
-                </Button>
-            </div>
-        );
-    }
-
-
 
     const form = useForm<BillFormValues>({
         resolver: zodResolver(billSchema),

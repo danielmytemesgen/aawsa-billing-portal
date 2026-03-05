@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { ShieldCheck, Save, Loader2, PlusCircle, Pencil, Trash2 } from "lucide-react";
+import { ShieldCheck, Save, Loader2, PlusCircle, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateRoleDialog } from "@/components/create-role-dialog";
 import { CreateEditPermissionDialog } from "@/components/create-edit-permission-dialog";
@@ -57,6 +57,10 @@ export default function StaffRolesAndPermissionsPage() {
     const [isDeleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
 
     const [isSaving, setIsSaving] = React.useState(false);
+
+    // Pagination for Manage Permissions
+    const [currentPage, setCurrentPage] = React.useState(1);
+    const [rowsPerPage, setRowsPerPage] = React.useState(10);
 
     const canView = hasPermission('permissions_view');
 
@@ -176,6 +180,12 @@ export default function StaffRolesAndPermissionsPage() {
             return acc;
         }, {} as PermissionGroup);
     }, [permissions]);
+
+    const totalPages = Math.ceil(permissions.length / rowsPerPage);
+    const paginatedPermissions = React.useMemo(() => {
+        const startIndex = (currentPage - 1) * rowsPerPage;
+        return permissions.slice(startIndex, startIndex + rowsPerPage);
+    }, [permissions, currentPage, rowsPerPage]);
 
     if (!canView) {
         return (
@@ -300,7 +310,7 @@ export default function StaffRolesAndPermissionsPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {permissions.map(permission => (
+                            {paginatedPermissions.map(permission => (
                                 <TableRow key={permission.id}>
                                     <TableCell>{permission.name}</TableCell>
                                     <TableCell>{permission.category}</TableCell>
@@ -316,6 +326,53 @@ export default function StaffRolesAndPermissionsPage() {
                             ))}
                         </TableBody>
                     </Table>
+
+                    <div className="flex items-center justify-end space-x-6 lg:space-x-8 pt-4">
+                        <div className="flex items-center space-x-2">
+                            <p className="text-sm font-medium">Rows per page</p>
+                            <Select
+                                value={`${rowsPerPage}`}
+                                onValueChange={(value) => {
+                                    setRowsPerPage(Number(value));
+                                    setCurrentPage(1);
+                                }}
+                            >
+                                <SelectTrigger className="h-8 w-[70px]">
+                                    <SelectValue placeholder={rowsPerPage} />
+                                </SelectTrigger>
+                                <SelectContent side="top">
+                                    {[5, 10, 20, 50].map((pageSize) => (
+                                        <SelectItem key={pageSize} value={`${pageSize}`}>
+                                            {pageSize}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex w-[100px] items-center justify-center text-sm font-medium">
+                            Page {currentPage} of {totalPages === 0 ? 1 : totalPages}
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Button
+                                variant="outline"
+                                className="h-8 w-8 p-0"
+                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                disabled={currentPage <= 1}
+                            >
+                                <span className="sr-only">Go to previous page</span>
+                                <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <Button
+                                variant="outline"
+                                className="h-8 w-8 p-0"
+                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                disabled={currentPage >= totalPages || totalPages === 0}
+                            >
+                                <span className="sr-only">Go to next page</span>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    </div>
                 </CardContent>
             </Card>
 

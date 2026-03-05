@@ -165,29 +165,28 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                 const billsRes = await getAllBillsAction();
                 if (billsRes.data) {
                     const allBills = billsRes.data;
-                    // Users with bill:manage_all see everything
-                    const manageAll = hasPermission('bill:manage_all');
 
                     // Filter based on status and permissions
-                    if (manageAll || hasPermission('bill:view_drafts')) {
+                    if (hasPermission('bill:view_drafts')) {
                         setMyDrafts(allBills.filter((b: any) => b.status === 'Draft' || !b.status));
                     }
 
-                    if (manageAll || hasPermission('bill:view_pending') || hasPermission('bill:approve')) {
+                    if (hasPermission('bill:view_pending') || hasPermission('bill:approve')) {
                         setPendingApprovals(allBills.filter((b: any) => b.status === 'Pending'));
                     }
 
-                    if (manageAll || hasPermission('bill:rework')) {
+                    if (hasPermission('bill:rework')) {
                         setReworkItems(allBills.filter((b: any) => b.status === 'Rework'));
                     }
 
-                    // Approved/Posted logic — 'Ready to Post' are Approved bills
-                    if (manageAll || hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve')) {
+                    // Approved/Posted logic
+                    // 'Ready to Post' are Approved bills
+                    if (hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve')) {
                         setApprovedBills(allBills.filter((b: any) => b.status === 'Approved'));
                     }
 
-                    // Recent Paid Bills
-                    if (manageAll || hasPermission('bill:view_paid')) {
+                    // Recent Paid Bills (usually only Posted bills can be Paid but being safe)
+                    if (hasPermission('bill:view_paid')) {
                         const paid = allBills.filter((b: any) => b.payment_status === 'Paid');
                         setPostedBills(paid.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 10));
                     }
@@ -195,11 +194,11 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                     // Posted or Approved bills that are unpaid are "Outstanding"
                     const outstanding = allBills.filter((b: any) => (b.status === 'Posted' || b.status === 'Approved') && b.payment_status === 'Unpaid');
 
-                    if (manageAll || hasPermission('bill:view_awaiting_payment')) {
+                    if (hasPermission('bill:view_awaiting_payment')) {
                         setAwaitingPaymentBills(outstanding.filter((b: any) => !b.due_date || new Date(b.due_date) >= new Date()));
                     }
 
-                    if (manageAll || hasPermission('bill:view_overdue')) {
+                    if (hasPermission('bill:view_overdue')) {
                         setOverdueBills(outstanding.filter((b: any) => b.due_date && new Date(b.due_date) < new Date()));
                     }
                 }
@@ -215,8 +214,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
     if (loading) return <div className="p-8">Loading dashboard...</div>;
 
     // Derived role string for the TaskBoard component based on permissions
-    const manageAll = hasPermission('bill:manage_all');
-    const role = (manageAll || hasPermission('bill:approve')) ? 'manager' : 'staff';
+    const role = hasPermission('bill:approve') ? 'manager' : 'staff';
 
     return (
         <div className="p-6 space-y-6">
@@ -257,8 +255,8 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                 approvedBills={approvedBills}
                 role={role}
                 basePath={basePath}
-                showApprovals={manageAll || hasPermission('bill:view_pending') || hasPermission('bill:approve')}
-                showReadyToPost={manageAll || hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve')}
+                showApprovals={hasPermission('bill:view_pending') || hasPermission('bill:approve')}
+                showReadyToPost={hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve')}
             />
 
             <Card className="md:col-span-2">
@@ -266,7 +264,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                     <CardTitle>Overview</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-8">
-                    {(manageAll || hasPermission('bill:view_awaiting_payment')) && (
+                    {hasPermission('bill:view_awaiting_payment') && (
                         <div className="space-y-3">
                             <h3 className="text-lg font-semibold flex items-center gap-2">
                                 Outstanding Bills
@@ -278,7 +276,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                         </div>
                     )}
 
-                    {(manageAll || hasPermission('bill:view_paid')) && (
+                    {hasPermission('bill:view_paid') && (
                         <div className="space-y-3">
                             <h3 className="text-lg font-semibold flex items-center gap-2">
                                 Recent Paid Bills
