@@ -239,10 +239,10 @@ const availableStaffReports: ReportType[] = [
   {
     id: "gl-finance-monthly",
     name: "GL Finance Monthly Report (XLSX)",
-    description: "Monthly summary of billing components grouped by charge group.",
+    description: "Monthly summary of billing components grouped by charge group. Bulk meters are listed individually.",
     headers: [
-      "Period", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
-      "Sanitation Fee", "Meter Rent", "Additional Fees", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
+      "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
+      "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
     ],
     getData: (filters: ReportFilters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
@@ -278,18 +278,24 @@ const availableStaffReports: ReportType[] = [
       filteredBills.forEach(bill => {
         const period = bill.monthYear; // Typically YYYY-MM
         let chargeGroup = "Unknown";
+        let customerKey = "";
+
         if (bill.individualCustomerId) {
           const cust = allCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
           chargeGroup = cust?.customerType || "Unknown";
+          customerKey = "";
         } else if (bill.CUSTOMERKEY) {
           const bm = allBulkMeters.find(b => b.customerKeyNumber === bill.CUSTOMERKEY);
           chargeGroup = bm?.chargeGroup || "Unknown";
+          customerKey = bill.CUSTOMERKEY;
         }
 
-        const key = `${period}-${chargeGroup}`;
+        const key = customerKey ? `${period}-BM-${customerKey}` : `${period}-IND-${chargeGroup}`;
+
         if (!aggregated[key]) {
           aggregated[key] = {
             "Period": period,
+            "Customer Key": customerKey || "",
             "Charge Group": chargeGroup,
             "Base Water Charge": 0,
             "Sewerage Charge": 0,
@@ -297,6 +303,7 @@ const availableStaffReports: ReportType[] = [
             "Sanitation Fee": 0,
             "Meter Rent": 0,
             "Additional Fees": 0,
+            "Penalty Amount": 0,
             "VAT Amount": 0,
             "Total Excl VAT": 0,
             "Total Incl VAT": 0,
@@ -310,6 +317,7 @@ const availableStaffReports: ReportType[] = [
         const sanit = Number(bill.sanitationFee) || 0;
         const rent = Number(bill.meterRent) || 0;
         const add = Number(bill.additionalFeesCharge) || 0;
+        const penalty = Number((bill as any).PENALTYAMT) || 0;
         const vat = Number(bill.vatAmount) || 0;
         const total = Number(bill.TOTALBILLAMOUNT) || 0;
 
@@ -319,6 +327,7 @@ const availableStaffReports: ReportType[] = [
         aggregated[key]["Sanitation Fee"] += sanit;
         aggregated[key]["Meter Rent"] += rent;
         aggregated[key]["Additional Fees"] += add;
+        aggregated[key]["Penalty Amount"] += penalty;
         aggregated[key]["VAT Amount"] += vat;
         aggregated[key]["Total Incl VAT"] += total;
         aggregated[key]["Total Amount"] += total;
@@ -344,10 +353,10 @@ const availableStaffReports: ReportType[] = [
   {
     id: "gl-finance-yearly",
     name: "GL Finance Yearly Report (XLSX)",
-    description: "Yearly summary of billing components grouped by charge group.",
+    description: "Yearly summary of billing components grouped by charge group. Bulk meters are listed individually.",
     headers: [
-      "Period", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
-      "Sanitation Fee", "Meter Rent", "Additional Fees", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
+      "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
+      "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
     ],
     getData: (filters: ReportFilters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
@@ -383,18 +392,24 @@ const availableStaffReports: ReportType[] = [
       filteredBills.forEach(bill => {
         const period = bill.monthYear.substring(0, 4); // YYYY
         let chargeGroup = "Unknown";
+        let customerKey = "";
+
         if (bill.individualCustomerId) {
           const cust = allCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
           chargeGroup = cust?.customerType || "Unknown";
+          customerKey = "";
         } else if (bill.CUSTOMERKEY) {
           const bm = allBulkMeters.find(b => b.customerKeyNumber === bill.CUSTOMERKEY);
           chargeGroup = bm?.chargeGroup || "Unknown";
+          customerKey = bill.CUSTOMERKEY;
         }
 
-        const key = `${period}-${chargeGroup}`;
+        const key = customerKey ? `${period}-BM-${customerKey}` : `${period}-IND-${chargeGroup}`;
+
         if (!aggregated[key]) {
           aggregated[key] = {
             "Period": period,
+            "Customer Key": customerKey || "",
             "Charge Group": chargeGroup,
             "Base Water Charge": 0,
             "Sewerage Charge": 0,
@@ -402,6 +417,7 @@ const availableStaffReports: ReportType[] = [
             "Sanitation Fee": 0,
             "Meter Rent": 0,
             "Additional Fees": 0,
+            "Penalty Amount": 0,
             "VAT Amount": 0,
             "Total Excl VAT": 0,
             "Total Incl VAT": 0,
@@ -415,6 +431,7 @@ const availableStaffReports: ReportType[] = [
         const sanit = Number(bill.sanitationFee) || 0;
         const rent = Number(bill.meterRent) || 0;
         const add = Number(bill.additionalFeesCharge) || 0;
+        const penalty = Number((bill as any).PENALTYAMT) || 0;
         const vat = Number(bill.vatAmount) || 0;
         const total = Number(bill.TOTALBILLAMOUNT) || 0;
 
@@ -424,6 +441,7 @@ const availableStaffReports: ReportType[] = [
         aggregated[key]["Sanitation Fee"] += sanit;
         aggregated[key]["Meter Rent"] += rent;
         aggregated[key]["Additional Fees"] += add;
+        aggregated[key]["Penalty Amount"] += penalty;
         aggregated[key]["VAT Amount"] += vat;
         aggregated[key]["Total Incl VAT"] += total;
         aggregated[key]["Total Amount"] += total;

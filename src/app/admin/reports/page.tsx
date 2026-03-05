@@ -519,10 +519,10 @@ const availableReports: ReportType[] = [
   {
     id: "gl-finance-monthly",
     name: "GL Finance Monthly Report (XLSX)",
-    description: "Monthly summary of billing components grouped by charge group.",
+    description: "Monthly summary of billing components. Includes outstanding previous bills. Bulk meters are listed individually.",
     headers: [
-      "Period", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
-      "Sanitation Fee", "Meter Rent", "Additional Fees", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
+      "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
+      "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
     ],
     getData: (filters: ReportFilters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
@@ -532,9 +532,37 @@ const availableReports: ReportType[] = [
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
-      let filteredBills = allBills;
+      // Helper: extract charge components from a bill
+      const extractCharges = (bill: DomainBill) => ({
+        base: Number(bill.baseWaterCharge) || 0,
+        sewerage: Number(bill.sewerageCharge) || 0,
+        maint: Number(bill.maintenanceFee) || 0,
+        sanit: Number(bill.sanitationFee) || 0,
+        rent: Number(bill.meterRent) || 0,
+        add: Number(bill.additionalFeesCharge) || 0,
+        penalty: Number(bill.PENALTYAMT) || 0,
+        vat: Number(bill.vatAmount) || 0,
+        total: Number(bill.TOTALBILLAMOUNT) || 0,
+      });
+
+      const addCharges = (row: any, c: ReturnType<typeof extractCharges>) => {
+        row["Base Water Charge"] += c.base;
+        row["Sewerage Charge"] += c.sewerage;
+        row["Maintenance Fee"] += c.maint;
+        row["Sanitation Fee"] += c.sanit;
+        row["Meter Rent"] += c.rent;
+        row["Additional Fees"] += c.add;
+        row["Penalty Amount"] += c.penalty;
+        row["VAT Amount"] += c.vat;
+        row["Total Incl VAT"] += c.total;
+        row["Total Amount"] += c.total;
+        row["Total Excl VAT"] += (c.total - c.vat);
+      };
+
+      // Step 1: Apply branch filter to ALL bills (for outstanding lookup)
+      let branchFilteredAllBills = allBills;
       if (branchId) {
-        filteredBills = filteredBills.filter(bill => {
+        branchFilteredAllBills = branchFilteredAllBills.filter(bill => {
           if (bill.CUSTOMERKEY) return branchBulkMeterKeys.has(bill.CUSTOMERKEY);
           if (bill.individualCustomerId) {
             const customer = allCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
@@ -544,32 +572,54 @@ const availableReports: ReportType[] = [
         });
       }
 
+      // Step 2: Apply date filter to get bills in the selected period
+      let periodBills = branchFilteredAllBills;
       if (startDate && endDate) {
         const start = startDate.getTime();
         const end = endDate.getTime();
-        filteredBills = filteredBills.filter(b => {
+        periodBills = periodBills.filter(b => {
           const billDate = new Date(b.billPeriodEndDate).getTime();
           return billDate >= start && billDate <= end;
         });
       }
 
+      // Step 3: Build a lookup of all outstanding (unpaid) bills outside the period, grouped by customer key
+      const periodBillIds = new Set(periodBills.map(b => b.id));
+      const outstandingByKey: Record<string, DomainBill[]> = {};
+      branchFilteredAllBills.forEach(bill => {
+        if (periodBillIds.has(bill.id)) return; // skip current period bills
+        if (bill.paymentStatus === 'Paid') return; // only unpaid
+        const key = bill.CUSTOMERKEY || bill.individualCustomerId || '';
+        if (!key) return;
+        if (!outstandingByKey[key]) outstandingByKey[key] = [];
+        outstandingByKey[key].push(bill);
+      });
+
       const aggregated: Record<string, any> = {};
 
-      filteredBills.forEach(bill => {
+      periodBills.forEach(bill => {
         const period = bill.monthYear; // Typically YYYY-MM
         let chargeGroup = "Unknown";
+        let customerKey = "";
+
         if (bill.individualCustomerId) {
           const cust = allCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
           chargeGroup = cust?.customerType || "Unknown";
+          customerKey = "";
         } else if (bill.CUSTOMERKEY) {
           const bm = allBulkMeters.find(b => b.customerKeyNumber === bill.CUSTOMERKEY);
           chargeGroup = bm?.chargeGroup || "Unknown";
+          customerKey = bill.CUSTOMERKEY;
         }
 
-        const key = `${period}-${chargeGroup}`;
-        if (!aggregated[key]) {
-          aggregated[key] = {
+        // Bulk meters: individual row per customer key. Individual customers: aggregated by charge group.
+        const rowKey = customerKey ? `${period}-BM-${customerKey}` : `${period}-IND-${chargeGroup}`;
+        const lookupKey = customerKey || bill.individualCustomerId || '';
+
+        if (!aggregated[rowKey]) {
+          aggregated[rowKey] = {
             "Period": period,
+            "Customer Key": customerKey || "",
             "Charge Group": chargeGroup,
             "Base Water Charge": 0,
             "Sewerage Charge": 0,
@@ -577,35 +627,31 @@ const availableReports: ReportType[] = [
             "Sanitation Fee": 0,
             "Meter Rent": 0,
             "Additional Fees": 0,
+            "Penalty Amount": 0,
             "VAT Amount": 0,
             "Total Excl VAT": 0,
             "Total Incl VAT": 0,
             "Total Amount": 0,
+            _outstandingAdded: new Set<string>(), // track which keys had outstanding added
           };
         }
 
-        const base = Number(bill.baseWaterCharge) || 0;
-        const sewerage = Number(bill.sewerageCharge) || 0;
-        const maint = Number(bill.maintenanceFee) || 0;
-        const sanit = Number(bill.sanitationFee) || 0;
-        const rent = Number(bill.meterRent) || 0;
-        const add = Number(bill.additionalFeesCharge) || 0;
-        const vat = Number(bill.vatAmount) || 0;
-        const total = Number(bill.TOTALBILLAMOUNT) || 0;
+        // Add current period bill charges
+        addCharges(aggregated[rowKey], extractCharges(bill));
 
-        aggregated[key]["Base Water Charge"] += base;
-        aggregated[key]["Sewerage Charge"] += sewerage;
-        aggregated[key]["Maintenance Fee"] += maint;
-        aggregated[key]["Sanitation Fee"] += sanit;
-        aggregated[key]["Meter Rent"] += rent;
-        aggregated[key]["Additional Fees"] += add;
-        aggregated[key]["VAT Amount"] += vat;
-        aggregated[key]["Total Incl VAT"] += total;
-        aggregated[key]["Total Amount"] += total;
-        aggregated[key]["Total Excl VAT"] += (total - vat);
+        // Add outstanding previous bills (only once per unique customer key per row)
+        if (lookupKey && !aggregated[rowKey]._outstandingAdded.has(lookupKey)) {
+          aggregated[rowKey]._outstandingAdded.add(lookupKey);
+          const outstandingBills = outstandingByKey[lookupKey] || [];
+          outstandingBills.forEach(ob => addCharges(aggregated[rowKey], extractCharges(ob)));
+        }
       });
 
-      let resultRows = Object.values(aggregated);
+      let resultRows = Object.values(aggregated).map(row => {
+        const { _outstandingAdded, ...rest } = row;
+        return rest;
+      });
+
       if (filterChargeGroup && filterChargeGroup !== "all") {
         resultRows = resultRows.filter(row => row["Charge Group"] === filterChargeGroup);
       }
@@ -624,10 +670,10 @@ const availableReports: ReportType[] = [
   {
     id: "gl-finance-yearly",
     name: "GL Finance Yearly Report (XLSX)",
-    description: "Yearly summary of billing components grouped by charge group.",
+    description: "Yearly summary of billing components. Includes outstanding previous bills. Bulk meters are listed individually.",
     headers: [
-      "Period", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
-      "Sanitation Fee", "Meter Rent", "Additional Fees", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
+      "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
+      "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
     ],
     getData: (filters: ReportFilters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
@@ -637,9 +683,36 @@ const availableReports: ReportType[] = [
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
-      let filteredBills = allBills;
+      const extractCharges = (bill: DomainBill) => ({
+        base: Number(bill.baseWaterCharge) || 0,
+        sewerage: Number(bill.sewerageCharge) || 0,
+        maint: Number(bill.maintenanceFee) || 0,
+        sanit: Number(bill.sanitationFee) || 0,
+        rent: Number(bill.meterRent) || 0,
+        add: Number(bill.additionalFeesCharge) || 0,
+        penalty: Number(bill.PENALTYAMT) || 0,
+        vat: Number(bill.vatAmount) || 0,
+        total: Number(bill.TOTALBILLAMOUNT) || 0,
+      });
+
+      const addCharges = (row: any, c: ReturnType<typeof extractCharges>) => {
+        row["Base Water Charge"] += c.base;
+        row["Sewerage Charge"] += c.sewerage;
+        row["Maintenance Fee"] += c.maint;
+        row["Sanitation Fee"] += c.sanit;
+        row["Meter Rent"] += c.rent;
+        row["Additional Fees"] += c.add;
+        row["Penalty Amount"] += c.penalty;
+        row["VAT Amount"] += c.vat;
+        row["Total Incl VAT"] += c.total;
+        row["Total Amount"] += c.total;
+        row["Total Excl VAT"] += (c.total - c.vat);
+      };
+
+      // Step 1: Apply branch filter to ALL bills
+      let branchFilteredAllBills = allBills;
       if (branchId) {
-        filteredBills = filteredBills.filter(bill => {
+        branchFilteredAllBills = branchFilteredAllBills.filter(bill => {
           if (bill.CUSTOMERKEY) return branchBulkMeterKeys.has(bill.CUSTOMERKEY);
           if (bill.individualCustomerId) {
             const customer = allCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
@@ -649,32 +722,53 @@ const availableReports: ReportType[] = [
         });
       }
 
+      // Step 2: Apply date filter to get bills in the selected period
+      let periodBills = branchFilteredAllBills;
       if (startDate && endDate) {
         const start = startDate.getTime();
         const end = endDate.getTime();
-        filteredBills = filteredBills.filter(b => {
+        periodBills = periodBills.filter(b => {
           const billDate = new Date(b.billPeriodEndDate).getTime();
           return billDate >= start && billDate <= end;
         });
       }
 
+      // Step 3: Build outstanding lookup — unpaid bills outside the selected period
+      const periodBillIds = new Set(periodBills.map(b => b.id));
+      const outstandingByKey: Record<string, DomainBill[]> = {};
+      branchFilteredAllBills.forEach(bill => {
+        if (periodBillIds.has(bill.id)) return;
+        if (bill.paymentStatus === 'Paid') return;
+        const key = bill.CUSTOMERKEY || bill.individualCustomerId || '';
+        if (!key) return;
+        if (!outstandingByKey[key]) outstandingByKey[key] = [];
+        outstandingByKey[key].push(bill);
+      });
+
       const aggregated: Record<string, any> = {};
 
-      filteredBills.forEach(bill => {
+      periodBills.forEach(bill => {
         const period = bill.monthYear.substring(0, 4); // YYYY
         let chargeGroup = "Unknown";
+        let customerKey = "";
+
         if (bill.individualCustomerId) {
           const cust = allCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
           chargeGroup = cust?.customerType || "Unknown";
+          customerKey = "";
         } else if (bill.CUSTOMERKEY) {
           const bm = allBulkMeters.find(b => b.customerKeyNumber === bill.CUSTOMERKEY);
           chargeGroup = bm?.chargeGroup || "Unknown";
+          customerKey = bill.CUSTOMERKEY;
         }
 
-        const key = `${period}-${chargeGroup}`;
-        if (!aggregated[key]) {
-          aggregated[key] = {
+        const rowKey = customerKey ? `${period}-BM-${customerKey}` : `${period}-IND-${chargeGroup}`;
+        const lookupKey = customerKey || bill.individualCustomerId || '';
+
+        if (!aggregated[rowKey]) {
+          aggregated[rowKey] = {
             "Period": period,
+            "Customer Key": customerKey || "",
             "Charge Group": chargeGroup,
             "Base Water Charge": 0,
             "Sewerage Charge": 0,
@@ -682,35 +776,29 @@ const availableReports: ReportType[] = [
             "Sanitation Fee": 0,
             "Meter Rent": 0,
             "Additional Fees": 0,
+            "Penalty Amount": 0,
             "VAT Amount": 0,
             "Total Excl VAT": 0,
             "Total Incl VAT": 0,
             "Total Amount": 0,
+            _outstandingAdded: new Set<string>(),
           };
         }
 
-        const base = Number(bill.baseWaterCharge) || 0;
-        const sewerage = Number(bill.sewerageCharge) || 0;
-        const maint = Number(bill.maintenanceFee) || 0;
-        const sanit = Number(bill.sanitationFee) || 0;
-        const rent = Number(bill.meterRent) || 0;
-        const add = Number(bill.additionalFeesCharge) || 0;
-        const vat = Number(bill.vatAmount) || 0;
-        const total = Number(bill.TOTALBILLAMOUNT) || 0;
+        addCharges(aggregated[rowKey], extractCharges(bill));
 
-        aggregated[key]["Base Water Charge"] += base;
-        aggregated[key]["Sewerage Charge"] += sewerage;
-        aggregated[key]["Maintenance Fee"] += maint;
-        aggregated[key]["Sanitation Fee"] += sanit;
-        aggregated[key]["Meter Rent"] += rent;
-        aggregated[key]["Additional Fees"] += add;
-        aggregated[key]["VAT Amount"] += vat;
-        aggregated[key]["Total Incl VAT"] += total;
-        aggregated[key]["Total Amount"] += total;
-        aggregated[key]["Total Excl VAT"] += (total - vat);
+        if (lookupKey && !aggregated[rowKey]._outstandingAdded.has(lookupKey)) {
+          aggregated[rowKey]._outstandingAdded.add(lookupKey);
+          const outstandingBills = outstandingByKey[lookupKey] || [];
+          outstandingBills.forEach(ob => addCharges(aggregated[rowKey], extractCharges(ob)));
+        }
       });
 
-      let resultRows = Object.values(aggregated);
+      let resultRows = Object.values(aggregated).map(row => {
+        const { _outstandingAdded, ...rest } = row;
+        return rest;
+      });
+
       if (filterChargeGroup && filterChargeGroup !== "all") {
         resultRows = resultRows.filter(row => row["Charge Group"] === filterChargeGroup);
       }
