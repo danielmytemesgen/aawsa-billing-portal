@@ -90,7 +90,7 @@ export default function PromotionsManagementPage() {
     }, [toast]);
 
     React.useEffect(() => {
-        if (hasPermission('promotions_manage')) {
+        if (hasPermission('promotions_manage') || hasPermission('settings_view')) {
             fetchPromotions();
         }
     }, [hasPermission, fetchPromotions]);
@@ -158,7 +158,7 @@ export default function PromotionsManagementPage() {
         p.tag.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    if (!hasPermission('promotions_manage')) {
+    if (!hasPermission('promotions_manage') && !hasPermission('settings_view')) {
         return (
             <div className="flex items-center justify-center h-[60vh]">
                 <Card className="max-w-md text-center">
