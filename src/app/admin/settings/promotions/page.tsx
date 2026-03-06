@@ -78,7 +78,7 @@ export default function PromotionsManagementPage() {
         setIsLoading(true);
         const result = await getAllPromotionsAction();
         if (result.success) {
-            setPromotions(result.data);
+            setPromotions(result.data ?? []);
         } else {
             toast({
                 variant: "destructive",
