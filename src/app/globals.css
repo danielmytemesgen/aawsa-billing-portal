@@ -150,6 +150,108 @@ body {
   }
 }
 
+/* Glassmorphism Styles */
+.glass-container {
+  background: radial-gradient(circle at 50% 50%, #004d61 0%, #002b36 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.bokeh {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+.bokeh-circle {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  filter: blur(40px);
+  animation: float 20s infinite alternate;
+}
+
+@keyframes float {
+  from {
+    transform: translate(0, 0);
+  }
+
+  to {
+    transform: translate(100px, 100px);
+  }
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.4) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+  border-radius: 2rem !important;
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: white !important;
+}
+
+.glass-input::placeholder {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+.glass-input:focus {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1) !important;
+}
+
+.glass-label {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.sign-in-button {
+  background: linear-gradient(to right, #00334e, #004d74) !important;
+  border: none !important;
+  color: white !important;
+  border-radius: 9999px !important;
+  height: 3.5rem !important;
+  font-size: 1.125rem !important;
+  font-weight: 500 !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4) !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.sign-in-button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5) !important;
+}
+
+.sign-in-button:active {
+  transform: translateY(0) !important;
+}
+
+.customer-link {
+  color: #8bbcd4 !important;
+  text-decoration: none !important;
+  transition: color 0.2s !important;
+}
+
+.customer-link:hover {
+  color: #ffffff !important;
+}
+
+.glass-separator {
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.2), transparent);
+  margin: 2rem 0;
+}
+
 /* Custom styles for Quick Access buttons */
 .quick-access-btn {
   /* Normal state: Ensure text and icons are primary for outline variant */

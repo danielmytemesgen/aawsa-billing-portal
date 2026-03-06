@@ -99,28 +99,32 @@ export function AuthForm() {
   };
 
   return (
-    <Card className="w-full max-w-sm shadow-2xl">
-      <CardHeader className="text-center">
-        <CardTitle className="text-2xl">AAWSA Billing Portal</CardTitle>
+    <Card className="w-full max-w-md glass-card p-6 border-none">
+      <CardHeader className="text-center pt-8 pb-12">
+        <CardTitle className="text-3xl font-bold text-white tracking-wide">
+          <span className="font-extrabold">AAWSA</span>{' '}
+          <span className="font-light opacity-80 text-2xl">Billing Portal</span>
+        </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-6">
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
             <FormField
               control={form.control}
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email</FormLabel>
+                  <FormLabel className="glass-label text-base mb-2">Email</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
-                      placeholder="e.g., kality@aawsa.com"
+                      placeholder="admin@aawsa.com"
                       {...field}
                       disabled={isLoading}
+                      className="glass-input h-14 text-lg rounded-xl px-4 focus-visible:ring-0 focus-visible:ring-offset-0"
                     />
                   </FormControl>
-                  <FormMessage />
+                  <FormMessage className="text-red-300" />
                 </FormItem>
               )}
             />
@@ -129,44 +133,56 @@ export function AuthForm() {
               name="password"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Password</FormLabel>
+                  <FormLabel className="glass-label text-base mb-2">Password</FormLabel>
                   <div className="relative">
                     <FormControl>
                       <Input
                         type={showPassword ? "text" : "password"}
-                        placeholder="••••••••"
+                        placeholder="•••••"
                         {...field}
                         disabled={isLoading}
+                        className="glass-input h-14 text-lg rounded-xl px-4 pr-12 focus-visible:ring-0 focus-visible:ring-offset-0"
                       />
                     </FormControl>
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground"
+                      className="absolute inset-y-0 right-0 flex items-center pr-4 text-white/50 hover:text-white"
                       aria-label={showPassword ? "Hide password" : "Show password"}
                     >
                       {showPassword ? (
-                        <EyeOff className="h-5 w-5" />
+                        <EyeOff className="h-6 w-6" />
                       ) : (
-                        <Eye className="h-5 w-5" />
+                        <Eye className="h-6 w-6" />
                       )}
                     </button>
                   </div>
-                  <FormMessage />
+                  <FormMessage className="text-red-300" />
                 </FormItem>
               )}
             />
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Signing In..." : <> <LogIn className="mr-2 h-4 w-4" /> Sign In </>}
+            <Button type="submit" className="w-full sign-in-button gap-3" disabled={isLoading}>
+              {isLoading ? "Signing In..." : (
+                <>
+                  <LogIn className="h-6 w-6" />
+                  Sign In
+                </>
+              )}
             </Button>
           </form>
         </Form>
       </CardContent>
-      <CardFooter className="flex flex-col gap-2 border-t pt-6 bg-muted/20">
-        <div className="text-sm text-center text-muted-foreground">Are you a customer?</div>
-        <Button variant="outline" className="w-full" onClick={() => router.push("/customer-login")}>
+      <div className="glass-separator mx-6"></div>
+      <CardFooter className="flex flex-col gap-6 pb-12">
+        <div className="text-lg text-center text-white/70 font-light italic">
+          Are you a customer?
+        </div>
+        <button
+          onClick={() => router.push("/customer-login")}
+          className="customer-link text-xl font-medium tracking-wide underline-offset-4"
+        >
           Go to Customer Portal
-        </Button>
+        </button>
       </CardFooter>
     </Card>
   );
