@@ -209,11 +209,11 @@ export default function StaffBulkMeterDetailsPage() {
         sewerageCharge: historicalBillDetails.sewerageCharge,
         meterRent: historicalBillDetails.meterRent,
         vatAmount: historicalBillDetails.vatAmount,
-        totalDifferenceBill: billToRender.TOTALBILLAMOUNT,
+        totalDifferenceBill: billToRender.THISMONTHBILLAMT ?? (billToRender.TOTALBILLAMOUNT - (billToRender.OUTSTANDINGAMT ?? 0)),
         differenceUsage: billToRender.differenceUsage ?? 0,
         penaltyAmt: Number(billToRender.PENALTYAMT || 0),
-        outstandingBill: reconstructedOutstanding,
-        totalPayable: reconstructedOutstanding + billToRender.TOTALBILLAMOUNT + Number(billToRender.PENALTYAMT || 0),
+        outstandingBill: billToRender.OUTSTANDINGAMT ?? reconstructedOutstanding,
+        totalPayable: (billToRender.OUTSTANDINGAMT ?? reconstructedOutstanding) + (billToRender.THISMONTHBILLAMT ?? (billToRender.TOTALBILLAMOUNT - (billToRender.OUTSTANDINGAMT ?? 0))) + Number(billToRender.PENALTYAMT || 0),
         paymentStatus: (billToRender.paymentStatus as PaymentStatus) || 'Unpaid',
         month: billToRender.monthYear,
       };
@@ -793,7 +793,7 @@ export default function StaffBulkMeterDetailsPage() {
                   <div className="print-banner">Total Amount Payable:</div>
                   <table className="print-table">
                     <tbody>
-                      <tr className="print-table-total"><td>Total Difference bill:</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
+                      <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
                       <tr><td>Penalty (ETB):</td><td>ETB {billCardDetails.penaltyAmt.toFixed(2)}</td></tr>
                       <tr><td>Outstanding (ETB):</td><td>ETB {billCardDetails.outstandingBill.toFixed(2)}</td></tr>
                       <tr className="print-table-total" style={{ fontSize: '14pt' }}>

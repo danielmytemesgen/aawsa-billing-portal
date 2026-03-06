@@ -155,7 +155,7 @@ export default function PrintInvoicesPage() {
                 <div className="print-banner">Total Amount Payable:</div>
                 <table className="print-table">
                   <tbody>
-                    <tr className="print-table-total"><td>Total Difference bill:</td><td>ETB {currentBill.toFixed(2)}</td></tr>
+                    <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {currentBill.toFixed(2)}</td></tr>
                     <tr><td>Penalty (ETB):</td><td>ETB {Number(bill.PENALTYAMT || 0).toFixed(2)}</td></tr>
                     <tr><td>Outstanding (ETB):</td><td>ETB {outstanding.toFixed(2)}</td></tr>
                     <tr className="print-table-total" style={{ fontSize: '14pt' }}>

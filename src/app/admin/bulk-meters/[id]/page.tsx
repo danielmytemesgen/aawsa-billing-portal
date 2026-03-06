@@ -237,11 +237,11 @@ export default function BulkMeterDetailsPage() {
         sewerageCharge: historicalBillDetails.sewerageCharge,
         meterRent: historicalBillDetails.meterRent,
         vatAmount: historicalBillDetails.vatAmount,
-        totalDifferenceBill: billToRender.TOTALBILLAMOUNT,
+        totalDifferenceBill: billToRender.THISMONTHBILLAMT ?? (billToRender.TOTALBILLAMOUNT - (billToRender.OUTSTANDINGAMT ?? 0)),
         differenceUsage: billToRender.differenceUsage ?? 0,
         penaltyAmt: Number(billToRender.PENALTYAMT || 0),
-        outstandingBill: reconstructedOutstanding,
-        totalPayable: reconstructedOutstanding + billToRender.TOTALBILLAMOUNT + Number(billToRender.PENALTYAMT || 0),
+        outstandingBill: billToRender.OUTSTANDINGAMT ?? reconstructedOutstanding,
+        totalPayable: (billToRender.OUTSTANDINGAMT ?? reconstructedOutstanding) + (billToRender.THISMONTHBILLAMT ?? (billToRender.TOTALBILLAMOUNT - (billToRender.OUTSTANDINGAMT ?? 0))) + Number(billToRender.PENALTYAMT || 0),
         paymentStatus: (billToRender.paymentStatus as PaymentStatus) || 'Unpaid',
         month: billToRender.monthYear,
       };
@@ -714,7 +714,7 @@ export default function BulkMeterDetailsPage() {
                       <tr><td>Meter Rent:</td><td>ETB {billCardDetails.meterRent.toFixed(2)}</td></tr>
                       <tr><td>Sewerage Fee:</td><td>ETB {billCardDetails.sewerageCharge.toFixed(2)}</td></tr>
                       <tr><td>VAT (15%):</td><td>ETB {billCardDetails.vatAmount.toFixed(2)}</td></tr>
-                      {differenceBillBreakdown?.additionalFeesCharge && differenceBillBreakdown.additionalFeesCharge > 0 && (
+                      {Boolean(differenceBillBreakdown?.additionalFeesCharge && differenceBillBreakdown.additionalFeesCharge > 0) ? (
                         <>
                           <tr className="border-t-2 border-dashed border-black">
                             <td className="font-semibold">Additional Fees:</td><td></td>
@@ -724,7 +724,7 @@ export default function BulkMeterDetailsPage() {
                           ))}
                           <tr><td className="font-semibold pl-4">Total Additional Fees:</td><td>ETB {differenceBillBreakdown.additionalFeesCharge.toFixed(2)}</td></tr>
                         </>
-                      )}
+                      ) : null}
                     </tbody>
                   </table>
                 </div>
@@ -735,7 +735,7 @@ export default function BulkMeterDetailsPage() {
                   <div className="print-banner">Total Amount Payable:</div>
                   <table className="print-table">
                     <tbody>
-                      <tr className="print-table-total"><td>Total Difference bill:</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
+                      <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
                       <tr><td>Penalty (ETB):</td><td>ETB {billCardDetails.penaltyAmt.toFixed(2)}</td></tr>
                       <tr><td>Outstanding (ETB):</td><td>ETB {billCardDetails.outstandingBill.toFixed(2)}</td></tr>
                       <tr className="print-table-total" style={{ fontSize: '14pt' }}>
