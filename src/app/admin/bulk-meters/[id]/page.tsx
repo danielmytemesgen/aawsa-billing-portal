@@ -661,81 +661,114 @@ export default function BulkMeterDetailsPage() {
               <div className="print-header">
                 <div className="print-header-top">
                   <span>{currentDateTime}</span>
-                  <span>AAWSA Bulk Meter Billing Portal</span>
+                  <span></span>
                 </div>
-                <div className="print-header-main">
+                <div className="print-header-main flex flex-col items-center px-2 text-center">
                   <h1 className="font-bold tracking-wider uppercase">ADDIS ABABA WATER AND SEWERAGE AUTHORITY</h1>
-                  <hr className="my-2" />
+                  <hr className="my-2 w-full" />
                   <div className="flex flex-row items-center justify-center gap-2 pt-1">
                     <Image src="https://veiethiopia.com/photo/partner/par2.png" alt="AAWSA Logo" width={30} height={18} className="flex-shrink-0" />
-                    <h2 className="font-semibold">AAWSA Bill calculating Portal</h2>
+                    <h2 className="font-semibold">AAWSA INVOICE</h2>
                   </div>
                 </div>
               </div>
               <div className="print-body">
                 <div className="print-section">
-                  <div className="print-row"><span>Bulk meter name:</span> <span>{currentBulkMeter.name}</span></div>
-                  <div className="print-row"><span>Customer key number:</span> <span>{currentBulkMeter.customerKeyNumber}</span></div>
-                  <div className="print-row"><span>Contract No:</span> <span>{currentBulkMeter.contractNumber ?? 'N/A'}</span></div>
-                  <div className="print-row"><span>Branch:</span> <span>{displayBranchName ?? 'N/A'}</span></div>
-                  <div className="print-row"><span>Sub-City:</span> <span>{currentBulkMeter.location}</span></div>
+                  <div className="print-banner">BULK INFORMATION</div>
+                  <table className="print-table">
+                    <tbody>
+                      <tr><td>Bulk meter name:</td><td>{currentBulkMeter.name}</td></tr>
+                      <tr><td>Customer key number:</td><td>{currentBulkMeter.customerKeyNumber}</td></tr>
+                      <tr><td>Contract No:</td><td>{currentBulkMeter.contractNumber ?? 'N/A'}</td></tr>
+                      <tr><td>Branch:</td><td>{displayBranchName ?? 'N/A'}</td></tr>
+                      <tr><td>Sub-City:</td><td>{currentBulkMeter.location}</td></tr>
+                    </tbody>
+                  </table>
                 </div>
 
                 <div className="print-section">
-                  <div className="print-row"><span>Bulk Meter Category:</span> <span>{currentBulkMeter.chargeGroup}</span></div>
-                  <div className="print-row"><span>Sewerage Connection:</span> <span>{currentBulkMeter.sewerageConnection}</span></div>
-                  <div className="print-row"><span>Number of Assigned Individual Customers:</span> <span>{associatedCustomers.length}</span></div>
-                  <div className="print-row"><span>Previous and current reading:</span> <span>{billCardDetails.prevReading.toFixed(2)} / {billCardDetails.currReading.toFixed(2)} m³</span></div>
-                  <div className="print-row"><span>Bulk usage:</span> <span>{billCardDetails.usage.toFixed(2)} m³</span></div>
-                  <div className="print-row"><span>Total Individual Usage:</span> <span>{totalIndividualUsage.toFixed(2)} m³</span></div>
+                  <div className="print-banner">READING INFORMATION</div>
+                  <table className="print-table">
+                    <tbody>
+                      <tr><td>Bulk Meter Category:</td><td>{currentBulkMeter.chargeGroup}</td></tr>
+                      <tr><td>Sewerage Connection:</td><td>{currentBulkMeter.sewerageConnection}</td></tr>
+                      <tr><td>Number of Assigned Individual Customers:</td><td>{associatedCustomers.length}</td></tr>
+                      <tr><td>Previous and current reading:</td><td>{billCardDetails.prevReading.toFixed(2)} / {billCardDetails.currReading.toFixed(2)} m³</td></tr>
+                      <tr><td>Bulk usage:</td><td>{billCardDetails.usage.toFixed(2)} m³</td></tr>
+                      <tr><td>Total Individual Usage:</td><td>{totalIndividualUsage.toFixed(2)} m³</td></tr>
+                      <tr><td>Difference usage:</td><td>{billCardDetails.differenceUsage.toFixed(2)} m³</td></tr>
+                    </tbody>
+                  </table>
                 </div>
 
                 <div className="print-section">
-                  <div className="print-row"><span>Base Water Charge:</span> <span>ETB {billCardDetails.baseWaterCharge.toFixed(2)}</span></div>
-                  <div className="print-row"><span>Maintenance Fee:</span> <span>ETB {billCardDetails.maintenanceFee.toFixed(2)}</span></div>
-                  <div className="print-row"><span>Sanitation Fee:</span> <span>ETB {billCardDetails.sanitationFee.toFixed(2)}</span></div>
-                  <div className="print-row"><span>Sewerage Fee:</span> <span>ETB {billCardDetails.sewerageCharge.toFixed(2)}</span></div>
-                  <div className="print-row"><span>Meter Rent:</span> <span>ETB {billCardDetails.meterRent.toFixed(2)}</span></div>
-                  <div className="print-row"><span>VAT (15%):</span> <span>ETB {billCardDetails.vatAmount.toFixed(2)}</span></div>
-                  {differenceBillBreakdown?.additionalFeesCharge && differenceBillBreakdown.additionalFeesCharge > 0 && (
-                    <>
-                      <hr className="print-hr-dashed" />
-                      <div className="print-row font-semibold"><span>Additional Fees:</span></div>
-                      {differenceBillBreakdown?.additionalFeesBreakdown?.map((fee, idx) => (
-                        <div key={idx} className="print-row pl-4">
-                          <span>{fee.name}:</span> <span>ETB {fee.charge.toFixed(2)}</span>
-                        </div>
-                      ))}
-                      <div className="print-row font-semibold pl-4">
-                        <span>Total Additional Fees:</span> <span>ETB {differenceBillBreakdown.additionalFeesCharge.toFixed(2)}</span>
-                      </div>
-                      <hr className="print-hr-dashed" />
-                    </>
-                  )}
-                  <div className="print-row"><span>Difference usage:</span> <span>{billCardDetails.differenceUsage.toFixed(2)} m³</span></div>
+                  <div className="print-banner">CHARGES BREAKDOWN</div>
+                  <table className="print-table">
+                    <tbody>
+                      <tr>
+                        <td>Base Water Charge (Rate/m³):</td>
+                        <td>ETB {billCardDetails.baseWaterCharge.toFixed(2)}</td>
+                      </tr>
+                      <tr><td>Maintenance Fee:</td><td>ETB {billCardDetails.maintenanceFee.toFixed(2)}</td></tr>
+                      <tr><td>Sanitation Fee:</td><td>ETB {billCardDetails.sanitationFee.toFixed(2)}</td></tr>
+                      <tr><td>Meter Rent:</td><td>ETB {billCardDetails.meterRent.toFixed(2)}</td></tr>
+                      <tr><td>Sewerage Fee:</td><td>ETB {billCardDetails.sewerageCharge.toFixed(2)}</td></tr>
+                      <tr><td>VAT (15%):</td><td>ETB {billCardDetails.vatAmount.toFixed(2)}</td></tr>
+                      {differenceBillBreakdown?.additionalFeesCharge && differenceBillBreakdown.additionalFeesCharge > 0 && (
+                        <>
+                          <tr className="border-t-2 border-dashed border-black">
+                            <td className="font-semibold">Additional Fees:</td><td></td>
+                          </tr>
+                          {differenceBillBreakdown?.additionalFeesBreakdown?.map((fee, idx) => (
+                            <tr key={idx}><td className="pl-4">{fee.name}:</td><td>ETB {fee.charge.toFixed(2)}</td></tr>
+                          ))}
+                          <tr><td className="font-semibold pl-4">Total Additional Fees:</td><td>ETB {differenceBillBreakdown.additionalFeesCharge.toFixed(2)}</td></tr>
+                        </>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
 
-                <hr className="print-hr" />
-                <div className="print-row"><span>Total Difference bill:</span> <span>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</span></div>
-                <hr className="print-hr" />
-                <div className="print-row"><span>Penalty (ETB):</span> <span>ETB {billCardDetails.penaltyAmt.toFixed(2)}</span></div>
-                <hr className="print-hr" />
-                <div className="print-row"><span>Outstanding (ETB):</span> <span>ETB {billCardDetails.outstandingBill.toFixed(2)}</span></div>
-                <hr className="print-hr" />
-                <div className="print-row font-bold text-lg"><span>Total Amount Payable:</span> <span>ETB {billCardDetails.totalPayable.toFixed(2)}</span></div>
-                <hr className="print-hr" />
+
 
                 <div className="print-section">
-                  <div className="print-row"><span>Paid/Unpaid:</span> <span>{billCardDetails.paymentStatus}</span></div>
-                  <div className="print-row"><span>Month:</span> <span>{billCardDetails.month}</span></div>
+                  <div className="print-banner">Total Amount Payable:</div>
+                  <table className="print-table">
+                    <tbody>
+                      <tr className="print-table-total"><td>Total Difference bill:</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
+                      <tr><td>Penalty (ETB):</td><td>ETB {billCardDetails.penaltyAmt.toFixed(2)}</td></tr>
+                      <tr><td>Outstanding (ETB):</td><td>ETB {billCardDetails.outstandingBill.toFixed(2)}</td></tr>
+                      <tr className="print-table-total" style={{ fontSize: '14pt' }}>
+                        <td>Total Amount Payable:</td>
+                        <td>ETB {billCardDetails.totalPayable.toFixed(2)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
 
-                <hr className="print-hr-dashed" />
+                <div className="flex justify-between items-end mt-4">
+                  <div className="space-y-1">
+                    <div className="text-sm">Paid/Unpaid: {billCardDetails.paymentStatus}</div>
+                    <div className="text-sm">Month: {billCardDetails.month}</div>
+                  </div>
+                  <div className="print-status-box">
+                    {billCardDetails.paymentStatus}
+                  </div>
+                </div>
 
-                <div className="print-signature-section">
-                  <div className="print-signature-item"><span>Prepared by</span><span>...................................</span></div>
-                  <div className="print-signature-item"><span>Checked by</span><span>...................................</span></div>
-                  <div className="print-signature-item"><span>Approved by</span><span>...................................</span></div>
+                <div className="print-signature-section grid grid-cols-3 gap-4 mt-8">
+                  <div className="print-signature-item border-t border-black pt-2 flex flex-col">
+                    <span className="text-xs uppercase font-bold">Prepared by</span>
+                    <span className="h-8"></span>
+                  </div>
+                  <div className="print-signature-item border-t border-black pt-2 flex flex-col">
+                    <span className="text-xs uppercase font-bold">Checked by</span>
+                    <span className="h-8"></span>
+                  </div>
+                  <div className="print-signature-item border-t border-black pt-2 flex flex-col">
+                    <span className="text-xs uppercase font-bold">Approved by</span>
+                    <span className="h-8"></span>
+                  </div>
                 </div>
               </div>
             </div>
