@@ -267,7 +267,7 @@ export default function PromotionsManagementPage() {
                                             id="order"
                                             type="number"
                                             value={formData.display_order}
-                                            onChange={e => setFormData({ ...formData, display_order: parseInt(e.target.value) })}
+                                            onChange={e => setFormData({ ...formData, display_order: parseInt(e.target.value) || 0 })}
                                         />
                                     </div>
                                 </div>
