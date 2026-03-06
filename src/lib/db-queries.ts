@@ -1218,3 +1218,32 @@ export const dbPermanentlyDeleteFromRecycleBin = async (recycleBinId: string) =>
         return true;
     });
 };
+
+export const dbGetAllPromotions = async () => {
+    return await query('SELECT * FROM promotions ORDER BY display_order ASC, created_at DESC');
+};
+
+export const dbGetActivePromotions = async () => {
+    return await query('SELECT * FROM promotions WHERE is_active = true ORDER BY display_order ASC, created_at DESC');
+};
+
+export const dbCreatePromotion = async (promotion: any) => {
+    const keys = Object.keys(promotion);
+    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
+    const sql = `INSERT INTO promotions (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
+    const rows: any = await query(sql, keys.map(k => promotion[k]));
+    return rows[0];
+};
+
+export const dbUpdatePromotion = async (id: string, promotion: any) => {
+    const keys = Object.keys(promotion);
+    if (keys.length === 0) return null;
+    const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+    const rows: any = await query(`UPDATE promotions SET ${setClause}, updated_at = NOW() WHERE id = $${keys.length + 1} RETURNING *`, [...keys.map(k => promotion[k]), id]);
+    return rows[0] || null;
+};
+
+export const dbDeletePromotion = async (id: string) => {
+    await query('DELETE FROM promotions WHERE id = $1', [id]);
+    return { success: true };
+};
