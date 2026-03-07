@@ -70,8 +70,10 @@ export function AuthAds() {
             </div>
 
             <Card className="glass-card p-8 border-none relative overflow-hidden group min-h-[220px]">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                    {ICON_MAP[ads[currentAd].icon_name] || <Megaphone className="h-8 w-8 text-blue-300" />}
+                <div className="absolute top-6 right-6 z-20 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] group-hover:drop-shadow-[0_0_25px_rgba(255,255,255,0.8)] group-hover:scale-110">
+                    <div className="animate-pulse">
+                        {ICON_MAP[ads[currentAd].icon_name] || <Megaphone className="h-8 w-8 text-blue-300" />}
+                    </div>
                 </div>
 
                 <div className="relative z-10 transition-all duration-500 transform">
