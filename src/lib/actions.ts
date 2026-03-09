@@ -1381,7 +1381,12 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
     const allCustomerTariffs = await dbGetAllTariffs();
     const relevantTariffs = allCustomerTariffs
       .filter(t => t.customer_type === customerType && t.effective_date)
-      .map(t => t.effective_date!)
+      .map(t => {
+        const d = t.effective_date!;
+        return d instanceof Date
+          ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+          : String(d);
+      })
       .sort((a, b) => b.localeCompare(a)); // Descending order
 
     if (relevantTariffs.length > 0 && effectiveDate < relevantTariffs[0]) {
