@@ -77,13 +77,13 @@ export function AuthAds() {
             <Card className="glass-card p-8 border-none relative overflow-hidden group min-h-[220px]">
                 {/* Background Image if available */}
                 {ads[currentAd].image_url && (
-                    <div className="absolute inset-0 z-0 opacity-20 transition-opacity duration-700 group-hover:opacity-30">
+                    <div className="absolute inset-0 z-0 transition-opacity duration-700">
                         <img
                             src={ads[currentAd].image_url}
                             alt=""
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500"
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                        <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/50 to-transparent z-10" />
                     </div>
                 )}
 
