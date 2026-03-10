@@ -6,14 +6,31 @@ import { useRoutes, useBulkMeters, fetchRoutes, initializeBulkMeters } from "@/l
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MapPin, ArrowRight, Loader2 } from "lucide-react";
+import { MapPin, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 
 export default function MyRoutesPage() {
     const { currentUser } = useCurrentUser();
+    const { hasPermission } = usePermissions();
     const routes = useRoutes();
     const allBulkMeters = useBulkMeters();
     const [isLoading, setIsLoading] = React.useState(true);
+
+    if (!hasPermission('routes_view_assigned')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to view your assigned routes.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     React.useEffect(() => {
         const load = async () => {

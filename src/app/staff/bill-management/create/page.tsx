@@ -13,6 +13,9 @@ import { ArrowLeft, Search, Loader2 } from 'lucide-react';
 import { getBulkMeterByIdAction, calculateBillAction, createBillAction, closeBillingCycleAction } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate } from '@/lib/billing-config';
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
 
 const billSchema = z.object({
     CUSTOMERKEY: z.string().min(1, "Bulk Customer Key is required"),
@@ -26,6 +29,21 @@ type BillFormValues = z.infer<typeof billSchema>;
 export default function CreateBillPage() {
     const router = useRouter();
     const { toast } = useToast();
+    const { hasPermission } = usePermissions();
+
+    if (!hasPermission('bill:create')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to create bills.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
     const [customer, setCustomer] = useState<any>(null);
     const [isLoadingCustomer, setIsLoadingCustomer] = useState(false);
     const [isCalculating, setIsCalculating] = useState(false);

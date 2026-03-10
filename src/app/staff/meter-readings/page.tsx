@@ -41,6 +41,7 @@ import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
+import { usePermissions } from "@/hooks/use-permissions";
 
 
 interface User {
@@ -57,6 +58,21 @@ export default function StaffMeterReadingsPage() {
   const [isIndividualCsvModalOpen, setIsIndividualCsvModalOpen] = React.useState(false);
   const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = React.useState(false);
   const { currentUser, branchId, branchName } = useCurrentUser();
+  const { hasPermission } = usePermissions();
+
+  if (!hasPermission('readings_view')) {
+    return (
+      <div className="p-6">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <UIAlertDescription>
+            You do not have permission to view or manage meter readings.
+          </UIAlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   const [individualReadings, setIndividualReadings] = React.useState<DisplayReading[]>([]);
   const [bulkReadings, setBulkReadings] = React.useState<DisplayReading[]>([]);

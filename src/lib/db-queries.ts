@@ -1039,7 +1039,14 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
 
     // 4. Counts
     const bulkMeterCountData: any = await query(`SELECT COUNT(*) as count FROM bulk_meters ${meterFilter}`, branchId ? [branchId] : []);
-    const individualCustomerCountData: any = await query(`SELECT COUNT(*) as count FROM individual_customers ${meterFilter}`, branchId ? [branchId] : []);
+
+    // Only count active individual customers, exclude pending/inactive
+    let individualFilter = 'WHERE status = \'Active\'';
+    if (branchId) {
+        individualFilter += ' AND branch_id = $1';
+    }
+    const individualCustomerCountData: any = await query(`SELECT COUNT(*) as count FROM individual_customers ${individualFilter}`, branchId ? [branchId] : []);
+
     const branchCountData: any = await query('SELECT COUNT(*) as count FROM branches');
 
     // 5. Top Delinquent Accounts (Filtered by latest month as requested)

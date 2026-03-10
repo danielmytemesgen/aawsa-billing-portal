@@ -18,6 +18,9 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Save, Loader2, PlusCircle, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import { Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateRoleDialog } from "@/components/create-role-dialog";
 import { CreateEditPermissionDialog } from "@/components/create-edit-permission-dialog";
@@ -38,7 +41,23 @@ interface PermissionGroup {
 }
 
 export default function RolesAndPermissionsPage() {
+  const { hasPermission } = usePermissions();
   const { toast } = useToast();
+
+  if (!hasPermission('permissions_view')) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl md:text-3xl font-bold">Roles & Permissions</h1>
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <UIAlertDescription>
+            You do not have the required permissions to view this page.
+          </UIAlertDescription>
+        </Alert>
+      </div>
+    );
+  }
   const [isLoading, setIsLoading] = React.useState(true);
 
   const [roles, setRoles] = React.useState<DomainRole[]>([]);

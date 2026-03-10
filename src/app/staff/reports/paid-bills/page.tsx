@@ -15,6 +15,9 @@ import type { IndividualCustomer } from "@/app/admin/individual-customers/indivi
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import { CheckCircle2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Lock } from "lucide-react";
 
 interface UserProfile {
   id: string;
@@ -25,6 +28,20 @@ interface UserProfile {
 }
 
 export default function StaffPaidBillsReportPage() {
+  const { hasPermission } = usePermissions();
+
+  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to view reports.</CardDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   const [bills, setBills] = React.useState<DomainBill[]>([]);
   const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
   const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);

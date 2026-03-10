@@ -26,6 +26,8 @@ import {
     permanentlyDeleteFromRecycleBinAction
 } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -56,6 +58,21 @@ export default function RecycleBinPage() {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [actionLoading, setActionLoading] = useState<string | null>(null);
+    const { hasPermission } = usePermissions();
+
+    if (!hasPermission('settings_manage')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to access the Recycle Bin.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     const fetchItems = useCallback(async () => {
         setLoading(true);

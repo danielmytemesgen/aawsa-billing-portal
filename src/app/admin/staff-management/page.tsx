@@ -22,6 +22,8 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import { logSecurityEventAction } from "@/lib/actions";
 import Link from "next/link";
+import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Lock } from "lucide-react";
 
 export default function StaffManagementPage() {
   const { hasPermission } = usePermissions();
@@ -120,6 +122,19 @@ export default function StaffManagementPage() {
     staff.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     staff.branchName.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (!hasPermission('staff_view')) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl md:text-3xl font-bold">Staff Management</h1>
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to view the staff list. Please contact your administrator.</CardDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

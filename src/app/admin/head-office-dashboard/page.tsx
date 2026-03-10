@@ -37,6 +37,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDashboardMetricsAction } from "@/lib/actions";
 import { format } from 'date-fns';
+import { usePermissions } from "@/hooks/use-permissions";
 
 const chartConfig = {
   paid: { label: "Paid", color: "hsl(var(--chart-1))" },
@@ -51,6 +52,21 @@ export default function HeadOfficeDashboardPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
+  const { hasPermission } = usePermissions();
+
+  if (!hasPermission('dashboard_view_all')) {
+    return (
+      <div className="p-4">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <UIAlertDescription>
+            You do not have permission to view the Head Office Dashboard.
+          </UIAlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   // State for dynamic data
   const [selectedMonth, setSelectedMonth] = React.useState<string>(format(new Date(), 'yyyy-MM'));
@@ -428,9 +444,8 @@ export default function HeadOfficeDashboardPage() {
           <CardHeader className="bg-rose-50 border-b border-rose-100">
             <CardTitle className="text-lg font-bold text-rose-900 flex items-center">
               <AlertCircle className="mr-2 h-5 w-5 text-rose-600" />
-              Top Delinquent Accounts
+              Highest outstanding balances needing attention.
             </CardTitle>
-            <CardDescription className="text-rose-700/70">Highest outstanding balances needing attention.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <Table>

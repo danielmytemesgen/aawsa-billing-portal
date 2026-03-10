@@ -20,9 +20,23 @@ import type { StaffMember } from "@/app/admin/staff-management/staff-types";
 import type { Branch } from "@/app/admin/branches/branch-types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Lock } from "lucide-react";
 
 export default function UnsettledBillsReportPage() {
   const { hasPermission } = usePermissions();
+
+  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to view reports.</CardDescription>
+        </Alert>
+      </div>
+    );
+  }
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
 
   const [bills, setBills] = React.useState<DomainBill[]>([]);

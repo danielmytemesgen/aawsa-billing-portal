@@ -38,8 +38,12 @@ import * as XLSX from 'xlsx';
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { getAllFaultCodes } from "@/lib/fault-codes";
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Lock } from "lucide-react";
 
 type ReadingCategory = 'Increase' | 'Decrease' | 'Zero' | 'Fault';
+
 
 interface ReadingRecord {
     id: string;
@@ -59,7 +63,21 @@ interface ReadingRecord {
 }
 
 export default function ReadingClassificationPage() {
+    const { hasPermission } = usePermissions();
     const { toast } = useToast();
+
+    if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch') && !hasPermission('routes_view_assigned')) {
+        return (
+            <div className="space-y-6">
+                <Alert variant="destructive">
+                    <Lock className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <CardDescription>You do not have permission to view reports.</CardDescription>
+                </Alert>
+            </div>
+        );
+    }
+
     const [isLoading, setIsLoading] = React.useState(true);
     const [readings, setReadings] = React.useState<ReadingRecord[]>([]);
     const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);

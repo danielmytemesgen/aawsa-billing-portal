@@ -685,9 +685,8 @@ export default function StaffDashboardPage() {
           <CardHeader className="bg-rose-50 border-b border-rose-100">
             <CardTitle className="text-lg font-bold text-rose-900 flex items-center">
               <AlertCircle className="mr-2 h-5 w-5 text-rose-600" />
-              Top Delinquent Accounts
+              Highest outstanding balances needing attention.
             </CardTitle>
-            <CardDescription className="text-rose-700/70 italic">Highest outstanding balances needing attention.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <Table>

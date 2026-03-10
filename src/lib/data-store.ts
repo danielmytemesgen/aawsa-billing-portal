@@ -1818,6 +1818,16 @@ export const deleteBranch = async (branchId: string): Promise<StoreOperationResu
 export const addCustomer = async (
   customerData: Partial<DomainIndividualCustomer>
 ): Promise<StoreOperationResult<DomainIndividualCustomer>> => {
+  if (customerData.assignedBulkMeterId) {
+    if (!bulkMetersFetched) {
+      await initializeBulkMeters();
+    }
+    const existingBulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === customerData.assignedBulkMeterId);
+    if (!existingBulkMeter) {
+      return { success: false, message: `Bulk meter with Customer Key Number '${customerData.assignedBulkMeterId}' does not exist.` };
+    }
+  }
+
   // Check if customer with the same key already exists
   const existingCustomer = customers.find(c => c.customerKeyNumber === customerData.customerKeyNumber);
   if (existingCustomer) {
@@ -1846,6 +1856,16 @@ export const addCustomer = async (
 
 
 export const updateCustomer = async (customerKeyNumber: string, customerData: Partial<Omit<DomainIndividualCustomer, 'customerKeyNumber'>>): Promise<StoreOperationResult<void>> => {
+  if (customerData.assignedBulkMeterId) {
+    if (!bulkMetersFetched) {
+      await initializeBulkMeters();
+    }
+    const existingBulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === customerData.assignedBulkMeterId);
+    if (!existingBulkMeter) {
+      return { success: false, message: `Bulk meter with Customer Key Number '${customerData.assignedBulkMeterId}' does not exist.` };
+    }
+  }
+
   const existingCustomer = customers.find(c => c.customerKeyNumber === customerKeyNumber);
   if (!existingCustomer) {
     return { success: false, message: "Customer not found to update.", isNotFoundError: true };

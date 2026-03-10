@@ -75,7 +75,7 @@ export default function SmsNotificationPage() {
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [cursorPosition, setCursorPosition] = React.useState<number>(0);
 
-  const canSendSms = hasPermission("admin") || hasPermission("staff_management");
+  const canSendSms = hasPermission('sms_send') || hasPermission('notifications_create');
 
   React.useEffect(() => {
     const fetchData = async () => {
@@ -331,13 +331,7 @@ export default function SmsNotificationPage() {
             </Button>
           </div>
 
-          <Alert>
-            <MessageSquareWarning className="h-4 w-4" />
-            <AlertTitle>Phone Numbers Missing!</AlertTitle>
-            <AlertDescription>
-              The phone number for bulk meter customers is not available in the database. The "phoneNumber" column in the exported file will be a placeholder. Please update the phone numbers manually in the exported file before sending the SMS messages.
-            </AlertDescription>
-          </Alert>
+
 
           {generatedMessages.length > 0 && (
             <div className="mt-6">

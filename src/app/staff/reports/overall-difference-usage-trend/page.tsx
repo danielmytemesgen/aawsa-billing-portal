@@ -11,10 +11,24 @@ import {
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import type { Branch } from "@/app/admin/branches/branch-types";
 import { usePermissions } from "@/hooks/use-permissions";
-import { TrendingUp } from "lucide-react";
+import { TrendingUp, Lock } from "lucide-react";
+import { Alert, AlertTitle } from "@/components/ui/alert";
 
 export default function OverallDifferenceUsageTrendPage() {
   const { hasPermission } = usePermissions();
+
+  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to view reports.</CardDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
   const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);

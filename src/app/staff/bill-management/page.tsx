@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -20,7 +21,7 @@ import { getAllBillsAction, deleteBillAction } from '@/lib/actions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
 import { format } from 'date-fns';
-import { MoreVertical, Printer, Trash2, Eye, Loader2, RefreshCcw } from 'lucide-react';
+import { MoreVertical, Printer, Trash2, Eye, Loader2, RefreshCcw, AlertCircle } from 'lucide-react';
 import { BillingCycleDialog } from './billing-cycle-dialog';
 
 interface BillManagementPageProps {
@@ -40,6 +41,29 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
     const [postedBills, setPostedBills] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
+
+    const canViewDrafts = hasPermission('bill:view_drafts') || hasPermission('bill:manage_all');
+    const canViewPending = hasPermission('bill:view_pending') || hasPermission('bill:approve') || hasPermission('bill:manage_all');
+    const canViewRework = hasPermission('bill:rework') || hasPermission('bill:manage_all');
+    const canViewApproved = hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve') || hasPermission('bill:manage_all');
+    const canViewPaid = hasPermission('bill:view_paid') || hasPermission('bill:manage_all');
+    const canViewUnpaid = hasPermission('bill:view_awaiting_payment') || hasPermission('bill:view_overdue') || hasPermission('bill:manage_all');
+
+    const canAccessPage = canViewDrafts || canViewPending || canViewRework || canViewApproved || canViewPaid || canViewUnpaid;
+
+    if (!loading && !canAccessPage) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to access the Bill Management page.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     const BillTable = ({ bills }: { bills: any[] }) => {
         if (bills.length === 0) return <p className="text-sm text-gray-400 py-4 text-center border rounded-md border-dashed">No bills to display.</p>;
@@ -167,26 +191,26 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                     const allBills = billsRes.data;
 
                     // Filter based on status and permissions
-                    if (hasPermission('bill:view_drafts')) {
+                    if (canViewDrafts) {
                         setMyDrafts(allBills.filter((b: any) => b.status === 'Draft' || !b.status));
                     }
 
-                    if (hasPermission('bill:view_pending') || hasPermission('bill:approve')) {
+                    if (canViewPending) {
                         setPendingApprovals(allBills.filter((b: any) => b.status === 'Pending'));
                     }
 
-                    if (hasPermission('bill:rework')) {
+                    if (canViewRework) {
                         setReworkItems(allBills.filter((b: any) => b.status === 'Rework'));
                     }
 
                     // Approved/Posted logic
                     // 'Ready to Post' are Approved bills
-                    if (hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve')) {
+                    if (canViewApproved) {
                         setApprovedBills(allBills.filter((b: any) => b.status === 'Approved'));
                     }
 
-                    // Recent Paid Bills (usually only Posted bills can be Paid but being safe)
-                    if (hasPermission('bill:view_paid')) {
+                    // Recent Paid Bills
+                    if (canViewPaid) {
                         const paid = allBills.filter((b: any) => b.payment_status === 'Paid');
                         setPostedBills(paid.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 10));
                     }
@@ -194,11 +218,8 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                     // Posted or Approved bills that are unpaid are "Outstanding"
                     const outstanding = allBills.filter((b: any) => (b.status === 'Posted' || b.status === 'Approved') && b.payment_status === 'Unpaid');
 
-                    if (hasPermission('bill:view_awaiting_payment')) {
+                    if (canViewUnpaid) {
                         setAwaitingPaymentBills(outstanding.filter((b: any) => !b.due_date || new Date(b.due_date) >= new Date()));
-                    }
-
-                    if (hasPermission('bill:view_overdue')) {
                         setOverdueBills(outstanding.filter((b: any) => b.due_date && new Date(b.due_date) < new Date()));
                     }
                 }
@@ -255,8 +276,8 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                 approvedBills={approvedBills}
                 role={role}
                 basePath={basePath}
-                showApprovals={hasPermission('bill:view_pending') || hasPermission('bill:approve')}
-                showReadyToPost={hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve')}
+                showApprovals={canViewPending}
+                showReadyToPost={canViewApproved}
             />
 
             <Card className="md:col-span-2">
@@ -264,7 +285,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                     <CardTitle>Overview</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-8">
-                    {hasPermission('bill:view_awaiting_payment') && (
+                    {canViewUnpaid && (
                         <div className="space-y-3">
                             <h3 className="text-lg font-semibold flex items-center gap-2">
                                 Outstanding Bills
@@ -276,7 +297,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                         </div>
                     )}
 
-                    {hasPermission('bill:view_paid') && (
+                    {canViewPaid && (
                         <div className="space-y-3">
                             <h3 className="text-lg font-semibold flex items-center gap-2">
                                 Recent Paid Bills

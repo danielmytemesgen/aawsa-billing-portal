@@ -89,9 +89,10 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     const settingsItems: NavItem[] = [];
     if (hasPermission('settings_view')) settingsItems.push({ title: "Settings", href: "/admin/settings", iconName: "Settings" });
     if (hasPermission('settings_view') || hasPermission('promotions_manage')) settingsItems.push({ title: "Promotions", href: "/admin/settings/promotions", iconName: "Megaphone" });
-    // Add Security Logs for all users with settings access
-    settingsItems.push({ title: "Security Logs", href: "/admin/security-logs", iconName: "Shield" });
-    settingsItems.push({ title: "Recycle Bin", href: "/admin/recycle-bin", iconName: "Trash2" });
+    if (hasPermission('settings_manage')) {
+        settingsItems.push({ title: "Security Logs", href: "/admin/security-logs", iconName: "Shield" });
+        settingsItems.push({ title: "Recycle Bin", href: "/admin/recycle-bin", iconName: "Trash2" });
+    }
 
     if (settingsItems.length > 0) {
         navItems.push({ title: "System", items: settingsItems });

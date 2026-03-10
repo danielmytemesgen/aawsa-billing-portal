@@ -15,6 +15,8 @@ import { SecurityLog } from '@/types/db';
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import {
     Dialog,
     DialogContent,
@@ -24,7 +26,7 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Eye, LogOut, Download } from 'lucide-react';
+import { Eye, LogOut, Download, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AuditLogDetails } from '@/components/audit-log-details';
 
@@ -52,6 +54,21 @@ interface CustomerSession {
 export default function SecurityLogsPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { hasPermission } = usePermissions();
+
+    if (!hasPermission('settings_manage')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to access the Security Logs.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     const [logs, setLogs] = useState<SecurityLog[]>([]);
     const [totalLogs, setTotalLogs] = useState(0);
@@ -275,8 +292,8 @@ export default function SecurityLogsPage() {
                                             <TableCell>{log.ip_address || 'N/A'}</TableCell>
                                             <TableCell>{log.branch_name || 'N/A'}</TableCell>
                                             <TableCell>
-                                                <Badge variant={log.severity === 'Critical' ? 'destructive' : log.severity === 'Warning' ? 'secondary' : 'default'} className={log.severity === 'Warning' ? 'bg-yellow-500 hover:bg-yellow-600 text-white' : ''}>
-                                                    {log.severity || 'Info'}
+                                                <Badge variant={log.severity === 'critical' ? 'destructive' : log.severity === 'warning' ? 'secondary' : 'default'} className={log.severity === 'warning' ? 'bg-yellow-500 hover:bg-yellow-600 text-white' : ''}>
+                                                    {log.severity || 'info'}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell>

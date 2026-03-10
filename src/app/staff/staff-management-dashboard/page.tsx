@@ -33,6 +33,7 @@ import {
 } from 'recharts';
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getBulkMeters, subscribeToBulkMeters, initializeBulkMeters, getCustomers, subscribeToCustomers, initializeCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
+import { getAllBranchesAction } from "@/lib/actions";
 import { format } from 'date-fns';
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import type { IndividualCustomer } from "@/app/admin/individual-customers/individual-customer-types";
@@ -79,15 +80,58 @@ export default function StaffManagementDashboardPage() {
     if (userString) {
       try {
         const parsedUser: User = JSON.parse(userString);
-        if (
-          parsedUser.role.toLowerCase() === "staff management" &&
-          parsedUser.branchId &&
-          parsedUser.branchName &&
-          parsedUser.branchName !== 'Unknown Branch'
-        ) {
-          setStaffBranchName(parsedUser.branchName);
-          setStaffBranchId(parsedUser.branchId);
-          setAuthStatus('authorized');
+        const roleLower = parsedUser.role?.toLowerCase();
+        if (roleLower === "staff management") {
+          const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
+          if (parsedUser.branchId && hasValidBranchName) {
+            setStaffBranchName(parsedUser.branchName ?? null);
+            setStaffBranchId(parsedUser.branchId ?? null);
+            setAuthStatus('authorized');
+          } else if (hasValidBranchName) {
+            // Try to resolve branchId from known branches
+            (async () => {
+              try {
+                const res = await getAllBranchesAction();
+                const branches = res.data || [];
+                const target = parsedUser.branchName || '';
+                let branch = branches.find((b: any) => b.name === target);
+                if (!branch) branch = branches.find((b: any) => (b.name || '').toLowerCase() === target.toLowerCase());
+                if (branch) {
+                  parsedUser.branchId = branch.id;
+                  try { localStorage.setItem('user', JSON.stringify(parsedUser)); } catch (e) { /* ignore */ }
+                  setStaffBranchName(parsedUser.branchName ?? null);
+                  setStaffBranchId(branch.id ?? null);
+                  setAuthStatus('authorized');
+                } else {
+                  setAuthStatus('unauthorized');
+                }
+              } catch (e) {
+                setAuthStatus('unauthorized');
+              }
+            })();
+          } else if (parsedUser.branchId) {
+            // branchId present but branchName missing — resolve from API
+            (async () => {
+              try {
+                const res = await getAllBranchesAction();
+                const branches = res.data || [];
+                const branch = branches.find((b: any) => String(b.id) === String(parsedUser.branchId));
+                if (branch) {
+                  parsedUser.branchName = branch.name;
+                  try { localStorage.setItem('user', JSON.stringify(parsedUser)); } catch (e) { /* ignore */ }
+                  setStaffBranchName(parsedUser.branchName ?? null);
+                  setStaffBranchId(parsedUser.branchId ?? null);
+                  setAuthStatus('authorized');
+                } else {
+                  setAuthStatus('unauthorized');
+                }
+              } catch (e) {
+                setAuthStatus('unauthorized');
+              }
+            })();
+          } else {
+            setAuthStatus('unauthorized');
+          }
         } else {
           setAuthStatus('unauthorized');
         }
