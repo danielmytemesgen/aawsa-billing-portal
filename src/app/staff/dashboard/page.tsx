@@ -29,6 +29,7 @@ import {
   initializeCustomers,
   initializeIndividualCustomerReadings,
   initializeBulkMeterReadings,
+  initializeBills,
   initializeStaffMembers,
   fetchRoutes,
   getBranches,
@@ -36,6 +37,7 @@ import {
   getCustomers,
   getIndividualCustomerReadings,
   getBulkMeterReadings,
+  getBills,
   getRoutes,
   getStaffMembers
 } from "@/lib/data-store";
@@ -72,6 +74,7 @@ export default function StaffDashboardPage() {
   const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
   const [allIndividualReadings, setAllIndividualReadings] = React.useState<any[]>([]);
   const [allBulkReadings, setAllBulkReadings] = React.useState<any[]>([]);
+  const [allBills, setAllBills] = React.useState<any[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
 
   // State for toggling views
@@ -175,6 +178,7 @@ export default function StaffDashboardPage() {
         initializeCustomers(true),
         initializeIndividualCustomerReadings(true),
         initializeBulkMeterReadings(true),
+        initializeBills(true),
         fetchRoutes(true),
         initializeStaffMembers(true)
       ]);
@@ -184,6 +188,7 @@ export default function StaffDashboardPage() {
       setAllCustomers(getCustomers());
       setAllIndividualReadings(getIndividualCustomerReadings());
       setAllBulkReadings(getBulkMeterReadings());
+      setAllBills(getBills());
       setAllRoutes(getRoutes());
       setAllStaff(getStaffMembers());
     } catch (err) {
@@ -226,21 +231,39 @@ export default function StaffDashboardPage() {
     const totalPendingApprovals = pendingCustomers + pendingBulkMeters;
 
 
-    // Calculation for the "Bills Status" card (Current month only for the branch)
-    const paidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length
-      + currentMonthCustomers.filter(c => c.paymentStatus === 'Paid').length;
-    const unpaidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length
-      + currentMonthCustomers.filter(c => c.paymentStatus === 'Unpaid' || c.paymentStatus === 'Pending').length;
+    // --- Data for Top Delinquent Accounts (Filtered by branch and Posted status) ---
+    // User requested: "Highest outstanding balances needing attention."
+    // We only show bills with payment_status = 'Unpaid' AND status = 'Posted'
+
+    // Get branch-specific bills
+    const branchBills = allBills.filter(bill => {
+      // Cross-reference with branchBMs or branchCustomers to ensure it belongs to this branch
+      if (bill.CUSTOMERKEY) {
+        return branchBMKeys.has(bill.CUSTOMERKEY);
+      }
+      if (bill.individualCustomerId) {
+        // Individual customers might be linked via branchId directly or via their meter
+        const customer = branchCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
+        return !!customer;
+      }
+      return false;
+    });
+
+    // Calculation for the "Bills Status" card (Current month only for the branch, POSTED bills only)
+    const currentMonthBills = branchBills.filter(bill => bill.monthYear === currentMonthYear && bill.status === 'Posted');
+
+    const paidCount = currentMonthBills.filter(bill => bill.paymentStatus === 'Paid').length;
+    const unpaidCount = currentMonthBills.filter(bill => bill.paymentStatus === 'Unpaid').length;
     const totalBillsCount = paidCount + unpaidCount;
     const billsData = [
       { name: 'Paid', value: paidCount, fill: '#10b981' },
       { name: 'Unpaid', value: unpaidCount, fill: '#ef4444' },
     ];
 
-    // Calculation for "Payment Collection Rate" card (Bulk Meters ONLY, THIS MONTH for the branch)
-    const currentMonthBMsForRate = branchBMs.filter(bm => bm.month === currentMonthYear);
-    const paidBMsCount = currentMonthBMsForRate.filter(bm => bm.paymentStatus === 'Paid').length;
-    const totalBMsCount = currentMonthBMsForRate.length;
+    // Calculation for "Payment Collection Rate" card (Bulk Meters ONLY, THIS MONTH for the branch, POSTED bills only)
+    const currentMonthBulkBills = currentMonthBills.filter(bill => bill.CUSTOMERKEY);
+    const paidBMsCount = currentMonthBulkBills.filter(bill => bill.paymentStatus === 'Paid').length;
+    const totalBMsCount = currentMonthBulkBills.length;
     const paidPercentage = totalBMsCount > 0 ? `${((paidBMsCount / totalBMsCount) * 100).toFixed(0)}%` : "0%";
 
     // --- Data for Branch Performance Chart (ALL branches, Bulk Meters ONLY, THIS MONTH) ---
@@ -259,7 +282,12 @@ export default function StaffDashboardPage() {
         performanceMap.set(bm.branchId, entry);
       }
     });
-    const branchPerformanceData = Array.from(performanceMap.values()).map(p => ({ branch: p.branchName.replace(/ Branch$/i, ""), paid: p.paid, unpaid: p.unpaid }));
+
+    const branchPerformanceData = Array.from(performanceMap.values()).map(p => ({
+      branch: p.branchName.replace(/ Branch$/i, ""),
+      paid: p.paid,
+      unpaid: p.unpaid
+    }));
 
     // --- Data for Water Usage Trend Chart (filtered by staff manager's branch, historical) ---
     const usageMap = new Map<string, number>();
@@ -285,24 +313,13 @@ export default function StaffDashboardPage() {
       .map(([month, usage]) => ({ month, usage }))
       .sort((a, b) => new Date(a.month + "-01").getTime() - new Date(b.month + "-01").getTime());
 
-    // --- Data for Top Delinquent Accounts (filtered by staff branch, top 5) ---
-    const delinquentBulk = branchBMs
-      .filter(bm => bm.paymentStatus === 'Unpaid')
-      .map(bm => ({
-        name: bm.name,
-        balance: bm.outStandingbill || 0,
-        type: 'Bulk'
-      }));
-
-    const delinquentIndividual = branchCustomers
-      .filter(c => c.paymentStatus === 'Unpaid' && c.status === 'Active')
-      .map(c => ({
-        name: c.name,
-        balance: c.calculatedBill || 0,
-        type: 'Individual'
-      }));
-
-    const topDelinquentAccounts = [...delinquentBulk, ...delinquentIndividual]
+    const topDelinquentAccounts = branchBills
+      .filter(bill => bill.paymentStatus === 'Unpaid' && bill.status === 'Posted' && (bill.TOTALBILLAMOUNT || 0) > 0)
+      .map(bill => ({
+        name: bill.CUSTOMERNAME || 'Unknown Account',
+        balance: bill.TOTALBILLAMOUNT || 0,
+        type: bill.CUSTOMERKEY ? 'Bulk' : 'Individual'
+      }))
       .sort((a, b) => b.balance - a.balance)
       .slice(0, 5);
 
@@ -593,7 +610,7 @@ export default function StaffDashboardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {processedStats.branchPerformanceData.map((item) => (
+                      {processedStats.branchPerformanceData.map((item: any) => (
                         <TableRow key={item.branch} className="hover:bg-gray-50/50">
                           <TableCell className="font-bold">{item.branch}</TableCell>
                           <TableCell className="text-right font-black text-emerald-600">{item.paid}</TableCell>
@@ -658,7 +675,7 @@ export default function StaffDashboardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {processedStats.waterUsageTrendData.map((item) => (
+                      {processedStats.waterUsageTrendData.map((item: any) => (
                         <TableRow key={item.month} className="hover:bg-gray-50/50">
                           <TableCell className="font-bold text-gray-900">{item.month}</TableCell>
                           <TableCell className="text-right font-black text-indigo-600">{item.usage.toFixed(2).toLocaleString()}</TableCell>
@@ -694,7 +711,7 @@ export default function StaffDashboardPage() {
               </TableHeader>
               <TableBody>
                 {processedStats.topDelinquentAccounts.length > 0 ? (
-                  processedStats.topDelinquentAccounts.map((account, idx) => (
+                  processedStats.topDelinquentAccounts.map((account: any, idx: number) => (
                     <TableRow key={idx} className="hover:bg-rose-50/50 transition-colors">
                       <TableCell className="font-medium pl-4 py-3">
                         <p className="text-sm font-bold text-gray-900">{account.name}</p>

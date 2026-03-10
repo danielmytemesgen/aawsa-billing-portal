@@ -173,6 +173,7 @@ export interface DomainBill {
   OUTSTANDINGAMT?: number | null;
   dueDate: string;
   paymentStatus: PaymentStatus;
+  status?: string | null;
   billNumber?: string | null;
   notes?: string | null;
   createdAt?: string | null;
@@ -872,6 +873,7 @@ const mapDbBillToDomain = (dbBill: Bill): DomainBill => ({
   OUTSTANDINGAMT: dbBill.OUTSTANDINGAMT ? Number(dbBill.OUTSTANDINGAMT) : null,
   dueDate: dbBill.due_date,
   paymentStatus: dbBill.payment_status,
+  status: dbBill.status,
   billNumber: dbBill.bill_number,
   PENALTYAMT: dbBill.PENALTYAMT ? Number(dbBill.PENALTYAMT) : null,
   THISMONTHBILLAMT: dbBill.THISMONTHBILLAMT ? Number(dbBill.THISMONTHBILLAMT) : null,

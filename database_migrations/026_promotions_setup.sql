@@ -32,7 +32,7 @@ CREATE POLICY "Allow admin manage access on promotions" ON public.promotions
         JOIN public.role_permissions rp ON sm.role_id = rp.role_id
         JOIN public.permissions p ON rp.permission_id = p.id
         WHERE sm.id = auth.uid() AND p.name = 'promotions_manage'
-    ));
+    )); 
 
 -- Chunk 3: Permissions
 -- Register permission

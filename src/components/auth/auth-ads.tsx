@@ -11,6 +11,8 @@ interface Ad {
     description: string;
     icon_name: string;
     tag: string;
+    display_duration?: number;
+    image_url?: string;
 }
 
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -40,11 +42,14 @@ export function AuthAds() {
 
     React.useEffect(() => {
         if (ads.length <= 1) return;
-        const timer = setInterval(() => {
+
+        const duration = ads[currentAd].display_duration || 5000;
+        const timer = setTimeout(() => {
             setCurrentAd((prev) => (prev + 1) % ads.length);
-        }, 5000);
-        return () => clearInterval(timer);
-    }, [ads.length]);
+        }, duration);
+
+        return () => clearTimeout(timer);
+    }, [ads.length, currentAd, ads]);
 
     if (isLoading) {
         return (
@@ -70,6 +75,18 @@ export function AuthAds() {
             </div>
 
             <Card className="glass-card p-8 border-none relative overflow-hidden group min-h-[220px]">
+                {/* Background Image if available */}
+                {ads[currentAd].image_url && (
+                    <div className="absolute inset-0 z-0 opacity-20 transition-opacity duration-700 group-hover:opacity-30">
+                        <img
+                            src={ads[currentAd].image_url}
+                            alt=""
+                            className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                    </div>
+                )}
+
                 <div className="absolute top-6 right-6 z-20 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] group-hover:drop-shadow-[0_0_25px_rgba(255,255,255,0.8)] group-hover:scale-110">
                     <div className="animate-pulse">
                         {ICON_MAP[ads[currentAd].icon_name] || <Megaphone className="h-8 w-8 text-blue-300" />}

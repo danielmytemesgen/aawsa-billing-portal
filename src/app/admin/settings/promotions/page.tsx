@@ -71,7 +71,9 @@ export default function PromotionsManagementPage() {
         tag: "",
         icon_name: "Megaphone",
         is_active: true,
-        display_order: 0
+        display_order: 0,
+        display_duration: 5000,
+        image_url: ""
     });
 
     const fetchPromotions = React.useCallback(async () => {
@@ -126,7 +128,9 @@ export default function PromotionsManagementPage() {
             tag: promo.tag,
             icon_name: promo.icon_name || "Megaphone",
             is_active: promo.is_active,
-            display_order: promo.display_order || 0
+            display_order: promo.display_order || 0,
+            display_duration: promo.display_duration || 5000,
+            image_url: promo.image_url || ""
         });
         setIsDialogOpen(true);
     };
@@ -192,7 +196,9 @@ export default function PromotionsManagementPage() {
                             tag: "",
                             icon_name: "Megaphone",
                             is_active: true,
-                            display_order: 0
+                            display_order: 0,
+                            display_duration: 5000,
+                            image_url: ""
                         });
                     }
                 }}>
@@ -240,6 +246,16 @@ export default function PromotionsManagementPage() {
                                         required
                                     />
                                 </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="image_url">Image URL (Optional)</Label>
+                                    <Input
+                                        id="image_url"
+                                        value={formData.image_url}
+                                        onChange={e => setFormData({ ...formData, image_url: e.target.value })}
+                                        placeholder="https://example.com/image.jpg"
+                                    />
+                                    <p className="text-[10px] text-muted-foreground">If provided, this image will be shown on the login page.</p>
+                                </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="grid gap-2">
                                         <Label htmlFor="icon">Icon</Label>
@@ -268,6 +284,16 @@ export default function PromotionsManagementPage() {
                                             type="number"
                                             value={formData.display_order}
                                             onChange={e => setFormData({ ...formData, display_order: parseInt(e.target.value) || 0 })}
+                                        />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="duration">Duration (Seconds)</Label>
+                                        <Input
+                                            id="duration"
+                                            type="number"
+                                            value={formData.display_duration / 1000}
+                                            onChange={e => setFormData({ ...formData, display_duration: (parseFloat(e.target.value) || 0) * 1000 })}
+                                            step="0.5"
                                         />
                                     </div>
                                 </div>
@@ -316,8 +342,9 @@ export default function PromotionsManagementPage() {
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead className="w-[80px]">Order</TableHead>
-                                        <TableHead>Icon</TableHead>
+                                        <TableHead>Preview</TableHead>
                                         <TableHead>Promotion Info</TableHead>
+                                        <TableHead>Duration</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead className="text-right">Actions</TableHead>
                                     </TableRow>
@@ -328,8 +355,15 @@ export default function PromotionsManagementPage() {
                                             <TableRow key={promo.id}>
                                                 <TableCell className="font-mono">{promo.display_order}</TableCell>
                                                 <TableCell>
-                                                    <div className="p-2 rounded-lg bg-primary/10 text-primary w-min">
-                                                        {ICONS.find(i => i.name === promo.icon_name)?.icon || <Megaphone className="h-4 w-4" />}
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="p-2 rounded-lg bg-primary/10 text-primary w-min">
+                                                            {ICONS.find(i => i.name === promo.icon_name)?.icon || <Megaphone className="h-4 w-4" />}
+                                                        </div>
+                                                        {promo.image_url && (
+                                                            <div className="w-10 h-10 rounded border overflow-hidden bg-gray-50 flex-shrink-0">
+                                                                <img src={promo.image_url} alt="Preview" className="w-full h-full object-cover" />
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </TableCell>
                                                 <TableCell>
@@ -348,6 +382,9 @@ export default function PromotionsManagementPage() {
                                                         checked={promo.is_active}
                                                         onCheckedChange={() => handleToggleActive(promo)}
                                                     />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <span className="text-xs font-mono">{promo.display_duration / 1000}s</span>
                                                 </TableCell>
                                                 <TableCell className="text-right">
                                                     <div className="flex justify-end gap-2">
@@ -384,7 +421,7 @@ export default function PromotionsManagementPage() {
                     </CardHeader>
                     <CardContent>
                         <p className="text-xs text-blue-600/80 dark:text-blue-400/80">
-                            The top active promotions are rotated every 5 seconds on the main login screen.
+                            The promotions are rotated based on their individual set durations (default 5s) on the main login screen.
                         </p>
                     </CardContent>
                 </Card>

@@ -122,12 +122,12 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
         const faultReadingsWithCode = allReadings.filter(r => r.FAULT_CODE && r.FAULT_CODE !== '');
 
         const faultCodeCounts = new Map<string, number>();
-        faultReadingsWithCode.forEach(r => {
+        faultReadingsWithCode.forEach((r: any) => {
             const code = r.FAULT_CODE || 'UNKNOWN';
             faultCodeCounts.set(code, (faultCodeCounts.get(code) || 0) + 1);
         });
 
-        faultCodeCounts.forEach((count, code) => {
+        faultCodeCounts.forEach((count: number, code: string) => {
             faultCodeBreakdown.push({
                 code,
                 label: getFaultCodeLabel(code),
@@ -148,7 +148,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
         const trendData = last6Months.map(month => {
             let usage = 0;
-            allReadings.forEach(r => {
+            allReadings.forEach((r: any) => {
                 const dateStr = r.readingDate || r.createdAt;
                 if (!dateStr) return;
                 const rMonth = typeof dateStr === 'string' ? dateStr.substring(0, 7) : format(new Date(dateStr), 'yyyy-MM');
@@ -339,7 +339,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                             paddingAngle={5}
                                             dataKey="value"
                                         >
-                                            {stats.dataStatus.map((entry, index) => (
+                                            {stats.dataStatus.map((entry: any, index: number) => (
                                                 <Cell key={`cell-${index}`} fill={entry.color} />
                                             ))}
                                         </Pie>
@@ -350,7 +350,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                             </ChartContainer>
                         </div>
                         <div className="mt-6 grid grid-cols-1 gap-3">
-                            {stats.dataStatus.map((item) => (
+                            {stats.dataStatus.map((item: any) => (
                                 <div key={item.name} className="flex items-center justify-between p-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
                                     <div className="flex items-center gap-3">
                                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
@@ -405,7 +405,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                             radius={[8, 8, 0, 0]}
                                             barSize={60}
                                         >
-                                            {stats.readingTypes.map((entry, index) => (
+                                            {stats.readingTypes.map((entry: any, index: number) => (
                                                 <Cell key={`cell-${index}`} fill={entry.color} />
                                             ))}
                                         </Bar>
@@ -414,7 +414,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                             </ChartContainer>
                         </div>
                         <div className="mt-4 flex flex-wrap justify-center gap-6">
-                            {stats.readingTypes.map(rt => (
+                            {stats.readingTypes.map((rt: any) => (
                                 <div key={rt.category} className="flex items-center gap-2">
                                     <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: rt.color }} />
                                     <span className="text-sm font-semibold text-gray-700">{rt.category}</span>
@@ -437,7 +437,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-3">
-                                {stats.faultCodeBreakdown.map((fault) => (
+                                {stats.faultCodeBreakdown.map((fault: any) => (
                                     <div key={fault.code} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
                                         <div className="flex items-center gap-3">
                                             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: fault.color }} />
@@ -508,7 +508,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                 </ChartContainer>
                             </div>
                             <div className="w-full flex justify-between px-2 mt-4">
-                                {stats.trendData.map((d, i) => (
+                                {stats.trendData.map((d: any, i: number) => (
                                     <span key={i} className="text-[10px] font-bold text-gray-400 uppercase">{d.month}</span>
                                 ))}
                             </div>
@@ -541,7 +541,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {stats.branchDetails.map((branch) => (
+                                {stats.branchDetails.map((branch: any) => (
                                     <TableRow key={branch.id} className="hover:bg-blue-50/30 transition-colors border-b">
                                         <TableCell className="py-4">
                                             <span className="font-bold text-gray-900">{branch.name}</span>
