@@ -515,36 +515,32 @@ export default function StaffDashboardPage() {
 
       </div>
 
-      <Card className="shadow-xl border-none overflow-hidden group">
-        <CardHeader className="bg-gray-50/50 border-b">
-          <CardTitle className="text-lg font-bold">Quick Access Gateways</CardTitle>
-          <CardDescription>Direct paths to core branch management operations.</CardDescription>
+      <Card className="bg-slate-50 border-slate-100 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-slate-900 font-bold">Quick Access</CardTitle>
+          <CardDescription className="text-slate-600/70">Navigate quickly to key management areas.</CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-6">
-          <Button asChild variant="outline" className="w-full justify-start p-6 h-auto border-2 hover:border-blue-500 hover:bg-blue-50/50 transition-all group/btn">
-            <Link href="/staff/bulk-meters">
-              <div className="p-3 bg-blue-100 rounded-xl group-hover/btn:bg-blue-600 group-hover/btn:text-white transition-colors">
-                <Gauge className="h-7 w-7" />
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Link href="/staff/bulk-meters" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group">
+              <Gauge className="mr-4 h-8 w-8 text-blue-500 group-hover:scale-110 transition-transform" />
+              <div>
+                <p className="font-bold text-slate-900 text-lg">View Bulk Meters</p>
+                <p className="text-sm text-slate-500">Manage all bulk water meters.</p>
               </div>
-              <div className="ml-4">
-                <div className="font-bold text-lg">Bulk Meters Registry</div>
-                <div className="text-sm text-muted-foreground font-medium">Analyze and manage large-scale distribution points.</div>
+              <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
+            </Button>
+          </Link>
+          <Link href="/staff/individual-customers" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group">
+              <Users className="mr-4 h-8 w-8 text-emerald-500 group-hover:scale-110 transition-transform" />
+              <div>
+                <p className="font-bold text-slate-900 text-lg">View Individual Customers</p>
+                <p className="text-sm text-slate-500">Manage all individual customer accounts.</p>
               </div>
-              <ArrowRight className="ml-auto h-6 w-6 text-gray-300 group-hover/btn:text-blue-600 transition-colors" />
-            </Link>
-          </Button>
-          <Button asChild variant="outline" className="w-full justify-start p-6 h-auto border-2 hover:border-emerald-500 hover:bg-emerald-50/50 transition-all group/btn">
-            <Link href="/staff/individual-customers">
-              <div className="p-3 bg-emerald-100 rounded-xl group-hover/btn:bg-emerald-600 group-hover/btn:text-white transition-colors">
-                <Users className="h-7 w-7" />
-              </div>
-              <div className="ml-4">
-                <div className="font-bold text-lg">Customer Portfolio</div>
-                <div className="text-sm text-muted-foreground font-medium">Subscriber profiles and billing history management.</div>
-              </div>
-              <ArrowRight className="ml-auto h-6 w-6 text-gray-300 group-hover/btn:text-emerald-600 transition-colors" />
-            </Link>
-          </Button>
+              <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all" />
+            </Button>
+          </Link>
         </CardContent>
       </Card>
 
