@@ -24,7 +24,8 @@ import {
 import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 // Mock types
 type Bill = {
