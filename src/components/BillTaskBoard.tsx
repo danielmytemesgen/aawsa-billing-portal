@@ -4,7 +4,7 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
 interface TaskBill {
@@ -26,6 +26,9 @@ interface BillTaskBoardProps {
     basePath?: string;
     showApprovals?: boolean;
     showReadyToPost?: boolean;
+    onSubmitAll?: () => Promise<void>;
+    onApproveAll?: () => Promise<void>;
+    onPostAll?: () => Promise<void>;
 }
 
 const PAGE_SIZE = 5;
@@ -37,10 +40,12 @@ export function BillTaskBoard({
     approvedBills,
     basePath = '/staff/bill-management',
     showApprovals = false,
-    showReadyToPost = false
+    showReadyToPost = false,
+    onSubmitAll,
+    onApproveAll,
+    onPostAll,
 }: BillTaskBoardProps) {
 
-    // Combine rework and drafts for "My Tasks" with explicit types
     const myTasks = [
         ...reworkItems.map(b => ({ ...b, cardType: 'rework' as const })),
         ...myDrafts.map(b => ({ ...b, cardType: 'draft' as const }))
@@ -62,6 +67,9 @@ export function BillTaskBoard({
                         basePath={basePath}
                     />
                 )}
+                bulkActionLabel="Submit All for Approval"
+                bulkActionClassName="bg-blue-600 hover:bg-blue-700 text-white"
+                onBulkAction={onSubmitAll}
             />
 
             {/* Pending Approvals Column */}
@@ -79,6 +87,9 @@ export function BillTaskBoard({
                             basePath={basePath}
                         />
                     )}
+                    bulkActionLabel="Approve All Invoices"
+                    bulkActionClassName="bg-amber-500 hover:bg-amber-600 text-white"
+                    onBulkAction={onApproveAll}
                 />
             )}
 
@@ -97,6 +108,9 @@ export function BillTaskBoard({
                             basePath={basePath}
                         />
                     )}
+                    bulkActionLabel="Post & Finalize All Bills"
+                    bulkActionClassName="bg-green-600 hover:bg-green-700 text-white"
+                    onBulkAction={onPostAll}
                 />
             )}
         </div>
@@ -109,21 +123,34 @@ interface TaskColumnProps {
     color: string;
     basePath: string;
     renderItem: (item: any) => React.ReactNode;
+    bulkActionLabel?: string;
+    bulkActionClassName?: string;
+    onBulkAction?: () => Promise<void>;
 }
 
-function TaskColumn({ title, items, color, renderItem }: TaskColumnProps) {
+function TaskColumn({ title, items, color, renderItem, bulkActionLabel, bulkActionClassName, onBulkAction }: TaskColumnProps) {
     const [currentPage, setCurrentPage] = useState(1);
+    const [isBulkLoading, setIsBulkLoading] = useState(false);
     const totalPages = Math.ceil(items.length / PAGE_SIZE);
 
     const startIndex = (currentPage - 1) * PAGE_SIZE;
     const visibleItems = items.slice(startIndex, startIndex + PAGE_SIZE);
 
-    // Reset to page 1 if items change and current page is out of bounds
     React.useEffect(() => {
         if (currentPage > totalPages && totalPages > 0) {
             setCurrentPage(totalPages);
         }
     }, [items.length, totalPages, currentPage]);
+
+    const handleBulkAction = async () => {
+        if (!onBulkAction) return;
+        setIsBulkLoading(true);
+        try {
+            await onBulkAction();
+        } finally {
+            setIsBulkLoading(false);
+        }
+    };
 
     return (
         <div className={`bg-${color}-50 p-4 rounded-lg border border-${color}-100 flex flex-col h-full min-h-[450px]`}>
@@ -170,6 +197,26 @@ function TaskColumn({ title, items, color, renderItem }: TaskColumnProps) {
                     </div>
                 )}
             </div>
+
+            {/* Bulk Action Button — only shown when items exist */}
+            {bulkActionLabel && onBulkAction && items.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-gray-200">
+                    <Button
+                        className={`w-full h-9 text-[12px] font-bold shadow-sm ${bulkActionClassName}`}
+                        onClick={handleBulkAction}
+                        disabled={isBulkLoading}
+                    >
+                        {isBulkLoading ? (
+                            <>
+                                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                Processing...
+                            </>
+                        ) : (
+                            bulkActionLabel
+                        )}
+                    </Button>
+                </div>
+            )}
         </div>
     );
 }
@@ -185,7 +232,7 @@ function TaskCard({ bill, type, basePath }: { bill: TaskBill, type: 'draft' | 'r
                 isDraft ? 'border-l-4 border-l-blue-400' : 'border-l-4 border-l-amber-400'
             }`}>
             <div className="flex justify-between items-start mb-1.5">
-                <span className="font-bold text-xs text-gray-900 truncate max-w-[120px]">
+                <span className="font-bold text-xs text-gray-900 truncate">
                     {bill.CUSTOMERKEY || bill.individual_customer_id}
                 </span>
                 <span className="text-[10px] text-gray-400 font-bold uppercase">

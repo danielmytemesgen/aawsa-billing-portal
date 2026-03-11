@@ -71,9 +71,9 @@ export default function StaffBulkMetersPage() {
       setAuthStatus('unauthorized');
       return;
     }
-    if (isStaff || isStaffManagement) setAuthStatus('authorized');
-    else setAuthStatus('unauthorized');
-  }, [currentUser, isStaff, isStaffManagement]);
+    // Allow any user with a session; permissions will handle specific actions
+    setAuthStatus('authorized');
+  }, [currentUser]);
 
   // Second useEffect for data loading, dependent on auth status
   React.useEffect(() => {

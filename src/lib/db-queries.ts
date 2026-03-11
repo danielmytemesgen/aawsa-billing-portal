@@ -1007,8 +1007,8 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
     // 2. Get Revenue Aggregation for the latest month (Only for POSTED bills)
     const revenueSql = `
         SELECT 
-            SUM("TOTALBILLAMOUNT") as total_billed,
-            SUM(CASE WHEN payment_status = 'Paid' THEN "TOTALBILLAMOUNT" ELSE 0 END) as total_collected
+            SUM(COALESCE("TOTALBILLAMOUNT", 0) + COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)) as total_billed,
+            SUM(CASE WHEN payment_status = 'Paid' THEN (COALESCE("TOTALBILLAMOUNT", 0) + COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)) ELSE 0 END) as total_collected
         FROM bills
         WHERE status = 'Posted' AND month_year = $1 ${branchFilter}
     `;
@@ -1058,14 +1058,14 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
                 (SELECT name FROM bulk_meters WHERE "customerKeyNumber" = bills."CUSTOMERKEY"),
                 'Unknown'
             ) as name,
-            "TOTALBILLAMOUNT" as outstanding,
+            (COALESCE("TOTALBILLAMOUNT", 0) + COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)) as outstanding,
             CASE 
                 WHEN "CUSTOMERKEY" IS NOT NULL THEN 'Bulk' 
                 ELSE 'Individual' 
             END as type
         FROM bills
         WHERE month_year = $1 AND payment_status = 'Unpaid' AND status = 'Posted' ${branchFilter}
-        ORDER BY "TOTALBILLAMOUNT" DESC
+        ORDER BY (COALESCE("TOTALBILLAMOUNT", 0) + COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)) DESC
         LIMIT 5
     `;
     const topDelinquent: any = await query(delinquentSql, params);

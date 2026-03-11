@@ -48,6 +48,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { format } from 'date-fns';
+import { usePermissions } from "@/hooks/use-permissions";
 import { ReaderReport } from "./reader-report";
 
 interface User {
@@ -64,6 +65,7 @@ const chartConfig = {
 } satisfies import("@/components/ui/chart").ChartConfig;
 
 export default function StaffDashboardPage() {
+  const { hasPermission } = usePermissions();
   const [authStatus, setAuthStatus] = React.useState<'loading' | 'unauthorized' | 'authorized'>('loading');
   const [staffBranchName, setStaffBranchName] = React.useState<string | null>(null);
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
@@ -371,8 +373,8 @@ export default function StaffDashboardPage() {
     );
   }
 
-  // Render Reader Report for Readers
-  if (currentUserRole === 'reader') {
+  // Render Reader Report for those with the appropriate permission (e.g., Readers, Admins)
+  if (hasPermission('meter_readings_analytics_view')) {
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

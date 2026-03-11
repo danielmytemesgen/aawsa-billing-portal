@@ -199,7 +199,7 @@ export default function StaffIndividualCustomersPage() {
     if (isLoading) {
       return <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">Loading...</div>;
     }
-    if (!branchId) {
+    if (!branchId && !hasPermission('customers_view_all')) {
       return <div className="mt-4 p-4 border rounded-md bg-destructive/10 text-center text-destructive">Your user profile is not configured for a staff role or branch.</div>;
     }
     if (branchFilteredData.customers.length === 0 && !searchTerm) {

@@ -5,10 +5,11 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/components/add-meter-reading-form";
 import MeterReadingsTable from "@/components/meter-readings-table";
+import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
 import {
   addIndividualCustomerReading,
@@ -27,14 +28,25 @@ import {
   subscribeToBulkMeters,
   getFaultCodes,
   initializeFaultCodes,
-  subscribeToFaultCodes
+  subscribeToFaultCodes,
+  getRoutes,
+  fetchRoutes,
+  getStaffMembers,
+  initializeStaffMembers,
+  getBranches,
+  initializeBranches,
+  initializeBills,
+  getBills
 } from "@/lib/data-store";
 import type { FaultCodeRow } from "@/lib/actions";
 import type { IndividualCustomer } from "@/app/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import type { DisplayReading } from "@/lib/data-store";
+import type { Branch } from "@/app/admin/branches/branch-types";
+import type { Route } from "@/app/admin/bulk-meters/bulk-meter-types";
 import { format } from "date-fns";
 import { CsvReadingUploadDialog } from "@/components/csv-reading-upload-dialog";
+import { ReaderReport } from "@/app/staff/dashboard/reader-report";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -61,6 +73,10 @@ export default function AdminMeterReadingsPage() {
 
   const [individualReadings, setIndividualReadings] = React.useState<DisplayReading[]>([]);
   const [bulkReadings, setBulkReadings] = React.useState<DisplayReading[]>([]);
+  const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
+  const [allRoutes, setAllRoutes] = React.useState<Route[]>([]);
+  const [allStaff, setAllStaff] = React.useState<any[]>([]);
+  const [allBills, setAllBills] = React.useState<any[]>([]);
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -69,6 +85,7 @@ export default function AdminMeterReadingsPage() {
   const [individualRowsPerPage, setIndividualRowsPerPage] = React.useState(10);
   const [bulkPage, setBulkPage] = React.useState(0);
   const [bulkRowsPerPage, setBulkRowsPerPage] = React.useState(10);
+  const [activeTab, setActiveTab] = React.useState("individual");
 
 
   const combineAndSortReadings = React.useCallback(() => {
@@ -128,10 +145,18 @@ export default function AdminMeterReadingsPage() {
       initializeIndividualCustomerReadings(true),
       initializeBulkMeterReadings(true),
       initializeFaultCodes(true),
+      initializeBranches(true),
+      fetchRoutes(true),
+      initializeStaffMembers(true),
+      initializeBills(true),
     ]).then(() => {
       if (!isMounted) return;
       setAllCustomers(getCustomers());
       setAllBulkMeters(getBulkMeters());
+      setAllBranches(getBranches());
+      setAllRoutes(getRoutes());
+      setAllStaff(getStaffMembers());
+      setAllBills(getBills());
       combineAndSortReadings();
       setIsLoading(false);
     }).catch(error => {
@@ -257,6 +282,22 @@ export default function AdminMeterReadingsPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          {hasPermission('meter_readings_analytics_view') && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant={activeTab === 'analytics' ? 'default' : 'default'}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={() => setActiveTab(activeTab === 'analytics' ? 'individual' : 'analytics')}
+              >
+                <BarChart className="mr-2 h-4 w-4" /> Reading Analytics
+              </Button>
+              <Link href="/admin/reports/reading-classification" passHref>
+                <Button variant="outline" className="bg-white">
+                  <FileSpreadsheet className="mr-2 h-4 w-4 text-muted-foreground" /> Reading Analytics Report
+                </Button>
+              </Link>
+            </div>
+          )}
           {hasPermission('meter_readings_create') && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -284,7 +325,7 @@ export default function AdminMeterReadingsPage() {
           )}
         </div>
       </div>
-      <Tabs defaultValue="individual">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="individual">Individual Readings ({filteredIndividualReadings.length})</TabsTrigger>
           <TabsTrigger value="bulk">Bulk Meter Readings ({filteredBulkReadings.length})</TabsTrigger>
@@ -347,6 +388,19 @@ export default function AdminMeterReadingsPage() {
             )}
           </Card>
         </TabsContent>
+        {hasPermission('meter_readings_analytics_view') && (
+          <TabsContent value="analytics" className="space-y-4">
+            <ReaderReport
+              branches={allBranches}
+              bulkMeters={allBulkMeters}
+              customers={allCustomers}
+              routes={allRoutes}
+              staff={allStaff}
+              individualReadings={individualReadings.map(r => ({ ...r, previousReading: 0 }))} // Simplified as specific usage data isn't directly in DisplayReading
+              bulkReadings={bulkReadings.map(r => ({ ...r, previousReading: 0 }))}
+            />
+          </TabsContent>
+        )}
       </Tabs>
 
       {hasPermission('meter_readings_create') && (

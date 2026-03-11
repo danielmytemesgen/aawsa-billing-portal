@@ -493,27 +493,80 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
                         </CardContent>
                     </Card>
 
-                    {/* Activity History */}
-                    <Card>
-                        <CardHeader className="bg-gray-50/50">
-                            <CardTitle className="text-lg">Activity History</CardTitle>
+                    {/* Activity History / Amendment Trail */}
+                    <Card className="shadow-sm border-gray-100">
+                        <CardHeader className="bg-gray-50/50 border-b border-gray-100">
+                            <CardTitle className="text-sm font-bold uppercase tracking-wider text-gray-600 flex items-center gap-2">
+                                <Clock className="h-4 w-4" /> Amendment Trail & History
+                            </CardTitle>
                         </CardHeader>
                         <CardContent className="pt-6">
-                            <div className="relative pl-6 border-l-2 border-gray-100 space-y-8">
-                                {logs.map((log) => (
-                                    <div key={log.id} className="relative">
-                                        <div className="absolute -left-[31px] top-1 h-3 w-3 rounded-full bg-blue-500 border-2 border-white"></div>
-                                        <div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="font-semibold text-sm">{log.from_status} &rarr; {log.to_status}</span>
-                                                <span className="text-xs text-gray-500">{format(new Date(log.created_at), 'MMM dd, HH:mm')}</span>
+                            <div className="relative pl-8 border-l-2 border-gray-100 space-y-8 pb-4">
+                                {logs.map((log) => {
+                                    const isRework = log.to_status === 'Rework' || log.to_status === 'Rejected';
+                                    const isPosted = log.to_status === 'Posted';
+                                    const isApproved = log.to_status === 'Approved';
+                                    const isCorrection = log.reason?.toLowerCase().includes('correction') || log.from_status === 'Posted';
+
+                                    return (
+                                        <div key={log.id} className="relative group">
+                                            <div className={cn(
+                                                "absolute -left-[41px] top-0 h-5 w-5 rounded-full border-2 border-white flex items-center justify-center shadow-sm transition-transform group-hover:scale-110",
+                                                isRework ? "bg-red-500" :
+                                                    isPosted ? "bg-green-600" :
+                                                        isApproved ? "bg-blue-600" :
+                                                            isCorrection ? "bg-orange-500" : "bg-gray-400"
+                                            )}>
+                                                {isRework ? <AlertCircle className="h-3 w-3 text-white" /> :
+                                                    isPosted ? <CheckCircle2 className="h-3 w-3 text-white" /> :
+                                                        isApproved ? <CheckCircle2 className="h-3 w-3 text-white" /> :
+                                                            isCorrection ? <RotateCcw className="h-3 w-3 text-white" /> :
+                                                                <Clock className="h-3 w-3 text-white" />}
                                             </div>
-                                            {log.reason && <p className="text-sm text-red-600 mt-1 italic">"{log.reason}"</p>}
-                                            <p className="text-xs text-gray-400 mt-1 uppercase tracking-tight">By User: {log.changed_by}</p>
+                                            <div>
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <div>
+                                                        <span className="font-bold text-sm text-gray-900">{log.from_status}</span>
+                                                        <span className="text-gray-400 mx-2">&rarr;</span>
+                                                        <span className={cn(
+                                                            "font-bold text-sm",
+                                                            isRework ? "text-red-600" :
+                                                                isPosted ? "text-green-600" :
+                                                                    isApproved ? "text-blue-600" :
+                                                                        isCorrection ? "text-orange-600" : "text-gray-900"
+                                                        )}>{log.to_status}</span>
+                                                    </div>
+                                                    <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
+                                                        {format(new Date(log.created_at), 'MMM dd, yyyy HH:mm')}
+                                                    </span>
+                                                </div>
+                                                {log.reason && (
+                                                    <div className={cn(
+                                                        "text-sm p-3 rounded-md mt-2 border",
+                                                        isRework ? "bg-red-50 border-red-100 text-red-800" :
+                                                            isCorrection ? "bg-orange-50 border-orange-100 text-orange-800" :
+                                                                "bg-gray-50 border-gray-100 text-gray-700"
+                                                    )}>
+                                                        <p className="italic font-medium leading-relaxed">"{log.reason}"</p>
+                                                    </div>
+                                                )}
+                                                <div className="flex items-center gap-2 mt-2">
+                                                    <div className="h-5 w-5 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-500 border border-gray-200 uppercase">
+                                                        {log.changed_by?.substring(0, 1) || 'U'}
+                                                    </div>
+                                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                                                        Modified by {log.changed_by || 'System'}
+                                                    </p>
+                                                </div>
+                                            </div>
                                         </div>
+                                    );
+                                })}
+                                {logs.length === 0 && (
+                                    <div className="text-center py-6 text-gray-400 italic text-sm">
+                                        No amendment history recorded for this bill.
                                     </div>
-                                ))}
-                                {logs.length === 0 && <p className="text-sm text-gray-500">No activity history for this bill.</p>}
+                                )}
                             </div>
                         </CardContent>
                     </Card>

@@ -1,4 +1,5 @@
 'use server'
+import { isManagementRole, PERMISSIONS } from '@/lib/constants/auth';
 import {
   dbCreateBranch,
   dbDeleteBranch,
@@ -821,8 +822,9 @@ export async function getBillByIdAction(id: string) {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase();
-    const isTopManagement = ['admin', 'head office management'].includes(role);
+    const role = session.role?.toLowerCase()?.trim();
+    const perms: string[] = session.permissions || [];
+    const isTopManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
     const branchId = !isTopManagement ? session.branchId : undefined;
 
     return await dbGetBillByIdQuery(id, branchId);
@@ -968,17 +970,14 @@ export async function getAllIndividualCustomerReadingsAction() {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
+    const role = session.role?.toLowerCase()?.trim();
+    const perms: string[] = session.permissions || [];
 
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
+    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
 
     const hasPerm = isManagement ||
-      ['reader', 'staff'].includes(role) ||
       perms.includes('meter_readings_view_all') ||
       perms.includes('meter_readings_view_branch') ||
-      perms.includes('dashboard_view_all') ||
       perms.includes('dashboard_view_branch');
 
     if (!hasPerm) {
@@ -1027,17 +1026,14 @@ export async function getAllBulkMeterReadingsAction() {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase();
-    const perms = session.permissions || [];
+    const role = session.role?.toLowerCase()?.trim();
+    const perms: string[] = session.permissions || [];
 
-    // Allow management roles to bypass
-    const isManagement = ['admin', 'head office management', 'staff management'].includes(role);
+    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
 
     const hasPerm = isManagement ||
-      ['reader', 'staff'].includes(role) ||
       perms.includes('meter_readings_view_all') ||
       perms.includes('meter_readings_view_branch') ||
-      perms.includes('dashboard_view_all') ||
       perms.includes('dashboard_view_branch');
 
     if (!hasPerm) {

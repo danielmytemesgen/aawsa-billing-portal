@@ -1,6 +1,5 @@
-"use client";
-
 import * as React from 'react';
+import { ROLES, PERMISSIONS, isManagementRole } from '@/lib/constants/auth';
 
 export interface CurrentUser {
   id?: string;
@@ -37,13 +36,25 @@ export function useCurrentUser() {
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
-  const roleLower = (currentUser?.role || '').toLowerCase();
+  const roleLower = (currentUser?.role || '').toLowerCase().trim();
+  const permissions = new Set(currentUser?.permissions || []);
+
+  /**
+   * Robust check for management/admin-area access.
+   * Priority 1: Specific high-level permission.
+   * Priority 2: Identified management role name.
+   */
+  const isManagement =
+    permissions.has(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    isManagementRole(roleLower);
 
   return {
     currentUser,
-    isStaff: ['staff', 'reader'].includes(roleLower),
-    isReader: roleLower === 'reader',
-    isStaffManagement: roleLower === 'staff management',
+    isStaff: roleLower === ROLES.STAFF || roleLower === ROLES.READER || (!isManagement && roleLower !== ''),
+    isReader: roleLower === ROLES.READER,
+    isStaffManagement: roleLower === ROLES.STAFF_MANAGEMENT,
+    isManagement,
+    isAdminAreaUser: isManagement,
     branchId: currentUser?.branchId,
     branchName: currentUser?.branchName,
   } as const;

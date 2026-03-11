@@ -29,14 +29,14 @@ import { LogIn, Eye, EyeOff } from "lucide-react";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
 
+import { ROLES, PERMISSIONS, isManagementRole } from "@/lib/constants/auth";
+
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
   password: z.string().min(1, { message: "Password is required." }),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;
-
-const ADMIN_ROLES = ['admin', 'head office management', 'staff management'];
 
 export function AuthForm() {
   const router = useRouter();
@@ -72,17 +72,25 @@ export function AuthForm() {
       // but NOT for security checks anymore.
       localStorage.setItem("user", JSON.stringify(result.user));
 
-      const role = result.user.role.toLowerCase();
+      const role = result.user.role.toLowerCase().trim();
+      const permissions = result.user.permissions || [];
+      const isManagement =
+        permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+        isManagementRole(role);
 
-      if (['admin', 'head office management', 'staff management'].includes(role)) {
+      if (isManagement) {
         // Automatically sync billing aging debt in the background for management users
         syncAllBillsAgingDebtAction().catch(err => {
           console.error("Background sync failed on login:", err);
         });
 
-        if (role === 'admin') router.push("/admin/dashboard");
-        else if (role === 'head office management') router.push("/admin/head-office-dashboard");
-        else if (role === 'staff management') router.push("/admin/staff-management-dashboard");
+        if (role === ROLES.HEAD_OFFICE_MANAGEMENT || permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+          router.push("/admin/head-office-dashboard");
+        } else if (role === ROLES.STAFF_MANAGEMENT) {
+          router.push("/admin/staff-management-dashboard");
+        } else {
+          router.push("/admin/dashboard");
+        }
       } else {
         router.push("/staff/dashboard");
       }

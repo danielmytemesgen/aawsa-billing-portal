@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decrypt } from '@/lib/auth';
+import { ROLES, PERMISSIONS, isManagementRole } from '@/lib/constants/auth';
 
 const protectedRoutes = ['/admin', '/staff'];
 const adminRoutes = ['/admin'];
@@ -21,14 +22,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/', request.url));
   }
 
-  const role = session.role?.toLowerCase();
-  const permissions = session.permissions || [];
+  const role = session.role?.toLowerCase()?.trim();
+  const permissions: string[] = session.permissions || [];
 
-  // 1. Basic Role-Based Path Protection
+  // 1. Admin Route Protection (role OR permission-based)
   const isAdminRoute = adminRoutes.some(route => path.startsWith(route));
   const isStaffRoute = staffRoutes.some(route => path.startsWith(route));
 
-  if (isAdminRoute && !['admin', 'head office management', 'staff management'].includes(role)) {
+  const hasAdminAccess =
+    permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    isManagementRole(role);
+
+  if (isAdminRoute && !hasAdminAccess) {
     return NextResponse.redirect(new URL('/staff/dashboard', request.url));
   }
 
@@ -43,22 +48,22 @@ export async function middleware(request: NextRequest) {
   if (path.startsWith('/admin/branches') && !permissions.includes('branches_view')) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
-  if (path.startsWith('/admin/staff') && !['admin', 'staff management'].includes(role) && !permissions.includes('staff_view')) {
+  if (path.startsWith('/admin/staff') && !isManagementRole(role) && !permissions.includes(PERMISSIONS.STAFF_VIEW)) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
-  if (path.startsWith('/admin/customers') && !permissions.includes('customers_view_all') && !permissions.includes('customers_view_branch')) {
+  if (path.startsWith('/admin/customers') && !permissions.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) && !permissions.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
-  if (path.startsWith('/admin/bulk-meters') && !permissions.includes('bulk_meters_view_all') && !permissions.includes('bulk_meters_view_branch')) {
+  if (path.startsWith('/admin/bulk-meters') && !permissions.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) && !permissions.includes(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
   if (path.startsWith('/admin/tariffs') && !permissions.includes('tariffs_view')) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
-  if (path.startsWith('/admin/reports') && !permissions.includes('reports_generate_all') && !permissions.includes('reports_generate_branch')) {
+  if (path.startsWith('/admin/reports') && !permissions.includes(PERMISSIONS.REPORTS_GENERATE_ALL) && !permissions.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
-  if (path.startsWith('/admin/settings') && !permissions.includes('settings_view')) {
+  if (path.startsWith('/admin/settings') && !permissions.includes(PERMISSIONS.SETTINGS_VIEW)) {
     return NextResponse.redirect(new URL('/admin/dashboard', request.url));
   }
 
