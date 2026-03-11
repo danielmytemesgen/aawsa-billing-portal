@@ -304,6 +304,7 @@ export interface DisplayReading {
   meterType: 'individual' | 'bulk';
   meterIdentifier: string;
   readingValue: number;
+  previousReading: number;
   readingDate: string;
   monthYear: string;
   notes?: string | null;

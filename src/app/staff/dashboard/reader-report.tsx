@@ -67,47 +67,48 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
     const currentYear = format(new Date(), 'yyyy');
 
     const stats = React.useMemo(() => {
+        // Determine the most recent month from available readings
+        const allReadings = [...individualReadings, ...bulkReadings];
+        const recentCycleMonth = allReadings.length > 0 
+            ? allReadings.reduce((latest, r) => (r.monthYear > latest ? r.monthYear : latest), "0000-00")
+            : format(new Date(), 'yyyy-MM');
+
+        const cycleDisplayText = recentCycleMonth !== "0000-00" ? recentCycleMonth : format(new Date(), 'yyyy-MM');
+        
         const totalCustomers = bulkMeters.length;
 
         // GPS Encoded: Meters with coordinates
         const gpsEncoded = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate).length +
-            customers.filter(c => (c as any).latitude && (c as any).longitude).length;
+            customers.filter(c => c.xCoordinate && c.yCoordinate).length;
 
-        // Collected vs Pending (This Month)
-        const thisMonthBMs = bulkMeters.filter(bm => bm.month === currentMonthYear);
-        const thisMonthCustomers = customers.filter(c => c.month === currentMonthYear);
+        // Collected vs Pending (Recent Cycle)
+        const cycleBMs = bulkMeters.filter(bm => bm.month === recentCycleMonth);
+        const cycleCustomers = customers.filter(c => c.month === recentCycleMonth);
 
-        const collectedCount = thisMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length +
-            thisMonthCustomers.filter(c => c.paymentStatus === 'Paid').length;
+        const collectedCount = cycleBMs.filter(bm => bm.paymentStatus === 'Paid').length +
+            cycleCustomers.filter(c => c.paymentStatus === 'Paid').length;
 
-        const pendingCount = thisMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length +
-            thisMonthCustomers.filter(c => c.paymentStatus === 'Unpaid').length;
+        const pendingCount = cycleBMs.filter(bm => bm.paymentStatus === 'Unpaid').length +
+            cycleCustomers.filter(c => c.paymentStatus === 'Unpaid').length;
 
-        // Charts: Customer Data Status (Modernized for Pie/Bar)
-        const dataStatus = [
-            { name: 'Collected', value: collectedCount, color: '#10b981', fill: '#10b981' },
-            { name: 'Pending', value: pendingCount, color: '#f59e0b', fill: '#f59e0b' },
-            { name: 'GPS Encoded', value: gpsEncoded, color: '#3b82f6', fill: '#3b82f6' },
-        ];
+        // Charts: Reading Type Ratio (Filtered for recent cycle)
+        const cycleReadings = allReadings.filter(r => r.monthYear === recentCycleMonth);
 
-        // Charts: Reading Type Ratio (Real categorizations from readings)
-        const allReadings = [...individualReadings, ...bulkReadings];
-
-        const zeroReadings = allReadings.filter(r => {
+        const zeroReadings = cycleReadings.filter(r => {
             const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
-            return usage === 0 && !r.FAULT_CODE;
+            return usage === 0 && !r.FAULT_CODE && !r.faultCode;
         }).length;
 
-        const faultReadings = allReadings.filter(r => r.FAULT_CODE && r.FAULT_CODE !== '').length;
+        const faultReadings = cycleReadings.filter(r => (r.FAULT_CODE && r.FAULT_CODE !== '') || (r.faultCode && r.faultCode !== '')).length;
 
-        const increaseReadings = allReadings.filter(r => {
+        const increaseReadings = cycleReadings.filter(r => {
             const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
-            return usage > 0 && !r.FAULT_CODE;
+            return usage > 0 && !r.FAULT_CODE && !r.faultCode;
         }).length;
 
-        const decreaseReadings = allReadings.filter(r => {
+        const decreaseReadings = cycleReadings.filter(r => {
             const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
-            return usage < 0 && !r.FAULT_CODE;
+            return usage < 0 && !r.FAULT_CODE && !r.faultCode;
         }).length;
 
         const readingTypes = [
@@ -117,13 +118,13 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             { category: 'Decrease', count: decreaseReadings, color: '#f59e0b' },
         ];
 
-        // Fault Code Breakdown
+        // Fault Code Breakdown (Filtered for recent cycle)
         const faultCodeBreakdown: { code: string; label: string; count: number; color: string; percentage: number }[] = [];
-        const faultReadingsWithCode = allReadings.filter(r => r.FAULT_CODE && r.FAULT_CODE !== '');
+        const faultReadingsInCycle = cycleReadings.filter(r => (r.FAULT_CODE && r.FAULT_CODE !== '') || (r.faultCode && r.faultCode !== ''));
 
         const faultCodeCounts = new Map<string, number>();
-        faultReadingsWithCode.forEach((r: any) => {
-            const code = r.FAULT_CODE || 'UNKNOWN';
+        faultReadingsInCycle.forEach((r: any) => {
+            const code = r.FAULT_CODE || r.faultCode || 'UNKNOWN';
             faultCodeCounts.set(code, (faultCodeCounts.get(code) || 0) + 1);
         });
 
@@ -140,7 +141,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
         // Sort by count descending
         faultCodeBreakdown.sort((a, b) => b.count - a.count);
 
-        // Consumption Trend Calculation (Last 6 Months)
+        // Consumption Trend Calculation (Always last 6 months for trend context)
         const last6Months = Array.from({ length: 6 }, (_, i) => {
             const date = subMonths(new Date(), i);
             return format(date, 'yyyy-MM');
@@ -174,27 +175,27 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                 ? `${(currentMonthUsage / 1000).toFixed(1)}K`
                 : currentMonthUsage.toFixed(0);
 
-        // Branch Detail Table Data
+        // Branch Detail Table Data (Filtered for recent cycle)
         const branchDetails = branches.filter(b => b.name.toLowerCase() !== 'head office').map(branch => {
             const bCustomers = customers.filter(c => c.branchId === branch.id);
             const bBulkMeters = bulkMeters.filter(bm => bm.branchId === branch.id);
-            const bThisMonthBMs = bBulkMeters.filter(bm => bm.month === currentMonthYear);
-            const bThisMonthCusts = bCustomers.filter(c => c.branchId === branch.id && c.month === currentMonthYear);
+            const bCycleBMs = bBulkMeters.filter(bm => bm.month === recentCycleMonth);
+            const bCycleCusts = bCustomers.filter(c => c.branchId === branch.id && c.month === recentCycleMonth);
 
             const branchReaders = staff.filter(s => s.branchId === branch.id && s.role.toLowerCase() === 'reader').length;
             const branchRoutes = routes.filter(r => r.branchId === branch.id).length;
 
-            const collected = bThisMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length +
-                bThisMonthCusts.filter(c => c.paymentStatus === 'Paid').length;
-            const pending = bThisMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length +
-                bThisMonthCusts.filter(c => c.paymentStatus === 'Unpaid').length;
-            const total = bCustomers.length + bBulkMeters.length;
-            const performance = total > 0 ? Math.round((collected / total) * 100) : 0;
+            const collected = bCycleBMs.filter(bm => bm.paymentStatus === 'Paid').length +
+                bCycleCusts.filter(c => c.paymentStatus === 'Paid').length;
+            const pending = bCycleBMs.filter(bm => bm.paymentStatus === 'Unpaid').length +
+                bCycleCusts.filter(c => c.paymentStatus === 'Unpaid').length;
+            const totalInCycle = bCycleBMs.length + bCycleCusts.length;
+            const performance = totalInCycle > 0 ? Math.round((collected / totalInCycle) * 100) : 0;
 
             return {
                 id: branch.id,
                 name: branch.name.replace(/ Branch$/i, ""),
-                total,
+                total: totalInCycle,
                 collected,
                 pending,
                 readers: branchReaders,
@@ -202,6 +203,13 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                 performance
             };
         });
+
+        // Charts: Customer Data Status (Modernized for Pie/Bar)
+        const dataStatus = [
+            { name: 'Collected', value: collectedCount, color: '#10b981', fill: '#10b981' },
+            { name: 'Pending', value: pendingCount, color: '#f59e0b', fill: '#f59e0b' },
+            { name: 'GPS Encoded', value: gpsEncoded, color: '#3b82f6', fill: '#3b82f6' },
+        ];
 
         return {
             totalCustomers,
@@ -215,12 +223,23 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             currentMonthUsage,
             formattedUsage,
             trendData,
-            trendPercentage
+            trendPercentage,
+            cycleMonth: cycleDisplayText
         };
-    }, [branches, bulkMeters, customers, routes, staff, currentMonthYear, individualReadings, bulkReadings]);
+    }, [branches, bulkMeters, customers, routes, staff, individualReadings, bulkReadings]);
 
     return (
         <div className="space-y-8 animate-in fade-in duration-700">
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Active Cycle:</span>
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-700 px-3 py-1 text-sm font-bold border-none">
+                        {stats.cycleMonth}
+                    </Badge>
+                </div>
+            </div>
+
             {/* Top Stats Cards - Modernized */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <Card className="relative overflow-hidden group border-none shadow-xl bg-gradient-to-br from-blue-600 to-blue-700 text-white transition-all hover:scale-[1.02]">

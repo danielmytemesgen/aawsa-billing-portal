@@ -102,6 +102,7 @@ export default function AdminMeterReadingsPage() {
         meterType: 'individual' as const,
         meterIdentifier: customer ? `${customer.name} (M: ${customer.meterNumber})` : `Cust. ID: ${r.individualCustomerId}`,
         readingValue: r.readingValue,
+        previousReading: r.previousReading || 0,
         readingDate: r.readingDate,
         monthYear: r.monthYear,
         notes: r.notes
@@ -116,6 +117,7 @@ export default function AdminMeterReadingsPage() {
         meterType: 'bulk' as const,
         meterIdentifier: bulkMeter ? `${bulkMeter.name} (M: ${bulkMeter.meterNumber})` : `BM ID: ${r.CUSTOMERKEY}`,
         readingValue: r.readingValue,
+        previousReading: r.previousReading || 0,
         readingDate: r.readingDate,
         monthYear: r.monthYear,
         notes: r.notes
@@ -396,8 +398,8 @@ export default function AdminMeterReadingsPage() {
               customers={allCustomers}
               routes={allRoutes}
               staff={allStaff}
-              individualReadings={individualReadings.map(r => ({ ...r, previousReading: 0 }))} // Simplified as specific usage data isn't directly in DisplayReading
-              bulkReadings={bulkReadings.map(r => ({ ...r, previousReading: 0 }))}
+              individualReadings={individualReadings}
+              bulkReadings={bulkReadings}
             />
           </TabsContent>
         )}

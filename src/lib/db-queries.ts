@@ -147,7 +147,7 @@ export const dbDeleteCustomer = async (customerKeyNumber: string, deletedBy?: st
 };
 
 export const dbGetCustomerById = async (customerKeyNumber: string) => {
-    const rows: any = await query('SELECT * FROM individual_customers WHERE "customerKeyNumber" = $1 AND deleted_at IS NULL', [customerKeyNumber]);
+    const rows: any = await query('SELECT * FROM individual_customers WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL', [customerKeyNumber]);
     return rows[0] ?? null;
 };
 
@@ -172,7 +172,9 @@ export const dbCreateBulkMeter = async (bulkMeter: any) => {
 };
 
 export const dbGetBulkMeterById = async (customerKeyNumber: string) => {
-    const rows: any = await query('SELECT * FROM bulk_meters WHERE "customerKeyNumber" = $1 AND deleted_at IS NULL', [customerKeyNumber]);
+    console.log(`[DB Query] Fetching bulk meter by ID: "${customerKeyNumber}"`);
+    const rows: any = await query('SELECT * FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL', [customerKeyNumber]);
+    console.log(`[DB Query] Result: ${rows.length > 0 ? 'Found' : 'Not Found'}`);
     return rows[0] ?? null;
 }
 
