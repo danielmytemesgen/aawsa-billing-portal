@@ -85,7 +85,7 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
         <div className="min-h-screen bg-gray-50 flex flex-col">
             {/* Header */}
             <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-md sticky top-0 z-50">
-                <div className="container mx-auto px-4 py-4">
+                <div className="w-full px-4 lg:px-8 xl:px-12 py-4">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             {/* Mobile Menu Trigger */}
@@ -192,7 +192,7 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
 
             {/* Desktop Navigation - Hidden on Mobile */}
             <nav className="bg-blue-50 border-b hidden md:block">
-                <div className="container mx-auto px-4">
+                <div className="w-full px-4 lg:px-8 xl:px-12">
                     <div className="flex gap-1">
                         <Link href="/customer/dashboard">
                             <Button variant="ghost" className="gap-2 rounded-none border-b-2 border-transparent hover:border-blue-600 hover:bg-blue-100/50">
@@ -223,13 +223,13 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
             </nav>
 
             {/* Main Content */}
-            <main className="container mx-auto px-4 py-8 flex-1">
+            <main className="w-full px-4 lg:px-8 xl:px-12 py-8 flex-1">
                 {children}
             </main>
 
             {/* Footer */}
             <footer className="bg-white border-t py-6">
-                <div className="container mx-auto px-4 text-center text-sm text-gray-600">
+                <div className="w-full px-4 text-center text-sm text-gray-600">
                     <p>© 2026 Addis Ababa Water and Sewerage Authority. All rights reserved.</p>
                 </div>
             </footer>

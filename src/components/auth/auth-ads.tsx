@@ -53,7 +53,7 @@ export function AuthAds() {
 
     if (isLoading) {
         return (
-            <div className="hidden lg:flex flex-col justify-center max-w-xl w-full pr-12 animate-pulse">
+            <div className="flex flex-col justify-center max-w-xl w-full pr-0 lg:pr-12 animate-pulse mb-8 lg:mb-0">
                 <div className="h-12 w-64 bg-white/10 rounded-lg mb-4" />
                 <div className="h-4 w-full bg-white/5 rounded mb-12" />
                 <Card className="glass-card p-8 border-none h-[220px] opacity-50" />
@@ -64,12 +64,12 @@ export function AuthAds() {
     if (ads.length === 0) return null;
 
     return (
-        <div className="hidden lg:flex flex-col justify-center flex-1 pr-12 animate-in fade-in slide-in-from-left-8 duration-700">
-            <div className="mb-12">
-                <h2 className="text-4xl font-extrabold text-white mb-4 tracking-tight">
+        <div className="flex flex-col justify-center flex-1 pr-0 lg:pr-12 animate-in fade-in slide-in-from-left-8 duration-700 w-full">
+            <div className="mb-8 lg:mb-12 text-center lg:text-left">
+                <h2 className="text-3xl lg:text-4xl font-extrabold text-white mb-4 tracking-tight">
                     Modernizing <span className="text-blue-400 underline decoration-blue-500/30 underline-offset-8">Utility Services</span>
                 </h2>
-                <p className="text-xl text-white/60 font-light leading-relaxed">
+                <p className="text-lg lg:text-xl text-white/60 font-light leading-relaxed max-w-2xl mx-auto lg:mx-0">
                     Access your account, track consumption, and manage payments effortlessly in one unified portal.
                 </p>
             </div>
@@ -118,12 +118,12 @@ export function AuthAds() {
                 </div>
             </Card>
 
-            <div className="mt-12 grid grid-cols-2 gap-6 opacity-60 hover:opacity-100 transition-opacity">
-                <div className="flex items-center gap-3 text-white/80">
+            <div className="mt-8 lg:mt-12 grid grid-cols-1 sm:grid-cols-2 gap-4 lg:gap-6 opacity-60 hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-3 text-white/80 justify-center lg:justify-start">
                     <div className="p-2 rounded-lg bg-white/5"><Calendar className="h-5 w-5" /></div>
                     <span className="text-sm font-medium">Quick Bill Access</span>
                 </div>
-                <div className="flex items-center gap-3 text-white/80">
+                <div className="flex items-center gap-3 text-white/80 justify-center lg:justify-start">
                     <div className="p-2 rounded-lg bg-white/5"><Droplets className="h-5 w-5" /></div>
                     <span className="text-sm font-medium">Usage Analytics</span>
                 </div>
