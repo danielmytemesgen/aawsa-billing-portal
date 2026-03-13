@@ -33,6 +33,7 @@ import { format, parse, isValid } from "date-fns";
 import { getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, useRoutes, fetchRoutes } from "@/lib/data-store";
 import type { Branch } from "../branches/branch-types";
 import type { Route } from "./bulk-meter-types";
+import { Edit, PlusCircle } from "lucide-react";
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_DIALOG_";
 
@@ -177,12 +178,17 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{defaultValues ? "Edit Bulk Meter" : "Add New Bulk Meter"}</DialogTitle>
-          <DialogDescription>
-            {defaultValues ? "Update the details of the bulk meter." : "Fill in the details to add a new bulk meter."}
-          </DialogDescription>
+      <DialogContent className="sm:max-w-[700px] max-h-[95vh] overflow-y-auto rounded-2xl shadow-2xl border-slate-200">
+        <DialogHeader className="pb-6 border-b space-y-4">
+          <div className={`h-14 w-14 ${defaultValues ? 'bg-indigo-100 text-indigo-600' : 'bg-blue-100 text-blue-600'} rounded-2xl flex items-center justify-center mb-2 shadow-sm`}>
+            {defaultValues ? <Edit className="h-7 w-7" /> : <PlusCircle className="h-7 w-7" />}
+          </div>
+          <div>
+            <DialogTitle className="text-2xl font-bold text-slate-900">{defaultValues ? "Edit Bulk Meter" : "Create New Bulk Meter"}</DialogTitle>
+            <DialogDescription className="text-slate-500 font-medium mt-1">
+              {defaultValues ? "Modify the operational details for this high-volume account." : "Register a new bulk meter entry into the billing system."}
+            </DialogDescription>
+          </div>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 py-4">
@@ -651,10 +657,10 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 )}
               />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-              <Button type="submit">
-                {defaultValues ? "Save Changes" : "Add Bulk Meter"}
+            <DialogFooter className="border-t pt-6 mt-4">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="border-slate-200 h-11 px-6 font-semibold">Cancel</Button>
+              <Button type="submit" className="h-11 px-8 font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98]">
+                {defaultValues ? "Save Changes" : "Register Meter"}
               </Button>
             </DialogFooter>
           </form>

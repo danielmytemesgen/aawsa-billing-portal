@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Gauge, Search, MapIcon } from "lucide-react";
+import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -135,10 +135,11 @@ export default function BulkMetersPage() {
   };
 
   const metersForUser = React.useMemo(() => {
+    let baseMeters = bulkMeters;
     if (currentUser?.role?.toLowerCase() === 'staff management' && currentUser.branchId) {
-      return bulkMeters.filter(meter => meter.branchId === currentUser.branchId);
+      baseMeters = bulkMeters.filter(meter => meter.branchId === currentUser.branchId);
     }
-    return bulkMeters;
+    return baseMeters.filter(meter => meter.status !== 'Pending Approval');
   }, [bulkMeters, currentUser]);
 
   const filteredBulkMeters = metersForUser.filter(bm =>
@@ -155,35 +156,96 @@ export default function BulkMetersPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 pb-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <h1 className="text-2xl md:text-3xl font-bold">Bulk Meters Management</h1>
-        <div className="flex gap-2 w-full md:w-auto">
-          {viewMode === 'table' && (
-            <div className="relative flex-grow">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search bulk meters..."
-                className="pl-8 w-full"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Bulk Meters Management</h1>
+          <p className="text-muted-foreground mt-1 text-base">Monitor and organize high-volume water consumption points across all branches.</p>
+        </div>
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+          {hasPermission('bulk_meters_create') && (
+            <Button onClick={handleAddBulkMeter} className="flex-shrink-0 shadow-sm order-1 md:order-2">
+              <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
+            </Button>
           )}
           <Button
             variant="outline"
-            size="sm"
             onClick={() => setViewMode(viewMode === 'table' ? 'map' : 'table')}
+            className="flex-shrink-0 shadow-sm border-slate-200 order-2 md:order-1"
           >
             <MapIcon className="mr-2 h-4 w-4" />
-            {viewMode === 'table' ? 'Map View' : 'Table View'}
+            {viewMode === 'table' ? 'View on Map' : 'Back to Table'}
           </Button>
-          {hasPermission('bulk_meters_create') && (
-            <Button onClick={handleAddBulkMeter} className="flex-shrink-0">
-              <PlusCircle className="mr-2 h-4 w-4" /> Add New
-            </Button>
-          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card className="bg-gradient-to-br from-blue-50 to-white border-blue-100 shadow-sm transition-all hover:shadow-md">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Total Bulk Meters</p>
+                <p className="text-4xl font-extrabold text-slate-900">{metersForUser.length}</p>
+              </div>
+              <div className="h-14 w-14 bg-blue-100/80 rounded-2xl flex items-center justify-center text-blue-600 rotate-3 group-hover:rotate-6 transition-transform">
+                <Gauge className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+              <span className="flex items-center gap-1"><Activity className="h-3 w-3 text-emerald-500" /> All established accounts</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-emerald-50 to-white border-emerald-100 shadow-sm transition-all hover:shadow-md">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest bg-emerald-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Active Meters</p>
+                <p className="text-4xl font-extrabold text-slate-900">{metersForUser.filter(m => m.status === 'Active').length}</p>
+              </div>
+              <div className="h-14 w-14 bg-emerald-100/80 rounded-2xl flex items-center justify-center text-emerald-600 -rotate-3 group-hover:rotate-0 transition-transform">
+                <CheckCircle2 className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+              <span className="flex items-center gap-1 font-bold text-emerald-600">
+                {Math.round((metersForUser.filter(m => m.status === 'Active').length / (metersForUser.length || 1)) * 100)}% 
+              </span>
+              <span className="ml-1 italic">of total meters functional</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-amber-50 to-white border-amber-100 shadow-sm transition-all hover:shadow-md">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-amber-700 uppercase tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Offline / Inactive</p>
+                <p className="text-4xl font-extrabold text-slate-900">{metersForUser.filter(m => m.status !== 'Active').length}</p>
+              </div>
+              <div className="h-14 w-14 bg-amber-100/80 rounded-2xl flex items-center justify-center text-amber-600 rotate-6 transition-transform">
+                <AlertCircle className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+              <span className="flex items-center gap-1 font-semibold text-amber-600">Action required</span>
+              <span className="ml-1 text-slate-400">for {metersForUser.filter(m => m.status !== 'Active').length} accounts</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-6 flex flex-col md:flex-row items-center gap-4">
+        <div className="relative flex-grow w-full">
+          <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+          <Input
+            type="search"
+            placeholder="Search by name, meter #, contract, or branch..."
+            className="pl-12 h-14 w-full shadow-sm border-slate-200 focus-visible:ring-primary/20 text-lg font-medium placeholder:text-slate-400 rounded-xl"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
       </div>
 
@@ -222,12 +284,23 @@ export default function BulkMetersPage() {
       )}
 
       <div className={viewMode === 'table' ? '' : 'hidden'}>
-        <Card className="shadow-lg">
-          <CardHeader>
-            <CardTitle>Bulk Meter List</CardTitle>
-            <CardDescription>View, edit, and manage bulk meter information.</CardDescription>
+        <Card className="shadow-lg border-slate-200 overflow-hidden rounded-2xl">
+          <CardHeader className="bg-slate-50/50 border-b py-6 px-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Activity className="h-5 w-5 text-primary animate-pulse" />
+                  <CardTitle className="text-xl font-bold text-slate-800">Bulk Meter Database</CardTitle>
+                </div>
+                <CardDescription className="text-slate-500 font-medium italic">Directory of registered high-capacity consumption endpoints.</CardDescription>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                <ListFilter className="h-4 w-4 text-slate-400" />
+                <span className="text-sm font-bold text-slate-600">{filteredBulkMeters.length} <span className="text-slate-400 font-normal">Found</span></span>
+              </div>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {isLoading ? (
               <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
                 Loading bulk meters...
@@ -251,19 +324,21 @@ export default function BulkMetersPage() {
               />
             )}
           </CardContent>
-          {filteredBulkMeters.length > 0 && (
-            <TablePagination
-              count={filteredBulkMeters.length}
-              page={page}
-              rowsPerPage={rowsPerPage}
-              onPageChange={setPage}
-              onRowsPerPageChange={(value) => {
-                setRowsPerPage(value);
-                setPage(0);
-              }}
-              rowsPerPageOptions={[5, 10, 25]}
-            />
-          )}
+          <div className="bg-slate-50/50 border-t py-4 px-6">
+            {filteredBulkMeters.length > 0 && (
+              <TablePagination
+                count={filteredBulkMeters.length}
+                page={page}
+                rowsPerPage={rowsPerPage}
+                onPageChange={setPage}
+                onRowsPerPageChange={(value) => {
+                  setRowsPerPage(value);
+                  setPage(0);
+                }}
+                rowsPerPageOptions={[5, 10, 25]}
+              />
+            )}
+          </div>
         </Card>
       </div>
 

@@ -37,6 +37,7 @@ const formSchema = z.object({
 export type KnowledgeBaseFormValues = z.infer<typeof formSchema> & {
   pdfFile?: File; // Include File type for direct access
   pdf_url?: string | null;
+  removePdf?: boolean; // Signal to remove existing PDF
 };
 
 interface KnowledgeBaseFormDialogProps {
@@ -98,6 +99,7 @@ export function KnowledgeBaseFormDialog({ open, onOpenChange, onSubmit, defaultV
     form.setValue("pdfFile", undefined);
     setExistingPdfUrl(null);
     form.clearErrors("pdfFile");
+    form.setValue("removePdf" as any, true); // Use as any if field is added dynamically or ensure registration
   }
 
   return (
@@ -163,7 +165,11 @@ export function KnowledgeBaseFormDialog({ open, onOpenChange, onSubmit, defaultV
                         type="file"
                         accept=".pdf"
                         onChange={(event) => {
-                          onChange(event.target.files && event.target.files[0]);
+                          const file = event.target.files && event.target.files[0];
+                          onChange(file);
+                          if (file) {
+                            form.setValue("removePdf" as any, false);
+                          }
                         }}
                       />
                       {existingPdfUrl && !value && (

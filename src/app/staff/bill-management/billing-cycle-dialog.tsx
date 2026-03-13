@@ -67,6 +67,14 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             return;
         }
 
+        if (!isBulk) {
+            const selectedMeter = bulkMeters.find(m => m.customerKeyNumber === selectedMeterId);
+            if (selectedMeter && selectedMeter.status !== 'Active') {
+                toast({ variant: "destructive", title: "Cannot create bill", description: "Account is not Active. Please approve the account first." });
+                return;
+            }
+        }
+
         setIsProcessing(true);
         try {
             if (isBulk) {
@@ -158,8 +166,11 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                                         <div className="p-2 text-sm text-center text-muted-foreground">No meters found</div>
                                     ) : (
                                         filteredMeters.map(m => (
-                                            <SelectItem key={m.customerKeyNumber} value={m.customerKeyNumber}>
-                                                {m.name} ({m.customerKeyNumber})
+                                            <SelectItem key={m.customerKeyNumber} value={m.customerKeyNumber} disabled={m.status !== 'Active'}>
+                                                <div className="flex items-center justify-between w-full gap-2">
+                                                    <span>{m.name} ({m.customerKeyNumber})</span>
+                                                    {m.status !== 'Active' && <span className="text-[10px] bg-amber-100 text-amber-700 px-1 rounded font-bold uppercase">Pending</span>}
+                                                </div>
                                             </SelectItem>
                                         ))
                                     )}

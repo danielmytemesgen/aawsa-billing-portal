@@ -24,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { createRole } from "@/lib/data-store";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldPlus } from "lucide-react";
 
 interface CreateRoleDialogProps {
   open: boolean;
@@ -70,11 +70,14 @@ export function CreateRoleDialog({ open, onOpenChange }: CreateRoleDialogProps) 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Create New Role</DialogTitle>
-          <DialogDescription>
-            Enter a name for the new role. You can assign permissions after creation.
+      <DialogContent className="sm:max-w-[425px] rounded-xl shadow-2xl border-slate-200">
+        <DialogHeader className="space-y-3">
+          <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center text-primary mb-2">
+            <ShieldPlus className="h-6 w-6" />
+          </div>
+          <DialogTitle className="text-xl font-bold">Create New Role</DialogTitle>
+          <DialogDescription className="text-slate-500">
+            Define a high-level role name. You will be able to granularly assign permissions in the main dashboard after creation.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -96,8 +99,8 @@ export function CreateRoleDialog({ open, onOpenChange }: CreateRoleDialogProps) 
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              <Button type="submit" disabled={isSubmitting} className="shadow-md">
+                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldPlus className="mr-2 h-4 w-4" />}
                 {isSubmitting ? "Creating..." : "Create Role"}
               </Button>
             </DialogFooter>

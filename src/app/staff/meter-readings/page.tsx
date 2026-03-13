@@ -134,7 +134,8 @@ export default function StaffMeterReadingsPage() {
             meterId: r.individualCustomerId,
             meterType: 'individual' as const,
             meterIdentifier: customer ? `${customer.name} (M: ${customer.meterNumber})` : `Cust ID ${r.individualCustomerId}`,
-            readingValue: r.readingValue, readingDate: r.readingDate, monthYear: r.monthYear, notes: r.notes
+            readingValue: r.readingValue, readingDate: r.readingDate, monthYear: r.monthYear, notes: r.notes,
+            previousReading: r.previousReading ?? 0,
           };
         }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
@@ -147,7 +148,8 @@ export default function StaffMeterReadingsPage() {
             meterId: r.CUSTOMERKEY,
             meterType: 'bulk' as const,
             meterIdentifier: bulkMeter ? `${bulkMeter.name} (M: ${bulkMeter.meterNumber})` : `BM ID ${r.CUSTOMERKEY}`,
-            readingValue: r.readingValue, readingDate: r.readingDate, monthYear: r.monthYear, notes: r.notes
+            readingValue: r.readingValue, readingDate: r.readingDate, monthYear: r.monthYear, notes: r.notes,
+            previousReading: r.previousReading ?? 0,
           };
         }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 

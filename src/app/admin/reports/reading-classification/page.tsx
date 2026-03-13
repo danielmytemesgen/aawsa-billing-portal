@@ -13,7 +13,8 @@ import {
     ArrowDownRight,
     Minus,
     AlertTriangle,
-    RefreshCw
+    RefreshCw,
+    Eye
 } from "lucide-react";
 import {
     getIndividualCustomerReadings,
@@ -41,9 +42,9 @@ import { getAllFaultCodes } from "@/lib/fault-codes";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
+import { ReadingDetailsDialog, type ReadingData } from "@/components/reading-details-dialog";
 
 type ReadingCategory = 'Increase' | 'Decrease' | 'Zero' | 'Fault';
-
 
 interface ReadingRecord {
     id: string;
@@ -61,6 +62,41 @@ interface ReadingRecord {
     route: string;
     meterType: 'Individual' | 'Bulk';
 }
+
+const ClassificationBadge = ({ category, faultCode }: { category: ReadingCategory, faultCode?: string }) => {
+    switch (category) {
+        case 'Increase':
+            return (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-100">
+                    <ArrowUpRight className="h-3 w-3" />
+                    Increase
+                </div>
+            );
+        case 'Decrease':
+            return (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-bold border border-amber-100">
+                    <ArrowDownRight className="h-3 w-3" />
+                    Decrease
+                </div>
+            );
+        case 'Zero':
+            return (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-gray-50 text-gray-500 text-[11px] font-bold border border-gray-200">
+                    <Minus className="h-3 w-3" />
+                    Zero
+                </div>
+            );
+        case 'Fault':
+            return (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 text-[11px] font-bold border border-red-100">
+                    <AlertTriangle className="h-3 w-3" />
+                    Fault ({faultCode || 'OVF'})
+                </div>
+            );
+        default:
+            return null;
+    }
+};
 
 export default function ReadingClassificationPage() {
     const { hasPermission } = usePermissions();
@@ -81,6 +117,8 @@ export default function ReadingClassificationPage() {
     const [isLoading, setIsLoading] = React.useState(true);
     const [readings, setReadings] = React.useState<ReadingRecord[]>([]);
     const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);
+    const [selectedReading, setSelectedReading] = React.useState<ReadingData | null>(null);
+    const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
 
     // Filters
     const [searchTerm, setSearchTerm] = React.useState("");
@@ -89,6 +127,66 @@ export default function ReadingClassificationPage() {
     const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
     const [selectedBranch, setSelectedBranch] = React.useState<string>('all');
     const [selectedRoute, setSelectedRoute] = React.useState<string>('all');
+
+    const handleViewDetails = (r: ReadingRecord) => {
+        const mappedData: ReadingData = {
+            id: r.id,
+            meterIdentifier: r.customerName,
+            meterId: r.customerKey,
+            meterType: r.meterType,
+            previousReading: r.previousReading,
+            currentReading: r.currentReading,
+            usage: r.usage,
+            readingDate: r.date,
+            monthYear: r.month,
+            faultCode: r.faultCode,
+            readerName: r.readerName,
+            branchName: r.branchName
+        };
+        setSelectedReading(mappedData);
+        setIsDetailsOpen(true);
+    };
+
+    const processReading = (r: any, type: 'Individual' | 'Bulk', customers: any[], staff: any[], branches: any[], bulkMeters: any[]): ReadingRecord => {
+        const customerKey = type === 'Individual' ? r.individualCustomerId : r.CUSTOMERKEY;
+        const customer = type === 'Individual' 
+            ? customers.find(c => c.customerKeyNumber === customerKey)
+            : bulkMeters.find(bm => bm.customerKeyNumber === customerKey);
+            
+        const reader = staff.find(s => s.id === r.readerStaffId || s.email === r.readerStaffId);
+        const branch = branches.find(b => b.id === (type === 'Individual' ? customer?.branchId : customer?.branchId));
+
+        const prev = Number(r.previousReading) || 0;
+        const curr = Number(r.readingValue) || 0;
+        const usage = curr - prev;
+
+        let category: ReadingCategory = 'Increase';
+        const fault = r.faultCode || (r as any).FAULT_CODE;
+        if (fault) {
+            category = 'Fault';
+        } else if (usage === 0) {
+            category = 'Zero';
+        } else if (usage < 0) {
+            category = 'Decrease';
+        }
+
+        return {
+            id: r.id,
+            date: r.readingDate,
+            month: r.monthYear,
+            customerKey: customerKey,
+            customerName: type === 'Individual' ? (customer?.name || r.custName || 'Unknown') : (customer?.name || 'Unknown Bulk Meter'),
+            previousReading: prev,
+            currentReading: curr,
+            usage: usage,
+            category: category,
+            faultCode: fault,
+            readerName: reader?.name || r.readerStaffId || 'System',
+            branchName: branch?.name || 'N/A',
+            route: type === 'Individual' ? (r.roundKey || (customer as any)?.bookNumber || 'N/A') : (r.roundKey || (customer as any)?.routeKey || 'N/A'),
+            meterType: type
+        };
+    };
 
     const fetchData = React.useCallback(async () => {
         setIsLoading(true);
@@ -109,82 +207,11 @@ export default function ReadingClassificationPage() {
             const staff = getStaffMembers();
             const branches = getBranches();
 
-            const processed: ReadingRecord[] = [];
+            const indProcessed = indReadings.map(r => processReading(r, 'Individual', customers, staff, branches, []));
+            const bulkProcessed = bulkReadings.map(r => processReading(r, 'Bulk', [], staff, branches, bms));
 
-            // Process Individual Readings
-            indReadings.forEach(r => {
-                const customer = customers.find(c => c.customerKeyNumber === r.individualCustomerId);
-                const reader = staff.find(s => s.id === r.readerStaffId || s.email === r.readerStaffId);
-                const branch = branches.find(b => b.id === customer?.branchId);
-
-                const prev = Number(r.previousReading) || 0;
-                const curr = Number(r.readingValue) || 0;
-                const usage = curr - prev;
-
-                let category: ReadingCategory = 'Increase';
-                if (r.faultCode || (r as any).FAULT_CODE) {
-                    category = 'Fault';
-                } else if (usage === 0) {
-                    category = 'Zero';
-                } else if (usage < 0) {
-                    category = 'Decrease';
-                }
-
-                processed.push({
-                    id: r.id,
-                    date: r.readingDate,
-                    month: r.monthYear,
-                    customerKey: r.individualCustomerId,
-                    customerName: customer?.name || r.custName || 'Unknown',
-                    previousReading: prev,
-                    currentReading: curr,
-                    usage: usage,
-                    category: category,
-                    faultCode: r.faultCode || (r as any).FAULT_CODE,
-                    readerName: reader?.name || r.readerStaffId || 'System',
-                    branchName: branch?.name || 'N/A',
-                    route: r.roundKey || (customer as any)?.bookNumber || 'N/A',
-                    meterType: 'Individual'
-                });
-            });
-
-            // Process Bulk Readings
-            bulkReadings.forEach(r => {
-                const meter = bms.find(bm => bm.customerKeyNumber === r.CUSTOMERKEY);
-                const reader = staff.find(s => s.id === r.readerStaffId || s.email === r.readerStaffId);
-                const branch = branches.find(b => b.id === meter?.branchId);
-
-                const prev = Number(r.previousReading) || 0;
-                const curr = Number(r.readingValue) || 0;
-                const usage = curr - prev;
-
-                let category: ReadingCategory = 'Increase';
-                if (r.faultCode || (r as any).FAULT_CODE) {
-                    category = 'Fault';
-                } else if (usage === 0) {
-                    category = 'Zero';
-                } else if (usage < 0) {
-                    category = 'Decrease';
-                }
-
-                processed.push({
-                    id: r.id,
-                    date: r.readingDate,
-                    month: r.monthYear,
-                    customerKey: r.CUSTOMERKEY,
-                    customerName: meter?.name || 'Unknown Bulk Meter',
-                    previousReading: prev,
-                    currentReading: curr,
-                    usage: usage,
-                    category: category,
-                    faultCode: r.faultCode || (r as any).FAULT_CODE,
-                    readerName: reader?.name || r.readerStaffId || 'System',
-                    branchName: branch?.name || 'N/A',
-                    route: r.roundKey || (meter as any)?.routeKey || 'N/A',
-                    meterType: 'Bulk'
-                });
-            });
-
+            const processed = [...indProcessed, ...bulkProcessed];
+            
             // Sort by date descending
             processed.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
             setReadings(processed);
@@ -282,6 +309,12 @@ export default function ReadingClassificationPage() {
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
+            <ReadingDetailsDialog 
+                open={isDetailsOpen} 
+                onOpenChange={setIsDetailsOpen} 
+                reading={selectedReading} 
+            />
+
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Reading Analytics Report</h1>
@@ -382,7 +415,7 @@ export default function ReadingClassificationPage() {
                         </div>
                     </div>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="p-0 text-primary">
                     <div className="overflow-x-auto">
                         <Table>
                             <TableHeader className="bg-gray-50/50">
@@ -395,20 +428,21 @@ export default function ReadingClassificationPage() {
                                     <TableHead className="font-bold px-6">Classification</TableHead>
                                     <TableHead className="font-bold text-center">Route</TableHead>
                                     <TableHead className="font-bold">Reader / Branch</TableHead>
+                                    <TableHead className="font-bold text-right">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {isLoading ? (
                                     Array.from({ length: 5 }).map((_, i) => (
                                         <TableRow key={i}>
-                                            <TableCell colSpan={7} className="h-12">
+                                            <TableCell colSpan={9} className="h-12">
                                                 <div className="h-4 w-full bg-gray-100 animate-pulse rounded" />
                                             </TableCell>
                                         </TableRow>
                                     ))
                                 ) : filteredReadings.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="h-40 text-center text-muted-foreground font-medium">
+                                        <TableCell colSpan={9} className="h-40 text-center text-muted-foreground font-medium">
                                             No reading records found matching your filters.
                                         </TableCell>
                                     </TableRow>
@@ -442,30 +476,7 @@ export default function ReadingClassificationPage() {
                                             </TableCell>
                                             <TableCell className="px-6">
                                                 <div className="flex items-center gap-2">
-                                                    {r.category === 'Increase' && (
-                                                        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-100">
-                                                            <ArrowUpRight className="h-3 w-3" />
-                                                            Increase
-                                                        </div>
-                                                    )}
-                                                    {r.category === 'Decrease' && (
-                                                        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-bold border border-amber-100">
-                                                            <ArrowDownRight className="h-3 w-3" />
-                                                            Decrease
-                                                        </div>
-                                                    )}
-                                                    {r.category === 'Zero' && (
-                                                        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-gray-50 text-gray-500 text-[11px] font-bold border border-gray-200">
-                                                            <Minus className="h-3 w-3" />
-                                                            Zero
-                                                        </div>
-                                                    )}
-                                                    {r.category === 'Fault' && (
-                                                        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 text-[11px] font-bold border border-red-100">
-                                                            <AlertTriangle className="h-3 w-3" />
-                                                            Fault ({r.faultCode || 'OVF'})
-                                                        </div>
-                                                    )}
+                                                    <ClassificationBadge category={r.category} faultCode={r.faultCode} />
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-center font-bold text-gray-500">
@@ -476,6 +487,16 @@ export default function ReadingClassificationPage() {
                                                     <span className="text-sm font-bold text-gray-700">{r.readerName}</span>
                                                     <span className="text-xs text-muted-foreground">{r.branchName}</span>
                                                 </div>
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button 
+                                                    variant="ghost" 
+                                                    size="icon" 
+                                                    className="h-8 w-8 hover:bg-blue-50 hover:text-blue-600 rounded-full transition-all"
+                                                    onClick={() => handleViewDetails(r)}
+                                                >
+                                                    <Eye className="h-4 w-4" />
+                                                </Button>
                                             </TableCell>
                                         </TableRow>
                                     ))

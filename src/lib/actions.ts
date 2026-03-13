@@ -573,6 +573,19 @@ export async function createBillAction(bill: BillInsert) {
       bill.TOTALBILLAMOUNT = (bill.THISMONTHBILLAMT || 0) + (bill.OUTSTANDINGAMT || 0);
     }
 
+    // [ANTI-GRAVITY] - Status Check: Ensure account is Active before billing
+    if (bill.CUSTOMERKEY) {
+      const bm = await dbGetBulkMeterById(bill.CUSTOMERKEY);
+      if (bm && bm.status !== 'Active') {
+        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      }
+    } else if (bill.individual_customer_id) {
+      const cust = await dbGetCustomerById(bill.individual_customer_id);
+      if (cust && cust.status !== 'Active') {
+        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      }
+    }
+
     const result = await dbCreateBill(bill);
 
     // Generate and update BILLKEY
@@ -623,6 +636,19 @@ export async function closeBillingCycleAction(payload: {
       billToInsert.OUTSTANDINGAMT = billToInsert.balance_carried_forward || 0;
     }
     billToInsert.TOTALBILLAMOUNT = (billToInsert.THISMONTHBILLAMT || 0) + (billToInsert.OUTSTANDINGAMT || 0);
+
+    // [ANTI-GRAVITY] - Status Check: Ensure account is Active before billing
+    if (billToInsert.CUSTOMERKEY) {
+      const bm = await dbGetBulkMeterById(billToInsert.CUSTOMERKEY);
+      if (bm && bm.status !== 'Active') {
+        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      }
+    } else if (billToInsert.individual_customer_id) {
+      const cust = await dbGetCustomerById(billToInsert.individual_customer_id);
+      if (cust && cust.status !== 'Active') {
+        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      }
+    }
 
     const billResult = await dbCreateBill(billToInsert);
 

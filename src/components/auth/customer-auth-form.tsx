@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import Image from "next/image";
 import {
     Card,
     CardContent,
@@ -119,6 +120,18 @@ export function CustomerAuthForm() {
     return (
         <Card className="w-full max-w-lg glass-card p-6 border-none">
             <CardHeader className="text-center pt-8 pb-12">
+                <div className="flex justify-center mb-6">
+                    <div className="bg-white p-2 rounded-xl shadow-lg inline-flex items-center justify-center">
+                        <Image
+                            src="https://veiethiopia.com/photo/partner/par2.png"
+                            alt="AAWSA Logo"
+                            width={80}
+                            height={50}
+                            className="object-contain"
+                            priority
+                        />
+                    </div>
+                </div>
                 <CardTitle className="text-3xl font-bold text-white tracking-wide">
                     <span className="font-extrabold">CUSTOMER</span>{' '}
                     <span className="font-light opacity-80 text-2xl">Portal Access</span>

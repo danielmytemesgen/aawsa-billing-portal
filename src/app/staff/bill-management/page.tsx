@@ -236,10 +236,8 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
 
     // Stats Calculations based on filtered data
     const getBillTotalPayable = (b: any) => {
-        const arrears = (Number(b.debit_30 || b.debit30 || 0)) +
-            (Number(b.debit_30_60 || b.debit30_60 || 0)) +
-            (Number(b.debit_60 || b.debit60 || 0));
-        return (Number(b.TOTALBILLAMOUNT) || 0) + arrears;
+        // Fix #2: TOTALBILLAMOUNT already includes arrears/outstanding, so don't add them again.
+        return (Number(b.TOTALBILLAMOUNT) || 0);
     };
 
     const totalOutstandingUnpaid = filteredForStats
@@ -259,6 +257,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
     const pendingTotalAmount = filteredForStats
         .filter(b => b.status === 'Pending')
         .reduce((sum, b) => sum + getBillTotalPayable(b), 0);
+    const postedBillsCount = filteredForStats.filter(b => b.status === 'Posted').length;
 
     const myDraftsCount = filteredForStats.filter(b => b.status === 'Draft' || !b.status).length;
     const reworkItemsCount = filteredForStats.filter(b => b.status === 'Rework').length;
@@ -364,21 +363,21 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatsCard
                     title="Drafts & Rework"
-                    value={`ETB ${draftTotalAmount.toLocaleString()}`}
+                    value={`ETB ${draftTotalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     count={myDrafts.length + reworkItems.length}
                     icon={<Clock className="h-5 w-5 text-blue-500" />}
                     color="blue"
                 />
                 <StatsCard
                     title="Pending Approval"
-                    value={`ETB ${pendingTotalAmount.toLocaleString()}`}
+                    value={`ETB ${pendingTotalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     count={pendingApprovals.length}
                     icon={<AlertCircle className="h-5 w-5 text-amber-500" />}
                     color="amber"
                 />
                 <StatsCard
                     title="Total Outstanding"
-                    value={`ETB ${totalOutstandingUnpaid.toLocaleString()}`}
+                    value={`ETB ${totalOutstandingUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     count={filteredOutstanding.length}
                     icon={<DollarSign className="h-5 w-5 text-red-500" />}
                     color="red"
@@ -405,6 +404,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
                 pendingApprovals={pendingApprovals}
                 reworkItems={reworkItems}
                 approvedBills={approvedBills}
+                postedCount={postedBillsCount}
                 role={role}
                 basePath={basePath}
                 showApprovals={canViewPending}
@@ -668,7 +668,7 @@ function BillTable({ bills, onDelete, router }: { bills: any[], onDelete: (id: s
                         const currentOutstanding = (Number(bill.debit_30 || bill.debit30 || 0)) +
                             (Number(bill.debit_30_60 || bill.debit30_60 || 0)) +
                             (Number(bill.debit_60 || bill.debit60 || 0));
-                        const totalPayable = (Number(bill.TOTALBILLAMOUNT) || 0) + currentOutstanding;
+                        const totalPayable = (Number(bill.TOTALBILLAMOUNT) || 0);
 
                         return (
                             <TableRow key={bill.id}>

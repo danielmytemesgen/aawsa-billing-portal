@@ -59,14 +59,14 @@ export default function IndividualCustomersPage() {
       initializeCustomers(true),
       initializeBranches(true)
     ]).then(() => {
-      setBulkMetersList(getBulkMeters().map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBulkMetersList(getBulkMeters().filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
       setCustomers(getCustomers());
       setBranches(getBranches());
       setIsLoading(false);
     });
 
     const unsubscribeBulkMeters = subscribeToBulkMeters((updatedBulkMeters) => {
-      setBulkMetersList(updatedBulkMeters.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBulkMetersList(updatedBulkMeters.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
     });
     const unsubscribeCustomers = subscribeToCustomers((updatedCustomers) => {
       setCustomers(updatedCustomers);
@@ -150,10 +150,11 @@ export default function IndividualCustomersPage() {
   };
 
   const customersForUser = React.useMemo(() => {
+    let baseCustomers = customers;
     if (currentUser?.role?.toLowerCase() === 'staff management' && currentUser.branchId) {
-      return customers.filter(customer => customer.branchId === currentUser.branchId);
+      baseCustomers = customers.filter(customer => customer.branchId === currentUser.branchId);
     }
-    return customers;
+    return baseCustomers.filter(customer => customer.status !== 'Pending Approval');
   }, [customers, currentUser]);
 
   const filteredCustomers = customersForUser.filter(customer => {

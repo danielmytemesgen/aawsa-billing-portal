@@ -109,8 +109,8 @@ const PrintableBill = ({ bill, relatedData }: { bill: Bill, relatedData: any }) 
                     </div>
 
                     <div className="border-t border-black pt-4 grid grid-cols-2 gap-y-2">
-                        <span className="font-bold">Bulk Meter Category:</span> <span className="text-right">{relatedData?.charge_group || 'Domestic'}</span>
-                        <span className="font-bold">Sewerage Connection:</span> <span className="text-right">{relatedData?.sewerage_connection || 'No'}</span>
+                        <span className="font-bold">Bulk Meter Category:</span> <span className="text-right">{relatedData?.chargeGroup || relatedData?.customerType || 'Domestic'}</span>
+                        <span className="font-bold">Sewerage Connection:</span> <span className="text-right">{relatedData?.sewerageConnection || 'No'}</span>
                         <span className="font-bold">Number of Assigned Individual Customers:</span> <span className="text-right">0</span>
                         <span className="font-bold">Previous / Current reading:</span> <span className="text-right">{Number(bill.PREVREAD).toFixed(2)} / {Number(bill.CURRREAD).toFixed(2)} m³</span>
                         <span className="font-bold">Billing usage:</span> <span className="text-right">{Number(bill.CONS).toFixed(2)} m³</span>

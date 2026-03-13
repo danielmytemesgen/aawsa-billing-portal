@@ -22,7 +22,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { DomainFaultCode, getFaultCodes, subscribeToFaultCodes, removeFaultCode } from "@/lib/data-store";
-import { Plus, MoreHorizontal, Pencil, Trash2, Search, AlertTriangle } from "lucide-react";
+import { PlusCircle, MoreHorizontal, Pencil, Trash2, Search, AlertTriangle, ListFilter, Hash, Tag, Activity, ChevronLeft, ChevronRight } from "lucide-react";
 import { FaultCodeDialog } from "./fault-code-dialog";
 import {
     AlertDialog,
@@ -124,84 +124,120 @@ export default function FaultCodesPage() {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-8 pb-10">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
-                    <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Fault Codes</h1>
-                    <p className="text-muted-foreground">Manage error codes and status flags for meter readings.</p>
+                    <h1 className="text-3xl font-bold tracking-tight">Fault Codes</h1>
+                    <p className="text-muted-foreground mt-1">Manage error codes and status flags for meter readings.</p>
                 </div>
                 {canManage && (
-                    <Button onClick={handleCreate}>
-                        <Plus className="mr-2 h-4 w-4" /> Add Fault Code
+                    <Button onClick={handleCreate} className="shadow-sm">
+                        <PlusCircle className="mr-2 h-4 w-4" /> Add Fault Code
                     </Button>
                 )}
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card className="bg-gradient-to-br from-blue-50 to-white border-blue-100 shadow-sm transition-all hover:shadow-md">
+                    <CardContent className="pt-6">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-100/50 px-2 py-0.5 rounded-sm inline-block mb-1">Total Codes</p>
+                                <p className="text-4xl font-extrabold mt-1 text-slate-900">{data.length}</p>
+                            </div>
+                            <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                                <Hash className="h-6 w-6" />
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-indigo-50 to-white border-indigo-100 shadow-sm transition-all hover:shadow-md">
+                    <CardContent className="pt-6">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs font-bold text-indigo-700 uppercase tracking-widest bg-indigo-100/50 px-2 py-0.5 rounded-sm inline-block mb-1">Categories</p>
+                                <p className="text-4xl font-extrabold mt-1 text-slate-900">
+                                    {new Set(data.map(d => d.category).filter(Boolean)).size}
+                                </p>
+                            </div>
+                            <div className="h-12 w-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
+                                <Tag className="h-6 w-6" />
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
             <Card>
-                <CardHeader>
-                    <CardTitle>Fault Code List</CardTitle>
+                <CardHeader className="bg-slate-50/50 border-b">
+                    <div className="flex items-center gap-2">
+                        <Activity className="h-5 w-5 text-primary" />
+                        <CardTitle>System Fault Codes</CardTitle>
+                    </div>
                     <CardDescription>
-                        List of all registered fault codes in the system.
+                        Configuration of terminal error signals and reading status flags.
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
-                    <div className="mb-4 flex items-center gap-2">
-                        <Search className="h-4 w-4 text-muted-foreground" />
+                <CardContent className="pt-6">
+                    <div className="mb-6 relative">
+                        <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                         <Input
                             placeholder="Search by code, description, or category..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="max-w-md"
+                            className="pl-10 h-11 border-slate-200 focus-visible:ring-primary/20 text-base"
                         />
                     </div>
 
-                    <div className="rounded-md border">
+                    <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm bg-white">
                         <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead className="w-[100px]">Code</TableHead>
-                                    <TableHead>Description</TableHead>
-                                    <TableHead>Category</TableHead>
-                                    <TableHead className="w-[100px] text-right">Actions</TableHead>
+                            <TableHeader className="bg-slate-50/80">
+                                <TableRow className="hover:bg-transparent border-b">
+                                    <TableHead className="w-[120px] font-bold text-slate-800 py-4">Code Identifier</TableHead>
+                                    <TableHead className="font-bold text-slate-800">Fault Description</TableHead>
+                                    <TableHead className="font-bold text-slate-800">Category Tag</TableHead>
+                                    <TableHead className="w-[100px] text-right font-bold text-slate-800">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {paginatedData.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={4} className="h-24 text-center">
-                                            No results found.
+                                        <TableCell colSpan={4} className="h-32 text-center text-slate-500 italic">
+                                            No matching fault codes found.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
                                     paginatedData.map((item) => (
-                                        <TableRow key={item.id}>
-                                            <TableCell className="font-medium">
-                                                <Badge variant="outline" className="font-mono">{item.code}</Badge>
+                                        <TableRow key={item.id} className="hover:bg-slate-50/50 group transition-colors border-b last:border-0">
+                                            <TableCell className="py-5">
+                                                <Badge variant="outline" className="font-mono text-sm px-3 py-1 bg-slate-50 text-slate-900 border-slate-200 shadow-sm group-hover:bg-white transition-colors">
+                                                    {item.code}
+                                                </Badge>
                                             </TableCell>
-                                            <TableCell>{item.description || <span className="text-muted-foreground italic">No description</span>}</TableCell>
-                                            <TableCell>{item.category || "-"}</TableCell>
-                                            <TableCell className="text-right">
-                                                <DropdownMenu>
-                                                    <DropdownMenuTrigger asChild>
-                                                        <Button variant="ghost" className="h-8 w-8 p-0">
-                                                            <span className="sr-only">Open menu</span>
-                                                            <MoreHorizontal className="h-4 w-4" />
-                                                        </Button>
-                                                    </DropdownMenuTrigger>
-                                                    <DropdownMenuContent align="end">
-                                                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                                        <DropdownMenuItem onClick={() => handleEdit(item)} disabled={!canManage}>
-                                                            <Pencil className="mr-2 h-4 w-4" /> Edit
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuItem
-                                                            onClick={() => handleDeleteClick(item.id)}
-                                                            disabled={!canManage}
-                                                            className="text-destructive focus:text-destructive"
-                                                        >
-                                                            <Trash2 className="mr-2 h-4 w-4" /> Delete
-                                                        </DropdownMenuItem>
-                                                    </DropdownMenuContent>
-                                                </DropdownMenu>
+                                            <TableCell className="py-5">
+                                                <div className="font-semibold text-slate-900 text-sm">
+                                                    {item.description || "N/A"}
+                                                </div>
+                                                {!item.description && <span className="text-xs text-slate-400 italic">No description provided</span>}
+                                            </TableCell>
+                                            <TableCell className="py-5">
+                                                {item.category ? (
+                                                    <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-100 text-xs font-bold px-2.5 py-0.5">
+                                                        {item.category}
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs">—</span>
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="text-right py-5">
+                                                <div className="flex justify-end gap-2">
+                                                    <Button variant="ghost" size="icon" className="h-9 w-9 hover:bg-blue-50 hover:text-blue-600 border border-transparent hover:border-blue-100 transition-all" onClick={() => handleEdit(item)} disabled={!canManage}>
+                                                        <Pencil className="h-4 w-4" />
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-9 w-9 hover:bg-red-50 hover:text-red-600 border border-transparent hover:border-red-100 transition-all text-slate-400" onClick={() => handleDeleteClick(item.id)} disabled={!canManage}>
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -209,9 +245,9 @@ export default function FaultCodesPage() {
                             </TableBody>
                         </Table>
                     </div>
-                    <div className="flex items-center justify-between mt-4">
-                        <div className="text-sm text-muted-foreground">
-                            Showing {filteredData.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} entries
+                    <div className="flex items-center justify-between mt-6 border-t pt-4">
+                        <div className="text-sm font-medium text-slate-500">
+                            Showing <span className="text-slate-900 font-bold">{filteredData.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}</span> to <span className="text-slate-900 font-bold">{Math.min(currentPage * itemsPerPage, filteredData.length)}</span> of <span className="text-slate-900 font-bold">{filteredData.length}</span> tokens
                         </div>
                         <div className="flex items-center space-x-2">
                             <Button
@@ -219,7 +255,9 @@ export default function FaultCodesPage() {
                                 size="sm"
                                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                 disabled={currentPage === 1}
+                                className="h-9 px-4 border-slate-200"
                             >
+                                <ChevronLeft className="h-4 w-4 mr-1" />
                                 Previous
                             </Button>
                             <Button
@@ -227,8 +265,10 @@ export default function FaultCodesPage() {
                                 size="sm"
                                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                 disabled={currentPage === totalPages || totalPages === 0}
+                                className="h-9 px-4 border-slate-200"
                             >
                                 Next
+                                <ChevronRight className="h-4 w-4 ml-1" />
                             </Button>
                         </div>
                     </div>
@@ -249,10 +289,10 @@ export default function FaultCodesPage() {
                             This action cannot be undone. This will permanently delete the fault code.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                            Delete
+                    <AlertDialogFooter className="pt-2">
+                        <AlertDialogCancel className="border-slate-200">Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={confirmDelete} className="bg-red-600 text-white hover:bg-red-700 shadow-lg shadow-red-200 border-none transition-all">
+                            Confirm Deletion
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

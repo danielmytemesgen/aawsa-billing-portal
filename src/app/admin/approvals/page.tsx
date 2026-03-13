@@ -25,7 +25,7 @@ import type { StaffMember } from "../staff-management/staff-types";
 import type { Branch } from "../branches/branch-types";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-import { Check, Frown, Lock, ShieldCheck, UserCheck, FileEdit } from "lucide-react";
+import { Check, Frown, Lock, ShieldCheck, UserCheck, FileEdit, CheckCircle, Loader2 } from "lucide-react";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "../individual-customers/individual-customer-form-dialog";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "../bulk-meters/bulk-meter-form-dialog";
 import { IndividualCustomerTable } from "../individual-customers/individual-customer-table";
@@ -60,6 +60,11 @@ export default function ApprovalsPage() {
   // Pagination state for bulk meters
   const [bulkMeterPage, setBulkMeterPage] = React.useState(0);
   const [bulkMeterRowsPerPage, setBulkMeterRowsPerPage] = React.useState(10);
+
+  // Bulk approval state
+  const [isBulkCustomerDialogOpen, setIsBulkCustomerDialogOpen] = React.useState(false);
+  const [isBulkMeterDialogOpen, setIsBulkMeterDialogOpen] = React.useState(false);
+  const [isProcessingBulk, setIsProcessingBulk] = React.useState(false);
 
 
   React.useEffect(() => {
@@ -150,6 +155,50 @@ export default function ApprovalsPage() {
   const updateBulkMeter = async (key: string, data: Partial<BulkMeter>) => {
     const { updateBulkMeter: _u } = await import('@/lib/data-store');
     return _u(key, data);
+  };
+
+  const handleBulkApproveCustomers = async () => {
+    if (pendingCustomers.length === 0 || !currentUser) return;
+    setIsProcessingBulk(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const customer of pendingCustomers) {
+      const result = await approveCustomer(customer.customerKeyNumber, currentUser.id);
+      if (result.success) successCount++;
+      else failCount++;
+    }
+
+    toast({
+      title: "Bulk Approval Complete",
+      description: `Successfully approved ${successCount} customers.${failCount > 0 ? ` Failed to approve ${failCount}.` : ""}`,
+      variant: failCount > 0 ? "destructive" : "default"
+    });
+
+    setIsProcessingBulk(false);
+    setIsBulkCustomerDialogOpen(false);
+  };
+
+  const handleBulkApproveBulkMeters = async () => {
+    if (pendingBulkMeters.length === 0 || !currentUser) return;
+    setIsProcessingBulk(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const meter of pendingBulkMeters) {
+      const result = await approveBulkMeter(meter.customerKeyNumber, currentUser.id);
+      if (result.success) successCount++;
+      else failCount++;
+    }
+
+    toast({
+      title: "Bulk Approval Complete",
+      description: `Successfully approved ${successCount} bulk meters.${failCount > 0 ? ` Failed to approve ${failCount}.` : ""}`,
+      variant: failCount > 0 ? "destructive" : "default"
+    });
+
+    setIsProcessingBulk(false);
+    setIsBulkMeterDialogOpen(false);
   };
 
   const confirmAction = async () => {
@@ -254,11 +303,23 @@ export default function ApprovalsPage() {
       </div>
 
       <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Pending Individual Customers</CardTitle>
-          <CardDescription>
-            The following customers have been added by staff and are awaiting your approval to become active.
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <div className="space-y-1">
+            <CardTitle>Pending Individual Customers</CardTitle>
+            <CardDescription>
+              The following customers have been added by staff and are awaiting your approval to become active.
+            </CardDescription>
+          </div>
+          {pendingCustomers.length > 0 && hasPermission('customers_approve') && (
+            <Button 
+              size="sm" 
+              className="bg-green-600 hover:bg-green-700 text-white shadow-sm"
+              onClick={() => setIsBulkCustomerDialogOpen(true)}
+            >
+              <CheckCircle className="mr-2 h-4 w-4" />
+              Approve All {pendingCustomers.length}
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -298,11 +359,23 @@ export default function ApprovalsPage() {
       </Card>
 
       <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Pending Bulk Meters</CardTitle>
-          <CardDescription>
-            The following bulk meters have been added by staff and are awaiting your approval.
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <div className="space-y-1">
+            <CardTitle>Pending Bulk Meters</CardTitle>
+            <CardDescription>
+              The following bulk meters have been added by staff and are awaiting your approval.
+            </CardDescription>
+          </div>
+          {pendingBulkMeters.length > 0 && hasPermission('bulk_meters_approve') && (
+            <Button 
+              size="sm" 
+              className="bg-green-600 hover:bg-green-700 text-white shadow-sm"
+              onClick={() => setIsBulkMeterDialogOpen(true)}
+            >
+              <CheckCircle className="mr-2 h-4 w-4" />
+              Approve All {pendingBulkMeters.length}
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -357,6 +430,51 @@ export default function ApprovalsPage() {
             >
               {actionType === 'approve' ? <Check className="mr-2 h-4 w-4" /> : <FileEdit className="mr-2 h-4 w-4" />}
               {dialogButtonText}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Approval Dialogs */}
+      <AlertDialog open={isBulkCustomerDialogOpen} onOpenChange={setIsBulkCustomerDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve All Customers?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will activate all {pendingCustomers.length} pending individual customers. They will become immediately billable.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isProcessingBulk}>Cancel</AlertDialogCancel>
+            <Button 
+                onClick={handleBulkApproveCustomers} 
+                disabled={isProcessingBulk}
+                className="bg-green-600 hover:bg-green-700"
+            >
+              {isProcessingBulk ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              Approve {pendingCustomers.length} Records
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={isBulkMeterDialogOpen} onOpenChange={setIsBulkMeterDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve All Bulk Meters?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will activate all {pendingBulkMeters.length} pending bulk meters.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isProcessingBulk}>Cancel</AlertDialogCancel>
+            <Button 
+                onClick={handleBulkApproveBulkMeters} 
+                disabled={isProcessingBulk}
+                className="bg-green-600 hover:bg-green-700"
+            >
+              {isProcessingBulk ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              Approve {pendingBulkMeters.length} Records
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

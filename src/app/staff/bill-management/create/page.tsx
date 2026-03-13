@@ -31,24 +31,13 @@ export default function CreateBillPage() {
     const { toast } = useToast();
     const { hasPermission } = usePermissions();
 
-    if (!hasPermission('bill:create')) {
-        return (
-            <div className="p-6">
-                <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Access Denied</AlertTitle>
-                    <UIAlertDescription>
-                        You do not have permission to create bills.
-                    </UIAlertDescription>
-                </Alert>
-            </div>
-        );
-    }
+    // All hooks must be called unconditionally BEFORE any early return
     const [customer, setCustomer] = useState<any>(null);
     const [isLoadingCustomer, setIsLoadingCustomer] = useState(false);
     const [isCalculating, setIsCalculating] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [calculationResult, setCalculationResult] = useState<any>(null);
+    const [searchStatus, setSearchStatus] = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
 
     const form = useForm<BillFormValues>({
         resolver: zodResolver(billSchema),
@@ -62,8 +51,6 @@ export default function CreateBillPage() {
 
     const { register, handleSubmit, watch, setValue, getValues, formState: { errors } } = form;
     const CUSTOMERKEY = watch('CUSTOMERKEY');
-
-    const [searchStatus, setSearchStatus] = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
 
     const handleFetchCustomer = useCallback(async (id: string) => {
         if (!id) return;
@@ -179,12 +166,15 @@ export default function CreateBillPage() {
                 CURRREAD: data.CURRREAD,
                 CONS: calculationResult.bulkUsage,
                 difference_usage: calculationResult.effectiveUsage,
+                // Fix #7: THISMONTHBILLAMT = the current month charge only (before outstanding)
+                THISMONTHBILLAMT: calculationResult.totalBill,
                 TOTALBILLAMOUNT: calculationResult.totalBill,
                 base_water_charge: calculationResult.baseWaterCharge,
                 sewerage_charge: calculationResult.sewerageCharge,
                 meter_rent: calculationResult.meterRent,
                 maintenance_fee: calculationResult.maintenanceFee,
                 sanitation_fee: calculationResult.sanitationFee,
+                vat_amount: calculationResult.vatAmount,
                 bill_number: `BILL-${Date.now()}`,
                 bill_period_start_date: getBillingPeriodStartDate(data.month_year),
                 bill_period_end_date: getBillingPeriodEndDate(data.month_year),
@@ -220,6 +210,21 @@ export default function CreateBillPage() {
         }
     };
 
+    // Permission guard AFTER all hooks
+    if (!hasPermission('bill:create')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to create bills.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
+
     return (
         <div className="p-6 space-y-6 max-w-4xl mx-auto">
             <div className="flex items-center gap-4">
@@ -235,6 +240,15 @@ export default function CreateBillPage() {
                         <CardTitle>Bill Details</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        {customer && customer.status !== 'Active' && (
+                            <Alert variant="destructive" className="mb-4">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>Cannot create bill</AlertTitle>
+                                <UIAlertDescription>
+                                    Account is not Active. Please approve the account first.
+                                </UIAlertDescription>
+                            </Alert>
+                        )}
                         {/* Bulk Meter Lookup */}
                         <div className="space-y-2">
                             <Label>Bulk Meter ID</Label>
@@ -360,7 +374,7 @@ export default function CreateBillPage() {
                             <p className="text-sm font-semibold mb-2">End of Month Actions</p>
                             <Button
                                 onClick={handleSubmit((data) => onSubmit(data, 'paid'))}
-                                disabled={!calculationResult || isSubmitting}
+                                disabled={!calculationResult || isSubmitting || (customer && customer.status !== 'Active')}
                                 className="w-full bg-blue-600 hover:bg-blue-700 mb-2"
                             >
                                 {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -368,7 +382,7 @@ export default function CreateBillPage() {
                             </Button>
                             <Button
                                 onClick={handleSubmit((data) => onSubmit(data, 'carry'))}
-                                disabled={!calculationResult || isSubmitting}
+                                disabled={!calculationResult || isSubmitting || (customer && customer.status !== 'Active')}
                                 variant="destructive"
                                 className="w-full"
                             >

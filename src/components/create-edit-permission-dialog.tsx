@@ -24,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { createPermission, updatePermission } from "@/lib/data-store";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldPlus, Pencil } from "lucide-react";
 import type { DomainPermission } from "@/lib/data-store";
 
 interface CreateEditPermissionDialogProps {
@@ -83,11 +83,16 @@ export function CreateEditPermissionDialog({ open, onOpenChange, permission }: C
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{isEditMode ? "Edit Permission" : "Create New Permission"}</DialogTitle>
-          <DialogDescription>
-            {isEditMode ? "Edit the permission details below." : "Enter details for the new permission."}
+      <DialogContent className="sm:max-w-[425px] rounded-xl shadow-2xl border-slate-200">
+        <DialogHeader className="space-y-3">
+          <div className={`h-12 w-12 ${isEditMode ? 'bg-amber-100 text-amber-600' : 'bg-primary/10 text-primary'} rounded-full flex items-center justify-center mb-2`}>
+            {isEditMode ? <Pencil className="h-6 w-6" /> : <ShieldPlus className="h-6 w-6" />}
+          </div>
+          <DialogTitle className="text-xl font-bold">{isEditMode ? "Modify Permission Token" : "Generate System Token"}</DialogTitle>
+          <DialogDescription className="text-slate-500">
+            {isEditMode 
+              ? "Update the handle and category for this underlying system token." 
+              : "Register a new permission string that can be used for role-based access control."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

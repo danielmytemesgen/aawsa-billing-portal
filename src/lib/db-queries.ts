@@ -1022,7 +1022,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
     if (branchId) {
         meterFilter = ' WHERE branch_id = $1';
     }
-    const totalCustomersSql = `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter}`;
+    const totalCustomersSql = `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + ' AND status = \'Active\'' : ' WHERE status = \'Active\''}`;
     const totalCustomersData: any = await query(totalCustomersSql, branchId ? [branchId] : []);
     const totalCustomers = parseInt(totalCustomersData[0].count || 0);
 
@@ -1040,10 +1040,10 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
     const currentReadings = parseInt(currentReadingsData[0].count || 0);
 
     // 4. Counts
-    const bulkMeterCountData: any = await query(`SELECT COUNT(*) as count FROM bulk_meters ${meterFilter}`, branchId ? [branchId] : []);
+    const bulkMeterCountData: any = await query(`SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + ' AND status != \'Pending Approval\'' : ' WHERE status != \'Pending Approval\''}`, branchId ? [branchId] : []);
 
     // Only count active individual customers, exclude pending/inactive
-    let individualFilter = 'WHERE status = \'Active\'';
+    let individualFilter = 'WHERE status != \'Pending Approval\'';
     if (branchId) {
         individualFilter += ' AND branch_id = $1';
     }
