@@ -19,4 +19,6 @@ export type IndividualCustomer = z.infer<typeof baseIndividualCustomerDataSchema
   updated_at?: string | null;
   approved_by?: string | null;
   approved_at?: string | null;
+  isMinOfThreeApplied?: boolean;
+  rawUsage?: number;
 };

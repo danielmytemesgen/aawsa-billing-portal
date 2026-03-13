@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2 } from "lucide-react";
+import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2, Calendar, LayoutGrid, Info, ArrowUpRight, TrendingUp } from "lucide-react";
 import type { TariffTier, TariffInfo, SewerageTier } from "@/lib/billing-calculations";
 import {
   getTariff, initializeTariffs, subscribeToTariffs, updateTariff, addTariff
@@ -496,21 +496,27 @@ export default function TariffManagementPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Header Section */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <LibraryBig className="h-8 w-8 text-primary" />
-          <h1 className="text-2xl md:text-3xl font-bold">Tariff Management</h1>
+        <div className="flex items-center gap-4">
+          <div className="h-14 w-14 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-xl shadow-indigo-100 rotate-3 group-hover:rotate-6 transition-transform">
+            <LibraryBig className="h-8 w-8" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black tracking-tight text-slate-900">Tariff Management</h1>
+            <p className="text-slate-500 font-medium">Configure water rates, fees, and charges for billing cycles.</p>
+          </div>
         </div>
         {(hasPermission('tariffs_update') || hasPermission('tariffs_create')) && (
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-3 flex-wrap">
             {hasPermission('tariffs_create') && (
-              <Button onClick={() => setIsNewVersionDialogOpen(true)} variant="outline" disabled={!activeTariffInfo || !isLatestTariff}>
+              <Button onClick={() => setIsNewVersionDialogOpen(true)} variant="outline" disabled={!activeTariffInfo || !isLatestTariff} className="h-11 border-slate-200 font-bold hover:bg-slate-50">
                 <PlusCircle className="mr-2 h-4 w-4" /> New Version
               </Button>
             )}
             {hasPermission('tariffs_update') && (
-              <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo || !isLatestTariff}>
+              <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo || !isLatestTariff} className="h-11 bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100 font-bold px-6">
                 <DollarSign className="mr-2 h-4 w-4" /> Manage Meter Rent
               </Button>
             )}
@@ -518,44 +524,119 @@ export default function TariffManagementPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="tariff-date">Tariff Version (Effective Date)</Label>
+      {/* Stats Header */}
+      <div className="grid gap-6 md:grid-cols-4">
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-blue-800 uppercase tracking-widest bg-blue-100 px-3 py-1 rounded-md mb-3 inline-block">Effective Date</p>
+                <p className="text-3xl font-black text-slate-900">{currentEffectiveDate}</p>
+              </div>
+              <div className="h-14 w-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
+                <Calendar className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-5 flex items-center text-sm font-bold text-slate-500">
+              {isLatestTariff ? (
+                <span className="flex items-center gap-1.5 text-emerald-700">
+                  <span className="h-2.5 w-2.5 bg-emerald-500 rounded-full animate-pulse" />
+                  Currently Active
+                </span>
+              ) : (
+                <span className="text-amber-700 italic">Historical Archive</span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-indigo-800 uppercase tracking-widest bg-indigo-100 px-3 py-1 rounded-md mb-3 inline-block">Tariff Category</p>
+                <p className="text-3xl font-black text-slate-900">{currentTariffType}</p>
+              </div>
+              <div className="h-14 w-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
+                <LayoutGrid className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-5 font-bold text-sm text-slate-500">
+              Primary pricing model
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-violet-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-violet-800 uppercase tracking-widest bg-violet-100 px-3 py-1 rounded-md mb-3 inline-block">Water Tiers</p>
+                <p className="text-4xl font-black text-slate-900">{activeWaterTiers.length}</p>
+              </div>
+              <div className="h-14 w-14 bg-violet-50 rounded-2xl flex items-center justify-center text-violet-600">
+                <TrendingUp className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-5 flex items-center gap-1.5 text-sm font-bold text-violet-700 italic">
+              {currentTariffType === 'Domestic' || currentTariffType === 'rental domestic' 
+                ? "Progressive pricing" 
+                : "Total volume pricing"}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-emerald-800 uppercase tracking-widest bg-emerald-100 px-3 py-1 rounded-md mb-3 inline-block">Custom Fees</p>
+                <p className="text-4xl font-black text-slate-900">{activeTariffInfo?.additional_fees?.length || 0}</p>
+              </div>
+              <div className="h-14 w-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
+                <Percent className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-5 text-sm font-bold text-emerald-700">
+              Active extra charges
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Control Toolbar */}
+      <div className="flex flex-wrap items-center gap-6 bg-slate-50 border border-slate-200 p-6 rounded-3xl">
+        <div className="space-y-2 flex-grow min-w-[200px]">
+          <Label htmlFor="tariff-date" className="text-xs font-black uppercase text-slate-700 tracking-widest ml-1">Tariff Version</Label>
           <div className="flex items-center gap-2">
-            <Select
-              value={currentEffectiveDate}
-              onValueChange={setCurrentEffectiveDate}
-            >
-              <SelectTrigger id="tariff-date" className="w-full md:w-[200px]">
+            <Select value={currentEffectiveDate} onValueChange={setCurrentEffectiveDate}>
+              <SelectTrigger id="tariff-date" className="h-14 bg-white font-bold text-lg rounded-2xl border-slate-200 shadow-sm transition-all focus:ring-4 focus:ring-indigo-500/20">
                 <SelectValue placeholder="Select a version" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-2xl font-bold text-lg">
                 {availableDates.map(date => (
-                  <SelectItem key={`tariff-date-${date}`} value={date}>{date}</SelectItem>
+                  <SelectItem key={`tariff-date-${date}`} value={date} className="py-2">{date}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {isLatestTariff ? (
-              <Badge variant="default" className="text-xs">Active (Latest)</Badge>
-            ) : (
-              <Badge variant="secondary" className="text-xs">Historical (Read-Only)</Badge>
-            )}
           </div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="customer-category">Select Customer Category</Label>
-          <Select
-            value={currentTariffType}
-            onValueChange={(value) => setCurrentTariffType(value as 'Domestic' | 'Non-domestic' | 'rental Non domestic' | 'rental domestic')}
-          >
-            <SelectTrigger id="customer-category" className="w-full md:w-[200px]">
+
+        <div className="space-y-2 flex-grow min-w-[200px]">
+          <Label htmlFor="customer-category" className="text-xs font-black uppercase text-slate-700 tracking-widest ml-1">Customer Category</Label>
+          <Select value={currentTariffType} onValueChange={(value) => setCurrentTariffType(value as any)}>
+            <SelectTrigger id="customer-category" className="h-14 bg-white font-bold text-lg rounded-2xl border-slate-200 shadow-sm transition-all focus:ring-4 focus:ring-indigo-500/20">
               <SelectValue placeholder="Select a category" />
             </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Domestic">Domestic</SelectItem>
-              <SelectItem value="Non-domestic">Non-domestic</SelectItem>
-              <SelectItem value="rental Non domestic">rental Non domestic</SelectItem>
-              <SelectItem value="rental domestic">rental domestic</SelectItem>
+            <SelectContent className="rounded-2xl font-bold text-lg">
+              <SelectItem value="Domestic" className="py-2">Domestic</SelectItem>
+              <SelectItem value="Non-domestic" className="py-2">Non-domestic</SelectItem>
+              <SelectItem value="rental Non domestic" className="py-2">Rental Non-domestic</SelectItem>
+              <SelectItem value="rental domestic" className="py-2">Rental Domestic</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -564,27 +645,36 @@ export default function TariffManagementPage() {
       {isDataLoading ? <p>Loading tariffs...</p> : !activeTariffInfo ?
         (<Card className="shadow-lg mt-4 border-dashed border-amber-500"><CardHeader><CardTitle className="text-amber-600">No Tariff Found</CardTitle><CardDescription>There is no tariff data for {currentTariffType} effective on {currentEffectiveDate}.</CardDescription></CardHeader></Card>) : (
           <>
-            <Card className="shadow-lg mt-4">
-              <CardHeader>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <ListChecks className="h-6 w-6 text-primary" />
-                    <CardTitle>Current Water Tariff Rates ({currentTariffType} - {activeTariffInfo?.effective_date || ''})</CardTitle>
+            <Card className="shadow-2xl border-none bg-white overflow-hidden rounded-3xl transition-shadow hover:shadow-indigo-100/50">
+              <div className="h-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600" />
+              <CardHeader className="pb-6 bg-slate-50/50 border-b">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-blue-100 flex items-center justify-center text-blue-600">
+                      <ListChecks className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-2xl font-black text-slate-900">Water Tariff Rates</CardTitle>
+                      <CardDescription className="font-bold text-slate-500 mt-0.5">
+                        {currentTariffType} Pricing Spectrum • {activeTariffInfo?.effective_date}
+                      </CardDescription>
+                    </div>
                   </div>
                   {canUpdateTariffs && (
-                    <Button onClick={() => handleAddTier('water')} size="sm">
+                    <Button onClick={() => handleAddTier('water')} className="h-11 bg-blue-600 hover:bg-blue-700 font-bold px-6 rounded-xl shadow-lg shadow-blue-100">
                       <PlusCircle className="mr-2 h-4 w-4" /> Add Water Tier
                     </Button>
                   )}
                 </div>
-                <CardDescription>
+                <p className="mt-4 text-sm font-medium text-slate-500 flex items-center gap-2">
+                  <Info className="h-4 w-4 text-blue-500" />
                   {currentTariffType === 'Domestic'
-                    ? "These rates are used for calculating domestic water bills. Rates are applied progressively."
-                    : "These rates are used for calculating non-domestic water bills. The single applicable rate is determined by the total consumption."
+                    ? "Progressive tiers ensure equitable pricing based on consumption volume."
+                    : "Non-domestic rates are applied based on total monthly volume."
                   }
-                </CardDescription>
+                </p>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-8">
                 <TariffRateTable
                   rates={activeWaterTiers}
                   onEdit={(rate) => handleEditTier(rate, 'water')}
@@ -595,106 +685,129 @@ export default function TariffManagementPage() {
               </CardContent>
             </Card>
 
-            <Card className="shadow-lg">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Percent className="h-6 w-6 text-primary" />
-                  <CardTitle>Fees &amp; Charges ({currentTariffType} - {activeTariffInfo?.effective_date || ''})</CardTitle>
+            <Card className="shadow-2xl border-none bg-white overflow-hidden rounded-3xl transition-shadow hover:shadow-emerald-100/50">
+              <div className="h-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600" />
+              <CardHeader className="pb-6 bg-slate-50/50 border-b">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-2xl bg-emerald-100 flex items-center justify-center text-emerald-600">
+                    <Percent className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-2xl font-black text-slate-900">Fees & Utility Charges</CardTitle>
+                    <CardDescription className="font-bold text-slate-500 mt-0.5">
+                      Operational Surcharges • {activeTariffInfo?.effective_date}
+                    </CardDescription>
+                  </div>
                 </div>
-                <CardDescription>
-                  Additional fees and taxes applied during bill calculation.
-                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4 pt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center p-2 rounded-md bg-muted/50">
-                      <div className="flex flex-col">
-                        <span className="text-muted-foreground text-sm">Maintenance Fee</span>
-                        <span className="font-semibold">{(activeTariffInfo.maintenance_percentage * 100).toFixed(0)}% of Base Water Charge</span>
-                      </div>
-                      {canUpdateTariffs && (
-                        <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFeeDialog('maintenance_percentage', 'Maintenance Fee')}>
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleResetFee('maintenance_percentage', 'Maintenance Fee')}>
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
+              <CardContent className="space-y-10 pt-8">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
+                  <div className="space-y-6">
+                    <h4 className="text-base font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
+                       <LayoutGrid className="h-5 w-5" /> Standard Surcharges
+                    </h4>
+                    <div className="grid gap-4">
+                      {[
+                        { label: "Maintenance Fee", field: "maintenance_percentage", value: activeTariffInfo.maintenance_percentage, icon: RotateCcw, color: "blue" },
+                        { label: "Sanitation Fee", field: "sanitation_percentage", value: activeTariffInfo.sanitation_percentage, icon: Trash2, color: "emerald" },
+                      ].map((item) => (
+                        <div key={item.field} className="flex items-center justify-between p-5 rounded-3xl bg-slate-50 border border-slate-200 hover:bg-white hover:shadow-lg transition-all group">
+                          <div className="flex items-center gap-5">
+                            <div className={`h-12 w-12 rounded-xl bg-${item.color}-100 flex items-center justify-center text-${item.color}-700 group-hover:scale-110 transition-transform`}>
+                              <item.icon className="h-6 w-6" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-600 uppercase mb-1">{item.label}</p>
+                              <p className="text-2xl font-black text-slate-900">{(item.value * 100).toFixed(0)}% <span className="text-sm font-bold text-slate-500 ml-1">of Base Charge</span></p>
+                            </div>
+                          </div>
+                          {canUpdateTariffs && (
+                            <div className="flex gap-2">
+                              <Button size="icon" variant="ghost" className="h-10 w-10 bg-white shadow-sm hover:text-indigo-600 rounded-xl border border-slate-200" onClick={() => handleOpenFeeDialog(item.field as any, item.label)}>
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-10 w-10 bg-white shadow-sm hover:text-red-600 rounded-xl border border-slate-200" onClick={() => handleResetFee(item.field as any, item.label)}>
+                                <RotateCcw className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center p-2 rounded-md bg-muted/50">
-                      <div className="flex flex-col">
-                        <span className="text-muted-foreground text-sm">Sanitation Fee</span>
-                        <span className="font-semibold">{(activeTariffInfo.sanitation_percentage * 100).toFixed(0)}% of Base Water Charge</span>
-                      </div>
-                      {canUpdateTariffs && (
-                        <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFeeDialog('sanitation_percentage', 'Sanitation Fee')}>
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleResetFee('sanitation_percentage', 'Sanitation Fee')}>
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
+                      ))}
+
+                      {/* Meter Rent Special Item */}
+                      <div className="flex items-center justify-between p-5 rounded-3xl bg-indigo-50 border border-indigo-200 hover:bg-white hover:shadow-lg transition-all group">
+                        <div className="flex items-center gap-5">
+                          <div className="h-12 w-12 rounded-xl bg-indigo-200 flex items-center justify-center text-indigo-800 group-hover:scale-110 transition-transform shadow-sm">
+                            <DollarSign className="h-6 w-6" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-600 uppercase mb-1">Meter Rent Fee</p>
+                            <p className="text-base font-bold text-indigo-700 italic">Multi-tier specialized pricing</p>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center p-2 rounded-md bg-muted/50">
-                      <div className="flex flex-col">
-                        <span className="text-muted-foreground text-sm">Meter Rent Fee</span>
-                        <span className="font-semibold text-xs italic text-muted-foreground">Managed via "Manage Meter Rent"</span>
+                        {canUpdateTariffs && (
+                          <Button size="sm" variant="outline" className="h-10 px-5 bg-white rounded-xl border-indigo-300 font-black text-indigo-700 hover:bg-indigo-100 shadow-sm" onClick={() => setIsMeterRentDialogOpen(true)}>
+                            Configure Rates
+                          </Button>
+                        )}
                       </div>
-                      {canUpdateTariffs && (
-                        <Button size="sm" variant="outline" className="h-8" onClick={() => setIsMeterRentDialogOpen(true)}>
-                          Configure
-                        </Button>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center p-2 rounded-md bg-muted/50">
-                      <div className="flex flex-col">
-                        <span className="text-muted-foreground text-sm">Penalty Calculation</span>
-                        <span className="font-semibold">Starts at Month {activeTariffInfo.penalty_month_threshold || 3}</span>
-                        <span className="text-xs text-muted-foreground">Rate: {((activeTariffInfo.bank_lending_rate || 0.15) * 100).toFixed(0)}% bank + tiered rates</span>
+
+                      {/* Penalty Special Item */}
+                      <div className="flex items-center justify-between p-5 rounded-3xl bg-amber-50 border border-amber-200 hover:bg-white hover:shadow-lg transition-all group">
+                        <div className="flex items-center gap-5">
+                          <div className="h-12 w-12 rounded-xl bg-amber-200 flex items-center justify-center text-amber-800 group-hover:scale-110 transition-transform shadow-sm">
+                            <Info className="h-6 w-6" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-600 uppercase mb-1">Penalty Logic</p>
+                            <p className="text-base font-bold text-amber-900 leading-tight">Threshold: <span className="font-black text-amber-600">Month {activeTariffInfo.penalty_month_threshold || 3}</span></p>
+                            <p className="text-xs font-bold text-amber-600 uppercase mt-1 tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-md inline-block">Bank Rate + Tiered Matrix</p>
+                          </div>
+                        </div>
+                        {canUpdateTariffs && (
+                          <Button size="sm" variant="outline" className="h-10 px-5 bg-white rounded-xl border-amber-300 font-black text-amber-700 hover:bg-amber-100 shadow-sm" onClick={() => setIsPenaltyDialogOpen(true)}>
+                            Modify Rules
+                          </Button>
+                        )}
                       </div>
-                      {canUpdateTariffs && (
-                        <Button size="sm" variant="outline" className="h-8" onClick={() => setIsPenaltyDialogOpen(true)}>
-                          Configure
-                        </Button>
-                      )}
                     </div>
                   </div>
 
-                  <div className="space-y-2 mt-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <h4 className="font-medium text-sm text-muted-foreground">Additional Custom Fees</h4>
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center pr-2">
+                       <h4 className="text-base font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
+                         <PlusCircle className="h-5 w-5" /> Additional Custom Fees
+                      </h4>
                       {canUpdateTariffs && (
-                        <Button onClick={() => handleOpenAdditionalFeeDialog()} size="sm" variant="outline">
-                          <PlusCircle className="mr-2 h-4 w-4" /> Add Fee
+                        <Button onClick={() => handleOpenAdditionalFeeDialog()} variant="ghost" size="sm" className="h-10 px-4 text-indigo-700 font-black hover:bg-indigo-100/50 text-xs uppercase tracking-widest rounded-xl">
+                          <PlusCircle className="mr-2 h-4 w-4" /> New Custom Fee
                         </Button>
                       )}
                     </div>
                     {activeTariffInfo.additional_fees && activeTariffInfo.additional_fees.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {activeTariffInfo.additional_fees.map((fee, idx) => (
-                          <div key={`custom-fee-${idx}`} className="p-3 border rounded-md group bg-muted/20 hover:bg-muted/40 transition-colors">
-                            <div className="flex justify-between items-center">
+                          <div key={`custom-fee-${idx}`} className="p-5 bg-white border border-slate-200 rounded-3xl shadow-sm hover:shadow-xl hover:border-indigo-200 transition-all group relative overflow-hidden">
+                            <div className={`absolute top-0 right-0 w-24 h-24 bg-gradient-to-br transition-all duration-300 opacity-5 -mr-12 -mt-12 rounded-full group-hover:scale-[3] ${fee.type === 'percentage' ? 'from-purple-600 to-indigo-600' : 'from-blue-600 to-cyan-600'}`} />
+                            <div className="flex justify-between items-start relative z-10">
                               <div>
-                                <div className="font-semibold text-sm">{fee.name}</div>
-                                <div className="text-primary font-bold">
-                                  {fee.type === 'percentage' ? `${(fee.value * 100).toFixed(1)}%` : `${fee.value} ETB`}
-                                  <span className="text-xs text-muted-foreground font-normal ml-1">
-                                    {fee.type === 'percentage' ? "of base charge" : "fixed"}
+                                <p className="font-black text-lg text-slate-900 mb-2">{fee.name}</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-2xl font-black text-indigo-700">
+                                    {fee.type === 'percentage' ? `${(fee.value * 100).toFixed(1)}%` : `${fee.value} ETB`}
                                   </span>
+                                  <Badge variant="outline" className="text-xs uppercase font-black px-2 py-0.5 border-slate-300 bg-white/80 shadow-sm text-slate-500 tracking-widest">
+                                    {fee.type === 'percentage' ? "of Subtotal" : "Flat Rate"}
+                                  </Badge>
                                 </div>
                               </div>
                               {canUpdateTariffs && (
-                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleOpenAdditionalFeeDialog(fee, idx)}>
-                                    <Edit2 className="h-3 w-3" />
+                                <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Button size="icon" variant="ghost" className="h-10 w-10 hover:text-indigo-700 bg-slate-50 border border-slate-200 rounded-xl shadow-sm" onClick={() => handleOpenAdditionalFeeDialog(fee, idx)}>
+                                    <Edit2 className="h-4 w-4" />
                                   </Button>
-                                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteAdditionalFee(idx)}>
-                                    <Trash2 className="h-3 w-3" />
+                                  <Button size="icon" variant="ghost" className="h-10 w-10 hover:text-red-600 bg-slate-50 border border-slate-200 rounded-xl shadow-sm" onClick={() => handleDeleteAdditionalFee(idx)}>
+                                    <Trash2 className="h-4 w-4" />
                                   </Button>
                                 </div>
                               )}
@@ -703,35 +816,41 @@ export default function TariffManagementPage() {
                         ))}
                       </div>
                     ) : (
-                      <div className="text-sm text-muted-foreground italic p-2 border border-dashed rounded-md text-center">
-                        No additional custom fees defined.
+                      <div className="text-sm font-bold text-slate-500 p-12 border-2 border-dashed border-slate-200 rounded-3xl text-center bg-slate-50/80">
+                        No additional custom fees defined for this category.
                       </div>
                     )}
-                  </div>
 
-                  <div className="space-y-4 mt-6">
-                    <div className="p-3 border rounded-md relative group">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-lg">VAT</span>
-                            <span className="text-primary font-bold">{(activeTariffInfo.vat_rate * 100).toFixed(0)}%</span>
+                    {/* VAT Section Integrated */}
+                    <div className="mt-8 p-8 bg-[#f8f9fc] rounded-3xl text-slate-900 shadow-sm relative overflow-hidden group border border-slate-200">
+                      <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-100 blur-[100px] -mr-32 -mt-32 group-hover:bg-indigo-200/50 transition-all duration-700 pointer-events-none" />
+                      <div className="flex justify-between items-start relative z-10">
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-5">
+                            <div className="bg-slate-900 px-4 py-2 rounded-2xl flex items-center justify-center shadow-md">
+                              <span className="font-extrabold text-sm tracking-widest text-white">VAT</span>
+                            </div>
+                            <span className="text-6xl font-black tracking-tight text-slate-900">{(activeTariffInfo.vat_rate * 100).toFixed(0)}%</span>
                           </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {currentTariffType === 'Domestic' || currentTariffType === 'rental domestic'
-                              ? `VAT only applies if consumption is > ${activeTariffInfo.domestic_vat_threshold_m3 || 0} m³.`
-                              : "VAT applies to all bills for this category."
-                            }
-                          </p>
+                          <div className="space-y-3 pt-2">
+                            <p className="text-sm font-bold text-slate-700 flex items-center gap-3">
+                              <span className="h-2 w-2 bg-indigo-500 rounded-full" />
+                              {currentTariffType === 'Domestic' || currentTariffType === 'rental domestic'
+                                ? `Threshold trigger: > ${activeTariffInfo.domestic_vat_threshold_m3 || 0} m³ consumption`
+                                : "Universal application across all bills"
+                              }
+                            </p>
+                            <p className="text-xs text-slate-400 font-bold uppercase tracking-[0.2em] italic font-mono pt-1">Revenue Compliance Standard</p>
+                          </div>
                         </div>
                         {canUpdateTariffs && (
-                          <div className="flex gap-1">
-                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleOpenFeeDialog('vat_rate', 'VAT Rate')}>
-                              <Edit2 className="h-4 w-4" />
+                          <div className="flex flex-col gap-3">
+                            <Button size="icon" variant="ghost" className="h-11 w-11 bg-white/10 hover:bg-white hover:text-slate-900 border-none rounded-xl" onClick={() => handleOpenFeeDialog('vat_rate', 'VAT Rate')}>
+                              <Edit2 className="h-5 w-5" />
                             </Button>
                             {currentTariffType === 'Domestic' && (
-                              <Button size="icon" variant="ghost" className="h-8 w-8" title="Edit Threshold" onClick={() => handleOpenFeeDialog('domestic_vat_threshold_m3', 'VAT Threshold', false)}>
-                                <ListChecks className="h-4 w-4" />
+                              <Button size="icon" variant="ghost" className="h-11 w-11 bg-white/10 hover:bg-white hover:text-slate-900 border-none rounded-xl" title="Edit Threshold" onClick={() => handleOpenFeeDialog('domestic_vat_threshold_m3', 'VAT Threshold', false)}>
+                                <ListChecks className="h-5 w-5" />
                               </Button>
                             )}
                           </div>
@@ -739,15 +858,27 @@ export default function TariffManagementPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center mb-2">
-                      <h4 className="font-medium text-sm text-muted-foreground">Sewerage Fee (if applicable)</h4>
-                      {canUpdateTariffs && (
-                        <Button onClick={() => handleAddTier('sewerage')} size="sm" variant="outline">
-                          <PlusCircle className="mr-2 h-4 w-4" /> Add Sewerage Tier
-                        </Button>
-                      )}
+                </div>
+
+                {/* Sewerage Fee Integrated at Bottom */}
+                <div className="pt-10 border-t border-slate-100 space-y-6">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-700 shadow-sm border border-blue-200">
+                        <ArrowUpRight className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h4 className="text-2xl font-black text-slate-900">Sewerage Utility Matrix</h4>
+                        <p className="text-sm font-bold text-slate-500 mt-1">Treatment and maintenance surcharge structure</p>
+                      </div>
                     </div>
+                    {canUpdateTariffs && (
+                      <Button onClick={() => handleAddTier('sewerage')} variant="outline" className="h-11 px-6 rounded-xl border-slate-300 font-black text-slate-700 hover:bg-slate-100 shadow-sm">
+                        <PlusCircle className="mr-2 h-5 w-5" /> Add Sewerage Tier
+                      </Button>
+                    )}
+                  </div>
+                  <div className="bg-slate-50/50 p-1 rounded-3xl border border-slate-100 overflow-hidden">
                     <TariffRateTable
                       rates={activeSewerageTiers}
                       onEdit={(rate) => handleEditTier(rate, 'sewerage')}

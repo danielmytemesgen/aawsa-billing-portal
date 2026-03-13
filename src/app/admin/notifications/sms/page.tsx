@@ -10,7 +10,7 @@ import { getBulkMeters, initializeBulkMeters } from "@/lib/data-store";
 import type { BulkMeter } from "@/app/admin/bulk-meters/bulk-meter-types";
 import { usePermissions } from "@/hooks/use-permissions";
 import { getDistinctBillingMonthsAction, getBillsByMonthAction } from "@/lib/actions";
-import { AlertCircle, MessageSquareWarning, Download, GripVertical } from "lucide-react";
+import { AlertCircle, MessageSquareWarning, Download, GripVertical, Megaphone, PlusCircle, History } from "lucide-react";
 import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
@@ -248,41 +248,74 @@ export default function SmsNotificationPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Send SMS to Bulk Meter Customers</CardTitle>
-          <CardDescription>Generate and export SMS messages for bulk meter customers for a selected month.</CardDescription>
+    <div className="space-y-8">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">SMS Notifications</h1>
+          <p className="text-slate-500 mt-1">Broadcast high-priority SMS alerts to bulk meter accounts.</p>
+        </div>
+        <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+          <MessageSquareWarning className="h-5 w-5 text-blue-600" />
+          <span className="text-sm font-bold text-blue-800">Direct Outreach Mode</span>
+        </div>
+      </div>
+
+      <Card className="shadow-2xl border-none bg-white overflow-hidden">
+        <div className="h-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600" />
+        <CardHeader className="pb-4 bg-slate-50/50 border-b">
+          <div className="flex items-center gap-4">
+            <div className="h-14 w-14 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-200">
+              <Megaphone className="h-7 w-7" />
+            </div>
+            <div>
+              <CardTitle className="text-2xl font-extrabold text-slate-900">SMS Broadcast Console</CardTitle>
+              <CardDescription className="text-slate-500 font-medium mt-1">
+                Configure your message template and generate batch SMS notifications for bulk meter customers.
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-8 p-8">
           {/* Available Fields - Draggable */}
-          <div className="space-y-2">
-            <Label>Available Fields (Drag to insert into message)</Label>
-            <div className="flex flex-wrap gap-2 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-indigo-100 rounded-lg text-indigo-600">
+                <GripVertical className="h-4 w-4" />
+              </div>
+              <Label className="text-base font-bold text-slate-800">Dynamic Personalization Tokens</Label>
+            </div>
+            <div className="flex flex-wrap gap-2.5 p-6 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
               {AVAILABLE_FIELDS.map((field) => (
                 <Badge
                   key={field.placeholder}
                   variant="secondary"
-                  className={`cursor-move px-3 py-2 text-sm font-medium flex items-center gap-1 transition-colors ${field.color}`}
+                  className={`cursor-move px-4 py-2.5 text-sm font-bold flex items-center gap-2 transition-all hover:scale-105 hover:shadow-md border-none ${field.color}`}
                   draggable
                   onDragStart={(e) => handleDragStart(e, field.placeholder)}
                   title={field.description}
                 >
-                  <GripVertical className="h-3 w-3" />
+                  <PlusCircle className="h-4 w-4 opacity-70" />
                   {field.label}
                 </Badge>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">
-              💡 Tip: Drag any field above and drop it into the message template below
+            <p className="text-sm font-medium text-slate-500 flex items-center gap-2 italic">
+              <span className="h-2 w-2 bg-blue-400 rounded-full animate-pulse" />
+              Tip: Drag tokens into the editor below to personalize your broadcast.
             </p>
           </div>
 
           {/* Message Template - Drop Zone */}
-          <div className="space-y-2 bg-green-50 border-2 border-green-200 rounded-lg p-4">
-            <Label htmlFor="message-template">Message Template (Drop fields here)</Label>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-600">
+                <History className="h-4 w-4" />
+              </div>
+              <Label htmlFor="message-template" className="text-base font-bold text-slate-800">Message Blueprint</Label>
+            </div>
             <div
-              className={`relative ${isDragging ? 'ring-2 ring-blue-500 ring-offset-2' : ''}`}
+              className={`relative group ${isDragging ? 'ring-4 ring-blue-500/20' : ''}`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
@@ -294,61 +327,80 @@ export default function SmsNotificationPage() {
                 onChange={(e) => setMessageTemplate(e.target.value)}
                 onClick={handleTextareaClick}
                 onKeyUp={handleTextareaKeyUp}
-                rows={6}
-                className={isDragging ? 'border-blue-500' : ''}
-                placeholder="Type your message or drag fields from above..."
+                rows={7}
+                className={`bg-slate-50 border-2 text-base font-medium leading-relaxed rounded-2xl focus:bg-white transition-all shadow-inner ${isDragging ? 'border-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
+                placeholder="Compose your master template here..."
               />
               {isDragging && (
-                <div className="absolute inset-0 bg-blue-100 bg-opacity-20 pointer-events-none flex items-center justify-center">
-                  <p className="text-blue-700 font-semibold">Drop field here</p>
+                <div className="absolute inset-0 bg-blue-600/5 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-blue-500 border-dashed rounded-2xl">
+                  <div className="bg-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 border border-blue-100 scale-110 animate-in zoom-in-95 duration-200">
+                    <PlusCircle className="h-6 w-6 text-blue-600" />
+                    <p className="text-blue-700 font-extrabold text-lg">Drop Token to Insert</p>
+                  </div>
                 </div>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              Available placeholders: {AVAILABLE_FIELDS.map(f => f.placeholder).join(", ")}
-            </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-4 items-end">
-            <div className="flex-grow">
-              <Label htmlFor="month-select">Select Month</Label>
+          <div className="flex flex-col lg:flex-row gap-6 items-end bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+            <div className="flex-grow w-full">
+              <Label htmlFor="month-select" className="text-sm font-bold text-slate-700 mb-2 block">Billing Period Focus</Label>
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger id="month-select" className="w-full md:w-[200px]">
-                  <SelectValue placeholder="Select Month" />
+                <SelectTrigger id="month-select" className="w-full h-12 bg-white font-bold text-base rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Select Target Month" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl font-medium">
                   {months.map(month => (
                     <SelectItem key={month} value={month}>{month}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <Button onClick={handleGenerateMessages} disabled={isGenerating || !selectedMonth}>
-              {isGenerating ? "Generating..." : "Generate Messages"}
-            </Button>
-            <Button onClick={handleExport} disabled={generatedMessages.length === 0} variant="outline">
-              <Download className="mr-2 h-4 w-4" /> Export to XLSX
-            </Button>
+            <div className="flex gap-4 w-full lg:w-auto">
+              <Button 
+                onClick={handleGenerateMessages} 
+                disabled={isGenerating || !selectedMonth}
+                className="flex-grow lg:flex-none h-12 px-8 bg-blue-600 hover:bg-blue-700 font-extrabold text-base shadow-lg shadow-blue-100 rounded-xl"
+              >
+                {isGenerating ? "Compiling..." : "Generate Messages"}
+              </Button>
+              <Button 
+                onClick={handleExport} 
+                disabled={generatedMessages.length === 0} 
+                variant="outline"
+                className="flex-grow lg:flex-none h-12 px-8 border-2 font-extrabold text-base rounded-xl hover:bg-slate-50 transition-colors"
+              >
+                <Download className="mr-2 h-5 w-5" /> Export XLSX
+              </Button>
+            </div>
           </div>
 
-
-
           {generatedMessages.length > 0 && (
-            <div className="mt-6">
-              <h3 className="text-lg font-medium mb-2">Generated Messages ({generatedMessages.length})</h3>
-              <div className="border rounded-md">
+            <div className="mt-12 space-y-6 pt-12 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900 leading-none">Generation Preview</h3>
+                  <p className="text-slate-500 font-medium mt-2 italic">{generatedMessages.length} personalized messages ready for broadcast</p>
+                </div>
+              </div>
+              
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/50">
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Phone Number</TableHead>
-                      <TableHead>Message</TableHead>
+                  <TableHeader className="bg-slate-50">
+                    <TableRow className="border-b border-slate-200">
+                      <TableHead className="font-extrabold text-slate-900 h-14">Recipient Contact</TableHead>
+                      <TableHead className="font-extrabold text-slate-900 h-14">Personalized Content</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {generatedMessages.map((msg, index) => (
-                      <TableRow key={index}>
-                        <TableCell>{msg.phoneNumber}</TableCell>
-                        <TableCell className="text-sm">{msg.message}</TableCell>
+                      <TableRow key={index} className="hover:bg-blue-50/30 transition-colors border-b border-slate-100">
+                        <TableCell className="py-5 font-bold text-slate-900">
+                          <code className="bg-blue-50 text-blue-700 px-3 py-1 rounded-lg text-sm">{msg.phoneNumber}</code>
+                        </TableCell>
+                        <TableCell className="py-5">
+                          <p className="text-slate-700 font-medium leading-relaxed max-w-3xl">{msg.message}</p>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

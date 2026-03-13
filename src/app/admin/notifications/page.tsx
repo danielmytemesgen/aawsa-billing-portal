@@ -15,7 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Bell, Send, Lock, Trash2, Edit, MessageSquareWarning } from "lucide-react";
+import { Bell, Send, Lock, Trash2, Edit, MessageSquareWarning, Megaphone, CheckCircle2, History, PlusCircle, ArrowRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import {
   addNotification,
@@ -216,36 +217,115 @@ export default function AdminNotificationsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl md:text-3xl font-bold">Send Notifications</h1>
+    <div className="space-y-8">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Notifications Management</h1>
+          <p className="text-slate-500 mt-1">Broadcast messages to staff and manage notification history.</p>
+        </div>
+      </div>
 
-      {canCreateSms && (
-        <Card className="shadow-lg">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <MessageSquareWarning className="h-8 w-8 text-primary" />
+      {/* Stats Header */}
+      <div className="grid gap-6 md:grid-cols-3">
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
               <div>
-                <CardTitle>SMS Notifications</CardTitle>
-                <CardDescription>Send SMS messages to bulk meter customers.</CardDescription>
+                <p className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Total Sent</p>
+                <p className="text-4xl font-extrabold text-slate-900">{sentNotifications.length}</p>
+              </div>
+              <div className="h-14 w-14 bg-blue-100/80 rounded-2xl flex items-center justify-center text-blue-600 rotate-3 group-hover:rotate-6 transition-transform">
+                <Megaphone className="h-7 w-7" />
               </div>
             </div>
-          </CardHeader>
-          <CardContent>
-            <Link href="/admin/notifications/sms">
-              <Button>Go to SMS Page</Button>
-            </Link>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+              <span className="flex items-center gap-1 font-semibold text-blue-600">Active broadcasting</span>
+            </div>
           </CardContent>
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest bg-emerald-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Branch Targets</p>
+                <p className="text-4xl font-extrabold text-slate-900">{sentNotifications.filter(n => n.targetBranchId !== null).length}</p>
+              </div>
+              <div className="h-14 w-14 bg-emerald-100/80 rounded-2xl flex items-center justify-center text-emerald-600 -rotate-3 group-hover:rotate-0 transition-transform">
+                <CheckCircle2 className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+              <span className="flex items-center gap-1 font-bold text-emerald-600">
+                {Math.round((sentNotifications.filter(n => n.targetBranchId !== null).length / (sentNotifications.length || 1)) * 100)}% 
+              </span>
+              <span className="ml-1 italic">targeted messages</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
+          <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-indigo-700 uppercase tracking-widest bg-indigo-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Last 24 Hours</p>
+                <p className="text-4xl font-extrabold text-slate-900">
+                  {sentNotifications.filter(n => new Date(n.createdAt).getTime() > Date.now() - 24 * 60 * 60 * 1000).length}
+                </p>
+              </div>
+              <div className="h-14 w-14 bg-indigo-100/80 rounded-2xl flex items-center justify-center text-indigo-600 rotate-6 transition-transform">
+                <History className="h-7 w-7" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+              <span className="flex items-center gap-1 font-semibold text-indigo-600">Recent outreach</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {canCreateSms && (
+        <Card className="shadow-lg border-none bg-gradient-to-br from-white to-slate-50 group hover:shadow-xl transition-all duration-300">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-xl bg-orange-100 flex items-center justify-center text-orange-600">
+                  <MessageSquareWarning className="h-6 w-6" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl font-bold text-slate-900">SMS Notifications</CardTitle>
+                  <CardDescription className="text-slate-500">Engage bulk meter customers directly via SMS.</CardDescription>
+                </div>
+              </div>
+              <Link href="/admin/notifications/sms">
+                <Button className="bg-orange-600 hover:bg-orange-700 shadow-md group-hover:scale-105 transition-all">
+                  Go to SMS Page <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
         </Card>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-8 lg:grid-cols-5">
         {canCreateNotifications && (
-          <Card className="shadow-lg lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Compose Message</CardTitle>
-              <CardDescription>Send a message to all staff or a specific branch.</CardDescription>
+          <Card className="shadow-xl lg:col-span-2 border-none bg-white">
+            <CardHeader className="border-b bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                  <PlusCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg font-bold">Compose Message</CardTitle>
+                  <CardDescription>Send an urgent broadcast to staff.</CardDescription>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                   <FormField
@@ -301,9 +381,9 @@ export default function AdminNotificationsPage() {
                       </FormItem>
                     )}
                   />
-                  <Button type="submit" disabled={form.formState.isSubmitting} className="w-full">
-                    <Send className="mr-2 h-4 w-4" />
-                    {form.formState.isSubmitting ? "Sending..." : "Send Notification"}
+                  <Button type="submit" disabled={form.formState.isSubmitting} className="w-full bg-blue-600 hover:bg-blue-700 h-11 text-base font-bold shadow-lg shadow-blue-200">
+                    <Send className="mr-2 h-5 w-5" />
+                    {form.formState.isSubmitting ? "Broadcasting..." : "Send Notification"}
                   </Button>
                 </form>
               </Form>
@@ -311,46 +391,57 @@ export default function AdminNotificationsPage() {
           </Card>
         )}
 
-        <Card className={`shadow-lg ${canCreateNotifications ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
-          <CardHeader>
-            <CardTitle>Sent History</CardTitle>
-            <CardDescription>A log of previously sent notifications.</CardDescription>
+        <Card className={`shadow-xl border-none bg-white ${canCreateNotifications ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
+          <CardHeader className="border-b bg-slate-50/50">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-indigo-100 rounded-lg text-indigo-600">
+                <History className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-lg font-bold">Sent History</CardTitle>
+                <CardDescription>Track all sent broadcasts and communications.</CardDescription>
+              </div>
+            </div>
           </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[450px]">
+          <CardContent className="pt-0 px-0">
+            <ScrollArea className="h-[550px]">
               <div className="overflow-x-auto">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-slate-50/80 sticky top-0 z-10">
                     <TableRow>
-                      <TableHead>Message</TableHead>
-                      <TableHead>Target</TableHead>
-                      <TableHead>Sent</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead className="font-bold text-slate-700 h-12">Message Content</TableHead>
+                      <TableHead className="font-bold text-slate-700 h-12">Target Group</TableHead>
+                      <TableHead className="font-bold text-slate-700 h-12">Timestamp</TableHead>
+                      <TableHead className="text-right font-bold text-slate-700 h-12 pr-6">Management</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading ? (
-                      <TableRow><TableCell colSpan={4} className="h-24 text-center">Loading notifications...</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} className="h-32 text-center text-slate-500 italic">Loading broadcasts...</TableCell></TableRow>
                     ) : filteredAndSortedNotifications.length > 0 ? (
                       filteredAndSortedNotifications.map(n => (
-                        <TableRow key={n.id}>
-                          <TableCell>
-                            <p className="font-medium">{n.title}</p>
-                            <p className="text-xs text-muted-foreground truncate max-w-xs">{n.message}</p>
+                        <TableRow key={n.id} className="hover:bg-slate-50/50 transition-colors">
+                          <TableCell className="max-w-[300px] py-4">
+                            <p className="font-bold text-slate-900 text-sm">{n.title}</p>
+                            <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">{n.message}</p>
                           </TableCell>
-                          <TableCell>{getDisplayTargetName(n.targetBranchId)}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
+                          <TableCell className="py-4">
+                            <Badge variant="secondary" className={`${n.targetBranchId ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'} font-bold px-2 py-0.5`}>
+                              {getDisplayTargetName(n.targetBranchId)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs font-semibold text-slate-600 py-4 tabular-nums">
                             {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
                           </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
+                          <TableCell className="text-right pr-6 py-4">
+                            <div className="flex items-center justify-end gap-2">
                               {canEditNotifications && (
-                                <Button variant="outline" size="icon" onClick={() => handleEdit(n)}>
+                                <Button variant="ghost" size="icon" onClick={() => handleEdit(n)} className="h-9 w-9 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
                                   <Edit className="h-4 w-4" />
                                 </Button>
                               )}
                               {canDeleteNotifications && (
-                                <Button variant="destructive" size="icon" onClick={() => handleDelete(n)}>
+                                <Button variant="ghost" size="icon" onClick={() => handleDelete(n)} className="h-9 w-9 text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               )}
@@ -359,7 +450,12 @@ export default function AdminNotificationsPage() {
                         </TableRow>
                       ))
                     ) : (
-                      <TableRow><TableCell colSpan={4} className="h-24 text-center">No notifications sent yet.</TableCell></TableRow>
+                      <TableRow>
+                        <TableCell colSpan={4} className="h-32 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                          <Bell className="h-10 w-10 opacity-10" />
+                          <p className="font-medium">No broadcasts sent yet.</p>
+                        </TableCell>
+                      </TableRow>
                     )}
                   </TableBody>
                 </Table>

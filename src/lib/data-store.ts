@@ -480,8 +480,10 @@ const mapDomainBranchToUpdate = (branch: Partial<Omit<DomainBranch, 'id'>>): Bra
 
 
 const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<DomainIndividualCustomer> => {
-  const usage = dbCustomer.currentReading - dbCustomer.previousReading;
-  const { totalBill: bill } = await computeBillLocal(usage, dbCustomer.customerType, dbCustomer.sewerageConnection, Number(dbCustomer.meterSize), dbCustomer.month);
+  const rawUsage = dbCustomer.currentReading - dbCustomer.previousReading;
+  const isMinOfThreeApplied = rawUsage < 3;
+  const billingUsage = isMinOfThreeApplied ? 3 : rawUsage;
+  const { totalBill: bill } = await computeBillLocal(billingUsage, dbCustomer.customerType, dbCustomer.sewerageConnection, Number(dbCustomer.meterSize), dbCustomer.month);
   return {
     customerKeyNumber: dbCustomer.customerKeyNumber,
     instKey: dbCustomer.INST_KEY,
@@ -504,6 +506,8 @@ const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<Do
     status: dbCustomer.status,
     paymentStatus: dbCustomer.paymentStatus,
     calculatedBill: bill,
+    isMinOfThreeApplied,
+    rawUsage,
     approved_at: dbCustomer.approved_at,
     xCoordinate: dbCustomer.x_coordinate ? Number(dbCustomer.x_coordinate) : undefined,
     yCoordinate: dbCustomer.y_coordinate ? Number(dbCustomer.y_coordinate) : undefined,
@@ -561,8 +565,10 @@ async function computeBillLocal(usage: number, customerType: CustomerType, sewer
 const mapDomainCustomerToInsert = async (
   customer: Partial<DomainIndividualCustomer>
 ): Promise<IndividualCustomerInsert> => {
-  const usage = (customer.currentReading || 0) - (customer.previousReading || 0);
-  const { totalBill: bill } = await computeBillLocal(usage, customer.customerType!, customer.sewerageConnection!, Number(customer.meterSize), customer.month!);
+  const rawUsage = (customer.currentReading || 0) - (customer.previousReading || 0);
+  const isMinOfThreeApplied = rawUsage < 3;
+  const billingUsage = isMinOfThreeApplied ? 3 : rawUsage;
+  const { totalBill: bill } = await computeBillLocal(billingUsage, customer.customerType!, customer.sewerageConnection!, Number(customer.meterSize), customer.month!);
   return {
     name: customer.name!,
     customerKeyNumber: customer.customerKeyNumber!,
@@ -619,9 +625,11 @@ const mapDomainCustomerToUpdate = async (customerWithUpdates: DomainIndividualCu
     y_coordinate: customerWithUpdates.yCoordinate,
   };
 
-  const usage = customerWithUpdates.currentReading - customerWithUpdates.previousReading;
+  const rawUsage = customerWithUpdates.currentReading - customerWithUpdates.previousReading;
+  const isMinOfThreeApplied = rawUsage < 3;
+  const billingUsage = isMinOfThreeApplied ? 3 : rawUsage;
   const { totalBill } = await computeBillLocal(
-    usage,
+    billingUsage,
     customerWithUpdates.customerType,
     customerWithUpdates.sewerageConnection,
     Number(customerWithUpdates.meterSize),
@@ -1318,6 +1326,9 @@ async function fetchAllBranches() {
 }
 
 async function fetchAllCustomers() {
+  if (!tariffsFetched) {
+    await initializeTariffs();
+  }
   const { data, error } = await getAllCustomersAction();
   if (data) {
     customers = await Promise.all(data.map(mapDbCustomerToDomain));
@@ -1330,6 +1341,9 @@ async function fetchAllCustomers() {
 }
 
 async function fetchAllBulkMeters() {
+  if (!tariffsFetched) {
+    await initializeTariffs();
+  }
   const { data: rawBulkMeters, error: fetchError } = await getAllBulkMetersAction();
 
   if (fetchError) {

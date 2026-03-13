@@ -101,7 +101,16 @@ export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bul
                     {getCustomerBranchName(customer.branchId, customer.subCity)}
                   </TableCell>
                   <TableCell>{customer.customerType}</TableCell>
-                  <TableCell>{usage.toFixed(2)}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span>{(customer.isMinOfThreeApplied ? 3 : usage).toFixed(2)}</span>
+                      {customer.isMinOfThreeApplied && (
+                        <span className="text-[10px] text-amber-600 font-medium leading-none mt-1">
+                          Min 3m³ applied (Raw: {customer.rawUsage?.toFixed(2)})
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>{customer.calculatedBill.toFixed(2)}</TableCell>
                   <TableCell>{getBulkMeterName(customer.assignedBulkMeterId)}</TableCell>
                   <TableCell>
@@ -193,7 +202,17 @@ export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bul
               <CardContent className="p-4 space-y-3">
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div><span className="text-muted-foreground uppercase font-semibold">Meter:</span> {customer.meterNumber}</div>
-                  <div><span className="text-muted-foreground uppercase font-semibold">Usage:</span> {usage.toFixed(2)} m³</div>
+                  <div>
+                    <span className="text-muted-foreground uppercase font-semibold text-[10px]">Usage:</span>
+                    <div className="flex flex-col">
+                      <span>{(customer.isMinOfThreeApplied ? 3 : usage).toFixed(2)} m³</span>
+                      {customer.isMinOfThreeApplied && (
+                        <span className="text-[9px] text-amber-600 font-bold leading-tight">
+                          Min 3m³ Applied (Raw: {customer.rawUsage?.toFixed(2)})
+                        </span>
+                      )}
+                    </div>
+                  </div>
                   <div><span className="text-muted-foreground uppercase font-semibold">Type:</span> {customer.customerType}</div>
                   <div><span className="text-muted-foreground uppercase font-semibold">Bill:</span> {currency} {customer.calculatedBill.toFixed(2)}</div>
                   <div className="col-span-2 border-t pt-1 mt-1 flex justify-between">

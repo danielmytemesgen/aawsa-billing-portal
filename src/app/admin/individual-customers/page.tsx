@@ -23,7 +23,8 @@ import {
   initializeBulkMeters,
   getBranches,
   initializeBranches,
-  subscribeToBranches
+  subscribeToBranches,
+  initializeTariffs
 } from "@/lib/data-store";
 import type { Branch } from "../branches/branch-types";
 import { TablePagination } from "@/components/ui/table-pagination";
@@ -57,7 +58,8 @@ export default function IndividualCustomersPage() {
     Promise.all([
       initializeBulkMeters(true),
       initializeCustomers(true),
-      initializeBranches(true)
+      initializeBranches(true),
+      initializeTariffs(true)
     ]).then(() => {
       setBulkMetersList(getBulkMeters().filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
       setCustomers(getCustomers());

@@ -52,6 +52,8 @@ const initialMemoizedDetails = {
   totalBulkBillForPeriod: 0, totalPayable: 0, differenceUsage: 0,
   differenceBill: 0, differenceBillBreakdown: {} as BillCalculationResult,
   displayBranchName: "N/A", displayCardLocation: "N/A",
+  isMinOfThreeApplied: false,
+  rawDifference: 0,
   billCardDetails: {
     prevReading: 0, currReading: 0, usage: 0, baseWaterCharge: 0,
     maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0,
@@ -150,14 +152,28 @@ export default function StaffBulkMeterDetailsPage() {
 
     const totalIndividualUsage = currentAssociatedCustomers.reduce((sum, cust) => sum + ((cust.currentReading ?? 0) - (cust.previousReading ?? 0)), 0);
 
-    let differenceUsage = bulkUsage - totalIndividualUsage;
+    const rawDifference = bulkUsage - totalIndividualUsage;
 
-    // Apply Rule: If Difference Usage is 0, 1, or 2, bump to 3
+    // Apply minimum-of-3 rule: if difference is < 3 (including negative), bill for at least 3 m³
+    let differenceUsage = rawDifference;
+    let isMinOfThreeApplied = false;
     if (differenceUsage < 3) {
       differenceUsage = 3;
+      isMinOfThreeApplied = true;
     }
 
-    const { data: differenceFullOrNull } = await calculateBillAction(differenceUsage, effectiveBulkMeterCustomerType, effectiveBulkMeterSewerageConnection, currentBulkMeter.meterSize, billingMonth, bulkUsage);
+    // Only pass sewerageUsage override when: sewerage connected AND bulk usage itself was low (0-2)
+    // This preserves accurate sewerage charge for normal-range difference usage
+    let sewerageUsage: number | undefined = undefined;
+    if (
+      effectiveBulkMeterSewerageConnection === 'Yes' &&
+      isMinOfThreeApplied &&
+      bulkUsage >= 0 && bulkUsage <= 2
+    ) {
+      sewerageUsage = bulkUsage;
+    }
+
+    const { data: differenceFullOrNull } = await calculateBillAction(differenceUsage, effectiveBulkMeterCustomerType, effectiveBulkMeterSewerageConnection, currentBulkMeter.meterSize, billingMonth, sewerageUsage);
     const differenceFull = differenceFullOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0 } as BillCalculationResult;
     const differenceBill = differenceFull.totalBill;
     const differenceBillBreakdown = differenceFull;
@@ -290,7 +306,9 @@ export default function StaffBulkMeterDetailsPage() {
     setMemoizedDetails({
       bmPreviousReading, bmCurrentReading, bulkUsage, totalBulkBillForPeriod,
       totalPayable, differenceUsage, differenceBill, differenceBillBreakdown,
-      displayBranchName, displayCardLocation: currentBulkMeter.specificArea || "N/A", billCardDetails: finalBillCardDetails, totalIndividualUsage,
+      displayBranchName, displayCardLocation: currentBulkMeter.specificArea || "N/A",
+      isMinOfThreeApplied, rawDifference,
+      billCardDetails: finalBillCardDetails, totalIndividualUsage,
     });
   }, []);
 
@@ -454,6 +472,8 @@ export default function StaffBulkMeterDetailsPage() {
     displayCardLocation,
     billCardDetails,
     totalIndividualUsage,
+    isMinOfThreeApplied,
+    rawDifference,
   } = memoizedDetails;
 
   const handleEditBulkMeter = () => setIsBulkMeterFormOpen(true);
@@ -873,53 +893,118 @@ export default function StaffBulkMeterDetailsPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </CardHeader>
-              <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p><strong className="font-semibold">Branch:</strong> {displayBranchName ?? 'N/A'}</p>
-                  <p><strong className="font-semibold">Sub-City:</strong> {bulkMeter.location ?? 'N/A'}, {bulkMeter.woreda ?? 'N/A'}</p><p><strong className="font-semibold">Specific Area:</strong> {bulkMeter.specificArea ?? 'N/A'}</p><p><strong className="font-semibold">Meter No:</strong> {bulkMeter.meterNumber ?? 'N/A'}</p><p><strong className="font-semibold">Meter Size:</strong> {bulkMeter.meterSize} inch</p>
-                  {bulkMeter.xCoordinate && bulkMeter.yCoordinate && (
-                    <a
-                      href={`https://www.google.com/maps?q=${bulkMeter.yCoordinate},${bulkMeter.xCoordinate}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center text-primary hover:underline mt-1"
-                    >
-                      <MapPin className="mr-1 h-4 w-4" />
-                      View on Map
-                    </a>
-                  )}
-                </div>
-                <div>
-                  <p><strong className="font-semibold">Contract No:</strong> {bulkMeter.contractNumber ?? 'N/A'}</p><p><strong className="font-semibold">Month:</strong> {bulkMeter.month ?? 'N/A'}</p><p><strong className="font-semibold">Billed Readings (Prev/Curr):</strong> {(bmPreviousReading).toFixed(2)} / {(bmCurrentReading).toFixed(2)}</p>
-                  <p className="text-lg"><strong className="font-semibold">Bulk Usage:</strong> {bulkUsage.toFixed(2)} m³</p>
-                  <p className="text-lg"><strong className="font-semibold">Total Individual Usage:</strong> {totalIndividualUsage.toFixed(2)} m³</p>
-                  <div className="flex items-center gap-2 mt-1"><strong className="font-semibold">Payment Status:</strong>
-                    <Badge variant={billCardDetails.paymentStatus === 'Paid' ? 'default' : 'destructive'} className="cursor-pointer hover:opacity-80">
-                      {billCardDetails.paymentStatus === 'Paid' ? <CheckCircle className="mr-1 h-3.5 w-3.5" /> : <XCircle className="mr-1 h-3.5 w-3.5" />}
-                      {billCardDetails.paymentStatus}
-                    </Badge>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  {/* Left column */}
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Branch', value: displayBranchName ?? 'N/A' },
+                      { label: 'Sub-City', value: `${bulkMeter.location ?? 'N/A'}, ${bulkMeter.woreda ?? 'N/A'}` },
+                      { label: 'Specific Area', value: bulkMeter.specificArea ?? 'N/A' },
+                      { label: 'Meter No', value: bulkMeter.meterNumber ?? 'N/A' },
+                      { label: 'Meter Size', value: `${bulkMeter.meterSize} inch` },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="flex items-center justify-between px-3 py-1.5 rounded-md bg-muted/40 border border-border/50">
+                        <span className="text-muted-foreground font-medium">{label}</span>
+                        <span className="font-semibold text-right">{value}</span>
+                      </div>
+                    ))}
+                    {bulkMeter.xCoordinate && bulkMeter.yCoordinate && (
+                      <a href={`https://www.google.com/maps?q=${bulkMeter.yCoordinate},${bulkMeter.xCoordinate}`} target="_blank" rel="noopener noreferrer" className="flex items-center text-primary hover:underline px-3 py-1 text-sm">
+                        <MapPin className="mr-1 h-4 w-4" /> View on Map
+                      </a>
+                    )}
+                  </div>
+                  {/* Right column */}
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Contract No', value: bulkMeter.contractNumber ?? 'N/A' },
+                      { label: 'Month', value: bulkMeter.month ?? 'N/A' },
+                      { label: 'Readings (Prev/Curr)', value: `${bmPreviousReading.toFixed(2)} / ${bmCurrentReading.toFixed(2)}` },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="flex items-center justify-between px-3 py-1.5 rounded-md bg-muted/40 border border-border/50">
+                        <span className="text-muted-foreground font-medium">{label}</span>
+                        <span className="font-semibold text-right">{value}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/30">
+                      <span className="text-blue-700 dark:text-blue-400 font-medium text-sm">Bulk Usage</span>
+                      <span className="font-bold text-blue-700 dark:text-blue-400">{bulkUsage.toFixed(2)} m³</span>
+                    </div>
+                    <div className="flex items-center justify-between px-3 py-2 rounded-md bg-violet-500/10 border border-violet-500/30">
+                      <span className="text-violet-700 dark:text-violet-400 font-medium text-sm">Total Individual Usage</span>
+                      <span className="font-bold text-violet-700 dark:text-violet-400">{totalIndividualUsage.toFixed(2)} m³</span>
+                    </div>
+                    <div className="flex items-center justify-between px-3 py-1.5 rounded-md bg-muted/40 border border-border/50">
+                      <span className="text-muted-foreground font-medium">Payment Status</span>
+                      <Badge variant={billCardDetails.paymentStatus === 'Paid' ? 'default' : 'destructive'} className="cursor-pointer hover:opacity-80">
+                        {billCardDetails.paymentStatus === 'Paid' ? <CheckCircle className="mr-1 h-3.5 w-3.5" /> : <XCircle className="mr-1 h-3.5 w-3.5" />}
+                        {billCardDetails.paymentStatus}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle>Difference Billing Calculation</CardTitle>
+            <Card className="shadow-lg border-primary/20">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <DollarSign className="h-4 w-4 text-primary" />
+                  Difference Billing Calculation
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                <p className={cn("text-lg", differenceUsage >= 0 ? "text-green-600" : "text-amber-600")}><strong className="font-semibold">Difference Usage:</strong> {differenceUsage?.toFixed(2)} m³</p>
-                <p><strong className="font-semibold">Base Water Charge:</strong> ETB {differenceBillBreakdown?.baseWaterCharge?.toFixed(2) ?? '0.00'}</p>
-                <p><strong className="font-semibold">Maintenance Fee:</strong> ETB {differenceBillBreakdown?.maintenanceFee?.toFixed(2) ?? '0.00'}</p>
-                <p><strong className="font-semibold">Sanitation Fee:</strong> ETB {differenceBillBreakdown?.sanitationFee?.toFixed(2) ?? '0.00'}</p>
-                <p><strong className="font-semibold">Sewerage Fee:</strong> ETB {differenceBillBreakdown?.sewerageCharge?.toFixed(2) ?? '0.00'}</p>
-                <p><strong className="font-semibold">Meter Rent:</strong> ETB {differenceBillBreakdown?.meterRent?.toFixed(2) ?? '0.00'}</p>
-                <p><strong className="font-semibold">VAT (15%):</strong> ETB {differenceBillBreakdown?.vatAmount?.toFixed(2) ?? '0.00'}</p>
-                <p className="text-base pt-1 border-t mt-1 font-semibold">Current Bill (ETB): ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</p>
-                <p className="text-base font-semibold text-destructive">Penalty (ETB): ETB {billCardDetails.penaltyAmt.toFixed(2)}</p>
-                <p className={cn("text-base font-semibold", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>Outstanding (ETB): ETB {billCardDetails.outstandingBill.toFixed(2)}</p>
-                <p className="text-xl font-bold text-primary pt-1 border-t mt-1">Total Amount Payable: ETB {billCardDetails.totalPayable.toFixed(2)}</p>
-                <Separator className="my-4" />
+              <CardContent className="space-y-1.5 text-sm">
+                {/* Difference Usage highlight */}
+                <div className={cn(
+                  "flex items-center justify-between px-3 py-2 rounded-md border font-semibold",
+                  isMinOfThreeApplied
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400"
+                    : "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400"
+                )}>
+                  <span>Difference Usage</span>
+                  <div className="text-right">
+                    <div>{differenceUsage?.toFixed(2)} m³</div>
+                    {isMinOfThreeApplied && (
+                      <div className="text-xs font-normal opacity-70">actual: {rawDifference.toFixed(2)} m³</div>
+                    )}
+                  </div>
+                </div>
+                {/* Fee breakdown rows */}
+                <div className="space-y-1 pt-1">
+                  {[
+                    { label: 'Base Water Charge', value: differenceBillBreakdown?.baseWaterCharge },
+                    { label: 'Maintenance Fee', value: differenceBillBreakdown?.maintenanceFee },
+                    { label: 'Sanitation Fee', value: differenceBillBreakdown?.sanitationFee },
+                    { label: 'Sewerage Fee', value: differenceBillBreakdown?.sewerageCharge },
+                    { label: 'Meter Rent', value: differenceBillBreakdown?.meterRent },
+                    { label: 'VAT (15%)', value: differenceBillBreakdown?.vatAmount },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="flex items-center justify-between py-0.5">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-medium tabular-nums">ETB {(value ?? 0).toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+                {/* Totals */}
+                <div className="pt-2 mt-1 border-t space-y-1">
+                  <div className="flex items-center justify-between py-0.5">
+                    <span className="font-semibold">Current Bill</span>
+                    <span className="font-bold tabular-nums">ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-0.5 text-destructive">
+                    <span className="font-medium">Penalty</span>
+                    <span className="font-semibold tabular-nums">ETB {billCardDetails.penaltyAmt.toFixed(2)}</span>
+                  </div>
+                  <div className={cn("flex items-center justify-between py-0.5", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>
+                    <span className="font-medium">Outstanding</span>
+                    <span className="font-semibold tabular-nums">ETB {billCardDetails.outstandingBill.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2 rounded-md bg-primary/10 border border-primary/30 mt-1">
+                    <span className="font-bold text-primary">Total Amount Payable</span>
+                    <span className="font-bold text-primary tabular-nums text-base">ETB {billCardDetails.totalPayable.toFixed(2)}</span>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
