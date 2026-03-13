@@ -60,24 +60,44 @@ export default function PrintInvoicesPage() {
     <div className="print-container">
       <style jsx global>{`
         @media print {
-          body { margin: 0; padding: 0; }
-          .print-container { width: 100%; }
-          .invoice-page { page-break-after: always; page-break-inside: avoid; }
+          body { margin: 0; padding: 0; background: white !important; }
+          .print-container { width: 100%; padding: 0; }
+          .invoice-page { 
+            page-break-after: always; 
+            page-break-inside: avoid;
+            margin: 0 !important;
+            border: none !important;
+            min-height: 297mm;
+            padding: 2.5rem !important;
+          }
           .invoice-page:last-child { page-break-after: auto; }
-          @page { margin: 1cm; size: A4; }
+          @page { margin: 1cm; size: A4 portrait; }
         }
-        .invoice-page { background: white; padding: 2rem; margin-bottom: 2rem; border: 1px solid #e5e7eb; }
-        .print-header-top { display: flex; justify-content: space-between; font-size: 0.75rem; color: #6b7280; margin-bottom: 1rem; }
-        .print-header-main { text-align: center; margin-bottom: 2rem; display: flex; flex-direction: column; align-items: center; }
-        .print-header-main h1 { font-size: 1.25rem; font-weight: bold; margin-bottom: 0.5rem; }
-        .print-header-main h2 { font-size: 1rem; font-weight: 600; }
-        .print-section { margin-bottom: 1.5rem; }
-        .print-row { display: flex; justify-content: space-between; padding: 0.25rem 0; font-size: 0.875rem; }
-        .print-row span:first-child { font-weight: 500; }
-        .print-hr { border: none; border-top: 2px solid #000; margin: 0.5rem 0; }
-        .print-hr-dashed { border: none; border-top: 1px dashed #9ca3af; margin: 0.5rem 0; }
-        .print-signature-section { display: flex; justify-content: space-between; margin-top: 2rem; font-size: 0.875rem; }
-        .print-signature-item { display: flex; flex-direction: column; gap: 0.5rem; }
+        .invoice-page { 
+          background: white; 
+          padding: 2.5rem; 
+          margin-bottom: 2rem; 
+          border: 1px solid #e5e7eb;
+          max-width: 800px;
+          margin-left: auto;
+          margin-right: auto;
+          position: relative;
+          overflow: hidden;
+        }
+        /* Bulk Watermark */
+        .invoice-page::before {
+          content: "OFFICIAL INVOICE";
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%) rotate(-45deg);
+          font-size: 80pt;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.03);
+          pointer-events: none;
+          white-space: nowrap;
+          z-index: 0;
+        }
       `}</style>
 
       {invoiceData.map(({ meter, bill }) => {
@@ -86,111 +106,105 @@ export default function PrintInvoicesPage() {
         const totalPayable = Number(bill.TOTALBILLAMOUNT ?? currentBill + outstanding);
 
         return (
-          <div key={meter.customerKeyNumber} className="invoice-page">
-            <div className="print-header-top">
-              <span>{currentDateTime}</span>
-              <span></span>
-            </div>
+          <div key={meter.customerKeyNumber} className="invoice-page printable-bill-card">
+            <div className="print-header">
+              <div className="print-header-top">
+                <span>Invoice generated on: {currentDateTime}</span>
+                <span className="font-bold">INVOICE #{meter.customerKeyNumber}-{bill.monthYear}</span>
+              </div>
 
-            <div className="print-header-main flex flex-col items-center px-2 text-center">
-              <h1 className="text-xl font-bold uppercase tracking-wide">Addis Ababa Water and Sewerage Authority</h1>
-              <hr className="my-2 w-full border-black" />
-              <div className="flex flex-row items-center justify-center gap-2 pt-1">
-                <Image src="https://veiethiopia.com/photo/partner/par2.png" alt="AAWSA Logo" width={32} height={20} className="flex-shrink-0" />
-                <h2 className="font-semibold text-lg">AAWSA INVOICE</h2>
+              <div className="print-header-main flex flex-col items-center px-2 text-center">
+                <h1 className="uppercase tracking-tighter">ADDIS ABABA WATER AND SEWERAGE AUTHORITY</h1>
+                <div className="flex flex-row items-center justify-center gap-4 mt-2">
+                  <Image src="https://veiethiopia.com/photo/partner/par2.png" alt="AAWSA Logo" width={50} height={30} className="flex-shrink-0" />
+                  <h2 className="border-l-2 border-slate-300 pl-4">AAWSA INVOICE</h2>
+                </div>
               </div>
             </div>
 
             <div className="print-body">
               <div className="print-section">
-                <div className="print-banner">BULK INFORMATION</div>
+                <div className="print-banner">Bulk Meter Information</div>
                 <table className="print-table">
                   <tbody>
-                    <tr><td>Bulk meter name:</td><td>{meter.name}</td></tr>
-                    <tr><td>Customer key number:</td><td>{meter.customerKeyNumber}</td></tr>
-                    <tr><td>Contract No:</td><td>{meter.contractNumber ?? 'N/A'}</td></tr>
-                    <tr><td>Meter Number:</td><td>{meter.meterKey || meter.meterNumber || 'N/A'}</td></tr>
-                    <tr><td>Branch:</td><td>{getBranchName(meter.branchId, meter.subCity)}</td></tr>
-                    <tr><td>Sub-City:</td><td>{meter.subCity}</td></tr>
-                    <tr><td>Woreda:</td><td>{meter.woreda}</td></tr>
-                    <tr><td>Specific Area:</td><td>{meter.specificArea}</td></tr>
-                    <tr><td>Phone Number:</td><td>{meter.phoneNumber ?? 'N/A'}</td></tr>
+                    <tr><td>Account Name</td><td>{meter.name}</td></tr>
+                    <tr><td>Customer Key</td><td>{meter.customerKeyNumber}</td></tr>
+                    <tr><td>Contract Number</td><td>{meter.contractNumber ?? 'N/A'}</td></tr>
+                    <tr><td>Operational Branch</td><td>{getBranchName(meter.branchId, meter.subCity)}</td></tr>
+                    <tr><td>Location (Sub-City)</td><td>{meter.subCity}</td></tr>
                   </tbody>
                 </table>
               </div>
 
               <div className="print-section">
-                <div className="print-banner">READING INFORMATION</div>
+                <div className="print-banner">Reading & Consumption</div>
                 <table className="print-table">
                   <tbody>
-                    <tr><td>Bulk Meter Category:</td><td>{meter.chargeGroup}</td></tr>
-                    <tr><td>Sewerage Connection:</td><td>{meter.sewerageConnection}</td></tr>
-                    <tr><td>Bill Month:</td><td>{bill.monthYear}</td></tr>
-                    <tr><td>Previous and Current Reading:</td><td>{Number(bill.PREVREAD).toFixed(2)} / {Number(bill.CURRREAD).toFixed(2)} m³</td></tr>
-                    <tr><td>Bulk Usage:</td><td>{Number(bill.CONS ?? 0).toFixed(2)} m³</td></tr>
-                    <tr><td>Total Individual Usage:</td><td>{(Number(bill.CONS ?? 0) - Number(bill.differenceUsage ?? 0)).toFixed(2)} m³</td></tr>
-                    <tr><td>Difference Usage:</td><td>{Number(bill.differenceUsage ?? 0).toFixed(2)} m³</td></tr>
+                    <tr><td>Meter Category</td><td>{meter.chargeGroup}</td></tr>
+                    <tr><td>Sewerage Connection</td><td>{meter.sewerageConnection}</td></tr>
+                    <tr><td>Billing Period</td><td>{bill.monthYear}</td></tr>
+                    <tr><td>Reading Range</td><td>{Number(bill.PREVREAD).toFixed(2)} - {Number(bill.CURRREAD).toFixed(2)} m³</td></tr>
+                    <tr><td>Main Meter Usage</td><td>{Number(bill.CONS ?? 0).toFixed(2)} m³</td></tr>
+                    <tr><td>Sub-Meter Total Usage</td><td>{(Number(bill.CONS ?? 0) - Number(bill.differenceUsage ?? 0)).toFixed(2)} m³</td></tr>
+                    <tr className="font-bold"><td>Billable Difference</td><td>{Number(bill.differenceUsage ?? 0).toFixed(2)} m³</td></tr>
                   </tbody>
                 </table>
               </div>
 
               <div className="print-section">
-                <div className="print-banner">CHARGES BREAKDOWN</div>
+                <div className="print-banner">Charges Breakdown</div>
                 <table className="print-table">
                   <tbody>
                     <tr>
-                      <td>Base Water Charge (Rate/m³):</td>
+                      <td>Base Water Charge (Standard Rate)</td>
                       <td>ETB {Number(bill.base_water_charge ?? 0).toFixed(2)}</td>
                     </tr>
-                    <tr><td>Maintenance Fee:</td><td>ETB {Number(bill.maintenanceFee ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>Sanitation Fee:</td><td>ETB {Number(bill.sanitationFee ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>Meter Rent:</td><td>ETB {Number(bill.meterRent ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>Sewerage Fee:</td><td>ETB {Number(bill.sewerageCharge ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>VAT (15%):</td><td>ETB {Number(bill.vatAmount ?? 0).toFixed(2)}</td></tr>
+                    <tr><td>Maintenance Service Fee</td><td>ETB {Number(bill.maintenanceFee ?? 0).toFixed(2)}</td></tr>
+                    <tr><td>Sanitation Service Fee</td><td>ETB {Number(bill.sanitationFee ?? 0).toFixed(2)}</td></tr>
+                    <tr><td>Meter Rental Fee</td><td>ETB {Number(bill.meterRent ?? 0).toFixed(2)}</td></tr>
+                    <tr><td>Sewerage Disposal Fee</td><td>ETB {Number(bill.sewerageCharge ?? 0).toFixed(2)}</td></tr>
+                    <tr><td>Value Added Tax (15%)</td><td>ETB {Number(bill.vatAmount ?? 0).toFixed(2)}</td></tr>
                   </tbody>
                 </table>
               </div>
 
-              <div className="print-section">
-                <div className="print-banner">Total Amount Payable:</div>
+              <div className="print-section pt-4 border-t-2 border-slate-200">
+                <div className="print-banner">Payment Summary</div>
                 <table className="print-table">
                   <tbody>
-                    <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {currentBill.toFixed(2)}</td></tr>
-                    <tr><td>Penalty (ETB):</td><td>ETB {Number(bill.PENALTYAMT || 0).toFixed(2)}</td></tr>
-                    <tr><td>Outstanding (ETB):</td><td>ETB {outstanding.toFixed(2)}</td></tr>
-                    <tr className="print-table-total" style={{ fontSize: '14pt' }}>
-                      <td>Total Amount Payable:</td>
+                    <tr><td>Current Period Bill</td><td>ETB {currentBill.toFixed(2)}</td></tr>
+                    <tr><td>Accrued Penalty</td><td>ETB {Number(bill.PENALTYAMT || 0).toFixed(2)}</td></tr>
+                    <tr><td>Outstanding Balance</td><td>ETB {outstanding.toFixed(2)}</td></tr>
+                    <tr className="print-table-total">
+                      <td className="uppercase tracking-wider">Total Amount Payable</td>
                       <td>ETB {totalPayable.toFixed(2)}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
-
-
-              <div className="flex justify-between items-end mt-4">
-                <div className="space-y-1">
-                  <div className="text-sm">Paid/Unpaid: {bill.paymentStatus ?? 'Unpaid'}</div>
-                  <div className="text-sm">Month: {bill.monthYear}</div>
-                  {bill.BILLKEY && <div className="text-xs text-muted-foreground">Key: {bill.BILLKEY}</div>}
+              <div className="flex justify-between items-center mt-12 bg-slate-50 p-6 rounded-lg border border-slate-100">
+                <div className="space-y-2">
+                  <div className="text-xs text-slate-500 font-bold uppercase tracking-widest leading-none">Billing Cycle</div>
+                  <div className="text-lg font-bold text-slate-900">{bill.monthYear}</div>
                 </div>
                 <div className="print-status-box">
                   {bill.paymentStatus ?? 'Unpaid'}
                 </div>
               </div>
 
-              <div className="print-signature-section grid grid-cols-3 gap-4 mt-8">
-                <div className="print-signature-item border-t border-black pt-2 flex flex-col text-center">
-                  <span className="text-xs uppercase font-bold">Prepared by</span>
-                  <span className="h-8"></span>
+              <div className="print-signature-section">
+                <div className="print-signature-item">
+                  <div className="print-signature-line"></div>
+                  <span className="print-signature-label">Prepared by</span>
                 </div>
-                <div className="print-signature-item border-t border-black pt-2 flex flex-col text-center">
-                  <span className="text-xs uppercase font-bold">Checked by</span>
-                  <span className="h-8"></span>
+                <div className="print-signature-item">
+                  <div className="print-signature-line"></div>
+                  <span className="print-signature-label">Checked by</span>
                 </div>
-                <div className="print-signature-item border-t border-black pt-2 flex flex-col text-center">
-                  <span className="text-xs uppercase font-bold">Approved by</span>
-                  <span className="h-8"></span>
+                <div className="print-signature-item">
+                  <div className="print-signature-line"></div>
+                  <span className="print-signature-label">Approved by</span>
                 </div>
               </div>
             </div>

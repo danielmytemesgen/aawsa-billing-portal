@@ -342,111 +342,109 @@ body {
 
   .printable-bill-card-wrapper {
     padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
   }
 
   .printable-bill-card {
     display: block !important;
-    position: static !important;
-    width: 100% !important;
-    height: auto !important;
-    margin: 0 !important;
-    padding: 1rem !important;
-    border: 2px solid #000 !important;
-    box-shadow: none !important;
-    color: #000 !important;
+    position: relative !important;
+    width: 210mm !important;
+    min-height: 297mm !important;
+    margin: 0 auto !important;
+    padding: 2.5rem !important;
+    color: #111827 !important;
     background: #fff !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1) !important;
+    overflow: hidden !important;
+  }
+
+  /* Professional Watermark */
+  .printable-bill-card::before {
+    content: "OFFICIAL INVOICE";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-45deg);
+    font-size: 80pt;
+    font-weight: 900;
+    color: rgba(15, 23, 42, 0.03);
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 0;
   }
 
   .printable-bill-card * {
-    color: #000 !important;
+    color: inherit !important;
     background-color: transparent !important;
     box-shadow: none !important;
+    z-index: 1;
+    position: relative;
   }
 
   .print-header-top {
     display: flex !important;
     justify-content: space-between !important;
-    font-size: 9pt;
-    padding: 0.25rem 0.5rem;
-    border-bottom: 1px solid #ccc;
-    margin-bottom: 0.5rem;
+    align-items: center !important;
+    font-size: 8pt;
+    color: #64748b !important;
+    border-bottom: 2px solid #f1f5f9;
+    margin-bottom: 2rem;
+    padding-bottom: 0.5rem;
   }
 
   .print-header-main {
-    text-align: center;
-    margin-bottom: 1rem;
-    padding: 0.5rem;
-  }
-
-  .print-header-main hr {
-    border-color: #000 !important;
+    margin-bottom: 2.5rem;
   }
 
   .print-header-main h1 {
-    font-size: 14pt;
-    font-weight: bold;
-    letter-spacing: 0.05em;
+    font-size: 18pt;
+    font-weight: 800;
+    color: #1e3a8a !important;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.5rem;
+  }
+
+  .print-header-main hr {
+    display: none !important;
   }
 
   .print-header-main h2 {
-    font-size: 12pt;
-    font-weight: 600;
-  }
-
-  .print-header-main img {
-    margin-right: 0.75rem;
-    vertical-align: middle;
-    display: inline-block !important;
+    font-size: 14pt;
+    font-weight: 700;
+    color: #334155 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .print-body {
-    margin: 0 auto;
     width: 100%;
-    padding: 0.5rem 1rem;
   }
 
   .print-section {
-    margin-bottom: 1.5rem;
-  }
-
-  .print-section-header {
-    background-color: #1e40af !important;
-    background: linear-gradient(to right, #1e3a8a, #172554) !important;
-    color: white !important;
-    padding: 0.5rem 1rem !important;
-    border-radius: 4px !important;
-    font-weight: bold !important;
-    font-size: 11pt !important;
-    margin-bottom: 0 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    display: block !important;
-    width: 100% !important;
-    border: 1px solid #111827 !important;
+    margin-bottom: 2rem;
   }
 
   .print-banner {
-    background-color: #172554 !important;
-    /* Very dark blue */
-    color: white !important;
-    padding: 0.6rem 1rem !important;
-    font-weight: bold !important;
-    font-size: 12pt !important;
-    width: 100% !important;
-    border: 1px solid #000 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+    color: #1e3a8a !important;
+    font-size: 10pt !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    border-bottom: 2px solid #1e3a8a !important;
+    padding-bottom: 0.5rem !important;
+    margin-bottom: 1rem !important;
   }
 
   .print-table {
     width: 100% !important;
     border-collapse: collapse !important;
-    margin-bottom: 1.5rem !important;
-    border: 1px solid #000 !important;
+    margin-bottom: 1rem !important;
   }
 
   .print-table tr {
-    border-bottom: 1px solid #000 !important;
+    border-bottom: 1px solid #f1f5f9 !important;
   }
 
   .print-table tr:last-child {
@@ -454,92 +452,92 @@ body {
   }
 
   .print-table td {
-    padding: 0.4rem 0.75rem !important;
-    font-size: 10.5pt !important;
+    padding: 0.75rem 0 !important;
+    font-size: 10pt !important;
+    vertical-align: middle;
   }
 
   .print-table td:first-child {
-    border-right: 1px solid #000 !important;
+    color: #64748b !important;
     font-weight: 500 !important;
+    text-align: left !important;
   }
 
   .print-table td:last-child {
     text-align: right !important;
-    width: 25% !important;
+    font-weight: 600 !important;
+    color: #0f172a !important;
   }
 
   .print-table-total {
-    font-weight: bold !important;
-    background-color: #f3f4f6 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+    background-color: #f8fafc !important;
+    border-top: 2px solid #e2e8f0 !important;
+  }
+
+  .print-table-total td {
+    padding: 1rem 0 !important;
+    font-weight: 700 !important;
+  }
+
+  .print-table-total td:last-child {
+    font-size: 12pt !important;
+    color: #1e3a8a !important;
   }
 
   .print-status-box {
-    border: 2px solid #000 !important;
-    padding: 0.5rem 1rem !important;
-    font-weight: 900 !important;
-    font-size: 14pt !important;
-    display: inline-block !important;
+    border: 3px solid #1e3a8a !important;
+    padding: 0.5rem 1.5rem !important;
+    border-radius: 4px !important;
+    font-weight: 800 !important;
+    font-size: 16pt !important;
+    color: #1e3a8a !important;
     text-transform: uppercase !important;
-    text-align: center !important;
-    min-width: 120px !important;
+    transform: rotate(-5deg);
+    opacity: 0.8 !important;
+    display: inline-block !important;
+    box-shadow: 2px 2px 0 rgba(30, 58, 138, 0.1) !important;
   }
 
-  .print-row {
-    display: flex;
-    justify-content: flex-start;
-    padding: 0.15rem 0;
-    line-height: 1.4;
-    border-bottom: 1px invisible #eee;
-  }
-
-  .print-row>span:first-child {
-    width: 280px;
-    /* Fixed width for labels to align values */
-    flex-shrink: 0;
-    font-weight: bold;
-    padding-right: 1.5rem;
-  }
-
-  .print-row>span:last-child {
-    flex: 1;
-    text-align: left !important;
-  }
-
-  .print-hr {
-    border: 0 !important;
-    height: 1px !important;
-    background-color: #000 !important;
-    margin: 0.25rem 0;
-  }
-
-  .print-hr-dashed {
-    border: 0 !important;
-    border-top: 1px dashed #999 !important;
-    margin: 1.5rem 0;
+  /* Unpaid coloring */
+  .print-status-box:contains("Unpaid") {
+    border-color: #ef4444 !important;
+    color: #ef4444 !important;
   }
 
   .print-signature-section {
-    margin-top: 2rem;
+    margin-top: 4rem;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3rem;
   }
 
   .print-signature-item {
-    margin-top: 1.5rem;
-    font-size: 11pt;
+    text-align: center;
   }
 
-  .print-signature-item span:first-child {
-    display: inline-block;
-    min-width: 120px;
-    font-weight: bold;
+  .print-signature-label {
+    display: block;
+    font-size: 8pt;
+    font-weight: 700;
+    color: #64748b !important;
+    text-transform: uppercase;
+    margin-top: 0.5rem;
+    border-top: 1px solid #cbd5e1;
+    padding-top: 0.5rem;
   }
 
-  .print-signature-item span:last-child {
-    font-family: monospace;
-  }
-
-  .no-print {
-    display: none !important;
+  .print-signature-line {
+    height: 40px;
+    margin-bottom: 0;
   }
 }
+
+/* Screen adjustments */
+@media screen {
+  .printable-bill-card {
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    max-width: 800px;
+    margin: 2rem auto;
+  }
+}
