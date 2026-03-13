@@ -118,9 +118,9 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
       setIsProcessing(false);
 
       if (localErrors.length === 0 && localSuccessCount > 0) {
-        toast({ title: "Upload Successful", description: `${localSuccessCount} records were successfully imported.` });
+        toast({ title: "Upload Successful", description: `${localSuccessCount} records were successfully imported and are pending approval.` });
       } else if (localErrors.length > 0 && localSuccessCount > 0) {
-        toast({ title: "Partial Success", description: `Imported ${localSuccessCount} records, but ${localErrors.length} rows had errors.` });
+        toast({ title: "Partial Success", description: `Imported ${localSuccessCount} records (pending approval), but ${localErrors.length} rows had errors.` });
       } else if (localErrors.length > 0) {
         toast({ variant: "destructive", title: "Upload Failed", description: "The CSV file contained errors and no records were imported." });
       }
@@ -129,39 +129,131 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-2">
-        <Input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileChange} className="flex-grow" />
-        <Button onClick={processCsvFile} disabled={!file || isProcessing} className="w-full sm:w-auto">
-          <UploadCloud className="mr-2 h-4 w-4" />
-          {isProcessing ? `Processing... (${Math.round(processingProgress)}%)` : "Upload & Process"}
+    <div className="space-y-6">
+      {/* File Drop/Selection Zone */}
+      <div 
+        className={`relative group border-2 border-dashed rounded-3xl p-10 transition-all duration-300 text-center
+          ${file ? 'border-primary/50 bg-primary/5' : 'border-slate-200 dark:border-slate-800 hover:border-primary/30 hover:bg-slate-50 dark:hover:bg-slate-900/30'}`}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const droppedFile = e.dataTransfer.files?.[0];
+          if (droppedFile) {
+            if (droppedFile.type === "text/csv" || droppedFile.name.endsWith(".csv")) {
+              setFile(droppedFile);
+            } else {
+              toast({ variant: "destructive", title: "Invalid File Type", description: "Please upload a valid .csv file." });
+            }
+          }
+        }}
+      >
+        <input 
+          ref={fileInputRef} 
+          type="file" 
+          accept=".csv" 
+          onChange={handleFileChange} 
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+        />
+        
+        <div className="flex flex-col items-center gap-4">
+          <div className={`p-4 rounded-2xl transition-transform duration-300 group-hover:scale-110 
+            ${file ? 'bg-primary/20 text-primary shadow-lg shadow-primary/20' : 'bg-slate-100 dark:bg-slate-900 text-slate-400'}`}>
+            <UploadCloud className="h-8 w-8" />
+          </div>
+          
+          <div>
+            <h3 className="text-lg font-bold text-slate-700 dark:text-slate-200">
+              {file ? file.name : "Choose CSV File"}
+            </h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+              {file ? `${(file.size / 1024).toFixed(2)} KB • Ready to process` : "Drag and drop or click to browse files"}
+            </p>
+          </div>
+
+          {file && !isProcessing && (
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              className="mt-2 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-full"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                resetState();
+              }}
+            >
+              Clear Selection
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Action Button */}
+      <div className="flex justify-center">
+        <Button 
+          onClick={processCsvFile} 
+          disabled={!file || isProcessing} 
+          className="w-full md:w-auto px-10 py-6 rounded-2xl shadow-xl hover:shadow-primary/20 transition-all duration-300 font-bold text-lg"
+        >
+          {isProcessing ? (
+            <>
+              <div className="mr-3 h-5 w-5 border-2 border-slate-200 border-t-white rounded-full animate-spin" />
+              Processing... {Math.round(processingProgress)}%
+            </>
+          ) : (
+            <>
+              <UploadCloud className="mr-2 h-5 w-5" />
+              Upload & Process for Approval
+            </>
+          )}
         </Button>
       </div>
 
-      {isProcessing && <Progress value={processingProgress} className="w-full" />}
+      {/* Progress & Results */}
+      {(isProcessing || successCount > 0 || processingErrors.length > 0) && (
+        <div className="space-y-4 pt-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {isProcessing && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs font-medium text-slate-500">
+                <span>Overall Progress</span>
+                <span>{Math.round(processingProgress)}%</span>
+              </div>
+              <Progress 
+                value={processingProgress} 
+                className="h-2 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800" 
+              />
+            </div>
+          )}
 
-      {successCount > 0 && (
-        <Alert variant="default" className="bg-green-50 dark:bg-green-900/30 border-green-300">
-          <CheckCircle className="h-5 w-5 text-green-600" />
-          <AlertTitle className="text-green-700">Processing Complete</AlertTitle>
-          <AlertDescription className="text-green-600">Successfully processed {successCount} record(s).</AlertDescription>
-        </Alert>
-      )}
+          {successCount > 0 && (
+            <Alert variant="default" className="rounded-2xl border-green-100 bg-green-50/50 dark:bg-green-900/10 dark:border-green-900/20 backdrop-blur-sm">
+              <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+              <AlertTitle className="text-green-800 dark:text-green-300 font-bold">Import Successful</AlertTitle>
+              <AlertDescription className="text-green-700 dark:text-green-400">
+                Successfully processed and recorded <span className="font-bold">{successCount}</span> records.
+              </AlertDescription>
+            </Alert>
+          )}
 
-      {processingErrors.length > 0 && (
-        <Alert variant="destructive">
-          <FileWarning className="h-5 w-5" />
-          <AlertTitle>Processing Errors</AlertTitle>
-          <AlertDescription>
-            <ScrollArea className="mt-2 h-[150px] w-full rounded-md border p-2 bg-background">
-              <ul className="list-disc pl-5 space-y-1 text-xs">
-                {processingErrors.map((error, index) => (
-                  <li key={index}>{error}</li>
-                ))}
-              </ul>
-            </ScrollArea>
-          </AlertDescription>
-        </Alert>
+          {processingErrors.length > 0 && (
+            <Alert variant="destructive" className="rounded-2xl border-destructive/20 bg-destructive/5 backdrop-blur-sm">
+              <FileWarning className="h-5 w-5 text-destructive" />
+              <AlertTitle className="font-bold">Errors Encountered ({processingErrors.length})</AlertTitle>
+              <AlertDescription>
+                <ScrollArea className="mt-3 h-[180px] w-full rounded-xl border border-destructive/10 p-4 bg-white/50 dark:bg-slate-900/50">
+                  <ul className="space-y-2">
+                    {processingErrors.map((error, index) => (
+                      <li key={index} className="text-xs flex gap-2 text-destructive/80 leading-relaxed">
+                        <span className="font-bold opacity-50 flex-shrink-0">•</span>
+                        <span>{error}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
       )}
     </div>
   );

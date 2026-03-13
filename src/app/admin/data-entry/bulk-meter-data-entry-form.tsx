@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -18,15 +17,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { bulkMeterDataEntrySchema, type BulkMeterDataEntryFormValues, meterSizeOptions, subCityOptions, woredaOptions } from "./customer-data-entry-types";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardContent } from "@/components/ui/card";
 import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, initializeCustomers, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches } from "@/lib/data-store";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse } from "date-fns";
-import type { BulkMeter } from "../bulk-meters/bulk-meter-types";
 import type { Branch } from "../branches/branch-types";
 import { customerTypes, sewerageConnections } from "@/lib/billing-calculations";
-import type { StaffMember } from "../staff-management/staff-types";
-
+import { 
+  Hash, 
+  Book, 
+  Activity, 
+  Calendar, 
+  MapPin, 
+  Settings, 
+  Phone,
+  Crosshair,
+  Droplets,
+  Package,
+  GitBranch,
+  Network
+} from "lucide-react";
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_";
 
@@ -93,39 +102,38 @@ export function BulkMeterDataEntryForm() {
     }
   }
 
-  const handleBranchChange = (branchIdValue: string) => {
-    const selectedBranch = availableBranches.find(b => b.id === branchIdValue);
-    if (selectedBranch) {
-      form.setValue("branchId", selectedBranch.id);
-    } else if (branchIdValue === BRANCH_UNASSIGNED_VALUE) {
-      form.setValue("branchId", undefined);
-    }
-  };
-
   return (
-    <ScrollArea className="h-[calc(100vh-280px)]">
-      <Card className="shadow-lg w-full">
-        <CardContent className="pt-6">
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="branchId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Assign to Branch</FormLabel>
+    <ScrollArea className="h-[calc(100vh-280px)] pr-4">
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-10">
+          
+          {/* Section: Assignment */}
+          <div>
+            <div className="form-section-divider">
+              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
+                <GitBranch className="h-3.5 w-3.5" /> Assignment
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <FormField
+                control={form.control}
+                name="branchId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Assign to Branch</FormLabel>
+                    <div className="premium-input-group">
+                      <Network className="h-4 w-4" />
                       <Select
                         onValueChange={field.onChange}
                         value={field.value || BRANCH_UNASSIGNED_VALUE}
                         disabled={isLoadingBranches || form.formState.isSubmitting}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm transition-all duration-300">
                             <SelectValue placeholder={isLoadingBranches ? "Loading branches..." : "Select a branch"} />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl">
                           <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
                           {availableBranches.map((branch) => (
                             branch?.id ? (
@@ -136,78 +144,131 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Bulk Meter Name / Identifier <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Section: Meter Identity */}
+          <div>
+            <div className="form-section-divider">
+              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
+                <Package className="h-3.5 w-3.5" /> Bulk Meter Identity
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Bulk Meter Name <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Package className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Enter bulk meter name" {...field} />
+                        <Input placeholder="Enter bulk meter name" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="customerKeyNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Customer Key Number <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="customerKeyNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Cust. Key No. <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Hash className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Enter customer key number" {...field} />
+                        <Input placeholder="Enter customer key number" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="instKey"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>INST_KEY <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="instKey"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">INST_KEY <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Hash className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="e.g., INST-123456" {...field} />
+                        <Input placeholder="e.g., INST-123456" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="contractNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contract Number <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="contractNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Contract Number <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Book className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Enter contract number" {...field} />
+                        <Input placeholder="Enter contract number" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="meterSize"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Meter Size (inch) <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Section: Meter Specs */}
+          <div>
+            <div className="form-section-divider">
+              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
+                <Settings className="h-3.5 w-3.5" /> Meter Specifications
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="meterNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Meter Number <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Activity className="h-4 w-4" />
+                      <FormControl>
+                        <Input placeholder="Enter meter number" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="meterSize"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Meter Size (inch) <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Settings className="h-4 w-4" />
                       <Select
                         onValueChange={field.onChange}
                         value={field.value ? String(field.value) : undefined}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
                             <SelectValue placeholder="Select a meter size" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl">
                           {meterSizeOptions.map(option => (
                             <SelectItem key={String(option.value)} value={String(option.value)}>
                               {option.label}
@@ -215,16 +276,19 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="NUMBER_OF_DIALS"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Number of Dials</FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="NUMBER_OF_DIALS"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Number of Dials</FormLabel>
+                    <div className="premium-input-group">
+                      <Settings className="h-4 w-4" />
                       <FormControl>
                         <Input
                           type="number"
@@ -235,31 +299,33 @@ export function BulkMeterDataEntryForm() {
                             const val = e.target.value;
                             field.onChange(val === "" ? undefined : parseInt(val, 10));
                           }}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                         />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="meterNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Meter Number <span className="text-destructive">*</span></FormLabel>
-                      <FormControl>
-                        <Input placeholder="Enter meter number" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="previousReading"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Previous Reading <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Section: Usage */}
+          <div>
+            <div className="form-section-divider">
+              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
+                <Calendar className="h-3.5 w-3.5" /> Usage & Period
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="previousReading"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Previous Reading <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Activity className="h-4 w-4" />
                       <FormControl>
                         <Input
                           type="number"
@@ -271,18 +337,22 @@ export function BulkMeterDataEntryForm() {
                             const val = e.target.value;
                             field.onChange(val === "" ? undefined : parseFloat(val));
                           }}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                         />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="currentReading"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Current Reading <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="currentReading"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Current Reading <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Activity className="h-4 w-4" />
                       <FormControl>
                         <Input
                           type="number"
@@ -294,54 +364,73 @@ export function BulkMeterDataEntryForm() {
                             const val = e.target.value;
                             field.onChange(val === "" ? undefined : parseFloat(val));
                           }}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                         />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="month"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Reading Month <span className="text-destructive">*</span></FormLabel>
-                      <DatePicker
-                        date={field.value ? parse(field.value, "yyyy-MM", new Date()) : undefined}
-                        setDate={(selectedDate) => {
-                          field.onChange(selectedDate ? format(selectedDate, "yyyy-MM") : "");
-                        }}
-                      />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="specificArea"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Specific Area <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="month"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Reading Month <span className="text-destructive">*</span></FormLabel>
+                    <DatePicker
+                      date={field.value ? parse(field.value, "yyyy-MM", new Date()) : undefined}
+                      setDate={(selectedDate) => {
+                        field.onChange(selectedDate ? format(selectedDate, "yyyy-MM") : "");
+                      }}
+                      disabledTrigger={form.formState.isSubmitting}
+                    />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Section: Location & Contact */}
+          <div>
+            <div className="form-section-divider">
+              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
+                <MapPin className="h-3.5 w-3.5" /> Location & Contact
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="specificArea"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Specific Area <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <MapPin className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Enter specific area" {...field} />
+                        <Input placeholder="Enter specific area" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="subCity"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Sub-City <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="subCity"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Sub-City <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <MapPin className="h-4 w-4" />
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
                             <SelectValue placeholder="Select a Sub-City" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl">
                           {subCityOptions.map(option => (
                             <SelectItem key={String(option)} value={String(option)}>
                               {option}
@@ -349,23 +438,26 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="woreda"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Woreda <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="woreda"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Woreda <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <MapPin className="h-4 w-4" />
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
                             <SelectValue placeholder="Select a Woreda" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl">
                           {woredaOptions.map(option => (
                             <SelectItem key={String(option)} value={String(option)}>
                               {option}
@@ -373,40 +465,57 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="phoneNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Phone Number</FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="phoneNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Phone Number</FormLabel>
+                    <div className="premium-input-group">
+                      <Phone className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Enter phone number" {...field} />
+                        <Input placeholder="Enter phone number" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="chargeGroup"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Charge Group <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Section: Infrastructure */}
+          <div>
+            <div className="form-section-divider">
+              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
+                <Crosshair className="h-3.5 w-3.5" /> Infrastructure & GPS
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="chargeGroup"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Charge Group <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Package className="h-4 w-4" />
                       <Select
                         onValueChange={field.onChange}
                         value={field.value}
                         defaultValue="Non-domestic"
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
                             <SelectValue placeholder="Select charge group" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl">
                           {customerTypes.map((type) => (
                             <SelectItem key={String(type)} value={String(type)}>
                               {type}
@@ -414,27 +523,30 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="sewerageConnection"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Sewerage Connection <span className="text-destructive">*</span></FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="sewerageConnection"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Sewerage Connection <span className="text-destructive">*</span></FormLabel>
+                    <div className="premium-input-group">
+                      <Droplets className="h-4 w-4" />
                       <Select
                         onValueChange={field.onChange}
                         value={field.value}
                         defaultValue="No"
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
                             <SelectValue placeholder="Select connection status" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl">
                           {sewerageConnections.map((type) => (
                             <SelectItem key={String(type)} value={String(type)}>
                               {type}
@@ -442,16 +554,19 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="xCoordinate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>X Coordinate (Optional)</FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="xCoordinate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">X Coordinate (Optional)</FormLabel>
+                    <div className="premium-input-group">
+                      <Crosshair className="h-4 w-4" />
                       <FormControl>
                         <Input
                           type="number"
@@ -463,18 +578,22 @@ export function BulkMeterDataEntryForm() {
                             const val = e.target.value;
                             field.onChange(val === "" ? undefined : parseFloat(val));
                           }}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                         />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="yCoordinate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Y Coordinate (Optional)</FormLabel>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="yCoordinate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Y Coordinate (Optional)</FormLabel>
+                    <div className="premium-input-group">
+                      <Crosshair className="h-4 w-4" />
                       <FormControl>
                         <Input
                           type="number"
@@ -486,21 +605,33 @@ export function BulkMeterDataEntryForm() {
                             const val = e.target.value;
                             field.onChange(val === "" ? undefined : parseFloat(val));
                           }}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                         />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
 
-              <Button type="submit" className="w-full md:w-auto" disabled={form.formState.isSubmitting}>
-                {form.formState.isSubmitting ? "Submitting..." : "Submit Bulk Meter for Approval"}
-              </Button>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+          <div className="pt-6 flex justify-end">
+            <Button 
+              type="submit" 
+              className="w-full md:w-auto px-8 py-6 rounded-2xl shadow-lg hover:shadow-primary/20 transition-all duration-300 font-bold text-lg" 
+              disabled={form.formState.isSubmitting}
+            >
+              {form.formState.isSubmitting ? (
+                <>
+                  <Activity className="mr-2 h-5 w-5 animate-spin" /> 
+                  Submitting Data...
+                </>
+              ) : "Submit Bulk Meter for Approval"}
+            </Button>
+          </div>
+        </form>
+      </Form>
     </ScrollArea>
   );
 }

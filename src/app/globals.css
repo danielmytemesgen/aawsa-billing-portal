@@ -307,6 +307,48 @@ body {
   color: hsl(var(--primary)) !important;
 }
 
+/* Premium Form Styles */
+.form-section-divider {
+  @apply flex items-center gap-4 my-8;
+}
+.form-section-divider::before,
+.form-section-divider::after {
+  content: "";
+  @apply h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent;
+}
+
+.premium-input-group {
+  @apply relative transition-all duration-300;
+}
+
+.premium-input-group:focus-within {
+  @apply transform scale-[1.01];
+}
+
+.premium-input-group svg {
+  @apply absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors duration-300;
+}
+
+.premium-input-group:focus-within svg {
+  @apply text-primary;
+}
+
+.premium-input-group input,
+.premium-input-group select,
+.premium-input-group button[role="combobox"] {
+  @apply pl-10 !important;
+}
+
+.form-card-premium {
+  @apply relative overflow-hidden border-none shadow-2xl bg-white/50 backdrop-blur-xl dark:bg-slate-900/50;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.form-card-premium::before {
+  content: "";
+  @apply absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50;
+}
+
 /* Print specific styles */
 @media print {
   @page {
