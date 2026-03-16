@@ -81,6 +81,23 @@ export default function ReadingClassificationPage() {
     const [isLoading, setIsLoading] = React.useState(true);
     const [readings, setReadings] = React.useState<ReadingRecord[]>([]);
     const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);
+    const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
+    const [staffBranchName, setStaffBranchName] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+            try {
+                const userObj = JSON.parse(userStr);
+                if (userObj.branchId) {
+                    setStaffBranchId(userObj.branchId);
+                    setStaffBranchName(userObj.branchName || null);
+                }
+            } catch (e) {
+                console.error("Error parsing user from localStorage", e);
+            }
+        }
+    }, []);
 
     // Filters
     const [searchTerm, setSearchTerm] = React.useState("");
@@ -185,10 +202,24 @@ export default function ReadingClassificationPage() {
                 });
             });
 
+            // Filter by staff branch context unless they have global view perms
+            const filteredProcessed = processed.filter(r => {
+                if (hasPermission('reports_generate_all') || hasPermission('meter_readings_view_all')) return true;
+                if (!staffBranchId) return false;
+                
+                // We need to match the actual branch ID, but the report only stored branchName.
+                // Let's refine parsing to use the branch object for accurate filtering.
+                const bmsMeter = bms.find(bm => bm.customerKeyNumber === r.customerKey);
+                const indCustomer = customers.find(c => c.customerKeyNumber === r.customerKey);
+                const recordBranchId = bmsMeter?.branchId || indCustomer?.branchId;
+
+                return recordBranchId === staffBranchId;
+            });
+
             // Sort by date descending
-            processed.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            setReadings(processed);
-            setFilteredReadings(processed);
+            filteredProcessed.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            setReadings(filteredProcessed);
+            setFilteredReadings(filteredProcessed);
         } catch (error) {
             console.error("Failed to fetch reading data:", error);
             toast({
@@ -199,7 +230,7 @@ export default function ReadingClassificationPage() {
         } finally {
             setIsLoading(false);
         }
-    }, [toast]);
+    }, [toast, staffBranchId, hasPermission]);
 
     React.useEffect(() => {
         fetchData();
@@ -356,17 +387,19 @@ export default function ReadingClassificationPage() {
                                 </SelectContent>
                             </Select>
 
-                            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                                <SelectTrigger className="w-[160px] h-9">
-                                    <SelectValue placeholder="Branch" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Branches</SelectItem>
-                                    {branches.map(b => (
-                                        <SelectItem key={b} value={b}>{b}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            {(hasPermission('reports_generate_all') || hasPermission('meter_readings_view_all')) && (
+                                <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                                    <SelectTrigger className="w-[160px] h-9">
+                                        <SelectValue placeholder="Branch" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Branches</SelectItem>
+                                        {branches.map(b => (
+                                            <SelectItem key={b} value={b}>{b}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            )}
 
                             <Select value={selectedRoute} onValueChange={setSelectedRoute}>
                                 <SelectTrigger className="w-[140px] h-9">

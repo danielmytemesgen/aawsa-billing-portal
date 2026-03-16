@@ -33,11 +33,19 @@ export default function OverallDifferenceUsageTrendPage() {
   const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [selectedBranchId, setSelectedBranchId] = React.useState("all");
+  const [currentUser, setCurrentUser] = React.useState<{ branchId?: string } | null>(null);
   const [selectedYear, setSelectedYear] = React.useState<string>("all");
   const [selectedMonth, setSelectedMonth] = React.useState<string>("all");
   const chartRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
+    const userStr = localStorage.getItem("user");
+    if (userStr) {
+      try {
+        const userObj = JSON.parse(userStr);
+        setCurrentUser(userObj);
+      } catch (e) {}
+    }
     const fetchData = async () => {
       setIsLoading(true);
       await Promise.all([
@@ -91,12 +99,16 @@ export default function OverallDifferenceUsageTrendPage() {
 
     let data = Object.values(branchUsage);
 
-    if (selectedBranchId !== "all") {
-      data = data.filter(d => branches.find(b => b.name === d.name)?.id === selectedBranchId);
+    const effectiveBranchIdId = (currentUser?.branchId && !hasPermission('reports_generate_all')) 
+      ? currentUser.branchId 
+      : selectedBranchId;
+
+    if (effectiveBranchIdId !== "all") {
+      data = data.filter(d => branches.find(b => b.name === d.name)?.id === effectiveBranchIdId);
     }
 
     return data;
-  }, [bulkMeters, branches, selectedBranchId, selectedYear, selectedMonth]);
+  }, [bulkMeters, branches, selectedBranchId, selectedYear, selectedMonth, currentUser, hasPermission]);
 
   const downloadCSV = React.useCallback(() => {
     if (!chartData || chartData.length === 0) return;

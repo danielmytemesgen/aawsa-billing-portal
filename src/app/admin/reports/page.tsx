@@ -27,6 +27,7 @@ import {
   getBranches,
   initializeBranches,
   removeBill,
+  getTariffs,
 } from "@/lib/data-store";
 import type { IndividualCustomer } from "../individual-customers/individual-customer-types";
 import type { BulkMeter } from "../bulk-meters/bulk-meter-types";
@@ -72,7 +73,7 @@ interface ReportType {
   name: string;
   description: string;
   headers?: string[];
-  getData?: (filters: ReportFilters) => any[];
+  getData?: (filters: ReportFilters) => any[] | Promise<any[]>;
 }
 
 
@@ -84,10 +85,10 @@ const availableReports: ReportType[] = [
     name: "Customer Data Export (XLSX)",
     description: "Download a comprehensive list of all individual customers with their details.",
     headers: [
-      "customerKeyNumber", "name", "contractNumber", "customerType", "bookNumber", "ordinal",
-      "meterSize", "meterNumber", "previousReading", "currentReading", "month", "specificArea",
-      "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "status", "paymentStatus", "calculatedBill",
-      "Assigned Branch Name", "created_at", "updated_at"
+      "Customer Key", "Name", "Contract Number", "Customer Type", "Book Number", "Ordinal",
+      "Meter Size", "Meter Number", "Previous Reading", "Current Reading", "Month", "Specific Area",
+      "SubCity", "Woreda", "Sewerage Connection", "Assigned Bulk Meter ID", "Status", "Payment Status", "Calculated Bill",
+      "Assigned Branch Name", "Created At", "Updated At"
     ],
     getData: (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -114,8 +115,28 @@ const availableReports: ReportType[] = [
       const dataWithBranchName = filteredData.map(customer => {
         const branch = customer.branchId ? branches.find(b => b.id === customer.branchId) : null;
         return {
-          ...customer,
+          "Customer Key": customer.customerKeyNumber,
+          "Name": customer.name,
+          "Contract Number": customer.contractNumber,
+          "Customer Type": customer.customerType,
+          "Book Number": customer.bookNumber,
+          "Ordinal": customer.ordinal,
+          "Meter Size": customer.meterSize,
+          "Meter Number": customer.meterNumber,
+          "Previous Reading": customer.previousReading,
+          "Current Reading": customer.currentReading,
+          "Month": customer.month,
+          "Specific Area": customer.specificArea,
+          "SubCity": customer.subCity,
+          "Woreda": customer.woreda,
+          "Sewerage Connection": customer.sewerageConnection,
+          "Assigned Bulk Meter ID": customer.assignedBulkMeterId || "N/A",
+          "Status": customer.status,
+          "Payment Status": customer.paymentStatus,
+          "Calculated Bill": customer.calculatedBill,
           "Assigned Branch Name": branch ? branch.name : "N/A",
+          "Created At": customer.created_at,
+          "Updated At": customer.updated_at,
         };
       });
 
@@ -127,10 +148,10 @@ const availableReports: ReportType[] = [
     name: "Bulk Meter Data Export (XLSX)",
     description: "Download a comprehensive list of all bulk meters, including their details and readings.",
     headers: [
-      "customerKeyNumber", "name", "contractNumber", "meterSize", "meterNumber",
-      "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "status",
-      "paymentStatus", "chargeGroup", "sewerageConnection", "Assigned Branch Name", "Number of Assigned Individual Customers",
-      "bulkUsage", "totalIndividualUsage", "totalBulkBill", "differenceUsage", "differenceBill"
+      "Customer Key", "Name", "Contract Number", "Meter Size", "Meter Number",
+      "Previous Reading", "Current Reading", "Month", "Specific Area", "SubCity", "Woreda", "Status",
+      "Payment Status", "Charge Group", "Sewerage Connection", "Assigned Branch Name", "Number of Assigned Individual Customers",
+      "Bulk Usage", "Total Individual Usage", "Total Bulk Bill", "Difference Usage", "Difference Bill"
     ],
     getData: async (filters) => {
       const { branchId } = filters;
@@ -172,13 +193,27 @@ const availableReports: ReportType[] = [
         }
 
         return {
-          ...bm,
+          "Customer Key": bm.customerKeyNumber,
+          "Name": bm.name,
+          "Contract Number": bm.contractNumber,
+          "Meter Size": bm.meterSize,
+          "Meter Number": bm.meterNumber,
+          "Previous Reading": bm.previousReading,
+          "Current Reading": bm.currentReading,
+          "Month": bm.month,
+          "Specific Area": bm.specificArea,
+          "SubCity": bm.subCity,
+          "Woreda": bm.woreda,
+          "Status": bm.status,
+          "Payment Status": bm.paymentStatus,
+          "Charge Group": bm.chargeGroup,
+          "Sewerage Connection": bm.sewerageConnection,
           "Assigned Branch Name": branch ? branch.name : "N/A",
           "Number of Assigned Individual Customers": associatedCustomers.length,
-          "totalIndividualUsage": totalIndividualUsage,
-          "bulkUsage": bulkUsage,
-          "differenceUsage": differenceUsage,
-          "differenceBill": differenceBill,
+          "Total Individual Usage": totalIndividualUsage,
+          "Bulk Usage": bulkUsage,
+          "Difference Usage": differenceUsage,
+          "Difference Bill": differenceBill,
         };
       }));
 
@@ -190,11 +225,11 @@ const availableReports: ReportType[] = [
     name: "Billing Summary Report (XLSX)",
     description: "Summary of all generated bills, including amounts and payment statuses.",
     headers: [
-      "id", "BILLKEY", "CUSTOMERKEY", "CUSTOMERNAME", "CUSTOMERTIN", "CUSTOMERBRANCH", "billPeriodStartDate", "billPeriodEndDate",
-      "monthYear", "PREVREAD", "CURRREAD", "CONS", "REASON",
-      "baseWaterCharge", "sewerageCharge", "maintenanceFee", "sanitationFee",
-      "meterRent", "THISMONTHBILLAMT", "PENALTYAMT", "TOTALBILLAMOUNT", "amountPaid", "OUTSTANDINGAMT", "dueDate",
-      "paymentStatus", "billNumber", "DRACCTNO", "CRACCTNO", "notes", "createdAt", "updatedAt"
+      "Bill ID", "Bill Key", "Customer Key", "Customer Name", "Customer TIN", "Branch", "Period Start", "Period End",
+      "Month/Year", "Previous Reading", "Current Reading", "Consumption", "Reason",
+      "Base Water Charge", "Sewerage Charge", "Maintenance Fee", "Sanitation Fee",
+      "Meter Rent", "Current Bill", "Penalty", "Total Bill", "Amount Paid", "Outstanding", "Due Date",
+      "Status", "Bill Number", "DR Account", "CR Account", "Notes", "Created At", "Updated At"
     ],
     getData: (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -266,12 +301,37 @@ const availableReports: ReportType[] = [
         const outstanding = reconstructedOutstanding || b.balanceCarriedForward || 0;
 
         return {
-          ...b,
-          BILLKEY: billKey,
-          CUSTOMERKEY: customerKey,
-          THISMONTHBILLAMT: currentBill,
-          OUTSTANDINGAMT: outstanding,
-          TOTALBILLAMOUNT: currentBill + outstanding,
+          "Bill ID": b.id,
+          "Bill Key": billKey,
+          "Customer Key": customerKey,
+          "Customer Name": b.CUSTOMERNAME,
+          "Customer TIN": b.CUSTOMERTIN,
+          "Branch": b.CUSTOMERBRANCH,
+          "Period Start": b.billPeriodStartDate,
+          "Period End": b.billPeriodEndDate,
+          "Month/Year": b.monthYear,
+          "Previous Reading": b.PREVREAD,
+          "Current Reading": b.CURRREAD,
+          "Consumption": b.CONS,
+          "Reason": b.REASON,
+          "Base Water Charge": b.baseWaterCharge,
+          "Sewerage Charge": b.sewerageCharge,
+          "Maintenance Fee": b.maintenanceFee,
+          "Sanitation Fee": b.sanitationFee,
+          "Meter Rent": b.meterRent,
+          "Current Bill": currentBill,
+          "Penalty": b.PENALTYAMT,
+          "Total Bill": currentBill + outstanding,
+          "Amount Paid": b.amountPaid,
+          "Outstanding": outstanding,
+          "Due Date": b.dueDate,
+          "Status": b.paymentStatus,
+          "Bill Number": b.billNumber,
+          "DR Account": b.DRACCTNO,
+          "CR Account": b.CRACCTNO,
+          "Notes": b.notes,
+          "Created At": b.createdAt,
+          "Updated At": b.updatedAt,
         };
       });
     },
@@ -281,11 +341,11 @@ const availableReports: ReportType[] = [
     name: "List Of Paid Bills (XLSX)",
     description: "A filtered list showing only the bills that have been marked as 'Paid'.",
     headers: [
-      "id", "individualCustomerId", "CUSTOMERKEY", "billPeriodStartDate", "billPeriodEndDate",
-      "monthYear", "PREVREAD", "CURRREAD", "CONS",
-      "baseWaterCharge", "sewerageCharge", "maintenanceFee", "sanitationFee",
-      "meterRent", "TOTALBILLAMOUNT", "amountPaid", "OUTSTANDINGAMT", "dueDate",
-      "paymentStatus", "billNumber", "notes", "createdAt", "updatedAt"
+      "Bill ID", "Individual Customer ID", "Customer Key", "Period Start", "Period End",
+      "Month/Year", "Previous Reading", "Current Reading", "Consumption",
+      "Base Water Charge", "Sewerage Charge", "Maintenance Fee", "Sanitation Fee",
+      "Meter Rent", "Total Bill Amount", "Amount Paid", "Outstanding Amount", "Due Date",
+      "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
     getData: (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -309,7 +369,31 @@ const availableReports: ReportType[] = [
           } catch { return false; }
         });
       }
-      return bills;
+      return bills.map(b => ({
+        "Bill ID": b.id,
+        "Individual Customer ID": b.individualCustomerId || "N/A",
+        "Customer Key": b.CUSTOMERKEY || "N/A",
+        "Period Start": b.billPeriodStartDate,
+        "Period End": b.billPeriodEndDate,
+        "Month/Year": b.monthYear,
+        "Previous Reading": b.PREVREAD,
+        "Current Reading": b.CURRREAD,
+        "Consumption": b.CONS,
+        "Base Water Charge": b.baseWaterCharge,
+        "Sewerage Charge": b.sewerageCharge,
+        "Maintenance Fee": b.maintenanceFee,
+        "Sanitation Fee": b.sanitationFee,
+        "Meter Rent": b.meterRent,
+        "Total Bill Amount": b.TOTALBILLAMOUNT,
+        "Amount Paid": b.amountPaid,
+        "Outstanding Amount": b.OUTSTANDINGAMT,
+        "Due Date": b.dueDate,
+        "Status": b.paymentStatus,
+        "Bill Number": b.billNumber,
+        "Notes": b.notes,
+        "Created At": b.createdAt,
+        "Updated At": b.updatedAt,
+      }));
     },
   },
   {
@@ -317,11 +401,11 @@ const availableReports: ReportType[] = [
     name: "List Of Sent Bills (XLSX)",
     description: "A comprehensive list of all bills that have been generated, regardless of payment status.",
     headers: [
-      "id", "individualCustomerId", "CUSTOMERKEY", "billPeriodStartDate", "billPeriodEndDate",
-      "monthYear", "PREVREAD", "CURRREAD", "CONS",
-      "baseWaterCharge", "sewerageCharge", "maintenanceFee", "sanitationFee",
-      "meterRent", "TOTALBILLAMOUNT", "amountPaid", "OUTSTANDINGAMT", "dueDate",
-      "paymentStatus", "billNumber", "notes", "createdAt", "updatedAt"
+      "Bill ID", "Individual Customer ID", "Customer Key", "Period Start", "Period End",
+      "Month/Year", "Previous Reading", "Current Reading", "Consumption",
+      "Base Water Charge", "Sewerage Charge", "Maintenance Fee", "Sanitation Fee",
+      "Meter Rent", "Total Bill Amount", "Amount Paid", "Outstanding Amount", "Due Date",
+      "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
     getData: (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -345,7 +429,31 @@ const availableReports: ReportType[] = [
           } catch { return false; }
         });
       }
-      return bills;
+      return bills.map(b => ({
+        "Bill ID": b.id,
+        "Individual Customer ID": b.individualCustomerId || "N/A",
+        "Customer Key": b.CUSTOMERKEY || "N/A",
+        "Period Start": b.billPeriodStartDate,
+        "Period End": b.billPeriodEndDate,
+        "Month/Year": b.monthYear,
+        "Previous Reading": b.PREVREAD,
+        "Current Reading": b.CURRREAD,
+        "Consumption": b.CONS,
+        "Base Water Charge": b.baseWaterCharge,
+        "Sewerage Charge": b.sewerageCharge,
+        "Maintenance Fee": b.maintenanceFee,
+        "Sanitation Fee": b.sanitationFee,
+        "Meter Rent": b.meterRent,
+        "Total Bill Amount": b.TOTALBILLAMOUNT,
+        "Amount Paid": b.amountPaid,
+        "Outstanding Amount": b.OUTSTANDINGAMT,
+        "Due Date": b.dueDate,
+        "Status": b.paymentStatus,
+        "Bill Number": b.billNumber,
+        "Notes": b.notes,
+        "Created At": b.createdAt,
+        "Updated At": b.updatedAt,
+      }));
     },
   },
   {
@@ -353,9 +461,9 @@ const availableReports: ReportType[] = [
     name: "Water Usage Report (XLSX)",
     description: "Detailed water consumption report from all meter readings.",
     headers: [
-      "id", "meterType", "individualCustomerId", "CUSTOMERKEY", "readerStaffId",
-      "readingDate", "monthYear", "readingValue", "isEstimate", "notes",
-      "createdAt", "updatedAt"
+      "Reading ID", "Meter Type", "Customer ID", "Bulk Meter ID", "Staff ID",
+      "Reading Date", "Month/Year", "Reading Value", "Is Estimate", "Notes",
+      "Created At", "Updated At"
     ],
     getData: (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -379,7 +487,23 @@ const availableReports: ReportType[] = [
           } catch { return false; }
         });
       }
-      return readings;
+      return readings.map(r => {
+        const isBulk = isBulkReading(r);
+        return {
+          "Reading ID": r.id,
+          "Meter Type": isBulk ? "Bulk" : "Individual",
+          "Customer ID": (!isBulk && (r as any).individualCustomerId) || "N/A",
+          "Bulk Meter ID": (isBulk && (r as any).CUSTOMERKEY) || "N/A",
+          "Staff ID": r.readerStaffId || "N/A",
+          "Reading Date": r.readingDate,
+          "Month/Year": r.monthYear,
+          "Reading Value": r.readingValue,
+          "Is Estimate": (r as any).isEstimate ? "Yes" : "No",
+          "Notes": r.notes || "",
+          "Created At": r.createdAt,
+          "Updated At": r.updatedAt,
+        };
+      });
     },
   },
   {
@@ -387,9 +511,9 @@ const availableReports: ReportType[] = [
     name: "Payment History Report (XLSX)",
     description: "Detailed log of all payments received.",
     headers: [
-      "id", "billId", "individualCustomerId", "paymentDate", "amountPaid",
-      "paymentMethod", "transactionReference", "processedByStaffId", "notes",
-      "createdAt", "updatedAt"
+      "Payment ID", "Bill ID", "Customer ID", "Payment Date", "Amount Paid",
+      "Payment Method", "Reference", "Processed By", "Notes",
+      "Created At", "Updated At"
     ],
     getData: (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -409,7 +533,19 @@ const availableReports: ReportType[] = [
           } catch { return false; }
         });
       }
-      return payments;
+      return payments.map(p => ({
+        "Payment ID": p.id,
+        "Bill ID": p.billId,
+        "Customer ID": p.individualCustomerId || "N/A",
+        "Payment Date": p.paymentDate,
+        "Amount Paid": p.amountPaid,
+        "Payment Method": p.paymentMethod,
+        "Reference": p.transactionReference || "N/A",
+        "Processed By": p.processedByStaffId || "N/A",
+        "Notes": p.notes || "",
+        "Created At": p.createdAt,
+        "Updated At": p.updatedAt,
+      }));
     },
   },
   {
@@ -484,25 +620,22 @@ const availableReports: ReportType[] = [
     name: "Tariffs Data Export (XLSX)",
     description: "Download a comprehensive list of all tariffs.",
     headers: [
-      "customer_type", "year", "tiers", "maintenance_percentage", "sanitation_percentage",
-      "sewerage_tiers", "meter_rent_prices", "vat_rate", "domestic_vat_threshold_m3"
+      "Customer Type", "Year", "Tiers", "Maintenance %", "Sanitation %",
+      "Sewerage Tiers", "Meter Rent Prices", "VAT Rate", "Domestic VAT Threshold"
     ],
     getData: (filters) => {
-      const { getTariffs } = require("@/lib/data-store");
-      return getTariffs();
-    },
-  },
-  {
-    id: "meter-readings-data-export",
-    name: "Meter Readings Data Export (XLSX)",
-    description: "Download a comprehensive list of all meter readings.",
-    headers: [
-      "id", "meterType", "individualCustomerId", "CUSTOMERKEY", "readerStaffId",
-      "readingDate", "monthYear", "readingValue", "isEstimate", "notes",
-      "createdAt", "updatedAt"
-    ],
-    getData: (filters) => {
-      return getMeterReadings();
+      const tariffs = getTariffs();
+      return tariffs.map(t => ({
+        "Customer Type": t.customer_type,
+        "Year": t.year,
+        "Tiers": JSON.stringify(t.tiers),
+        "Maintenance %": t.maintenance_percentage,
+        "Sanitation %": t.sanitation_percentage,
+        "Sewerage Tiers": JSON.stringify(t.sewerage_tiers),
+        "Meter Rent Prices": JSON.stringify(t.meter_rent_prices),
+        "VAT Rate": t.vat_rate,
+        "Domestic VAT Threshold": t.domestic_vat_threshold_m3,
+      }));
     },
   },
   {
@@ -510,10 +643,20 @@ const availableReports: ReportType[] = [
     name: "Staff Data Export (XLSX)",
     description: "Download a comprehensive list of all staff members.",
     headers: [
-      "id", "name", "email", "branchName", "status", "phone", "hireDate", "role"
+      "Staff ID", "Name", "Email", "Branch Name", "Status", "Phone", "Hire Date", "Role"
     ],
     getData: (filters) => {
-      return getStaffMembers();
+      const staff = getStaffMembers();
+      return staff.map(s => ({
+        "Staff ID": s.id,
+        "Name": s.name,
+        "Email": s.email,
+        "Branch Name": s.branchName,
+        "Status": s.status,
+        "Phone": s.phone,
+        "Hire Date": s.hireDate,
+        "Role": s.role,
+      }));
     },
   },
   {

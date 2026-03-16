@@ -1772,7 +1772,20 @@ export async function logCustomerPageViewAction(sessionId: string, pageName: str
 
 export async function getAllFaultCodesAction() {
   return await wrap(async () => {
-    await checkPermission('settings_view');
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes('settings_view') ||
+      perms.includes('meter_readings_create') ||
+      perms.includes('meter_readings_view_branch') ||
+      perms.includes('meter_readings_view_all') ||
+      perms.includes('dashboard_view_all') ||
+      perms.includes('dashboard_view_branch');
+
+    if (!hasPerm) {
+      throw new Error('Forbidden: No permissions to view fault codes');
+    }
     return await dbGetAllFaultCodes();
   });
 }
