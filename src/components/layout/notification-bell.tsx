@@ -19,7 +19,7 @@ import {
   subscribeToBranches,
 } from "@/lib/data-store";
 import type { DomainNotification } from "@/lib/data-store";
-import type { Branch } from "@/app/admin/branches/branch-types";
+import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 
 const LAST_READ_TIMESTAMP_KEY = "last-read-timestamp";
 

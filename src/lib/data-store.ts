@@ -1,11 +1,11 @@
 "use client";
 
-import type { IndividualCustomer as DomainIndividualCustomer, IndividualCustomerStatus } from '@/app/admin/individual-customers/individual-customer-types';
-import type { BulkMeter as DomainBulkMeterTypeFromTypes } from '@/app/admin/bulk-meters/bulk-meter-types';
-import type { Branch as DomainBranch } from '@/app/admin/branches/branch-types';
-import type { StaffMember as DomainStaffMember } from '@/app/admin/staff-management/staff-types';
+import type { IndividualCustomer as DomainIndividualCustomer, IndividualCustomerStatus } from '@/app/(dashboard)/admin/individual-customers/individual-customer-types';
+import type { BulkMeter as DomainBulkMeterTypeFromTypes } from '@/app/(dashboard)/admin/bulk-meters/bulk-meter-types';
+import type { Branch as DomainBranch } from '@/app/(dashboard)/admin/branches/branch-types';
+import type { StaffMember as DomainStaffMember } from '@/app/(dashboard)/admin/staff-management/staff-types';
 import { calculateBillFromTariff, type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult, type TariffInfo, type TariffTier, safeParseJsonField, type AdditionalFee } from '@/lib/billing-calculations';
-import { KnowledgeBaseArticle, KnowledgeBaseArticleInsert, KnowledgeBaseArticleUpdate } from '@/app/admin/knowledge-base/knowledge-base-types';
+import { KnowledgeBaseArticle, KnowledgeBaseArticleInsert, KnowledgeBaseArticleUpdate } from '@/app/(dashboard)/admin/knowledge-base/knowledge-base-types';
 import { format } from "date-fns";
 import { useState, useEffect } from "react";
 
@@ -187,6 +187,12 @@ export interface DomainBill {
   REASON?: string | null;
   DRACCTNO?: string | null;
   CRACCTNO?: string | null;
+  // New Missing Fields
+  totalAmountDue?: number;
+  usageM3?: number;
+  currentReadingValue?: number;
+  previousReadingValue?: number;
+  bulkMeterId?: string | null;
   snapshot_data?: {
     chargeGroup?: string;
     sewerageConnection?: string;
@@ -251,6 +257,7 @@ export interface DomainBulkMeterReading {
   readProcId?: string;
   CUSTOMERKEY: string; // Maps to CUST_KEY
   custKey?: string; // Optional alias
+  bulkMeterId?: string | null; // Added missing field
 
   // Feature Parity Fields
   roundKey?: string;
@@ -353,7 +360,7 @@ interface StoreOperationResult<T = any> {
 }
 
 type BulkMeter = DomainBulkMeterTypeFromTypes;
-type Route = import('@/app/admin/bulk-meters/bulk-meter-types').Route;
+type Route = import('@/app/(dashboard)/admin/bulk-meters/bulk-meter-types').Route;
 type StaffMember = DomainStaffMember;
 type DomainRole = import('./actions').RoleRow;
 type DomainPermission = import('./actions').PermissionRow;
@@ -902,6 +909,12 @@ const mapDbBillToDomain = (dbBill: Bill): DomainBill => ({
   REASON: dbBill.REASON,
   DRACCTNO: dbBill.DRACCTNO,
   CRACCTNO: dbBill.CRACCTNO,
+  // New Mapping for derived/missing fields
+  totalAmountDue: Number(dbBill.TOTALBILLAMOUNT),
+  usageM3: dbBill.CONS ? Number(dbBill.CONS) : (dbBill.difference_usage ? Number(dbBill.difference_usage) : 0),
+  currentReadingValue: Number(dbBill.CURRREAD),
+  previousReadingValue: Number(dbBill.PREVREAD),
+  bulkMeterId: dbBill.CUSTOMERKEY, // Fallback mapping
 });
 
 const mapDomainBillToDb = (bill: Partial<DomainBill>): Partial<BillInsert | BillUpdate> => {
@@ -1111,6 +1124,7 @@ const mapDbBulkReadingToDomain = (dbReading: BulkMeterReading): DomainBulkMeterR
     readProcId: dbReading.READ_PROC_ID,
     CUSTOMERKEY: dbReading.CUST_KEY || dbReading.CUSTOMERKEY, // Fallback
     custKey: dbReading.CUST_KEY,
+    bulkMeterId: dbReading.CUST_KEY || dbReading.CUSTOMERKEY, // Map to CUST_KEY for parity
 
     roundKey: dbReading.ROUND_KEY,
     walkOrder: dbReading.WALK_ORDER,
@@ -1550,6 +1564,13 @@ async function fetchAllRolePermissions() {
   }
   rolePermissionsFetched = true;
   return rolePermissions;
+}
+
+export async function refetchUserPermissions() {
+  await Promise.all([
+    fetchAllPermissions(),
+    fetchAllRolePermissions()
+  ]);
 }
 
 async function fetchAllKnowledgeBaseArticles() {

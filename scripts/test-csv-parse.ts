@@ -1,4 +1,4 @@
-import { bulkMeterDataEntrySchema, individualCustomerDataEntrySchema } from '../src/app/admin/data-entry/customer-data-entry-types';
+import { bulkMeterDataEntrySchema, individualCustomerDataEntrySchema } from '../src/app/(dashboard)/admin/data-entry/customer-data-entry-types';
 
 const bulkRow = {
   name: 'Bulk A',

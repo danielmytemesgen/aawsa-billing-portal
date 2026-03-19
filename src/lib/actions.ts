@@ -95,6 +95,7 @@ import {
   dbRestoreFromRecycleBin,
   dbPermanentlyDeleteFromRecycleBin,
 } from './db-queries';
+import { withTransaction } from './db';
 
 import { calculateBill, type CustomerType, type SewerageConnection } from './billing';
 import { encrypt, getSession } from './auth';
@@ -309,15 +310,16 @@ export async function getAllCustomersAction() {
 
     const perms = session.permissions || [];
 
-    const hasPerm = perms.includes('customers_view_all') ||
-      perms.includes('customers_view_branch') ||
-      perms.includes('dashboard_view_all') ||
-      perms.includes('dashboard_view_branch');
+    const hasGlobalAccess = perms.includes('customers_view_all') || perms.includes('dashboard_view_all');
+    const hasBranchAccess = perms.includes('customers_view_branch') || perms.includes('dashboard_view_branch');
 
-    if (!hasPerm) {
+    if (!hasGlobalAccess && !hasBranchAccess) {
       throw new Error('Forbidden: No customer permissions');
     }
-    return await dbGetAllCustomers();
+
+    // Enforce server-side branch isolation: only pass branchId if user lacks global access
+    const branchId = !hasGlobalAccess ? (session.branchId ?? undefined) : undefined;
+    return await dbGetAllCustomers(branchId);
   });
 }
 export async function createCustomerAction(customer: IndividualCustomerInsert) {
@@ -395,15 +397,16 @@ export async function getAllBulkMetersAction() {
 
     const perms = session.permissions || [];
 
-    const hasPerm = perms.includes('bulk_meters_view_all') ||
-      perms.includes('bulk_meters_view_branch') ||
-      perms.includes('dashboard_view_all') ||
-      perms.includes('dashboard_view_branch');
+    const hasGlobalAccess = perms.includes('bulk_meters_view_all') || perms.includes('dashboard_view_all');
+    const hasBranchAccess = perms.includes('bulk_meters_view_branch') || perms.includes('dashboard_view_branch');
 
-    if (!hasPerm) {
+    if (!hasGlobalAccess && !hasBranchAccess) {
       throw new Error('Forbidden: No bulk meter permissions');
     }
-    return await dbGetAllBulkMeters();
+
+    // Enforce server-side branch isolation: only pass branchId if user lacks global access
+    const branchId = !hasGlobalAccess ? (session.branchId ?? undefined) : undefined;
+    return await dbGetAllBulkMeters(branchId);
   });
 }
 export async function getBulkMeterByIdAction(customerKeyNumber: string) { return await wrap(() => dbGetBulkMeterById(customerKeyNumber)); }
@@ -573,7 +576,7 @@ export async function createBillAction(bill: BillInsert) {
       bill.TOTALBILLAMOUNT = (bill.THISMONTHBILLAMT || 0) + (bill.OUTSTANDINGAMT || 0);
     }
 
-    // [ANTI-GRAVITY] - Status Check: Ensure account is Active before billing
+    // Status Check: Ensure account is Active before billing
     if (bill.CUSTOMERKEY) {
       const bm = await dbGetBulkMeterById(bill.CUSTOMERKEY);
       if (bm && bm.status !== 'Active') {
@@ -586,21 +589,32 @@ export async function createBillAction(bill: BillInsert) {
       }
     }
 
-    const result = await dbCreateBill(bill);
+    return await withTransaction(async (client) => {
+      const result = await dbCreateBill(bill, client);
 
-    // Generate and update BILLKEY
-    if (result && result.id) {
-      const billKey = generateBillKey(result.id);
-      await dbUpdateBill(result.id, { BILLKEY: billKey });
-      result.BILLKEY = billKey; // Update returned object
-    }
+      // Generate and update BILLKEY
+      if (result && result.id) {
+        const billKey = generateBillKey(result.id);
+        await dbUpdateBill(result.id, { BILLKEY: billKey }, client);
+        result.BILLKEY = billKey; // Update returned object
+      }
 
-    await logSecurityEventAction({
-      event: 'Create Bill',
-      customerKeyNumber: bill.CUSTOMERKEY || undefined,
-      details: { bill }
+      // Log initial workflow state
+      await dbCreateBillWorkflowLog({
+        bill_id: result.id,
+        from_status: 'N/A',
+        to_status: result.status || 'Draft',
+        changed_by: session.id,
+        reason: 'Manual bill creation'
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Create Bill',
+        customerKeyNumber: bill.CUSTOMERKEY || undefined,
+        details: { billId: result.id }
+      });
+      return result;
     });
-    return result;
   });
 }
 
@@ -626,58 +640,69 @@ export async function closeBillingCycleAction(payload: {
       }
     }
 
-    // 1. Create the Bill
-    const billToInsert = { ...payload.bill };
-    // Ensure mappings for direct closure
-    if (billToInsert.THISMONTHBILLAMT === undefined || billToInsert.THISMONTHBILLAMT === null) {
-      billToInsert.THISMONTHBILLAMT = billToInsert.TOTALBILLAMOUNT;
-    }
-    if (billToInsert.OUTSTANDINGAMT === undefined || billToInsert.OUTSTANDINGAMT === null) {
-      billToInsert.OUTSTANDINGAMT = billToInsert.balance_carried_forward || 0;
-    }
-    billToInsert.TOTALBILLAMOUNT = (billToInsert.THISMONTHBILLAMT || 0) + (billToInsert.OUTSTANDINGAMT || 0);
-
-    // [ANTI-GRAVITY] - Status Check: Ensure account is Active before billing
-    if (billToInsert.CUSTOMERKEY) {
-      const bm = await dbGetBulkMeterById(billToInsert.CUSTOMERKEY);
-      if (bm && bm.status !== 'Active') {
-        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+    // Wrap in transaction for atomicity
+    return await withTransaction(async (client) => {
+      // 1. Prepare and Create the Bill
+      const billToInsert = { ...payload.bill };
+      if (billToInsert.THISMONTHBILLAMT === undefined || billToInsert.THISMONTHBILLAMT === null) {
+        billToInsert.THISMONTHBILLAMT = billToInsert.TOTALBILLAMOUNT;
       }
-    } else if (billToInsert.individual_customer_id) {
-      const cust = await dbGetCustomerById(billToInsert.individual_customer_id);
-      if (cust && cust.status !== 'Active') {
-        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      if (billToInsert.OUTSTANDINGAMT === undefined || billToInsert.OUTSTANDINGAMT === null) {
+        billToInsert.OUTSTANDINGAMT = billToInsert.balance_carried_forward || 0;
       }
-    }
+      billToInsert.TOTALBILLAMOUNT = (billToInsert.THISMONTHBILLAMT || 0) + (billToInsert.OUTSTANDINGAMT || 0);
 
-    const billResult = await dbCreateBill(billToInsert);
+      // Status Check: Ensure account is Active before billing
+      if (billToInsert.CUSTOMERKEY) {
+        const bm = await dbGetBulkMeterById(billToInsert.CUSTOMERKEY);
+        if (bm && bm.status !== 'Active') {
+          throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+        }
+      } else if (billToInsert.individual_customer_id) {
+        const cust = await dbGetCustomerById(billToInsert.individual_customer_id);
+        if (cust && cust.status !== 'Active') {
+          throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+        }
+      }
 
-    // Generate and update BILLKEY
-    if (billResult && billResult.id) {
-      const billKey = generateBillKey(billResult.id);
-      await dbUpdateBill(billResult.id, { BILLKEY: billKey });
-      billResult.BILLKEY = billKey; // Update returned object
-    }
+      const billResult = await dbCreateBill(billToInsert, client);
 
-    // 2. Update the Bulk Meter
-    const meterResult = await dbUpdateBulkMeter(payload.meterUpdate.customerKeyNumber, {
-      previousReading: payload.meterUpdate.previousReading,
-      currentReading: payload.meterUpdate.currentReading,
-      outStandingbill: payload.meterUpdate.outStandingbill as any,
-      paymentStatus: payload.meterUpdate.paymentStatus as any,
+      // Generate and update BILLKEY
+      if (billResult && billResult.id) {
+        const billKey = generateBillKey(billResult.id);
+        await dbUpdateBill(billResult.id, { BILLKEY: billKey }, client);
+        billResult.BILLKEY = billKey;
+      }
+
+      // 2. Update the Bulk Meter
+      const meterResult = await dbUpdateBulkMeter(payload.meterUpdate.customerKeyNumber, {
+        previousReading: payload.meterUpdate.previousReading,
+        currentReading: payload.meterUpdate.currentReading,
+        outStandingbill: payload.meterUpdate.outStandingbill as any,
+        paymentStatus: payload.meterUpdate.paymentStatus as any,
+      }, client);
+
+      // 3. Log initial workflow state
+      await dbCreateBillWorkflowLog({
+        bill_id: billResult.id,
+        from_status: 'N/A',
+        to_status: billResult.status || 'Draft',
+        changed_by: session.id, // Use UUID
+        reason: 'Initial creation via billing cycle closure'
+      }, client);
+
+      // 4. Log Security Event (outside client transaction if it's a separate utility, but we want it logged)
+      await logSecurityEventAction({
+        event: 'Close Billing Cycle',
+        customerKeyNumber: payload.meterUpdate.customerKeyNumber,
+        details: {
+          billId: billResult.id,
+          meterUpdate: payload.meterUpdate
+        }
+      });
+
+      return { bill: billResult, meter: meterResult };
     });
-
-    // 3. Log Security Event
-    await logSecurityEventAction({
-      event: 'Close Billing Cycle',
-      customerKeyNumber: payload.meterUpdate.customerKeyNumber,
-      details: {
-        billId: billResult.id,
-        meterUpdate: payload.meterUpdate
-      }
-    });
-
-    return { bill: billResult, meter: meterResult };
   });
 }
 
@@ -829,7 +854,41 @@ export async function updateBillAction(id: string, bill: BillUpdate) {
   return await wrap(async () => {
     const session = await checkPermission('bill:update');
     await verifyBillBranchAccess(id, session);
+
+    // Hardening: Mutation Guards & Audit Trail
+    const currentBill = await dbGetBillByIdQuery(id);
+    if (!currentBill) {
+      throw new Error(`Bill ${id} not found.`);
+    }
+
+    if (currentBill.status === 'Approved' || currentBill.status === 'Posted') {
+      throw new Error(`Cannot edit bill. Status is currently ${currentBill.status}.`);
+    }
+
     const result = await dbUpdateBill(id, bill);
+
+    // Build diff for audit trail
+    const changes: Record<string, { old: any, new: any }> = {};
+    const currBillRecord = currentBill as Record<string, any>;
+    for (const key of Object.keys(bill)) {
+      const newVal = bill[key as keyof BillUpdate];
+      if (newVal !== currBillRecord[key]) {
+        changes[key] = { old: currBillRecord[key], new: newVal };
+      }
+    }
+
+    // Log the specific field changes to workflow history
+    if (Object.keys(changes).length > 0) {
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentBill.status,
+        to_status: currentBill.status, // Status hasn't changed, just values
+        changed_by: session.id, // Use UUID
+        reason: 'Field Update',
+        details: JSON.stringify(changes) // Store as JSON string 
+      });
+    }
+
     await logSecurityEventAction({
       event: 'Update Bill',
       details: { id, updates: bill }
@@ -866,7 +925,6 @@ export async function getBillByIdAction(id: string) {
 
 export async function submitBillAction(id: string) {
   return await wrap(async () => {
-    // Accept bill:submit OR bill:create (creator can always submit their own draft)
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
@@ -877,46 +935,51 @@ export async function submitBillAction(id: string) {
 
     await verifyBillBranchAccess(id, session);
 
-    const billRes = await dbGetBillByIdQuery(id);
-    const currentStatus = billRes?.status || 'Draft';
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Draft';
 
-    const updatedBill = await dbUpdateBillStatus(id, 'Pending');
-    await dbCreateBillWorkflowLog({
-      bill_id: id,
-      from_status: currentStatus,
-      to_status: 'Pending',
-      changed_by: session.id
+      const updatedBill = await dbUpdateBillStatus(id, 'Pending', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Pending',
+        changed_by: session.id
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Submit Bill',
+        details: { id, from: currentStatus }
+      });
+      return updatedBill;
     });
-    await logSecurityEventAction({
-      event: 'Submit Bill',
-      details: { id, from: currentStatus }
-    });
-    return updatedBill;
   });
 }
-
 
 export async function approveBillAction(id: string) {
   return await wrap(async () => {
     const session = await checkPermission('bill:approve');
     await verifyBillBranchAccess(id, session);
 
-    const billRes = await dbGetBillByIdQuery(id);
-    const currentStatus = billRes?.status || 'Pending';
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Pending';
 
-    const approvalDate = new Date();
-    const bill = await dbUpdateBillStatus(id, 'Approved', approvalDate, session.id);
-    await dbCreateBillWorkflowLog({
-      bill_id: id,
-      from_status: currentStatus,
-      to_status: 'Approved',
-      changed_by: session.id
+      const approvalDate = new Date();
+      const bill = await dbUpdateBillStatus(id, 'Approved', approvalDate, session.id, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Approved',
+        changed_by: session.id
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Approve Bill',
+        details: { id, from: currentStatus }
+      });
+      return bill;
     });
-    await logSecurityEventAction({
-      event: 'Approve Bill',
-      details: { id, from: currentStatus }
-    });
-    return bill;
   });
 }
 
@@ -925,29 +988,31 @@ export async function rejectBillAction(id: string, reason: string) {
     const session = await checkPermission('bill:rework');
     await verifyBillBranchAccess(id, session);
 
-    const billRes = await dbGetBillByIdQuery(id);
-    const currentStatus = billRes?.status || 'Pending';
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Pending';
 
-    const bill = await dbUpdateBillStatus(id, 'Rework');
-    await dbCreateBillWorkflowLog({
-      bill_id: id,
-      from_status: currentStatus,
-      to_status: 'Rework',
-      changed_by: session.id,
-      reason: reason
+      const bill = await dbUpdateBillStatus(id, 'Rework', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Rework',
+        changed_by: session.id,
+        reason: reason
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Reject Bill',
+        severity: 'warning',
+        details: { id, reason, from: currentStatus }
+      });
+      return bill;
     });
-    await logSecurityEventAction({
-      event: 'Reject Bill',
-      severity: 'warning',
-      details: { id, reason, from: currentStatus }
-    });
-    return bill;
   });
 }
 
 export async function postBillAction(id: string) {
   return await wrap(async () => {
-    // Standardize: some UIs might call this 'send'
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
@@ -957,18 +1022,25 @@ export async function postBillAction(id: string) {
     }
 
     await verifyBillBranchAccess(id, session);
-    const bill = await dbUpdateBillStatus(id, 'Posted');
-    await dbCreateBillWorkflowLog({
-      bill_id: id,
-      from_status: 'Approved',
-      to_status: 'Posted',
-      changed_by: session.id
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Approved';
+
+      const bill = await dbUpdateBillStatus(id, 'Posted', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Posted',
+        changed_by: session.id
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Post Bill',
+        details: { id }
+      });
+      return bill;
     });
-    await logSecurityEventAction({
-      event: 'Post Bill',
-      details: { id }
-    });
-    return bill;
   });
 }
 
@@ -976,20 +1048,27 @@ export async function correctBillAction(id: string, reason: string) {
   return await wrap(async () => {
     const session = await checkPermission('bill:correct');
     await verifyBillBranchAccess(id, session);
-    const bill = await dbUpdateBillStatus(id, 'Rework');
-    await dbCreateBillWorkflowLog({
-      bill_id: id,
-      from_status: 'Posted',
-      to_status: 'Rework',
-      changed_by: session.id,
-      reason: reason || 'Correction requested'
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Posted';
+
+      const bill = await dbUpdateBillStatus(id, 'Rework', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Rework',
+        changed_by: session.id,
+        reason: reason || 'Correction requested'
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Correct Bill',
+        severity: 'warning',
+        details: { id, reason }
+      });
+      return bill;
     });
-    await logSecurityEventAction({
-      event: 'Correct Bill',
-      severity: 'warning',
-      details: { id, reason }
-    });
-    return bill;
   });
 }
 
@@ -1999,3 +2078,4 @@ export async function syncAllBillsAgingDebtAction() {
     return { success: true, updatedCount: count };
   });
 }
+

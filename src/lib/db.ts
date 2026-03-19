@@ -2,6 +2,9 @@
 
 
 import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import * as schema from './schema';
+import { env } from './env';
 
 let pool: Pool | undefined;
 
@@ -20,10 +23,12 @@ function getPool() {
     ...params,
     max: 10,
     idleTimeoutMillis: 30000,
-    ssl: process.env.POSTGRES_HOST !== '127.0.0.1' && process.env.POSTGRES_HOST !== 'localhost' ? { rejectUnauthorized: false } : false,
+    ssl: env.POSTGRES_HOST !== '127.0.0.1' && env.POSTGRES_HOST !== 'localhost' ? { rejectUnauthorized: false } : false,
   });
   return pool;
 }
+
+export const db = drizzle(getPool(), { schema });
 
 export async function query(text: string, params?: any[]) {
   // console.log('Executing query:', text, params);

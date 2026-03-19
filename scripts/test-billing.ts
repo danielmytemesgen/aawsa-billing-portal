@@ -1,9 +1,9 @@
-import { calculateBillFromTariff, calculateBill, type TariffInfo } from '../src/lib/billing';
+import { calculateBillFromTariff, type TariffInfo } from '../src/lib/billing-calculations';
 
 async function runTests() {
   const domesticTariff: TariffInfo = {
     customer_type: 'Domestic',
-    year: 2025,
+    effective_date: '2025-01-01',
     tiers: [
       { rate: 5, limit: 5 },
       { rate: 8, limit: 14 },
@@ -18,11 +18,12 @@ async function runTests() {
     meter_rent_prices: { '0.5': 37, '0.75': 45 },
     vat_rate: 0.15,
     domestic_vat_threshold_m3: 15,
+    additional_fees: [],
   };
 
   const nonDomesticTariff: TariffInfo = {
     customer_type: 'Non-domestic',
-    year: 2025,
+    effective_date: '2025-01-01',
     tiers: [
       { rate: 6, limit: 5 },
       { rate: 9, limit: 14 },
@@ -36,6 +37,7 @@ async function runTests() {
     meter_rent_prices: { '1': 50 },
     vat_rate: 0.15,
     domestic_vat_threshold_m3: 0, // unused for non-domestic
+    additional_fees: [],
   };
 
   console.log('--- Domestic tests ---');

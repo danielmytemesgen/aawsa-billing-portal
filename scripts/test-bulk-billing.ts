@@ -1,6 +1,6 @@
 
 import { initializeCustomers, addBulkMeter, getBulkMeterByCustomerKey, initializeBulkMeters, initializeTariffs, addCustomer, deleteCustomer, deleteBulkMeter } from '../src/lib/data-store';
-import type { StaffMember } from '@/app/admin/staff-management/staff-types';
+import type { StaffMember } from '@/app/(dashboard)/admin/staff-management/staff-types';
 import { customerTypes } from '@/lib/billing';
 
 async function runBulkBillingTest() {
@@ -12,6 +12,8 @@ async function runBulkBillingTest() {
     name: 'Test User',
     email: 'test@example.com',
     role: 'admin',
+    branchName: 'Head Office',
+    status: 'Active',
   };
 
   // Initialize tariffs
@@ -90,12 +92,12 @@ async function runBulkBillingTest() {
   try {
     // Add mock customers
     for (const customer of mockCustomers) {
-      await addCustomer(customer, currentUser);
+      await addCustomer(customer);
     }
     console.log('Mock customers added successfully.');
 
     // Add the bulk meter
-    const result = await addBulkMeter(mockBulkMeter, currentUser);
+    const result = await addBulkMeter(mockBulkMeter);
 
     if (!result.success) {
       throw new Error(`Failed to add bulk meter: ${result.message}`);

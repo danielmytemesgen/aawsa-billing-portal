@@ -1,9 +1,9 @@
-import { sql } from '@vercel/postgres';
+import { query } from '../src/lib/db';
 
 export default async function Script() {
-    await sql`
-    INSERT INTO permissions (name, description, module) 
+    await query(`
+    INSERT INTO permissions (name, description, category) 
     VALUES ('tariffs_create', 'Create new tariff versions', 'Tariff Management')
     ON CONFLICT (name) DO NOTHING;
-  `;
+  `);
 }

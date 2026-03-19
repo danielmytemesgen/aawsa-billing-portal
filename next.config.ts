@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   output: 'standalone', // Required for Docker deployment
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   eslint: {
     ignoreDuringBuilds: true,

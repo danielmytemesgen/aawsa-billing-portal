@@ -10,15 +10,12 @@ export async function logCustomerActivity(
     try {
         // Dynamically import the server action to avoid bundling issues
         const { logSecurityEventAction } = await import('./actions');
-        await logSecurityEventAction(
-            activityType,
-            undefined,
-            undefined,
-            undefined,
-            'Info',
-            details || {},
+        await logSecurityEventAction({
+            event: activityType,
+            severity: 'info',
+            details: details || {},
             customerKeyNumber
-        );
+        });
     } catch (error) {
         console.error('Failed to log customer activity:', error);
     }
