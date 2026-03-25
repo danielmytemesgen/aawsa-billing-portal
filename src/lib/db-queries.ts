@@ -521,6 +521,20 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
         const bill = billRes.rows[0];
         if (!bill) return false;
 
+        // Reconcile outstanding balance:
+        // If the bill was unpaid or partially paid, subtract the unpaid portion from the meter/customer's balance.
+        const totalAmt = Number(bill.TOTALBILLAMOUNT || 0);
+        const paidAmt = Number(bill.amount_paid || 0);
+        const unpaidAmt = Number((totalAmt - paidAmt).toFixed(2));
+
+        if (unpaidAmt > 0) {
+            if (bill.CUSTOMERKEY) {
+                await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.CUSTOMERKEY]);
+            } else if (bill.individual_customer_id) {
+                await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.individual_customer_id]);
+            }
+        }
+
         await client.query('UPDATE bills SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
             ['bill', id, bill.bill_number || `Bill ${id}`, deletedBy, JSON.stringify(bill)]);
