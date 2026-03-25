@@ -236,8 +236,13 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
 
     // Stats Calculations based on filtered data
     const getBillTotalPayable = (b: any) => {
-        // Fix #2: TOTALBILLAMOUNT already includes arrears/outstanding, so don't add them again.
-        return (Number(b.TOTALBILLAMOUNT) || 0);
+        const d30 = Number(b.debit30 || b.debit_30 || 0);
+        const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
+        const d60 = Number(b.debit60 || b.debit_60 || 0);
+        const outstanding = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+        const current = Math.max(0, Number(b.THISMONTHBILLAMT ?? (Number(b.TOTALBILLAMOUNT || 0) - outstanding)));
+        const penalty = Number(b.PENALTYAMT || 0);
+        return outstanding + current + penalty;
     };
 
     const totalOutstandingUnpaid = filteredForStats
@@ -281,7 +286,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
 
     // Filtered Outstanding List (Main Table)
     const filteredOutstanding = filteredForStats
-        .filter(b => (b.status === 'Posted' || b.status === 'Approved') && b.payment_status === 'Unpaid')
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Unpaid')
         .filter(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
             const matchesStatus = statusFilter === 'all' ||
@@ -292,7 +297,7 @@ export default function BillManagementPage({ basePath = '/staff/bill-management'
 
     // Filtered Paid List (Second Table)
     const filteredPaid = filteredForStats
-        .filter(b => b.payment_status === 'Paid');
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid');
 
     // Pagination for Outstanding
     const totalPages = Math.ceil(filteredOutstanding.length / itemsPerPage);
@@ -658,6 +663,7 @@ function BillTable({ bills, onDelete, router, canDelete = false }: { bills: any[
                         <TableHead className="text-right text-[10px]">DEBIT_&gt;60</TableHead>
                         <TableHead className="text-right">Outstanding (ETB)</TableHead>
                         <TableHead className="text-right">Current Bill (ETB)</TableHead>
+                        <TableHead className="text-right">Penalty (ETB)</TableHead>
                         <TableHead className="text-right">Total Payable (ETB)</TableHead>
                         <TableHead className="text-center">Status</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -667,10 +673,13 @@ function BillTable({ bills, onDelete, router, canDelete = false }: { bills: any[
                     {bills.map((bill) => {
                         const now = new Date();
                         const isOverdue = bill.payment_status === 'Unpaid' && bill.due_date && isBefore(new Date(bill.due_date), now);
-                        const currentOutstanding = (Number(bill.debit_30 || bill.debit30 || 0)) +
-                            (Number(bill.debit_30_60 || bill.debit30_60 || 0)) +
-                            (Number(bill.debit_60 || bill.debit60 || 0));
-                        const totalPayable = (Number(bill.TOTALBILLAMOUNT) || 0);
+                        const d30 = Number(bill.debit_30 || bill.debit30 || 0);
+                        const d30_60 = Number(bill.debit_30_60 || bill.debit30_60 || 0);
+                        const d60 = Number(bill.debit_60 || bill.debit60 || 0);
+                        const currentOutstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+                        const currentBillAmt = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - currentOutstanding)));
+                        const penaltyAmt = Number(bill.PENALTYAMT || 0);
+                        const totalPayable = currentOutstanding + currentBillAmt + penaltyAmt;
 
                         return (
                             <TableRow key={bill.id}>
@@ -696,8 +705,9 @@ function BillTable({ bills, onDelete, router, canDelete = false }: { bills: any[
                                 <TableCell className="text-right text-[10px] text-gray-500">{Number(bill.debit_30_60 || bill.debit30_60 || 0).toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-[10px] text-gray-500">{Number(bill.debit_60 || bill.debit60 || 0).toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs">{Number(bill.TOTALBILLAMOUNT || 0).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs font-bold whitespace-nowrap">
+                                <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-xs text-destructive font-medium">{penaltyAmt.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">
                                     {totalPayable.toFixed(2)}
                                 </TableCell>
                                 <TableCell className="text-center">

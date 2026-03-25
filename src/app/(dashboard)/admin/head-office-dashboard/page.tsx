@@ -54,20 +54,6 @@ export default function HeadOfficeDashboardPage() {
   const [isClient, setIsClient] = React.useState(false);
   const { hasPermission } = usePermissions();
 
-  if (!hasPermission('dashboard_view_all')) {
-    return (
-      <div className="p-4">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Access Denied</AlertTitle>
-          <UIAlertDescription>
-            You do not have permission to view the Head Office Dashboard.
-          </UIAlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   // State for dynamic data
   const [selectedMonth, setSelectedMonth] = React.useState<string>(format(new Date(), 'yyyy-MM'));
   const [dynamicTotalBills, setDynamicTotalBills] = React.useState(0);
@@ -182,6 +168,20 @@ export default function HeadOfficeDashboardPage() {
       isMounted = false;
     };
   }, [processDashboardData]);
+
+  if (!hasPermission('dashboard_view_all')) {
+    return (
+      <div className="p-4">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <UIAlertDescription>
+            You do not have permission to view the Head Office Dashboard.
+          </UIAlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return <div className="p-4 text-center">Loading dashboard data...</div>;

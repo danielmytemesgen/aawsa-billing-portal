@@ -233,8 +233,11 @@ const availableStaffReports: ReportType[] = [
           }
         }
 
-        const currentBill = b.TOTALBILLAMOUNT;
+        const currentBill = (b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined)
+          ? Number(b.THISMONTHBILLAMT)
+          : (Number(b.TOTALBILLAMOUNT || 0) - Number(b.OUTSTANDINGAMT || 0));
         const outstanding = reconstructedOutstanding || b.balanceCarriedForward || 0;
+        const penalty = Number((b as any).PENALTYAMT || 0);
 
         return {
           "Bill ID": b.id,
@@ -252,7 +255,7 @@ const availableStaffReports: ReportType[] = [
           "Sanitation Fee": b.sanitationFee,
           "Meter Rent": b.meterRent,
           "Current Bill": currentBill,
-          "Total Bill": currentBill + outstanding,
+          "Total Bill": outstanding + currentBill + penalty,
           "Amount Paid": b.amountPaid,
           "Outstanding": outstanding,
           "Due Date": b.dueDate,
@@ -375,8 +378,11 @@ const availableStaffReports: ReportType[] = [
           reasonFormatted = `${parseInt(month)}/1/${year}`;
         }
 
-        const currentBill = bill.TOTALBILLAMOUNT;
+        const currentBill = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
+          ? Number(bill.THISMONTHBILLAMT)
+          : (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0));
         const outstanding = reconstructedOutstanding || bill.balanceCarriedForward || 0;
+        const penalty = Number((bill as any).PENALTYAMT || 0);
 
         return {
           "BILLKEY": billKeyFormatted,
@@ -388,10 +394,10 @@ const availableStaffReports: ReportType[] = [
           "CURRREAD": bill.CURRREAD,
           "PREVREAD": bill.PREVREAD,
           "CONS": bill.CONS || 0,
-          "TOTALBILLAMOUNT": currentBill + outstanding,
-          "THISMONTHBILLAMT": currentBill,
+          "TOTALBILLAMOUNT": outstanding + Math.max(0, currentBill) + penalty,
+          "THISMONTHBILLAMT": Math.max(0, currentBill),
           "OUTSTANDINGAMT": outstanding,
-          "PENALTYAMT": (bill as any).PENALTYAMT || 0,
+          "PENALTYAMT": penalty,
           "VAT_AMOUNT": bill.vatAmount || 0,
           "DRACCTNO": bill.DRACCTNO || "",
           "CRACCTNO": bill.CRACCTNO || ""
@@ -748,9 +754,12 @@ const availableStaffReports: ReportType[] = [
         "Maintenance Fee": b.maintenanceFee,
         "Sanitation Fee": b.sanitationFee,
         "Meter Rent": b.meterRent,
-        "Total Bill Amount": b.TOTALBILLAMOUNT,
+        "Current Bill": (b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined)
+          ? Number(b.THISMONTHBILLAMT)
+          : (Number(b.TOTALBILLAMOUNT || 0) - Number(b.OUTSTANDINGAMT || 0)),
+        "Total Bill Amount": (b.OUTSTANDINGAMT ?? 0) + ((b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined) ? Number(b.THISMONTHBILLAMT) : (Number(b.TOTALBILLAMOUNT || 0) - Number(b.OUTSTANDINGAMT || 0))) + Number((b as any).PENALTYAMT || 0),
         "Amount Paid": b.amountPaid,
-        "Outstanding Amount": b.OUTSTANDINGAMT,
+        "Outstanding Amount": (b as any).debit30 !== undefined ? (Number((b as any).debit30 || 0) + Number((b as any).debit30_60 || 0) + Number((b as any).debit60 || 0)) : (b.OUTSTANDINGAMT || 0),
         "Due Date": b.dueDate,
         "Status": b.paymentStatus,
         "Bill Number": b.billNumber,
@@ -808,9 +817,12 @@ const availableStaffReports: ReportType[] = [
         "Maintenance Fee": b.maintenanceFee,
         "Sanitation Fee": b.sanitationFee,
         "Meter Rent": b.meterRent,
-        "Total Bill Amount": b.TOTALBILLAMOUNT,
+        "Current Bill": (b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined)
+          ? Number(b.THISMONTHBILLAMT)
+          : (Number(b.TOTALBILLAMOUNT || 0) - Number(b.OUTSTANDINGAMT || 0)),
+        "Total Bill Amount": (b.OUTSTANDINGAMT ?? 0) + ((b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined) ? Number(b.THISMONTHBILLAMT) : (Number(b.TOTALBILLAMOUNT || 0) - Number(b.OUTSTANDINGAMT || 0))) + Number((b as any).PENALTYAMT || 0),
         "Amount Paid": b.amountPaid,
-        "Outstanding Amount": b.OUTSTANDINGAMT,
+        "Outstanding Amount": (b as any).debit30 !== undefined ? (Number((b as any).debit30 || 0) + Number((b as any).debit30_60 || 0) + Number((b as any).debit60 || 0)) : (b.OUTSTANDINGAMT || 0),
         "Due Date": b.dueDate,
         "Status": b.paymentStatus,
         "Bill Number": b.billNumber,

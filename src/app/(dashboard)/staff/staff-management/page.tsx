@@ -156,7 +156,7 @@ export default function StaffStaffManagementPage() {
                         <div className="mt-4 p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
                             <UserCog className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                             <h3 className="text-lg font-semibold">No Staff Members Found</h3>
-                            <p className="text-muted-foreground mt-1">Click "Add New" to get started.</p>
+                            <p className="text-muted-foreground mt-1">Click &quot;Add New&quot; to get started.</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto">

@@ -66,18 +66,6 @@ export default function ReadingClassificationPage() {
     const { hasPermission } = usePermissions();
     const { toast } = useToast();
 
-    if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch') && !hasPermission('routes_view_assigned')) {
-        return (
-            <div className="space-y-6">
-                <Alert variant="destructive">
-                    <Lock className="h-4 w-4" />
-                    <AlertTitle>Access Denied</AlertTitle>
-                    <CardDescription>You do not have permission to view reports.</CardDescription>
-                </Alert>
-            </div>
-        );
-    }
-
     const [isLoading, setIsLoading] = React.useState(true);
     const [readings, setReadings] = React.useState<ReadingRecord[]>([]);
     const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);
@@ -270,6 +258,18 @@ export default function ReadingClassificationPage() {
 
         setFilteredReadings(result);
     }, [searchTerm, selectedCategory, selectedMonth, selectedBranch, selectedRoute, selectedFaultCode, readings]);
+
+    if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch') && !hasPermission('routes_view_assigned')) {
+        return (
+            <div className="space-y-6">
+                <Alert variant="destructive">
+                    <Lock className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <CardDescription>You do not have permission to view reports.</CardDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     const handleExport = () => {
         if (filteredReadings.length === 0) {

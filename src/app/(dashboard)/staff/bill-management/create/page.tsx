@@ -121,14 +121,9 @@ export default function CreateBillPage() {
         setIsCalculating(true);
         try {
             const rawUsage = values.CURRREAD - values.PREVREAD;
-            // Apply Rule: Minimum 3m3 for billing
-            let effectiveUsage = rawUsage;
-            if (rawUsage < 3) {
-                effectiveUsage = 3;
-            }
 
             const res = await calculateBillAction(
-                effectiveUsage,
+                rawUsage,
                 customer.charge_group || "Non-domestic",
                 customer.sewerage_connection || "No",
                 customer.meterSize,
@@ -139,7 +134,6 @@ export default function CreateBillPage() {
                 setCalculationResult({
                     ...res.data,
                     bulkUsage: rawUsage,
-                    effectiveUsage: effectiveUsage
                 });
             }
         } catch (e) {
@@ -359,7 +353,7 @@ export default function CreateBillPage() {
                                 </div>
 
                                 <div className="flex justify-between text-lg font-bold pt-2 text-blue-600 border-t mt-2">
-                                    <span>Total Amount Payable:</span>
+                                    <span>Total Payable (Current + Outstanding):</span>
                                     <span>ETB {(Number(calculationResult.totalBill || 0) + Number(customer?.outStandingbill || 0)).toFixed(2)}</span>
                                 </div>
                             </div>

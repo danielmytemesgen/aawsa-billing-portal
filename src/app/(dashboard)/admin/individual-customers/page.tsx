@@ -16,8 +16,7 @@ import {
   addCustomer as addCustomerToStore,
   updateCustomer as updateCustomerInStore,
   deleteCustomer as deleteCustomerFromStore,
-  subscribeToCustomers,
-  initializeCustomers,
+  fetchCustomersPaginated,
   getBulkMeters,
   subscribeToBulkMeters,
   initializeBulkMeters,
@@ -47,6 +46,37 @@ export default function IndividualCustomersPage() {
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [totalCount, setTotalCount] = React.useState(0);
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string) => {
+    setIsLoading(true);
+    const { customers: paginatedCustomers, totalCount: count, error } = await fetchCustomersPaginated(rpp, p * rpp, search);
+    if (!error) {
+      setCustomers(paginatedCustomers);
+      setTotalCount(count);
+    } else {
+      toast({
+        title: "Error",
+        description: "Failed to fetch customers from server.",
+        variant: "destructive",
+      });
+    }
+    setIsLoading(false);
+  }, [toast]);
+
+  // Debounce search
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(0); // Reset to first page on search
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  React.useEffect(() => {
+    fetchData(page, rowsPerPage, debouncedSearch);
+  }, [page, rowsPerPage, debouncedSearch, fetchData]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -54,31 +84,24 @@ export default function IndividualCustomersPage() {
       setCurrentUser(JSON.parse(userJson));
     }
 
-    setIsLoading(true);
+    // Initialize secondary data
     Promise.all([
       initializeBulkMeters(true),
-      initializeCustomers(true),
       initializeBranches(true),
       initializeTariffs(true)
     ]).then(() => {
       setBulkMetersList(getBulkMeters().filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
-      setCustomers(getCustomers());
       setBranches(getBranches());
-      setIsLoading(false);
     });
 
     const unsubscribeBulkMeters = subscribeToBulkMeters((updatedBulkMeters) => {
       setBulkMetersList(updatedBulkMeters.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
-    });
-    const unsubscribeCustomers = subscribeToCustomers((updatedCustomers) => {
-      setCustomers(updatedCustomers);
     });
     const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
       setBranches(updatedBranches);
     });
 
     return () => {
-      unsubscribeCustomers();
       unsubscribeBulkMeters();
       unsubscribeBranches();
     };
@@ -104,6 +127,7 @@ export default function IndividualCustomersPage() {
       const result = await deleteCustomerFromStore(customerToDelete.customerKeyNumber);
       if (result.success) {
         toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been removed.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
       } else {
         toast({ variant: "destructive", title: "Delete Failed", description: result.message || "Could not delete customer." });
       }
@@ -123,6 +147,7 @@ export default function IndividualCustomersPage() {
       const result = await updateCustomerInStore(selectedCustomer.customerKeyNumber, data);
       if (result.success) {
         toast({ title: "Customer Updated", description: `${data.name} has been updated.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
       } else {
         toast({
           variant: "destructive",
@@ -135,6 +160,7 @@ export default function IndividualCustomersPage() {
       const result = await addCustomerToStore(data);
       if (result.success && result.data) {
         toast({ title: "Customer Added", description: `${result.data.name} has been added.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
       } else {
         toast({ variant: "destructive", title: "Add Failed", description: result.message || "Could not add customer." });
       }
@@ -150,30 +176,6 @@ export default function IndividualCustomersPage() {
     }
     return fallbackLocation || "";
   };
-
-  const customersForUser = React.useMemo(() => {
-    let baseCustomers = customers;
-    if (currentUser?.role?.toLowerCase() === 'staff management' && currentUser.branchId) {
-      baseCustomers = customers.filter(customer => customer.branchId === currentUser.branchId);
-    }
-    return baseCustomers.filter(customer => customer.status !== 'Pending Approval');
-  }, [customers, currentUser]);
-
-  const filteredCustomers = customersForUser.filter(customer => {
-    const branchName = getBranchNameFromList(customer.branchId, customer.subCity);
-    return (
-      customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      branchName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.woreda.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (customer.assignedBulkMeterId && bulkMetersList.find(bm => bm.customerKeyNumber === customer.assignedBulkMeterId)?.name.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-  });
-
-  const paginatedCustomers = filteredCustomers.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
 
   return (
     <div className="space-y-6">
@@ -212,12 +214,12 @@ export default function IndividualCustomersPage() {
             <div className="mt-4 p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
               <User className="mx-auto h-12 w-12 text-gray-400 mb-4" />
               <h3 className="text-lg font-semibold">No Customers Found</h3>
-              <p className="text-muted-foreground mt-1">Click "Add New" to get started.</p>
+              <p className="text-muted-foreground mt-1">Click &quot;Add New&quot; to get started.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <IndividualCustomerTable
-                data={paginatedCustomers}
+                data={customers}
                 onEdit={handleEditCustomer}
                 onDelete={handleDeleteCustomer}
                 bulkMetersList={bulkMetersList}
@@ -228,9 +230,9 @@ export default function IndividualCustomersPage() {
             </div>
           )}
         </CardContent>
-        {filteredCustomers.length > 0 && (
+        {totalCount > 0 && (
           <TablePagination
-            count={filteredCustomers.length}
+            count={totalCount}
             page={page}
             rowsPerPage={rowsPerPage}
             onPageChange={setPage}
@@ -238,7 +240,7 @@ export default function IndividualCustomersPage() {
               setRowsPerPage(value);
               setPage(0);
             }}
-            rowsPerPageOptions={[5, 10, 25]}
+            rowsPerPageOptions={[10, 25, 50, 100]}
           />
         )}
       </Card>

@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 /**
  * Logs customer activity in the portal (page visits, feature usage)
  * This is a client-side utility that calls server actions
@@ -25,19 +27,21 @@ export async function logCustomerActivity(
  * Hook to automatically log page views in customer portal
  */
 export function useCustomerActivityLogger(pageName: string) {
-    if (typeof window !== 'undefined') {
-        const customerData = localStorage.getItem('customer');
-        if (customerData) {
-            try {
-                const customer = JSON.parse(customerData);
-                logCustomerActivity(
-                    customer.customerKeyNumber,
-                    `Viewed ${pageName}`,
-                    { page: pageName, timestamp: new Date().toISOString() }
-                );
-            } catch (e) {
-                console.error('Failed to parse customer data', e);
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const customerData = localStorage.getItem('customer');
+            if (customerData) {
+                try {
+                    const customer = JSON.parse(customerData);
+                    logCustomerActivity(
+                        customer.customerKeyNumber,
+                        `Viewed ${pageName}`,
+                        { page: pageName, timestamp: new Date().toISOString() }
+                    );
+                } catch (e) {
+                    console.error('Failed to parse customer data', e);
+                }
             }
         }
-    }
+    }, [pageName]);
 }

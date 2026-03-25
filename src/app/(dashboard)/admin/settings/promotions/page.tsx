@@ -401,7 +401,7 @@ export default function PromotionsManagementPage() {
                                     ) : (
                                         <TableRow>
                                             <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                                                No promotions found. Click "Add Promotion" to create one.
+                                                No promotions found. Click &quot;Add Promotion&quot; to create one.
                                             </TableCell>
                                         </TableRow>
                                     )}

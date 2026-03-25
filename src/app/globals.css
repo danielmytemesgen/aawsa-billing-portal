@@ -158,6 +158,48 @@ body {
   aside[data-collapsible] button.bg-sidebar-accent svg {
     color: hsl(var(--sidebar-accent-foreground));
   }
+
+  /* Premium Form Styles */
+  .form-section-divider {
+    @apply flex items-center gap-4 my-8;
+  }
+  .form-section-divider::before,
+  .form-section-divider::after {
+    content: "";
+    @apply h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent;
+  }
+
+  .premium-input-group {
+    @apply relative transition-all duration-300;
+  }
+
+  .premium-input-group:focus-within {
+    @apply transform scale-[1.01];
+  }
+
+  .premium-input-group svg {
+    @apply absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors duration-300;
+  }
+
+  .premium-input-group:focus-within svg {
+    @apply text-primary;
+  }
+
+  .premium-input-group input,
+  .premium-input-group select,
+  .premium-input-group button[role="combobox"] {
+    @apply pl-10 !important;
+  }
+
+  .form-card-premium {
+    @apply relative overflow-hidden border-none shadow-2xl bg-white/50 backdrop-blur-xl dark:bg-slate-900/50;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .form-card-premium::before {
+    content: "";
+    @apply absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50;
+  }
 }
 
 /* Glassmorphism Styles */
@@ -307,46 +349,184 @@ body {
   color: hsl(var(--primary)) !important;
 }
 
-/* Premium Form Styles */
-.form-section-divider {
-  @apply flex items-center gap-4 my-8;
-}
-.form-section-divider::before,
-.form-section-divider::after {
-  content: "";
-  @apply h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent;
+
+
+/* Professional Invoice Design (Shared by Screen Preview and Print) */
+.printable-bill-card {
+  display: block;
+  position: relative;
+  width: 100%;
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: 2.5rem;
+  color: #000 !important;
+  background: #fff !important;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  font-family: 'Times New Roman', Times, serif;
 }
 
-.premium-input-group {
-  @apply relative transition-all duration-300;
+/* Professional Watermark */
+.printable-bill-card::before {
+  content: "OFFICIAL INVOICE";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-size: 80pt;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.03);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 0;
 }
 
-.premium-input-group:focus-within {
-  @apply transform scale-[1.01];
+.printable-bill-card * {
+  z-index: 1;
+  position: relative;
 }
 
-.premium-input-group svg {
-  @apply absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors duration-300;
+.print-header-top {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  font-size: 8pt;
+  color: #64748b;
+  border-bottom: 2px solid #f1f5f9;
+  margin-bottom: 2rem;
+  padding-bottom: 0.5rem;
 }
 
-.premium-input-group:focus-within svg {
-  @apply text-primary;
+.print-header-main {
+  margin-bottom: 2.5rem;
+  text-align: left;
 }
 
-.premium-input-group input,
-.premium-input-group select,
-.premium-input-group button[role="combobox"] {
-  @apply pl-10 !important;
+.print-header-main h1 {
+  font-size: 18pt;
+  font-weight: 800;
+  color: #000 !important;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.5rem;
 }
 
-.form-card-premium {
-  @apply relative overflow-hidden border-none shadow-2xl bg-white/50 backdrop-blur-xl dark:bg-slate-900/50;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+.print-header-main h2 {
+  font-size: 14pt;
+  font-weight: 700;
+  color: #000 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.form-card-premium::before {
-  content: "";
-  @apply absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary/50 via-primary to-primary/50;
+.print-body {
+  width: 100%;
+}
+
+.print-section {
+  margin-bottom: 2rem;
+}
+
+.print-banner {
+  background-color: #1e3a8a !important;
+  color: #ffffff !important;
+  font-size: 11pt !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  padding: 0.5rem 0.75rem !important;
+  margin-bottom: 1rem !important;
+  text-align: left !important;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+.print-table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  margin-bottom: 1rem !important;
+}
+
+.print-table tr {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.print-table tr:last-child {
+  border-bottom: none;
+}
+
+.print-table td {
+  padding: 0.75rem 0;
+  font-size: 10pt;
+  vertical-align: middle;
+}
+
+.print-table td:first-child {
+  color: #000;
+  font-weight: 600;
+  text-align: left;
+}
+
+.print-table td:last-child {
+  text-align: right;
+  font-weight: 700;
+  color: #000;
+}
+
+.print-table-total {
+  background-color: #f8fafc;
+  border-top: 2px solid #e2e8f0;
+}
+
+.print-table-total td {
+  padding: 1rem 0;
+  font-weight: 700;
+}
+
+.print-table-total td:last-child {
+  font-size: 12pt;
+  color: #1e3a8a !important;
+}
+
+.print-status-box {
+  border: 3px solid #1e3a8a;
+  padding: 0.5rem 1.5rem;
+  border-radius: 4px;
+  font-weight: 800;
+  font-size: 16pt;
+  color: #1e3a8a;
+  text-transform: uppercase;
+  transform: rotate(-5deg);
+  opacity: 0.8;
+  display: inline-block;
+  box-shadow: 2px 2px 0 rgba(30, 58, 138, 0.1);
+}
+
+.print-signature-section {
+  margin-top: 4rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3rem;
+}
+
+.print-signature-item {
+  text-align: center;
+}
+
+.print-signature-label {
+  display: block;
+  font-size: 8pt;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  margin-top: 0.5rem;
+  border-top: 1px solid #cbd5e1;
+  padding-top: 0.5rem;
+}
+
+.print-signature-line {
+  height: 40px;
+  margin-bottom: 0;
 }
 
 /* Print specific styles */
@@ -354,7 +534,6 @@ body {
   @page {
     size: A4 portrait;
     margin: 0;
-    /* Remove browser-controlled margins */
   }
 
   body {
@@ -364,19 +543,13 @@ body {
     font-size: 10pt;
     font-family: 'Times New Roman', Times, serif;
     margin: 1cm;
-    /* Apply margin to the body for content padding */
   }
 
-  header,
-  nav,
-  aside,
-  footer,
-  .non-printable {
+  header, nav, aside, footer, .non-printable {
     display: none !important;
   }
 
-  main,
-  main>div {
+  main, main > div {
     padding: 0 !important;
     margin: 0 !important;
     background: none !important;
@@ -389,188 +562,15 @@ body {
   }
 
   .printable-bill-card {
-    display: block !important;
-    position: relative !important;
     width: 210mm !important;
     min-height: 297mm !important;
-    margin: 0 auto !important;
-    padding: 2.5rem !important;
-    color: #111827 !important;
-    background: #fff !important;
+    margin: 0 !important;
     border: 1px solid #e5e7eb !important;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1) !important;
-    overflow: hidden !important;
-  }
-
-  /* Professional Watermark */
-  .printable-bill-card::before {
-    content: "OFFICIAL INVOICE";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) rotate(-45deg);
-    font-size: 80pt;
-    font-weight: 900;
-    color: rgba(15, 23, 42, 0.03);
-    pointer-events: none;
-    white-space: nowrap;
-    z-index: 0;
-  }
-
-  .printable-bill-card * {
-    color: inherit !important;
-    background-color: transparent !important;
     box-shadow: none !important;
-    z-index: 1;
-    position: relative;
-  }
-
-  .print-header-top {
-    display: flex !important;
-    justify-content: space-between !important;
-    align-items: center !important;
-    font-size: 8pt;
-    color: #64748b !important;
-    border-bottom: 2px solid #f1f5f9;
-    margin-bottom: 2rem;
-    padding-bottom: 0.5rem;
-  }
-
-  .print-header-main {
-    margin-bottom: 2.5rem;
-  }
-
-  .print-header-main h1 {
-    font-size: 18pt;
-    font-weight: 800;
-    color: #1e3a8a !important;
-    letter-spacing: 0.1em;
-    margin-bottom: 0.5rem;
   }
 
   .print-header-main hr {
     display: none !important;
-  }
-
-  .print-header-main h2 {
-    font-size: 14pt;
-    font-weight: 700;
-    color: #334155 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .print-body {
-    width: 100%;
-  }
-
-  .print-section {
-    margin-bottom: 2rem;
-  }
-
-  .print-banner {
-    color: #1e3a8a !important;
-    font-size: 10pt !important;
-    font-weight: 800 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.05em !important;
-    border-bottom: 2px solid #1e3a8a !important;
-    padding-bottom: 0.5rem !important;
-    margin-bottom: 1rem !important;
-  }
-
-  .print-table {
-    width: 100% !important;
-    border-collapse: collapse !important;
-    margin-bottom: 1rem !important;
-  }
-
-  .print-table tr {
-    border-bottom: 1px solid #f1f5f9 !important;
-  }
-
-  .print-table tr:last-child {
-    border-bottom: none !important;
-  }
-
-  .print-table td {
-    padding: 0.75rem 0 !important;
-    font-size: 10pt !important;
-    vertical-align: middle;
-  }
-
-  .print-table td:first-child {
-    color: #64748b !important;
-    font-weight: 500 !important;
-    text-align: left !important;
-  }
-
-  .print-table td:last-child {
-    text-align: right !important;
-    font-weight: 600 !important;
-    color: #0f172a !important;
-  }
-
-  .print-table-total {
-    background-color: #f8fafc !important;
-    border-top: 2px solid #e2e8f0 !important;
-  }
-
-  .print-table-total td {
-    padding: 1rem 0 !important;
-    font-weight: 700 !important;
-  }
-
-  .print-table-total td:last-child {
-    font-size: 12pt !important;
-    color: #1e3a8a !important;
-  }
-
-  .print-status-box {
-    border: 3px solid #1e3a8a !important;
-    padding: 0.5rem 1.5rem !important;
-    border-radius: 4px !important;
-    font-weight: 800 !important;
-    font-size: 16pt !important;
-    color: #1e3a8a !important;
-    text-transform: uppercase !important;
-    transform: rotate(-5deg);
-    opacity: 0.8 !important;
-    display: inline-block !important;
-    box-shadow: 2px 2px 0 rgba(30, 58, 138, 0.1) !important;
-  }
-
-  /* Unpaid coloring */
-  .print-status-box:contains("Unpaid") {
-    border-color: #ef4444 !important;
-    color: #ef4444 !important;
-  }
-
-  .print-signature-section {
-    margin-top: 4rem;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 3rem;
-  }
-
-  .print-signature-item {
-    text-align: center;
-  }
-
-  .print-signature-label {
-    display: block;
-    font-size: 8pt;
-    font-weight: 700;
-    color: #64748b !important;
-    text-transform: uppercase;
-    margin-top: 0.5rem;
-    border-top: 1px solid #cbd5e1;
-    padding-top: 0.5rem;
-  }
-
-  .print-signature-line {
-    height: 40px;
-    margin-bottom: 0;
   }
 }
 
@@ -580,6 +580,6 @@ body {
     border-radius: 0.75rem;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
     max-width: 800px;
-    margin: 2rem auto;
+    margin: 2rem 0;
   }
 }

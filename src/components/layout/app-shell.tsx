@@ -31,7 +31,6 @@ import {
 import { cn } from '@/lib/utils';
 import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import { NotificationBell } from './notification-bell';
-import { ChatbotWidget } from '@/components/chatbot-widget';
 import { ROLES, PERMISSIONS, isManagementRole } from '@/lib/constants/auth';
 
 interface UserProfile {
@@ -186,9 +185,6 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
           Design and Developed by Daniel Temesgen
           &copy; {currentYear} {appName}. All rights reserved.
         </footer>
-        <div className="no-print">
-          <ChatbotWidget />
-        </div>
       </SidebarInset>
     </SidebarProvider>
   );

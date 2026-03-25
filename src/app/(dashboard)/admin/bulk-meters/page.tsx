@@ -24,8 +24,8 @@ import {
   addBulkMeter as addBulkMeterToStore,
   updateBulkMeter as updateBulkMeterInStore,
   deleteBulkMeter as deleteBulkMeterFromStore,
-  subscribeToBulkMeters,
-  initializeBulkMeters,
+  fetchBulkMetersPaginated,
+  fetchBulkMetersSummary,
   getBranches,
   initializeBranches,
   subscribeToBranches,
@@ -51,37 +51,61 @@ export default function BulkMetersPage() {
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [totalCount, setTotalCount] = React.useState(0);
+  const [summary, setSummary] = React.useState({ total: 0, active: 0, inactive: 0 });
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [selectedMeters, setSelectedMeters] = React.useState<Set<string>>(new Set());
   const [isBatchInvoiceDialogOpen, setIsBatchInvoiceDialogOpen] = React.useState(false);
 
+
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string) => {
+    setIsLoading(true);
+    const { bulkMeters: paginatedBMs, totalCount: count, error } = await fetchBulkMetersPaginated(rpp, p * rpp, search);
+    if (!error) {
+      setBulkMeters(paginatedBMs);
+      setTotalCount(count);
+    } else {
+      toast({ title: "Error", description: "Failed to fetch bulk meters.", variant: "destructive" });
+    }
+    setIsLoading(false);
+  }, [toast]);
+
+  const fetchSummaryStats = React.useCallback(async () => {
+    const { data } = await fetchBulkMetersSummary();
+    if (data) setSummary(data);
+  }, []);
+
+  // Debounce search
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(0);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  React.useEffect(() => {
+    fetchData(page, rowsPerPage, debouncedSearch);
+  }, [page, rowsPerPage, debouncedSearch, fetchData]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
     if (userJson) {
       setCurrentUser(JSON.parse(userJson));
     }
-    setIsLoading(true);
-    Promise.all([
-      initializeBulkMeters(true),
-      initializeBranches(true)
-    ]).then(() => {
-      setBulkMeters(getBulkMeters());
+    fetchSummaryStats();
+    initializeBranches(true).then(() => {
       setBranches(getBranches());
-      setIsLoading(false);
     });
 
-    const unsubscribeBM = subscribeToBulkMeters((updatedBulkMeters) => {
-      setBulkMeters(updatedBulkMeters);
-    });
     const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
       setBranches(updatedBranches);
     });
 
     return () => {
-      unsubscribeBM();
       unsubscribeBranches();
     };
-  }, []);
+  }, [fetchSummaryStats]);
 
   const handleAddBulkMeter = () => {
     setSelectedBulkMeter(null);
@@ -100,8 +124,14 @@ export default function BulkMetersPage() {
 
   const confirmDelete = async () => {
     if (bulkMeterToDelete) {
-      await deleteBulkMeterFromStore(bulkMeterToDelete.customerKeyNumber);
-      toast({ title: "Bulk Meter Deleted", description: `${bulkMeterToDelete.name} has been removed.` });
+      const result = await deleteBulkMeterFromStore(bulkMeterToDelete.customerKeyNumber);
+      if (result.success) {
+        toast({ title: "Bulk Meter Deleted", description: `${bulkMeterToDelete.name} has been removed.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchSummaryStats();
+      } else {
+        toast({ variant: "destructive", title: "Delete Failed", description: result.message });
+      }
       setBulkMeterToDelete(null);
     }
     setIsDeleteDialogOpen(false);
@@ -118,16 +148,20 @@ export default function BulkMetersPage() {
       const result = await updateBulkMeterInStore(selectedBulkMeter.customerKeyNumber, data);
       if (result.success) {
         toast({ title: "Bulk Meter Updated", description: `${data.name} has been updated.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchSummaryStats();
       } else {
-        toast({ variant: "destructive", title: "Update Failed", description: result.message });
+        toast({ variant: "destructive", title: "Update Failed", description: result.message || "Could not update meter." });
       }
     } else {
       if (!hasPermission('bulk_meters_create')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create bulk meters.' }); return; }
       const result = await addBulkMeterToStore(data);
       if (result.success) {
         toast({ title: "Bulk Meter Added", description: `${data.name} has been added and is pending approval.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchSummaryStats();
       } else {
-        toast({ variant: "destructive", title: "Add Failed", description: result.message });
+        toast({ variant: "destructive", title: "Add Failed", description: result.message || "Could not add meter." });
       }
     }
     setIsFormOpen(false);
@@ -135,25 +169,8 @@ export default function BulkMetersPage() {
   };
 
   const metersForUser = React.useMemo(() => {
-    let baseMeters = bulkMeters;
-    if (currentUser?.role?.toLowerCase() === 'staff management' && currentUser.branchId) {
-      baseMeters = bulkMeters.filter(meter => meter.branchId === currentUser.branchId);
-    }
-    return baseMeters.filter(meter => meter.status !== 'Pending Approval');
-  }, [bulkMeters, currentUser]);
-
-  const filteredBulkMeters = metersForUser.filter(bm =>
-    bm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    bm.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (bm.branchId && branches.find(b => b.id === bm.branchId)?.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    bm.subCity.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    bm.contractNumber.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const paginatedBulkMeters = filteredBulkMeters.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
+    return bulkMeters; // Branch filtering handled server side in getAllBulkMetersAction
+  }, [bulkMeters]);
 
   return (
     <div className="space-y-8 pb-10">
@@ -185,7 +202,7 @@ export default function BulkMetersPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Total Bulk Meters</p>
-                <p className="text-4xl font-extrabold text-slate-900">{metersForUser.length}</p>
+                <p className="text-4xl font-extrabold text-slate-900">{summary.total}</p>
               </div>
               <div className="h-14 w-14 bg-blue-100/80 rounded-2xl flex items-center justify-center text-blue-600 rotate-3 group-hover:rotate-6 transition-transform">
                 <Gauge className="h-7 w-7" />
@@ -202,7 +219,7 @@ export default function BulkMetersPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest bg-emerald-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Active Meters</p>
-                <p className="text-4xl font-extrabold text-slate-900">{metersForUser.filter(m => m.status === 'Active').length}</p>
+                <p className="text-4xl font-extrabold text-slate-900">{summary.active}</p>
               </div>
               <div className="h-14 w-14 bg-emerald-100/80 rounded-2xl flex items-center justify-center text-emerald-600 -rotate-3 group-hover:rotate-0 transition-transform">
                 <CheckCircle2 className="h-7 w-7" />
@@ -210,7 +227,7 @@ export default function BulkMetersPage() {
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1 font-bold text-emerald-600">
-                {Math.round((metersForUser.filter(m => m.status === 'Active').length / (metersForUser.length || 1)) * 100)}% 
+                {Math.round((summary.active / (summary.total || 1)) * 100)}% 
               </span>
               <span className="ml-1 italic">of total meters functional</span>
             </div>
@@ -222,7 +239,7 @@ export default function BulkMetersPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-amber-700 uppercase tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Offline / Inactive</p>
-                <p className="text-4xl font-extrabold text-slate-900">{metersForUser.filter(m => m.status !== 'Active').length}</p>
+                <p className="text-4xl font-extrabold text-slate-900">{summary.inactive}</p>
               </div>
               <div className="h-14 w-14 bg-amber-100/80 rounded-2xl flex items-center justify-center text-amber-600 rotate-6 transition-transform">
                 <AlertCircle className="h-7 w-7" />
@@ -230,7 +247,7 @@ export default function BulkMetersPage() {
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1 font-semibold text-amber-600">Action required</span>
-              <span className="ml-1 text-slate-400">for {metersForUser.filter(m => m.status !== 'Active').length} accounts</span>
+              <span className="ml-1 text-slate-400">for {summary.inactive} accounts</span>
             </div>
           </CardContent>
         </Card>
@@ -296,7 +313,7 @@ export default function BulkMetersPage() {
               </div>
               <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
                 <ListFilter className="h-4 w-4 text-slate-400" />
-                <span className="text-sm font-bold text-slate-600">{filteredBulkMeters.length} <span className="text-slate-400 font-normal">Found</span></span>
+                <span className="text-sm font-bold text-slate-600">{totalCount} <span className="text-slate-400 font-normal">Found</span></span>
               </div>
             </div>
           </CardHeader>
@@ -309,11 +326,11 @@ export default function BulkMetersPage() {
               <div className="mt-4 p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
                 <Gauge className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                 <h3 className="text-lg font-semibold">No Bulk Meters Found</h3>
-                <p className="text-muted-foreground mt-1">Click "Add New" to get started.</p>
+                <p className="text-muted-foreground mt-1">Click &quot;Add New&quot; to get started.</p>
               </div>
             ) : (
               <BulkMeterTable
-                data={paginatedBulkMeters}
+                data={bulkMeters}
                 onEdit={handleEditBulkMeter}
                 onDelete={handleDeleteBulkMeter}
                 branches={branches}
@@ -325,9 +342,9 @@ export default function BulkMetersPage() {
             )}
           </CardContent>
           <div className="bg-slate-50/50 border-t py-4 px-6">
-            {filteredBulkMeters.length > 0 && (
+            {totalCount > 0 && (
               <TablePagination
-                count={filteredBulkMeters.length}
+                count={totalCount}
                 page={page}
                 rowsPerPage={rowsPerPage}
                 onPageChange={setPage}
@@ -335,7 +352,7 @@ export default function BulkMetersPage() {
                   setRowsPerPage(value);
                   setPage(0);
                 }}
-                rowsPerPageOptions={[5, 10, 25]}
+                rowsPerPageOptions={[10, 25, 50, 100]}
               />
             )}
           </div>

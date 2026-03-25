@@ -92,6 +92,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     if (hasPermission('settings_manage')) {
         settingsItems.push({ title: "Security Logs", href: "/admin/security-logs", iconName: "Shield" });
         settingsItems.push({ title: "Recycle Bin", href: "/admin/recycle-bin", iconName: "Trash2" });
+        settingsItems.push({ title: "System Maintenance", href: "/admin/maintenance", iconName: "Activity" });
     }
 
     if (settingsItems.length > 0) {

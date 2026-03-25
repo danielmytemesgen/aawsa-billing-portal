@@ -6,11 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { TablePagination } from "@/components/ui/table-pagination";
 import { BillTable } from "../bill-table";
 import {
-  getBills, initializeBills, subscribeToBills,
   getCustomers, initializeCustomers, subscribeToCustomers,
   getBulkMeters, initializeBulkMeters, subscribeToBulkMeters,
   getBranches, initializeBranches, subscribeToBranches
 } from "@/lib/data-store";
+import { getAllSentBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
@@ -27,116 +27,86 @@ import { Lock } from "lucide-react";
 export default function SentBillsReportPage() {
   const { hasPermission } = usePermissions();
 
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
-    return (
-      <div className="space-y-6">
-        <Alert variant="destructive">
-          <Lock className="h-4 w-4" />
-          <AlertTitle>Access Denied</AlertTitle>
-          <CardDescription>You do not have permission to view reports.</CardDescription>
-        </Alert>
-      </div>
-    );
-  }
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
 
   const [bills, setBills] = React.useState<DomainBill[]>([]);
+  const [totalBills, setTotalBills] = React.useState(0);
   const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
   const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
   const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [selectedBranchId, setSelectedBranchId] = React.useState("all");
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
 
+  // Debounce search term
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(0);
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  // Load initial static data
   React.useEffect(() => {
     const user = localStorage.getItem("user");
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      // If user is Staff Management, lock filter to their branch
       if (parsedUser.role?.toLowerCase() === 'staff management' && parsedUser.branchId) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }
 
-    const fetchData = async () => {
-      setIsLoading(true);
+    const fetchStaticData = async () => {
       await Promise.all([
-        initializeBills(true),
         initializeCustomers(true),
         initializeBulkMeters(true),
         initializeBranches(true),
       ]);
-      setBills(getBills());
       setCustomers(getCustomers());
       setBulkMeters(getBulkMeters());
       setBranches(getBranches());
-      setIsLoading(false);
     };
-    fetchData();
+    fetchStaticData();
 
-    const unsubBills = subscribeToBills(setBills);
     const unsubCustomers = subscribeToCustomers(setCustomers);
     const unsubBms = subscribeToBulkMeters(setBulkMeters);
     const unsubBranches = subscribeToBranches(setBranches);
 
     return () => {
-      unsubBills();
       unsubCustomers();
       unsubBms();
       unsubBranches();
     };
   }, []);
 
-  const filteredBills = React.useMemo(() => {
-    let visibleBills = [...bills];
+  // Fetch paginated sent bills from server
+  React.useEffect(() => {
+    const fetchBills = async () => {
+      setIsLoading(true);
+      const branchIdToFilter = currentUser?.role?.toLowerCase() === 'staff management' ? currentUser.branchId : selectedBranchId;
 
-    // Branch filter based on UI selection or locked user role
-    const branchIdToFilter = currentUser?.role?.toLowerCase() === 'staff management' ? currentUser.branchId : selectedBranchId;
-
-    if (branchIdToFilter && branchIdToFilter !== "all") {
-      visibleBills = visibleBills.filter(bill => {
-        const entityId = bill.individualCustomerId || bill.CUSTOMERKEY;
-        if (!entityId) return false;
-
-        const customer = customers.find(c => c.customerKeyNumber === entityId);
-        if (customer) {
-          // Direct match on customer's branch
-          if (customer.branchId === branchIdToFilter) return true;
-          // Indirect match via customer's bulk meter's branch
-          if (customer.assignedBulkMeterId) {
-            const bm = bulkMeters.find(b => b.customerKeyNumber === customer.assignedBulkMeterId);
-            if (bm?.branchId === branchIdToFilter) return true;
-          }
-          return false;
-        }
-
-        // Direct match on bulk meter's branch
-        const bulkMeter = bulkMeters.find(b => b.customerKeyNumber === entityId);
-        if (bulkMeter?.branchId === branchIdToFilter) return true;
-
-        return false;
+      const result = await getAllSentBillsAction({
+        page,
+        limit: rowsPerPage,
+        searchTerm: debouncedSearch,
+        branchId: branchIdToFilter
       });
-    }
 
-    if (searchTerm) {
-      const lowercasedTerm = searchTerm.toLowerCase();
-      visibleBills = visibleBills.filter(bill => {
-        const customerKey = bill.individualCustomerId || bill.CUSTOMERKEY;
-        return customerKey?.toLowerCase().includes(lowercasedTerm);
-      });
-    }
+      if (result.success) {
+        setBills(result.bills || []);
+        setTotalBills(result.total || 0);
+      }
+      setIsLoading(false);
+    };
 
-    return visibleBills.sort((a, b) => new Date(b.billPeriodEndDate).getTime() - new Date(a.billPeriodEndDate).getTime());
-  }, [bills, customers, bulkMeters, searchTerm, selectedBranchId, currentUser]);
-
-  const paginatedBills = filteredBills.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
+    fetchBills();
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser]);
 
   return (
     <div className="space-y-6">
@@ -185,12 +155,12 @@ export default function SentBillsReportPage() {
           {isLoading ? (
             <div className="text-center p-8 text-muted-foreground">Loading all bills...</div>
           ) : (
-            <BillTable bills={paginatedBills} customers={customers} bulkMeters={bulkMeters} branches={branches} allBills={bills} />
+            <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
           )}
         </CardContent>
-        {filteredBills.length > 0 && (
+        {totalBills > 0 && (
           <TablePagination
-            count={filteredBills.length}
+            count={totalBills}
             page={page}
             rowsPerPage={rowsPerPage}
             onPageChange={setPage}

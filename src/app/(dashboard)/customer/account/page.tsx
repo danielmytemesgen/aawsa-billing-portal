@@ -38,9 +38,7 @@ export default function CustomerAccountPage() {
     const [account, setAccount] = useState<CustomerAccount | null>(null);
 
     // Log page view
-    useEffect(() => {
-        useCustomerActivityLogger('Account');
-    }, []);
+    useCustomerActivityLogger('Account');
 
     useEffect(() => {
         loadAccountData();

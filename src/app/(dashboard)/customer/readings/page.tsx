@@ -32,9 +32,7 @@ export default function ReadingHistoryPage() {
     const [customerType, setCustomerType] = useState<string>("individual");
 
     // Log page view
-    useEffect(() => {
-        useCustomerActivityLogger('Readings');
-    }, []);
+    useCustomerActivityLogger('Readings');
 
     useEffect(() => {
         loadReadings();
@@ -137,7 +135,7 @@ export default function ReadingHistoryPage() {
                         <div className="text-center py-12 text-gray-500">
                             <Info className="h-12 w-12 mx-auto text-gray-300 mb-4" />
                             <p className="text-lg font-medium">No readings found</p>
-                            <p>We haven't recorded any meter readings for your account yet.</p>
+                            <p>We haven&apos;t recorded any meter readings for your account yet.</p>
                         </div>
                     ) : (
                         <div className="border rounded-lg overflow-hidden">

@@ -102,24 +102,6 @@ export default function ReadingClassificationPage() {
     const { hasPermission } = usePermissions();
     const { toast } = useToast();
 
-    if (!hasPermission('meter_readings_analytics_view')) {
-        return (
-            <div className="space-y-6">
-                <Alert variant="destructive">
-                    <Lock className="h-4 w-4" />
-                    <AlertTitle>Access Denied</AlertTitle>
-                    <CardDescription>You do not have permission to view reading analytics reports.</CardDescription>
-                </Alert>
-            </div>
-        );
-    }
-
-    const [isLoading, setIsLoading] = React.useState(true);
-    const [readings, setReadings] = React.useState<ReadingRecord[]>([]);
-    const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);
-    const [selectedReading, setSelectedReading] = React.useState<ReadingData | null>(null);
-    const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
-
     // Filters
     const [searchTerm, setSearchTerm] = React.useState("");
     const [selectedCategory, setSelectedCategory] = React.useState<ReadingCategory | 'all'>('all');
@@ -127,6 +109,12 @@ export default function ReadingClassificationPage() {
     const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
     const [selectedBranch, setSelectedBranch] = React.useState<string>('all');
     const [selectedRoute, setSelectedRoute] = React.useState<string>('all');
+
+    const [isLoading, setIsLoading] = React.useState(true);
+    const [readings, setReadings] = React.useState<ReadingRecord[]>([]);
+    const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);
+    const [selectedReading, setSelectedReading] = React.useState<ReadingData | null>(null);
+    const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
 
     const handleViewDetails = (r: ReadingRecord) => {
         const mappedData: ReadingData = {
@@ -263,9 +251,20 @@ export default function ReadingClassificationPage() {
         if (selectedFaultCode !== 'all') {
             result = result.filter(r => r.faultCode === selectedFaultCode);
         }
-
         setFilteredReadings(result);
-    }, [searchTerm, selectedCategory, selectedMonth, selectedBranch, selectedRoute, selectedFaultCode, readings]);
+    }, [readings, searchTerm, selectedCategory, selectedMonth, selectedBranch, selectedRoute, selectedFaultCode]);
+
+    if (!hasPermission('meter_readings_analytics_view')) {
+        return (
+            <div className="space-y-6">
+                <Alert variant="destructive">
+                    <Lock className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <CardDescription>You do not have permission to view reading analytics reports.</CardDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     const handleExport = () => {
         if (filteredReadings.length === 0) {

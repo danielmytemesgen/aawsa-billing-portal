@@ -15,10 +15,13 @@ import {
   updateBranchAction,
   deleteBranchAction,
   getAllCustomersAction,
+  getCustomersCountAction,
   createCustomerAction,
   updateCustomerAction,
   deleteCustomerAction,
   getAllBulkMetersAction,
+  getBulkMetersCountAction,
+  getBulkMetersSummaryAction,
   createBulkMeterAction,
   updateBulkMeterAction,
   deleteBulkMeterAction,
@@ -187,6 +190,7 @@ export interface DomainBill {
   REASON?: string | null;
   DRACCTNO?: string | null;
   CRACCTNO?: string | null;
+  branchId?: string | null;
   // New Missing Fields
   totalAmountDue?: number;
   usageM3?: number;
@@ -494,9 +498,7 @@ const mapDomainBranchToUpdate = (branch: Partial<Omit<DomainBranch, 'id'>>): Bra
 
 const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<DomainIndividualCustomer> => {
   const rawUsage = dbCustomer.currentReading - dbCustomer.previousReading;
-  const isMinOfThreeApplied = rawUsage < 3;
-  const billingUsage = isMinOfThreeApplied ? 3 : rawUsage;
-  const { totalBill: bill } = await computeBillLocal(billingUsage, dbCustomer.customerType, dbCustomer.sewerageConnection, Number(dbCustomer.meterSize), dbCustomer.month);
+  const { totalBill: bill, effectiveUsage } = await computeBillLocal(rawUsage, dbCustomer.customerType, dbCustomer.sewerageConnection, Number(dbCustomer.meterSize), dbCustomer.month);
   return {
     customerKeyNumber: dbCustomer.customerKeyNumber,
     instKey: dbCustomer.INST_KEY,
@@ -519,7 +521,8 @@ const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<Do
     status: dbCustomer.status,
     paymentStatus: dbCustomer.paymentStatus,
     calculatedBill: bill,
-    isMinOfThreeApplied,
+    isMinOfThreeApplied: effectiveUsage !== rawUsage,
+    effectiveUsage,
     rawUsage,
     approved_at: dbCustomer.approved_at,
     xCoordinate: dbCustomer.x_coordinate ? Number(dbCustomer.x_coordinate) : undefined,
@@ -541,7 +544,8 @@ async function computeBillLocal(usage: number, customerType: CustomerType, sewer
 
     // Find matching tariff in local store
     // Find the most recent tariff with effective_date <= reading date
-    const readingDate = month + '-01'; // Assuming month is YYYY-MM
+    // We use the end of the month (-31) to ensure any tariff starting WITHIN the month is considered for that month's readings.
+    const readingDate = month + '-31'; 
     const applicableTariffs = tariffs
       .filter(t => t.customer_type === customerType && t.effective_date <= readingDate)
       .sort((a, b) => b.effective_date.localeCompare(a.effective_date));
@@ -550,7 +554,7 @@ async function computeBillLocal(usage: number, customerType: CustomerType, sewer
 
     if (!tariffRow) {
       console.warn(`computeBillLocal: No applicable tariff for ${customerType} on ${readingDate} found in local store. Returning zero bill.`);
-      return { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0, additionalFeesCharge: 0 };
+      return { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0, additionalFeesCharge: 0, effectiveUsage: usage };
     }
 
     // Parse the tariff row into TariffInfo
@@ -564,14 +568,16 @@ async function computeBillLocal(usage: number, customerType: CustomerType, sewer
       meter_rent_prices: safeParseJsonField<{ [key: string]: number }>(tariffRow.meter_rent_prices, 'meter_rent_prices', 'object'),
       vat_rate: Number(tariffRow.vat_rate),
       domestic_vat_threshold_m3: Number(tariffRow.domestic_vat_threshold_m3 || 15),
-      additional_fees: safeParseJsonField<AdditionalFee[]>(tariffRow.additional_fees, 'additional_fees', 'array')
+      additional_fees: safeParseJsonField<AdditionalFee[]>(tariffRow.additional_fees, 'additional_fees', 'array'),
+      fixed_tier_index: tariffRow.fixed_tier_index !== undefined && tariffRow.fixed_tier_index !== null ? Number(tariffRow.fixed_tier_index) : undefined,
+      use_rule_of_three: tariffRow.use_rule_of_three !== undefined && tariffRow.use_rule_of_three !== null ? Boolean(tariffRow.use_rule_of_three) : true,
     };
 
     return calculateBillFromTariff(tariffConfig, usage, meterSize, sewerageConnection, sewerageCONS);
 
   } catch (e) {
     console.warn('computeBillLocal: calculation failed, returning zero bill.', e);
-    return { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0, additionalFeesCharge: 0 };
+    return { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0, additionalFeesCharge: 0, effectiveUsage: usage };
   }
 }
 
@@ -579,9 +585,7 @@ const mapDomainCustomerToInsert = async (
   customer: Partial<DomainIndividualCustomer>
 ): Promise<IndividualCustomerInsert> => {
   const rawUsage = (customer.currentReading || 0) - (customer.previousReading || 0);
-  const isMinOfThreeApplied = rawUsage < 3;
-  const billingUsage = isMinOfThreeApplied ? 3 : rawUsage;
-  const { totalBill: bill } = await computeBillLocal(billingUsage, customer.customerType!, customer.sewerageConnection!, Number(customer.meterSize), customer.month!);
+  const { totalBill: bill } = await computeBillLocal(rawUsage, customer.customerType!, customer.sewerageConnection!, Number(customer.meterSize), customer.month!);
   return {
     name: customer.name!,
     customerKeyNumber: customer.customerKeyNumber!,
@@ -639,10 +643,8 @@ const mapDomainCustomerToUpdate = async (customerWithUpdates: DomainIndividualCu
   };
 
   const rawUsage = customerWithUpdates.currentReading - customerWithUpdates.previousReading;
-  const isMinOfThreeApplied = rawUsage < 3;
-  const billingUsage = isMinOfThreeApplied ? 3 : rawUsage;
   const { totalBill } = await computeBillLocal(
-    billingUsage,
+    rawUsage,
     customerWithUpdates.customerType,
     customerWithUpdates.sewerageConnection,
     Number(customerWithUpdates.meterSize),
@@ -710,14 +712,10 @@ const mapDomainBulkMeterToInsert = async (bm: Partial<BulkMeter>): Promise<BulkM
   let differenceUsage = calculatedBulkUsage - sumIndividualUsage;
   let differenceBill = 0;
 
-  if (differenceUsage < 0) {
-    const { totalBill } = await computeBillLocal(3, bm.chargeGroup as CustomerType || "Non-domestic", bm.sewerageConnection || "No", Number(bm.meterSize), bm.month!, calculatedBulkUsage);
-    differenceBill = totalBill;
-    differenceUsage = 3;
-  } else {
-    const { totalBill } = await computeBillLocal(differenceUsage, bm.chargeGroup as CustomerType || "Non-domestic", bm.sewerageConnection || "No", Number(bm.meterSize), bm.month!);
-    differenceBill = totalBill;
-  }
+  // Actually, let's simplify.
+  const billingResult = await computeBillLocal(differenceUsage, bm.chargeGroup as CustomerType || "Non-domestic", bm.sewerageConnection || "No", Number(bm.meterSize), bm.month!);
+  differenceBill = billingResult.totalBill;
+  differenceUsage = billingResult.effectiveUsage;
 
   return {
     name: bm.name!,
@@ -1345,103 +1343,43 @@ async function fetchAllBranches() {
   return branches;
 }
 
-async function fetchAllCustomers() {
+async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string }) {
   if (!tariffsFetched) {
     await initializeTariffs();
   }
-  const { data, error } = await getAllCustomersAction();
+  const { data, error } = await getAllCustomersAction(options);
   if (data) {
     customers = await Promise.all(data.map(mapDbCustomerToDomain));
     notifyCustomerListeners();
   } else {
     console.error("DataStore: Failed to fetch customers. Database error:", JSON.stringify(error, null, 2));
   }
-  customersFetched = true;
+  customersFetched = !options; // Only mark as fully fetched if no filters applied
   return customers;
 }
 
-async function fetchAllBulkMeters() {
+async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string }) {
   if (!tariffsFetched) {
     await initializeTariffs();
   }
-  const { data: rawBulkMeters, error: fetchError } = await getAllBulkMetersAction();
+  const { data: rawBulkMeters, error: fetchError } = await getAllBulkMetersAction(options);
 
   if (fetchError) {
     console.error("DataStore: Failed to fetch bulk meters. Database error:", JSON.stringify(fetchError, null, 2));
-    bulkMetersFetched = true;
+    bulkMetersFetched = !options;
     return [];
   }
 
   if (!rawBulkMeters) {
     bulkMeters = [];
     notifyBulkMeterListeners();
-    bulkMetersFetched = true;
+    bulkMetersFetched = !options;
     return [];
   }
 
-  let processedBulkMeters = rawBulkMeters;
-
-  if (!customersFetched) {
-    await initializeCustomers();
-  }
-
-  const updatedRowsFromBackfill: BulkMeterRow[] = [];
-  let backfillPerformed = false;
-
-  for (const dbBulkMeter of rawBulkMeters) {
-    if (
-      dbBulkMeter.bulk_usage === null ||
-      dbBulkMeter.total_bulk_bill === null ||
-      dbBulkMeter.difference_usage === null ||
-      dbBulkMeter.difference_bill === null
-    ) {
-      backfillPerformed = true;
-      const currentReading = Number(dbBulkMeter.currentReading) || 0;
-      const previousReading = Number(dbBulkMeter.previousReading) || 0;
-
-      const calculatedBulkUsage = currentReading - previousReading;
-      const { totalBill: calculatedTotalBulkBill } = await computeBillLocal(calculatedBulkUsage, dbBulkMeter.charge_group || 'Non-domestic', dbBulkMeter.sewerage_connection || 'No', Number(dbBulkMeter.meterSize), dbBulkMeter.month);
-
-      const associatedCustomersData = getCustomers().filter(c => c.assignedBulkMeterId === dbBulkMeter.customerKeyNumber);
-      const sumIndividualUsage = associatedCustomersData.reduce((acc, cust) => acc + ((cust.currentReading ?? 0) - (cust.previousReading ?? 0)), 0);
-
-      const calculatedDifferenceUsage = calculatedBulkUsage - sumIndividualUsage;
-      const { totalBill: calculatedDifferenceBill } = await computeBillLocal(calculatedDifferenceUsage, dbBulkMeter.charge_group || 'Non-domestic', dbBulkMeter.sewerage_connection || 'No', Number(dbBulkMeter.meterSize), dbBulkMeter.month);
-
-
-      const updatePayload: BulkMeterUpdate = {
-        bulk_usage: calculatedBulkUsage,
-        total_bulk_bill: calculatedTotalBulkBill,
-        difference_usage: calculatedDifferenceUsage,
-        difference_bill: calculatedDifferenceBill,
-      };
-
-      const { data: updatedRow, error: updateError } = await updateBulkMeterAction(dbBulkMeter.customerKeyNumber, updatePayload);
-      if (updateError) {
-        // Handle permission errors gracefully during automatic backfill
-        const isForbidden = typeof updateError === 'object' && updateError !== null &&
-          ('message' in updateError && String(updateError.message).includes('Forbidden'));
-
-        if (!isForbidden) {
-          console.error(`DataStore: Failed to backfill bulk meter ${dbBulkMeter.customerKeyNumber}. Error:`, JSON.stringify(updateError, null, 2));
-        }
-        updatedRowsFromBackfill.push(dbBulkMeter);
-      } else if (updatedRow) {
-        updatedRowsFromBackfill.push(updatedRow);
-      } else {
-        updatedRowsFromBackfill.push(dbBulkMeter);
-      }
-    } else {
-      updatedRowsFromBackfill.push(dbBulkMeter);
-    }
-  }
-  if (backfillPerformed) {
-    processedBulkMeters = updatedRowsFromBackfill;
-  }
-
-  bulkMeters = await Promise.all(processedBulkMeters.map(mapDbBulkMeterToDomain));
+  bulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
   notifyBulkMeterListeners();
-  bulkMetersFetched = true;
+  bulkMetersFetched = !options;
   return bulkMeters;
 }
 
@@ -1459,7 +1397,7 @@ async function fetchAllStaffMembers() {
 }
 
 async function fetchAllBills() {
-  const { data, error } = await getAllBillsAction();
+  const { data, error } = await getAllBillsAction({ excludeUnfinalized: true });
   if (data) {
     bills = data.map(mapDbBillToDomain);
     notifyBillListeners();
@@ -1641,16 +1579,41 @@ export const initializeBranches = async (force: boolean = false) => {
   }
 };
 
-export const initializeCustomers = async (force: boolean = false) => {
-  if (force || !customersFetched || customers.length === 0) {
-    await fetchAllCustomers();
+export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string }) => {
+  if (force || !customersFetched || customers.length === 0 || options) {
+    await fetchAllCustomers(options);
   }
 };
 
-export const initializeBulkMeters = async (force: boolean = false) => {
-  if (force || !bulkMetersFetched || bulkMeters.length === 0) {
-    await fetchAllBulkMeters();
+export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string }) => {
+  if (force || !bulkMetersFetched || bulkMeters.length === 0 || options) {
+    await fetchAllBulkMeters(options);
   }
+};
+
+export const fetchCustomersPaginated = async (limit: number, offset: number, searchTerm?: string) => {
+  const { data, error } = await getAllCustomersAction({ limit, offset, searchTerm, excludePending: true });
+  const { data: count, error: countError } = await getCustomersCountAction(searchTerm, true);
+  return { 
+    customers: data ? await Promise.all(data.map(mapDbCustomerToDomain)) : [],
+    totalCount: count || 0,
+    error: error || countError 
+  };
+};
+
+export const fetchBulkMetersPaginated = async (limit: number, offset: number, searchTerm?: string) => {
+  const { data, error } = await getAllBulkMetersAction({ limit, offset, searchTerm, excludePending: true });
+  const { data: count, error: countError } = await getBulkMetersCountAction(searchTerm, true);
+  return { 
+    bulkMeters: data ? await Promise.all(data.map(mapDbBulkMeterToDomain)) : [],
+    totalCount: count || 0,
+    error: error || countError 
+  };
+};
+
+export const fetchBulkMetersSummary = async () => {
+  const { data, error } = await getBulkMetersSummaryAction();
+  return { data, error };
 };
 
 export const initializeStaffMembers = async (force: boolean = false) => {
@@ -1742,6 +1705,8 @@ export const getTariff = (customerType: CustomerType, effectiveDate: string): Ta
     vat_rate: tariff.vat_rate,
     domestic_vat_threshold_m3: tariff.domestic_vat_threshold_m3,
     additional_fees: parseJsonField(tariff.additional_fees, 'additional_fees'),
+    fixed_tier_index: tariff.fixed_tier_index !== undefined && tariff.fixed_tier_index !== null ? Number(tariff.fixed_tier_index) : undefined,
+    use_rule_of_three: tariff.use_rule_of_three !== undefined && tariff.use_rule_of_three !== null ? Boolean(tariff.use_rule_of_three) : undefined,
   };
 };
 
@@ -2533,6 +2498,9 @@ export const updateTariff = async (customerType: CustomerType, effectiveDate: st
   if (tariff.vat_rate) updatePayload.vat_rate = tariff.vat_rate;
   if (tariff.domestic_vat_threshold_m3) updatePayload.domestic_vat_threshold_m3 = tariff.domestic_vat_threshold_m3;
   if (tariff.additional_fees !== undefined) (updatePayload as any).additional_fees = tariff.additional_fees;
+  // Pass fixed_tier_index — use explicit null-check because 0 is a valid value
+  if ((tariff as any).fixed_tier_index !== undefined) (updatePayload as any).fixed_tier_index = (tariff as any).fixed_tier_index;
+  if ((tariff as any).use_rule_of_three !== undefined) (updatePayload as any).use_rule_of_three = (tariff as any).use_rule_of_three;
 
   // Serialize JSON fields to strings so the DB layer stores valid JSON
   if (updatePayload.tiers && typeof updatePayload.tiers !== 'string') {

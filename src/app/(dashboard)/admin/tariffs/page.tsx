@@ -5,9 +5,11 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2, Calendar, LayoutGrid, Info, ArrowUpRight, TrendingUp } from "lucide-react";
+import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2, Calendar, LayoutGrid, Info, ArrowUpRight, TrendingUp, Layers } from "lucide-react";
 import type { TariffTier, TariffInfo, SewerageTier } from "@/lib/billing-calculations";
 import {
   getTariff, initializeTariffs, subscribeToTariffs, updateTariff, addTariff
@@ -16,7 +18,6 @@ import type { CustomerType } from "@/lib/billing";
 import type { TariffRow } from "@/lib/actions";
 import { TariffRateTable, type DisplayTariffRate } from "./tariff-rate-table";
 import { TariffFormDialog, type TariffFormValues } from "./tariff-form-dialog";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { MeterRentDialog } from "./meter-rent-dialog";
@@ -460,6 +461,34 @@ export default function TariffManagementPage() {
     }
   };
 
+  const handleUpdateFixedTierIndex = async (newIndex: number | null) => {
+    if (!activeTariffInfo) return;
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
+      fixed_tier_index: newIndex
+    } as any);
+    if (result.success) {
+      if (newIndex !== null) {
+        toast({ title: "Tier Selection Updated", description: `Billing for ${currentTariffType} will now use Tier ${newIndex + 1} (${activeWaterTiers[newIndex]?.description || ''}).` });
+      } else {
+        toast({ title: "Override Cleared", description: `Billing for ${currentTariffType} has been reset to default rules.` });
+      }
+    } else {
+      toast({ variant: "destructive", title: "Update Failed", description: result.message });
+    }
+  };
+
+  const handleToggleRuleOfThree = async (enabled: boolean) => {
+    if (!activeTariffInfo) return;
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
+      use_rule_of_three: enabled
+    } as any);
+    if (result.success) {
+      toast({ title: "3m³ Rule Updated", description: `Minimum 3m³ adjustment is now ${enabled ? 'ENABLED' : 'DISABLED'} for ${currentTariffType}.` });
+    } else {
+      toast({ variant: "destructive", title: "Update Failed", description: result.message });
+    }
+  };
+
   const handleCreateNewVersion = async (data: NewVersionFormValues) => {
     if (!activeTariffInfo) return;
 
@@ -684,6 +713,127 @@ export default function TariffManagementPage() {
                 />
               </CardContent>
             </Card>
+
+            {/* Advanced Billing Rules Selector - fixed tiers and 3m3 rule */}
+            {activeTariffInfo && (
+              <Card className="shadow-2xl border-none bg-white overflow-hidden rounded-3xl transition-shadow hover:shadow-violet-100/50">
+                <div className="h-2 bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600" />
+                <CardHeader className="pb-6 bg-slate-50/50 border-b">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="h-12 w-12 rounded-2xl bg-violet-100 flex items-center justify-center text-violet-600">
+                        <Layers className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-2xl font-black text-slate-900">Advanced Billing Rules</CardTitle>
+                        <CardDescription className="font-bold text-slate-500 mt-0.5">
+                          Configure usage thresholds and rate overrides for {currentTariffType}
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-8 pb-6 space-y-10">
+                  {/* Rule of 3 Toggle */}
+                  <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-lg font-black text-slate-900">Rule of 3 (Minimum 3m³ Usage)</h4>
+                        <Badge className={activeTariffInfo.use_rule_of_three !== false ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-slate-100 text-slate-600 border-slate-200"}>
+                          {activeTariffInfo.use_rule_of_three !== false ? "Active" : "Inactive"}
+                        </Badge>
+                      </div>
+                      <p className="text-sm font-bold text-slate-500">
+                        When enabled, consumption of 0, 1, or 2 m³ will be automatically billed as 3 m³.
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <Label htmlFor="rule-of-three-toggle" className="text-sm font-black uppercase tracking-wider text-slate-400">
+                        {activeTariffInfo.use_rule_of_three !== false ? "Enabled" : "Disabled"}
+                      </Label>
+                      <Switch
+                        id="rule-of-three-toggle"
+                        checked={activeTariffInfo.use_rule_of_three !== false}
+                        onCheckedChange={handleToggleRuleOfThree}
+                        disabled={!canUpdateTariffs}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Fixed Tier Override */}
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <div className="space-y-1">
+                        <h4 className="text-lg font-black text-slate-900">Fixed Tier Rate Override</h4>
+                        <p className="text-sm font-bold text-slate-500">
+                          Force all customers to bill at a single flat tier rate instead of progressive tiers
+                        </p>
+                      </div>
+                      {canUpdateTariffs && activeTariffInfo.fixed_tier_index !== undefined && activeTariffInfo.fixed_tier_index !== null && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-10 px-5 rounded-xl border-red-200 text-red-600 font-black hover:bg-red-50"
+                          onClick={() => handleUpdateFixedTierIndex(null)}
+                        >
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          Clear Override
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {activeWaterTiers.map((tier, index) => {
+                        const currentIndex = activeTariffInfo.fixed_tier_index !== undefined && activeTariffInfo.fixed_tier_index !== null
+                          ? Number(activeTariffInfo.fixed_tier_index)
+                          : null;
+                        const isSelected = currentIndex !== null && index === currentIndex;
+                        return (
+                          <button
+                            key={tier.id}
+                            onClick={() => canUpdateTariffs && handleUpdateFixedTierIndex(index)}
+                            disabled={!canUpdateTariffs}
+                            className={`group relative p-5 rounded-2xl border-2 text-left transition-all duration-200 ${
+                              isSelected
+                                ? 'border-violet-500 bg-violet-50 shadow-lg shadow-violet-100'
+                                : 'border-slate-200 bg-white hover:border-violet-300 hover:bg-violet-50/50'
+                            } ${!canUpdateTariffs ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                          >
+                            <div className={`absolute top-3 right-3 h-5 w-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                              isSelected ? 'border-violet-500 bg-violet-500' : 'border-slate-300'
+                            }`}>
+                              {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                            </div>
+                            <div className={`h-9 w-9 rounded-xl flex items-center justify-center text-sm font-black mb-3 ${
+                              isSelected ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-700 group-hover:bg-violet-100 group-hover:text-violet-700'
+                            }`}>
+                              {index + 1}
+                            </div>
+                            <p className={`text-xs font-black uppercase tracking-widest mb-1 ${
+                              isSelected ? 'text-violet-700' : 'text-slate-500'
+                            }`}>Tier {index + 1}</p>
+                            <p className={`text-lg font-black ${
+                              isSelected ? 'text-violet-900' : 'text-slate-800'
+                            }`}>{tier.rate.toFixed(2)} ETB</p>
+                            <p className={`text-xs font-bold mt-1 ${
+                              isSelected ? 'text-violet-600' : 'text-slate-400'
+                            }`}>per m³ · {tier.minConsumption}–{tier.maxConsumption} m³</p>
+                            {isSelected && (
+                              <span className="mt-3 inline-block text-[10px] font-black uppercase tracking-widest bg-violet-600 text-white px-2.5 py-1 rounded-lg">
+                                Active Override
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {activeWaterTiers.length === 0 && (
+                      <p className="text-center text-sm text-slate-400 font-bold py-8">Add water tiers above first to enable tier selection.</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="shadow-2xl border-none bg-white overflow-hidden rounded-3xl transition-shadow hover:shadow-emerald-100/50">
               <div className="h-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600" />
@@ -945,7 +1095,7 @@ export default function TariffManagementPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Are you sure you want to delete this tier?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This action cannot be undone. Tier: "{rateToDelete?.tier.description}"
+                  This action cannot be undone. Tier: &quot;{rateToDelete?.tier.description}&quot;
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

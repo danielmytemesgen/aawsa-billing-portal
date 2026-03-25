@@ -6,10 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { TablePagination } from "@/components/ui/table-pagination";
 import { BillTable } from "../bill-table";
 import {
-  getBills, initializeBills, subscribeToBills,
   getCustomers, initializeCustomers, subscribeToCustomers,
   getBulkMeters, initializeBulkMeters, subscribeToBulkMeters
 } from "@/lib/data-store";
+import { getPaidBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
@@ -30,6 +30,76 @@ interface UserProfile {
 export default function StaffPaidBillsReportPage() {
   const { hasPermission } = usePermissions();
 
+  const [bills, setBills] = React.useState<DomainBill[]>([]);
+  const [totalBills, setTotalBills] = React.useState(0);
+  const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
+  const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [searchTerm, setSearchTerm] = React.useState("");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+
+  const [page, setPage] = React.useState(0);
+  const [rowsPerPage, setRowsPerPage] = React.useState(10);
+
+  // Debounce search term
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(0);
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  // Load initial static data
+  React.useEffect(() => {
+    const user = localStorage.getItem("user");
+    if (user) setCurrentUser(JSON.parse(user));
+
+    const fetchStaticData = async () => {
+      setIsLoading(true);
+      await Promise.all([
+        initializeCustomers(true),
+        initializeBulkMeters(true),
+      ]);
+      setCustomers(getCustomers());
+      setBulkMeters(getBulkMeters());
+      setIsLoading(false);
+    };
+    fetchStaticData();
+
+    const unsubCustomers = subscribeToCustomers(setCustomers);
+    const unsubBms = subscribeToBulkMeters(setBulkMeters);
+
+    return () => {
+      unsubCustomers();
+      unsubBms();
+    };
+  }, []);
+
+  // Fetch paginated paid bills from server
+  React.useEffect(() => {
+    if (!currentUser) return;
+
+    const fetchBills = async () => {
+      setIsLoading(true);
+      const result = await getPaidBillsAction({
+        page,
+        limit: rowsPerPage,
+        searchTerm: debouncedSearch,
+        branchId: currentUser.branchId // Staff always filtered by their branch
+      });
+
+      if (result.success) {
+        setBills(result.bills || []);
+        setTotalBills(result.total || 0);
+      }
+      setIsLoading(false);
+    };
+
+    fetchBills();
+  }, [page, rowsPerPage, debouncedSearch, currentUser]);
+
   if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
     return (
       <div className="space-y-6">
@@ -41,90 +111,6 @@ export default function StaffPaidBillsReportPage() {
       </div>
     );
   }
-
-  const [bills, setBills] = React.useState<DomainBill[]>([]);
-  const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
-  const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [searchTerm, setSearchTerm] = React.useState("");
-  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
-
-  const [page, setPage] = React.useState(0);
-  const [rowsPerPage, setRowsPerPage] = React.useState(10);
-
-  React.useEffect(() => {
-    const user = localStorage.getItem("user");
-    if (user) setCurrentUser(JSON.parse(user));
-
-    const fetchData = async () => {
-      setIsLoading(true);
-      await Promise.all([
-        initializeBills(true),
-        initializeCustomers(true),
-        initializeBulkMeters(true),
-      ]);
-      setBills(getBills());
-      setCustomers(getCustomers());
-      setBulkMeters(getBulkMeters());
-      setIsLoading(false);
-    };
-    fetchData();
-
-    const unsubBills = subscribeToBills(setBills);
-    const unsubCustomers = subscribeToCustomers(setCustomers);
-    const unsubBms = subscribeToBulkMeters(setBulkMeters);
-
-    return () => {
-      unsubBills();
-      unsubCustomers();
-      unsubBms();
-    };
-  }, []);
-
-  const filteredBills = React.useMemo(() => {
-    let visibleBills = bills.filter(bill => bill.paymentStatus === 'Paid');
-
-    if (currentUser?.branchId) {
-      const branchBulkMeterKeys = new Set(
-        bulkMeters.filter(bm => bm.branchId === currentUser.branchId).map(bm => bm.customerKeyNumber)
-      );
-      const directBranchCustomerKeys = new Set(
-        customers.filter(c => c.branchId === currentUser.branchId).map(c => c.customerKeyNumber)
-      );
-      const indirectBranchCustomerKeys = new Set(
-        customers.filter(c => c.assignedBulkMeterId && branchBulkMeterKeys.has(c.assignedBulkMeterId)).map(c => c.customerKeyNumber)
-      );
-
-      visibleBills = visibleBills.filter(bill => {
-        if (bill.individualCustomerId) {
-          return directBranchCustomerKeys.has(bill.individualCustomerId) || indirectBranchCustomerKeys.has(bill.individualCustomerId);
-        }
-        if (bill.CUSTOMERKEY) {
-          return branchBulkMeterKeys.has(bill.CUSTOMERKEY);
-        }
-        return false;
-      });
-    } else if (currentUser) {
-      // Staff not assigned to a branch sees nothing
-      visibleBills = [];
-    }
-
-
-    if (searchTerm) {
-      const lowercasedTerm = searchTerm.toLowerCase();
-      visibleBills = visibleBills.filter(bill => {
-        const customerKey = bill.individualCustomerId || bill.CUSTOMERKEY;
-        return customerKey?.toLowerCase().includes(lowercasedTerm);
-      });
-    }
-
-    return visibleBills.sort((a, b) => new Date(b.billPeriodEndDate).getTime() - new Date(a.billPeriodEndDate).getTime());
-  }, [bills, customers, bulkMeters, searchTerm, currentUser]);
-
-  const paginatedBills = filteredBills.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
 
   return (
     <div className="space-y-6">
@@ -154,12 +140,12 @@ export default function StaffPaidBillsReportPage() {
           {isLoading ? (
             <div className="text-center p-8 text-muted-foreground">Loading paid bills...</div>
           ) : (
-            <BillTable bills={paginatedBills} customers={customers} bulkMeters={bulkMeters} />
+            <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} />
           )}
         </CardContent>
-        {filteredBills.length > 0 && (
+        {totalBills > 0 && (
           <TablePagination
-            count={filteredBills.length}
+            count={totalBills}
             page={page}
             rowsPerPage={rowsPerPage}
             onPageChange={setPage}

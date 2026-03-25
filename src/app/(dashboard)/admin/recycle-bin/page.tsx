@@ -60,6 +60,25 @@ export default function RecycleBinPage() {
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const { hasPermission } = usePermissions();
 
+    const fetchItems = useCallback(async () => {
+        setLoading(true);
+        try {
+            const { data, error } = await getRecycleBinItemsAction();
+            if (error) throw error;
+            setItems(data || []);
+        } catch (e: any) {
+            toast({ variant: 'destructive', title: 'Error', description: `Failed to fetch items: ${e.message}` });
+        } finally {
+            setLoading(false);
+        }
+    }, [toast]);
+
+    useEffect(() => {
+        if (hasPermission('settings_manage')) {
+            fetchItems();
+        }
+    }, [fetchItems, hasPermission]);
+
     if (!hasPermission('settings_manage')) {
         return (
             <div className="p-6">
@@ -73,23 +92,6 @@ export default function RecycleBinPage() {
             </div>
         );
     }
-
-    const fetchItems = useCallback(async () => {
-        setLoading(true);
-        try {
-            const { data, error } = await getRecycleBinItemsAction();
-            if (error) throw error;
-            setItems(data || []);
-        } catch (e: any) {
-            toast({ variant: 'destructive', title: 'Error', description: `Failed to fetch items: ${e.message}` });
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        fetchItems();
-    }, [fetchItems]);
 
     const handleRestore = async (id: string) => {
         setActionLoading(id);

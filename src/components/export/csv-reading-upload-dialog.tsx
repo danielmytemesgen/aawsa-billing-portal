@@ -138,9 +138,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
       }
 
       const headerLine = lines[0].split(CSV_SPLIT_REGEX).map(h => h.trim().replace(/^\"|\"$/g, ''));
-
       const requiredHeaders = readingCsvHeaders;
-
       const missingHeaders = requiredHeaders.filter(rh => !headerLine.includes(rh));
 
       if (missingHeaders.length > 0) {
@@ -154,20 +152,14 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
         const rowData = Object.fromEntries(headerLine.map((header, index) => [header, values[index]]));
 
         try {
-          let validatedRow: any;
+          const validatedRow = readingCsvRowSchema.parse(rowData);
+          const customerKeyVal = validatedRow.CUST_KEY;
+          const meterReadingVal = validatedRow.METER_READING;
           let parsedDate = new Date();
           let monthYearStr = "";
-          let meterReadingVal = 0;
-          let customerKeyVal = "";
-
-          // Use the same schema for both
-          validatedRow = readingCsvRowSchema.parse(rowData);
-          customerKeyVal = validatedRow.CUST_KEY;
-          meterReadingVal = validatedRow.METER_READING;
 
           const dateStr = validatedRow.READING_DATE;
           if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-            // User requested format: 16/12/2025
             parsedDate = parse(dateStr, 'dd/MM/yyyy', new Date());
             if (!isValid(parsedDate)) throw new Error("Invalid date format. Expected dd/MM/yyyy");
             monthYearStr = format(parsedDate, 'yyyy-MM');
@@ -181,10 +173,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
             monthYearStr = format(parsedDate, 'yyyy-MM');
           }
 
-          let meterPool = meters as any[];
-          // For bulk, filter by branch if needed - though the schema doesn't strictly depend on it in rich mode as CUST_KEY is unique
-          // validatedRow.BRANCH_NAME is available but finding by key is better.
-
+          const meterPool = meters as any[];
           let meter = undefined;
           if (meterType === 'individual') {
             meter = meterPool.find((m: any) => m.customerKeyNumber === customerKeyVal);
@@ -192,7 +181,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
               meter = meterPool.find((m: any) => m.meterNumber === (validatedRow as any).METER_KEY);
             }
           } else {
-            // Bulk
             meter = meterPool.find((m: any) => m.customerKeyNumber === customerKeyVal);
             if (!meter && (validatedRow as any).METER_KEY) {
               meter = meterPool.find((m: any) => m.meterNumber === (validatedRow as any).METER_KEY);
@@ -204,7 +192,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
             continue;
           }
 
-          // Helper Function safely inside the loop or logic block
           const parseDateHelper = (dateStr: string | undefined): string | undefined => {
             if (!dateStr || !dateStr.trim()) return undefined;
             try {
@@ -218,7 +205,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
               } else {
                 d = new Date(dateStr);
               }
-
               if (isValid(d)) return format(d, "yyyy-MM-dd");
               return undefined;
             } catch (e) {
@@ -231,15 +217,10 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
             readingDate: format(parsedDate, "yyyy-MM-dd"),
             monthYear: monthYearStr,
             readingValue: meterReadingVal,
-
-
-
-            // New mapped fields common to both now
             roundKey: validatedRow.ROUND_KEY,
             walkOrder: validatedRow.WALK_ORDER,
             instKey: validatedRow.INST_KEY,
             instTypeCode: validatedRow.INST_TYPE_CODE,
-            // custKey/CUSTOMERKEY handled per type below
             custName: validatedRow.CUST_NAME,
             displayAddress: validatedRow.DISPLAY_ADDRESS,
             branchName: validatedRow.BRANCH_NAME,
@@ -273,15 +254,13 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
           let result;
           if (meterType === 'individual') {
             const calculatedUsage = (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0);
-
             result = await addIndividualCustomerReading({
               individualCustomerId: meter.customerKeyNumber,
               custKey: validatedRow.CUST_KEY,
-              shadowUsage: calculatedUsage, // Set usage here
+              shadowUsage: calculatedUsage,
               ...commonPayload
             });
-          } else { // bulk
-            // Bulk reading supports full parity now
+          } else {
             result = await addBulkMeterReading({
               CUSTOMERKEY: meter.customerKeyNumber,
               custKey: validatedRow.CUST_KEY,
@@ -295,7 +274,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
           } else {
             localErrors.push(`Row ${i + 1} (${customerKeyVal}): ${result?.message || 'Unknown error.'}`);
           }
-
         } catch (error) {
           if (error instanceof ZodError) {
             const errorMessages = error.issues.map(issue => `Row ${i + 1}, Column '${issue.path.join('.')}' : ${issue.message}`).join("; ");

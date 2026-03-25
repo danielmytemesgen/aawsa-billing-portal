@@ -175,7 +175,7 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
                             <div className="space-y-2">
                                 <label className="text-[10px] font-bold text-muted-foreground uppercase">Observer Notes</label>
                                 <div className="p-3 rounded-lg bg-gray-50 border border-gray-100 text-sm italic text-gray-600">
-                                    "{notes}"
+                                    &quot;{notes}&quot;
                                 </div>
                             </div>
                         )}

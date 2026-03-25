@@ -47,6 +47,7 @@ export function BillTable({ bills, customers, bulkMeters }: BillTableProps) {
             <TableHead className="text-right">Usage (m³)</TableHead>
             <TableHead className="text-right">Diff. Usage</TableHead>
             <TableHead className="text-right">Outstanding (ETB)</TableHead>
+            <TableHead className="text-right">Current Bill (ETB)</TableHead>
             <TableHead className="text-right">Total Due (ETB)</TableHead>
             <TableHead>Due Date</TableHead>
             <TableHead>Status</TableHead>
@@ -63,11 +64,27 @@ export function BillTable({ bills, customers, bulkMeters }: BillTableProps) {
                 <TableCell className="text-right">{bill.CURRREAD.toFixed(2)}</TableCell>
                 <TableCell className="text-right">{(bill.CONS ?? (bill.CURRREAD - bill.PREVREAD)).toFixed(2)}</TableCell>
                 <TableCell className="text-right">{bill.differenceUsage?.toFixed(2) ?? '-'}</TableCell>
-                <TableCell className="text-right">{(bill.balanceCarriedForward ?? 0).toFixed(2)}</TableCell>
-                <TableCell className="text-right font-mono">{(() => {
-                  const billAmount = bill.TOTALBILLAMOUNT ?? 0;
-                  const outstanding = bill.balanceCarriedForward ?? 0;
-                  return (billAmount + outstanding).toFixed(2);
+                <TableCell className="text-right font-medium">{(
+                  (Number((bill as any).debit_30 || bill.debit30 || 0)) + 
+                  (Number((bill as any).debit_30_60 || bill.debit30_60 || 0)) + 
+                  (Number((bill as any).debit_60 || bill.debit60 || 0))
+                ).toFixed(2)}</TableCell>
+                <TableCell className="text-right">{(() => {
+                  const current = bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT;
+                  return Math.max(0, Number(current || 0)).toFixed(2);
+                })()}</TableCell>
+                <TableCell className="text-right font-bold font-mono">{(() => {
+                  const outstanding = (
+                    (Number((bill as any).debit_30 || bill.debit30 || 0)) + 
+                    (Number((bill as any).debit_30_60 || bill.debit30_60 || 0)) + 
+                    (Number((bill as any).debit_60 || bill.debit60 || 0))
+                  );
+                  const current = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
+                    ? Number(bill.THISMONTHBILLAMT)
+                    : (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0));
+                  const penalty = Number(bill.PENALTYAMT || 0);
+                  
+                  return (outstanding + Math.max(0, current) + penalty).toFixed(2);
                 })()}</TableCell>
                 <TableCell>{formatDate(bill.dueDate)}</TableCell>
                 <TableCell>

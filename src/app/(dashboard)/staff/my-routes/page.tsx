@@ -77,7 +77,7 @@ export default function MyRoutesPage() {
                     <MapPin className="mx-auto h-16 w-16 text-muted-foreground opacity-20 mb-4" />
                     <CardTitle className="text-xl">No Routes Assigned</CardTitle>
                     <CardDescription className="max-w-xs mx-auto">
-                        You haven't been assigned to any meter reading routes yet. Please contact your branch manager.
+                        You haven&apos;t been assigned to any meter reading routes yet. Please contact your branch manager.
                     </CardDescription>
                 </Card>
             ) : (

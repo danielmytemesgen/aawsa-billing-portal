@@ -48,7 +48,6 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { calculateBillAction, syncAllBillsAgingDebtAction } from "@/lib/actions";
 import { RefreshCw, Zap } from "lucide-react";
 import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
-import { ReportAIAssistant } from "./report-ai-assistant";
 
 
 // Top-level type guards for meter reading unions (used by multiple reports)
@@ -1150,7 +1149,7 @@ export default function AdminReportsPage() {
       return [];
     }
 
-    let data = await selectedReport.getData({
+    const data = await selectedReport.getData({
       branchId: selectedBranch === 'all' ? undefined : selectedBranch,
       startDate: dateRange?.from,
       endDate: dateRange?.to,
@@ -1307,15 +1306,6 @@ export default function AdminReportsPage() {
         </CardContent>
       </Card>
 
-      <Accordion type="single" collapsible className="w-full">
-//...
-        <AccordionItem value="item-1">
-          <AccordionTrigger className="text-lg font-medium">Interactive AI Assistant</AccordionTrigger>
-          <AccordionContent>
-            <ReportAIAssistant />
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
 
       <Card className="shadow-lg">
         <CardHeader>
@@ -1581,7 +1571,6 @@ export default function AdminReportsPage() {
             className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white"
             disabled={isGenerating}
             onClick={async () => {
-              const { toast } = require("@/hooks/use-toast");
               try {
                 const result = await syncAllBillsAgingDebtAction();
                 if (result.data?.success) {

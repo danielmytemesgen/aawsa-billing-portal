@@ -316,12 +316,23 @@ export default function StaffDashboardPage() {
       .sort((a, b) => new Date(a.month + "-01").getTime() - new Date(b.month + "-01").getTime());
 
     const topDelinquentAccounts = branchBills
-      .filter(bill => bill.paymentStatus === 'Unpaid' && bill.status === 'Posted' && (bill.TOTALBILLAMOUNT || 0) > 0)
-      .map(bill => ({
-        name: bill.CUSTOMERNAME || 'Unknown Account',
-        balance: bill.TOTALBILLAMOUNT || 0,
-        type: bill.CUSTOMERKEY ? 'Bulk' : 'Individual'
-      }))
+      .filter(bill => bill.paymentStatus === 'Unpaid' && bill.status === 'Posted')
+      .map(bill => {
+        const d30 = Number(bill.debit_30 || 0);
+        const d30_60 = Number(bill.debit_30_60 || 0);
+        const d60 = Number(bill.debit_60 || 0);
+        const outstanding = bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60);
+        const current = Math.max(0, bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - outstanding));
+        const penalty = Number(bill.PENALTYAMT || 0);
+        const totalPayable = outstanding + current + penalty;
+
+        return {
+          name: bill.CUSTOMERNAME || 'Unknown Account',
+          balance: totalPayable,
+          type: bill.CUSTOMERKEY ? 'Bulk' : 'Individual'
+        };
+      })
+      .filter(a => a.balance > 0)
       .sort((a, b) => b.balance - a.balance)
       .slice(0, 5);
 

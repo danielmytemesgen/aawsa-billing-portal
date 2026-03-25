@@ -38,7 +38,7 @@ export function TariffRateTable({ rates, onEdit, onDelete, currency = "ETB", can
       <div className="mt-4 p-6 border rounded-md bg-muted/50 text-center text-muted-foreground">
         <ListX className="mx-auto h-12 w-12 text-gray-400 mb-3" />
         <p className="font-semibold">No tariff rates configured.</p>
-        {canUpdate && <p className="text-sm">Click "Add New Tier" to get started.</p>}
+        {canUpdate && <p className="text-sm">Click &quot;Add New Tier&quot; to get started.</p>}
       </div>
     );
   }

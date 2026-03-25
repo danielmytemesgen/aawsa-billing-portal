@@ -63,20 +63,6 @@ export default function AdminDashboardPage() {
   const [isClient, setIsClient] = React.useState(false);
   const { hasPermission } = usePermissions();
 
-  if (!hasPermission('dashboard_view_all') && !hasPermission('dashboard_view_branch')) {
-    return (
-      <div className="p-4">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Access Denied</AlertTitle>
-          <UIAlertDescription>
-            You do not have permission to view the admin dashboard.
-          </UIAlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   // State for dynamic data
   const [dynamicTotalBills, setDynamicTotalBills] = React.useState(0);
   const [dynamicPaidBills, setDynamicPaidBills] = React.useState(0);
@@ -98,11 +84,11 @@ export default function AdminDashboardPage() {
   const [branchPerformanceView, setBranchPerformanceView] = React.useState<'chart' | 'table'>('chart');
   const [waterUsageView, setWaterUsageView] = React.useState<'chart' | 'table'>('chart');
 
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(format(new Date(), 'yyyy-MM'));
+
   React.useEffect(() => {
     setIsClient(true);
   }, []);
-
-  const [selectedMonth, setSelectedMonth] = React.useState<string>(format(new Date(), 'yyyy-MM'));
 
   const processDashboardData = React.useCallback(async () => {
     const { data: metrics, error: metricsError } = await getDashboardMetricsAction();

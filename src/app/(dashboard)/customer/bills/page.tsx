@@ -64,9 +64,7 @@ export default function CustomerBillsPage() {
     const [copied, setCopied] = useState(false);
 
     // Log page view
-    useEffect(() => {
-        useCustomerActivityLogger('Bills');
-    }, []);
+    useCustomerActivityLogger('Bills');
 
     useEffect(() => {
         loadBills();
@@ -214,10 +212,10 @@ export default function CustomerBillsPage() {
                     "Meter Rent": b.meter_rent,
                     "VAT": b.vat_amount || 0,
                     "Additional": b.additional_fees_charge || 0,
-                    "Current Bill": b.THISMONTHBILLAMT ?? b.TOTALBILLAMOUNT,
+                    "Current Bill": Math.max(0, Number(b.THISMONTHBILLAMT ?? (Number(b.TOTALBILLAMOUNT || 0) - (Number(b.OUTSTANDINGAMT || 0))))),
                     "Penalty": b.PENALTYAMT || 0,
-                    "Outstanding": (Number(b.debit_30 || 0) + Number(b.debit_30_60 || 0) + Number(b.debit_60 || 0)),
-                    "Total Amount Payable": (Number(b.PENALTYAMT || 0) + Number(b.debit_30 || 0) + Number(b.debit_30_60 || 0) + Number(b.debit_60 || 0) + Number(b.THISMONTHBILLAMT ?? b.TOTALBILLAMOUNT ?? 0)),
+                    "Outstanding": (Number(b.OUTSTANDINGAMT ?? (Number(b.debit_30 || 0) + Number(b.debit_30_60 || 0) + Number(b.debit_60 || 0)))),
+                    "Total Amount Payable": (Number(b.PENALTYAMT || 0) + Number(b.OUTSTANDINGAMT ?? (Number(b.debit_30 || 0) + Number(b.debit_30_60 || 0) + Number(b.debit_60 || 0))) + Math.max(0, Number(b.THISMONTHBILLAMT ?? (Number(b.TOTALBILLAMOUNT || 0) - (Number(b.OUTSTANDINGAMT || 0)))))),
                     "Status": b.payment_status,
                     "Due Date": formatDate(b.due_date)
                 }));
@@ -342,12 +340,9 @@ export default function CustomerBillsPage() {
                                                 ? format(new Date(bill.created_at || bill.bill_period_end_date!), "MMM yyyy")
                                                 : "N/A"
                                         );
-                                        const currentBillAmt = Number(bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT ?? bill.total_amount_due ?? 0);
+                                        const outstanding = Number(bill.OUTSTANDINGAMT ?? (Number(bill.debit_30 ?? 0) + Number(bill.debit_30_60 ?? 0) + Number(bill.debit_60 ?? 0)));
+                                        const currentBillAmt = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - outstanding)));
                                         const consumption = Number(bill.CONS ?? bill.usage_m3 ?? 0);
-                                        const d30 = Number(bill.debit_30 ?? 0);
-                                        const d30_60 = Number(bill.debit_30_60 ?? 0);
-                                        const d60 = Number(bill.debit_60 ?? 0);
-                                        const outstanding = d30 + d30_60 + d60;
                                         const penalty = Number(bill.PENALTYAMT ?? 0);
                                         const totalPayable = penalty + outstanding + currentBillAmt;
 
@@ -481,10 +476,18 @@ export default function CustomerBillsPage() {
                                                 <span className="font-medium">ETB {Number(selectedBill.additional_fees_charge).toFixed(2)}</span>
                                             </div>
                                         )}
-                                        <div className="flex justify-between pt-3 mt-2 border-t-2 border-gray-200 font-bold text-lg bg-gray-50 p-2 rounded">
-                                            <span>Total Amount Payable:</span>
-                                            <span className="text-blue-600">ETB {(Number(selectedBill.PENALTYAMT || 0) + Number(selectedBill.debit_30 || 0) + Number(selectedBill.debit_30_60 || 0) + Number(selectedBill.debit_60 || 0) + Number(selectedBill.THISMONTHBILLAMT ?? selectedBill.TOTALBILLAMOUNT ?? selectedBill.total_amount_due ?? 0)).toFixed(2)}</span>
-                                        </div>
+                                        {(() => {
+                                            const currentBillAmt = Math.max(0, Number(selectedBill.THISMONTHBILLAMT ?? (Number(selectedBill.TOTALBILLAMOUNT || 0) - (Number(selectedBill.OUTSTANDINGAMT || 0)))));
+                                            const outstanding = Number(selectedBill.OUTSTANDINGAMT ?? (Number(selectedBill.debit_30 || 0) + Number(selectedBill.debit_30_60 || 0) + Number(selectedBill.debit_60 || 0)));
+                                            const penalty = Number(selectedBill.PENALTYAMT || 0);
+
+                                            return (
+                                                <div className="flex justify-between pt-3 mt-2 border-t-2 border-gray-200 font-bold text-lg bg-gray-50 p-2 rounded">
+                                                    <span>Total Amount Payable:</span>
+                                                    <span className="text-blue-600">ETB {(penalty + outstanding + currentBillAmt).toFixed(2)}</span>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             </div>

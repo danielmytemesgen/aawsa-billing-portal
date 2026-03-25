@@ -203,7 +203,7 @@ export default function StaffIndividualCustomersPage() {
       return <div className="mt-4 p-4 border rounded-md bg-destructive/10 text-center text-destructive">Your user profile is not configured for a staff role or branch.</div>;
     }
     if (branchFilteredData.customers.length === 0 && !searchTerm) {
-      return <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">No customers found for your branch. Click "Add New Customer" to get started. <User className="inline-block ml-2 h-5 w-5" /></div>;
+      return <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">No customers found for your branch. Click &quot;Add New Customer&quot; to get started. <User className="inline-block ml-2 h-5 w-5" /></div>;
     }
     return (
       <IndividualCustomerTable

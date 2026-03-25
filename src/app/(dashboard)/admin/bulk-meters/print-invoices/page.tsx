@@ -57,49 +57,49 @@ export default function PrintInvoicesPage() {
   }
 
   return (
-    <div className="print-container">
+    <div className="print-container non-printable-bg min-h-screen p-0">
       <style jsx global>{`
         @media print {
           body { margin: 0; padding: 0; }
-          .print-container { width: 100%; }
-          .invoice-page { page-break-after: always; page-break-inside: avoid; }
-          .invoice-page:last-child { page-break-after: auto; }
-          @page { margin: 1cm; size: A4; }
+          .print-container { width: 100%; p-0 !important; margin: 0 !important; }
+          .invoice-page-wrapper { page-break-after: always; page-break-inside: avoid; margin: 0 !important; padding: 0 !important; }
+          .invoice-page-wrapper:last-child { page-break-after: auto; }
+          @page { margin: 0; size: A4; }
         }
-        .invoice-page { background: white; padding: 2rem; margin-bottom: 2rem; border: 1px solid #e5e7eb; }
-        .print-header-top { display: flex; justify-content: space-between; font-size: 0.75rem; color: #6b7280; margin-bottom: 1rem; }
-        .print-header-main { text-align: center; margin-bottom: 2rem; display: flex; flex-direction: column; align-items: center; }
-        .print-header-main h1 { font-size: 1.25rem; font-weight: bold; margin-bottom: 0.5rem; }
-        .print-header-main h2 { font-size: 1rem; font-weight: 600; }
-        .print-section { margin-bottom: 1.5rem; }
-        .print-row { display: flex; justify-content: space-between; padding: 0.25rem 0; font-size: 0.875rem; }
-        .print-row span:first-child { font-weight: 500; }
-        .print-hr { border: none; border-top: 2px solid #000; margin: 0.5rem 0; }
-        .print-hr-dashed { border: none; border-top: 1px dashed #9ca3af; margin: 0.5rem 0; }
-        .print-signature-section { display: flex; justify-content: space-between; margin-top: 2rem; font-size: 0.875rem; }
-        .print-signature-item { display: flex; flex-direction: column; gap: 0.5rem; }
+        .non-printable-bg { background-color: #f3f4f6; }
+        .invoice-page-wrapper {
+          padding: 2rem 0;
+          display: flex;
+          justify-content: flex-start;
+        }
       `}</style>
 
       {invoiceData.map(({ meter, bill }) => {
-        const currentBill = Number(bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT ?? 0);
-        const outstanding = Number(bill.OUTSTANDINGAMT ?? bill.balanceCarriedForward ?? 0);
-        const totalPayable = Number(bill.TOTALBILLAMOUNT ?? currentBill + outstanding);
+        const d30 = Number(bill.debit_30 || 0);
+        const d30_60 = Number(bill.debit_30_60 || 0);
+        const d60 = Number(bill.debit_60 || 0);
+        const outstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+        const current = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - outstanding)));
+        const penalty = Number(bill.PENALTYAMT || 0);
+        const totalPayable = outstanding + current + penalty;
 
         return (
-          <div key={meter.customerKeyNumber} className="invoice-page">
-            <div className="print-header-top">
-              <span>{currentDateTime}</span>
-              <span></span>
-            </div>
-
-            <div className="print-header-main flex flex-col items-center px-2 text-center">
-              <h1 className="text-xl font-bold uppercase tracking-wide">Addis Ababa Water and Sewerage Authority</h1>
-              <hr className="my-2 w-full border-black" />
-              <div className="flex flex-row items-center justify-center gap-2 pt-1">
-                <Image src="https://veiethiopia.com/photo/partner/par2.png" alt="AAWSA Logo" width={32} height={20} className="flex-shrink-0" />
-                <h2 className="font-semibold text-lg">AAWSA INVOICE</h2>
+          <div key={meter.customerKeyNumber} className="invoice-page-wrapper">
+            <div className="printable-bill-card">
+              <div className="print-header">
+                <div className="print-header-top">
+                  <span>{currentDateTime}</span>
+                  <span></span>
+                </div>
+                <div className="print-header-main flex flex-col items-start text-left">
+                  <h1 className="font-bold tracking-wider uppercase">ADDIS ABABA WATER AND SEWERAGE AUTHORITY</h1>
+                  <hr className="my-2 w-full" />
+                  <div className="flex flex-row items-center justify-center gap-2 pt-1">
+                    <Image src="https://veiethiopia.com/photo/partner/par2.png" alt="AAWSA Logo" width={30} height={18} className="flex-shrink-0" />
+                    <h2 className="font-semibold">AAWSA INVOICE</h2>
+                  </div>
+                </div>
               </div>
-            </div>
 
             <div className="print-body">
               <div className="print-section">
@@ -155,7 +155,7 @@ export default function PrintInvoicesPage() {
                 <div className="print-banner">Total Amount Payable:</div>
                 <table className="print-table">
                   <tbody>
-                    <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {currentBill.toFixed(2)}</td></tr>
+                    <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {current.toFixed(2)}</td></tr>
                     <tr><td>Penalty (ETB):</td><td>ETB {Number(bill.PENALTYAMT || 0).toFixed(2)}</td></tr>
                     <tr><td>Outstanding (ETB):</td><td>ETB {outstanding.toFixed(2)}</td></tr>
                     <tr className="print-table-total" style={{ fontSize: '14pt' }}>
@@ -195,6 +195,7 @@ export default function PrintInvoicesPage() {
               </div>
             </div>
           </div>
+        </div>
         );
       })}
     </div>

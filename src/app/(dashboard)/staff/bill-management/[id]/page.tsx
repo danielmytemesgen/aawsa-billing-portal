@@ -128,21 +128,40 @@ const PrintableBill = ({ bill, relatedData }: { bill: Bill, relatedData: any }) 
                     </div>
 
                     <div className="border-t border-black pt-4 grid grid-cols-2 gap-y-4 pb-4">
-                        <span className="font-bold">Current Month Bill:</span> <span className="text-right font-medium">ETB {Number(bill.THISMONTHBILLAMT || bill.TOTALBILLAMOUNT || 0).toFixed(2)}</span>
-                        <span className="font-bold">Outstanding Bill (Previous Balance):</span> <span className="text-right">ETB {Number(bill.OUTSTANDINGAMT || bill.balance_carried_forward || 0).toFixed(2)}</span>
+                        {(() => {
+                            const d30 = Number(bill.debit30 || bill.debit_30 || 0);
+                            const d30_60 = Number(bill.debit30_60 || bill.debit_30_60 || 0);
+                            const d60 = Number(bill.debit60 || bill.debit_60 || 0);
+                            const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0) 
+                              ? Number(bill.OUTSTANDINGAMT) 
+                              : (d30 + d30_60 + d60);
+                            const penalty = Number(bill.PENALTYAMT || 0);
+                            const current = (bill.THISMONTHBILLAMT !== undefined && bill.THISMONTHBILLAMT !== null)
+                              ? Number(bill.THISMONTHBILLAMT)
+                              : (Number(bill.TOTALBILLAMOUNT || 0) - (bill.OUTSTANDINGAMT || 0));
+                            const total = outstanding + Math.max(0, current) + penalty;
 
-                        {(Number(bill.debit_30 || bill.debit30 || 0) > 0 || Number(bill.debit_30_60 || bill.debit30_60 || 0) > 0 || Number(bill.debit_60 || bill.debit60 || 0) > 0) && (
-                            <div className="col-span-2 pl-4 text-[10px] space-y-1 text-gray-600 italic">
-                                <div className="flex justify-between"><span>- DEBIT_30:</span> <span>ETB {Number(bill.debit_30 || bill.debit30 || 0).toFixed(2)}</span></div>
-                                <div className="flex justify-between"><span>- DEBIT_30_60:</span> <span>ETB {Number(bill.debit_30_60 || bill.debit30_60 || 0).toFixed(2)}</span></div>
-                                <div className="flex justify-between"><span>- DEBIT_&gt;60:</span> <span>ETB {Number(bill.debit_60 || bill.debit60 || 0).toFixed(2)}</span></div>
-                            </div>
-                        )}
+                            return (
+                                <>
+                                    <span className="font-bold">Current Month Bill:</span> <span className="text-right font-medium">ETB {Math.max(0, current).toFixed(2)}</span>
+                                    <span className="font-bold">Outstanding Bill (Previous Balance):</span> <span className="text-right">ETB {outstanding.toFixed(2)}</span>
+                                    <span className="font-bold">Penalty (ETB):</span> <span className="text-right text-red-600">ETB {penalty.toFixed(2)}</span>
 
-                        <div className="col-span-2 border-y-[2px] border-black py-2 flex justify-between items-center px-1">
-                            <span className="text-lg font-bold uppercase">Total Amount Payable:</span>
-                            <span className="text-xl font-bold">ETB {Number(bill.TOTALBILLAMOUNT || (Number(bill.THISMONTHBILLAMT || 0) + Number(bill.OUTSTANDINGAMT || bill.balance_carried_forward || 0))).toFixed(2)}</span>
-                        </div>
+                                    {(d30 > 0 || d30_60 > 0 || d60 > 0) && (
+                                        <div className="col-span-2 pl-4 text-[10px] space-y-1 text-gray-600 italic">
+                                            <div className="flex justify-between"><span>- DEBIT_30:</span> <span>ETB {d30.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>- DEBIT_30_60:</span> <span>ETB {d30_60.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>- DEBIT_&gt;60:</span> <span>ETB {d60.toFixed(2)}</span></div>
+                                        </div>
+                                    )}
+
+                                    <div className="col-span-2 border-y-[2px] border-black py-2 flex justify-between items-center px-1">
+                                        <span className="text-lg font-bold uppercase">Total Amount Payable:</span>
+                                        <span className="text-xl font-bold">ETB {total.toFixed(2)}</span>
+                                    </div>
+                                </>
+                            );
+                        })()}
 
                         <span className="font-bold">Payment Status:</span> <span className="text-right uppercase">{bill.payment_status || 'Unpaid'}</span>
                         <span className="font-bold">Billing Month:</span> <span className="text-right uppercase">{bill.month_year}</span>
@@ -275,7 +294,7 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
             );
 
             if (calcRes.data) {
-                setCalculatedPreview({ usage: Math.max(0, usage), amount: calcRes.data.totalAmount });
+                setCalculatedPreview({ usage: calcRes.data.effectiveUsage, amount: calcRes.data.totalBill });
             }
         } catch (error) {
             console.error(error);
@@ -301,9 +320,10 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
                 await updateBillAction(bill.id, {
                     CURRREAD: editValues.current,
                     PREVREAD: editValues.previous,
-                    CONS: calcRes.data.usage,
-                    THISMONTHBILLAMT: calcRes.data.totalAmount,
-                    TOTALBILLAMOUNT: calcRes.data.totalAmount + currentOutstanding,
+                    CONS: Math.max(0, usage),
+                    difference_usage: calcRes.data.effectiveUsage,
+                    THISMONTHBILLAMT: calcRes.data.totalBill,
+                    TOTALBILLAMOUNT: calcRes.data.totalBill + currentOutstanding,
                 });
                 await loadData();
                 setIsEditing(false);
@@ -468,23 +488,42 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
                                     </div>
                                 ) : (
                                     <>
-                                        <DetailItem label="Previous Reading" value={`${bill.PREVREAD} m³`} />
-                                        <DetailItem label="Current Reading" value={`${bill.CURRREAD} m³`} />
-                                        <DetailItem label="Billed Usage" value={`${bill.CONS} m³`} bold />
-                                        <DetailItem label="Current Bill" value={`ETB ${Number(bill.THISMONTHBILLAMT || bill.TOTALBILLAMOUNT || 0).toFixed(2)}`} bold color="text-blue-700" />
-                                        <DetailItem label="Outstanding Balance" value={
-                                            <div className="space-y-1">
-                                                <div>ETB {Number(bill.OUTSTANDINGAMT || bill.balance_carried_forward || 0).toFixed(2)}</div>
-                                                {(Number(bill.debit_30 || bill.debit30 || 0) > 0 || Number(bill.debit_30_60 || bill.debit30_60 || 0) > 0 || Number(bill.debit_60 || bill.debit60 || 0) > 0) && (
-                                                    <div className="text-[10px] text-gray-500 font-normal">
-                                                        <div>30 days: ETB {Number(bill.debit_30 || bill.debit30 || 0).toFixed(2)}</div>
-                                                        <div>60 days: ETB {Number(bill.debit_30_60 || bill.debit30_60 || 0).toFixed(2)}</div>
-                                                        <div>&gt;60 days: ETB {Number(bill.debit_60 || bill.debit60 || 0).toFixed(2)}</div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        } />
-                                        <DetailItem label="Total Payable" value={`ETB ${Number(bill.TOTALBILLAMOUNT || (Number(bill.THISMONTHBILLAMT || 0) + Number(bill.OUTSTANDINGAMT || bill.balance_carried_forward || 0))).toFixed(2)}`} bold color="text-red-700" size="text-base" />
+                                        {(() => {
+                                            const d30 = Number(bill.debit30 || bill.debit_30 || 0);
+                                            const d30_60 = Number(bill.debit30_60 || bill.debit_30_60 || 0);
+                                            const d60 = Number(bill.debit60 || bill.debit_60 || 0);
+                                            const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0) 
+                                              ? Number(bill.OUTSTANDINGAMT) 
+                                              : (d30 + d30_60 + d60);
+                                            const penalty = Number(bill.PENALTYAMT || 0);
+                                            const current = (bill.THISMONTHBILLAMT !== undefined && bill.THISMONTHBILLAMT !== null)
+                                              ? Number(bill.THISMONTHBILLAMT)
+                                              : (Number(bill.TOTALBILLAMOUNT || 0) - (bill.OUTSTANDINGAMT || 0));
+                                            const total = outstanding + Math.max(0, current) + penalty;
+
+                                            return (
+                                                <>
+                                                    <DetailItem label="Previous Reading" value={`${bill.PREVREAD} m³`} />
+                                                    <DetailItem label="Current Reading" value={`${bill.CURRREAD} m³`} />
+                                                    <DetailItem label="Billed Usage" value={`${bill.CONS} m³`} bold />
+                                                    <DetailItem label="Current Bill" value={`ETB ${Math.max(0, current).toFixed(2)}`} bold color="text-blue-700" />
+                                                    <DetailItem label="Outstanding Balance" value={
+                                                        <div className="space-y-1">
+                                                            <div>ETB {outstanding.toFixed(2)}</div>
+                                                            {(d30 > 0 || d30_60 > 0 || d60 > 0) && (
+                                                                <div className="text-[10px] text-gray-500 font-normal">
+                                                                    <div>30 days: ETB {d30.toFixed(2)}</div>
+                                                                    <div>60 days: ETB {d30_60.toFixed(2)}</div>
+                                                                    <div>&gt;60 days: ETB {d60.toFixed(2)}</div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    } />
+                                                    <DetailItem label="Penalty (ETB)" value={`ETB ${penalty.toFixed(2)}`} color="text-red-600" />
+                                                    <DetailItem label="Total Payable" value={`ETB ${total.toFixed(2)}`} bold color="text-red-700" size="text-base" />
+                                                </>
+                                            );
+                                        })()}
                                     </>
                                 )}
 
@@ -548,7 +587,7 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
                                                             isCorrection ? "bg-orange-50 border-orange-100 text-orange-800" :
                                                                 "bg-gray-50 border-gray-100 text-gray-700"
                                                     )}>
-                                                        <p className="italic font-medium leading-relaxed">"{log.reason}"</p>
+                                                        <p className="italic font-medium leading-relaxed">&quot;{log.reason}&quot;</p>
                                                     </div>
                                                 )}
                                                 <div className="flex items-center gap-2 mt-2">

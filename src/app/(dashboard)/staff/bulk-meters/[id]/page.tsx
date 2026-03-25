@@ -1125,13 +1125,20 @@ export default function StaffBulkMeterDetailsPage() {
                             for (let j = fullIndex + 3; j < billingHistory.length; j++) d90 += getUnpaid(billingHistory[j]);
                           }
                           if (fullIndex === billingHistory.length - 1) d90 = bill.balanceCarriedForward ?? 0;
-
+ 
                           const totalOutstanding = d30 + d60 + d90;
+                          const currentBill = (bill.THISMONTHBILLAMT !== undefined && bill.THISMONTHBILLAMT !== null)
+                            ? Number(bill.THISMONTHBILLAMT)
+                            : (Number(bill.TOTALBILLAMOUNT || 0) - (bill.OUTSTANDINGAMT || 0));
+                          const penalty = Number(bill.PENALTYAMT || 0);
+                          const totalPayableForHistory = totalOutstanding + Math.max(0, currentBill) + penalty;
+
                           return (
                             <>
                               <p>Outstanding:</p><p className="text-right font-medium">{totalOutstanding.toFixed(2)} ETB</p>
-                              <p>Current Bill:</p><p className="text-right font-medium">{bill.TOTALBILLAMOUNT.toFixed(2)} ETB</p>
-                              <p className="font-bold">Total Payable:</p><p className="text-right font-bold">{(totalOutstanding + bill.TOTALBILLAMOUNT).toFixed(2)} ETB</p>
+                              <p>Penalty:</p><p className="text-right font-medium text-destructive">{penalty.toFixed(2)} ETB</p>
+                              <p>Current Bill:</p><p className="text-right font-medium">{Math.max(0, currentBill).toFixed(2)} ETB</p>
+                              <p className="font-bold">Total Payable:</p><p className="text-right font-bold">{totalPayableForHistory.toFixed(2)} ETB</p>
                             </>
                           );
                         })()}
@@ -1205,17 +1212,22 @@ export default function StaffBulkMeterDetailsPage() {
                           debit90 = oldestBill.balanceCarriedForward ?? 0;
                         }
 
+                        const currentBill = (bill.THISMONTHBILLAMT !== undefined && bill.THISMONTHBILLAMT !== null)
+                          ? Number(bill.THISMONTHBILLAMT)
+                          : (Number(bill.TOTALBILLAMOUNT || 0) - (bill.OUTSTANDINGAMT || 0));
+                        const penalty = Number(bill.PENALTYAMT || 0);
                         const currentOutstanding = debit30 + debit60 + debit90;
+                        const totalPayableForHistory = currentOutstanding + Math.max(0, currentBill) + penalty;
 
                         return (
                           <>
                             <TableCell className="text-right text-xs text-muted-foreground">{debit30 > 0 ? debit30.toFixed(2) : '-'}</TableCell>
                             <TableCell className="text-right text-xs text-muted-foreground">{debit60 > 0 ? debit60.toFixed(2) : '-'}</TableCell>
                             <TableCell className="text-right text-xs text-muted-foreground">{debit90 > 0 ? debit90.toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right text-destructive font-medium">{Number(bill.PENALTYAMT || 0) > 0 ? Number(bill.PENALTYAMT || 0).toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right">{(currentOutstanding + Number(bill.PENALTYAMT || 0)).toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-medium">{bill.TOTALBILLAMOUNT.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-bold">{(currentOutstanding + Number(bill.PENALTYAMT || 0) + bill.TOTALBILLAMOUNT).toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-destructive font-medium">{penalty > 0 ? penalty.toFixed(2) : '-'}</TableCell>
+                            <TableCell className="text-right">{currentOutstanding.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-medium">{Math.max(0, currentBill).toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-bold text-red-700">{totalPayableForHistory.toFixed(2)}</TableCell>
                           </>
                         );
                       })()}

@@ -57,14 +57,6 @@ function formatDateForDisplay(value?: string | Date | number | null) {
 import { TablePagination } from "@/components/ui/table-pagination";
 import { Separator } from "@/components/ui/separator";
 
-function calculateAdjustedDifferenceUsage(bulkUsage: number, individualUsage: number): { usage: number; minOfThreeApplied: boolean } {
-  const diff = bulkUsage - individualUsage;
-  // Apply minimum-of-3 rule: if difference is 0, 1, 2 or negative, bill for at least 3 m³
-  if (diff < 3) {
-    return { usage: 3, minOfThreeApplied: true };
-  }
-  return { usage: diff, minOfThreeApplied: false };
-}
 
 const initialMemoizedDetails = {
   bmPreviousReading: 0, bmCurrentReading: 0, bulkUsage: 0,
@@ -172,29 +164,19 @@ export default function BulkMeterDetailsPage() {
     const totalIndividualUsage = currentAssociatedCustomers.reduce((sum, cust) => sum + ((cust.currentReading ?? 0) - (cust.previousReading ?? 0)), 0);
 
     const rawDifference = bulkUsage - totalIndividualUsage;
-    const { usage: differenceUsage, minOfThreeApplied: isMinOfThreeApplied } = calculateAdjustedDifferenceUsage(bulkUsage, totalIndividualUsage);
-
-
-    let sewerageUsage: number | undefined = undefined;
-    if (
-      effectiveBulkMeterSewerageConnection === 'Yes' &&
-      isMinOfThreeApplied &&
-      bulkUsage >= 0 && bulkUsage <= 2
-    ) {
-      sewerageUsage = bulkUsage;
-    }
 
     const { data: differenceFullOrNull } = await calculateBillAction(
-      differenceUsage,
+      rawDifference,
       effectiveBulkMeterCustomerType,
       effectiveBulkMeterSewerageConnection,
       currentBulkMeter.meterSize,
-      billingMonth,
-      sewerageUsage
+      billingMonth
     );
-    const differenceFull = differenceFullOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0 } as BillCalculationResult;
+    const differenceFull = differenceFullOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0, effectiveUsage: rawDifference } as BillCalculationResult;
     const differenceBill = differenceFull.totalBill;
     const differenceBillBreakdown = differenceFull;
+    const differenceUsage = differenceFull.effectiveUsage;
+    const isMinOfThreeApplied = differenceUsage !== rawDifference;
 
     const totalPayable = differenceBill + outStandingBillValue;
     const paymentStatus: PaymentStatus = totalPayable > 0.01 ? 'Unpaid' : 'Paid';
@@ -246,7 +228,7 @@ export default function BulkMeterDetailsPage() {
         currentBulkMeter.meterSize,
         billToRender.monthYear
       );
-      const historicalBillDetails = historicalBillDetailsOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, sewerageUsageM3: 0, baseWaterChargeUsageM3: 0, additionalFeesCharge: 0 } as BillCalculationResult;
+      const historicalBillDetails = historicalBillDetailsOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0, effectiveUsage: billToRender.differenceUsage ?? 0 } as BillCalculationResult;
 
       finalBillCardDetails = {
         prevReading: billToRender.PREVREAD,
@@ -672,7 +654,7 @@ export default function BulkMeterDetailsPage() {
   const currentBulkMeter = bulkMeter!;
 
   return (
-    <div className="space-y-6 p-4">
+    <div className={cn("space-y-6", showSlip ? "p-0" : "p-4")}>
       {showSlip ? (
         <Card className="printable-bill-card-wrapper">
           <CardHeader className="non-printable flex flex-row items-center justify-between">
@@ -681,14 +663,14 @@ export default function BulkMeterDetailsPage() {
               <XCircle className="h-5 w-5" />
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             <div className="printable-bill-card">
               <div className="print-header">
                 <div className="print-header-top">
                   <span>{currentDateTime}</span>
                   <span></span>
                 </div>
-                <div className="print-header-main flex flex-col items-center px-2 text-center">
+                <div className="print-header-main flex flex-col items-start text-left">
                   <h1 className="font-bold tracking-wider uppercase">ADDIS ABABA WATER AND SEWERAGE AUTHORITY</h1>
                   <hr className="my-2 w-full" />
                   <div className="flex flex-row items-center justify-center gap-2 pt-1">
@@ -1061,7 +1043,7 @@ export default function BulkMeterDetailsPage() {
                           <TableHead className="text-right">DEBIT_30</TableHead>
                           <TableHead className="text-right">DEBIT_30_60</TableHead>
                           <TableHead className="text-right">DEBIT_60</TableHead>
-                          <TableHead className="text-right">Penalty</TableHead>
+                          <TableHead className="text-right">Penalty (ETB)</TableHead>
                           <TableHead className="text-right">Outstanding (ETB)</TableHead>
                           <TableHead className="text-right">Current Bill (ETB)</TableHead>
                           <TableHead className="text-right">Total Payable (ETB)</TableHead>
@@ -1081,17 +1063,20 @@ export default function BulkMeterDetailsPage() {
                           const d30_60 = Number(bill.debit30_60 ?? 0);
                           const d60 = Number(bill.debit60 ?? 0);
 
-                          // Outstanding = sum of the three debit buckets (penalty is separate)
+
+                          // Outstanding = sum of the buckets (Formula: Total Payable = Outstanding + Current + Penalty)
                           const outstandingAmt = d30 + d30_60 + d60;
 
-                          // Penalty stored separately from debit buckets
+                          // Penalty
                           const penaltyAmt = Number(bill.PENALTYAMT || 0);
 
-                          // Current Bill = this month's bill amount only
-                          const currentBillAmt = bill.THISMONTHBILLAMT ? Number(bill.THISMONTHBILLAMT) : bill.TOTALBILLAMOUNT;
+                          // Current Bill
+                          const currentBillAmt = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined) 
+                            ? Number(bill.THISMONTHBILLAMT) 
+                            : (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0));
 
-                          // Total Payable = Penalty + Outstanding + Current Bill
-                          const totalPayable = penaltyAmt + outstandingAmt + currentBillAmt;
+                          // Total Payable (Explicit Sum)
+                          const finalTotalPayable = outstandingAmt + Math.max(0, currentBillAmt) + penaltyAmt;
 
                           const fmt = (val: number) => val > 0 ? val.toFixed(2) : '—';
 
@@ -1108,8 +1093,8 @@ export default function BulkMeterDetailsPage() {
                               <TableCell className="text-right">{fmt(d60)}</TableCell>
                               <TableCell className="text-right text-destructive font-medium">{fmt(penaltyAmt)}</TableCell>
                               <TableCell className="text-right font-medium">{outstandingAmt > 0 ? outstandingAmt.toFixed(2) : '0.00'}</TableCell>
-                              <TableCell className="text-right font-medium">{currentBillAmt.toFixed(2)}</TableCell>
-                              <TableCell className={cn("text-right font-bold", totalPayable > currentBillAmt ? "text-primary" : "")}>{totalPayable.toFixed(2)}</TableCell>
+                              <TableCell className="text-right font-medium">{Math.max(0, currentBillAmt).toFixed(2)}</TableCell>
+                              <TableCell className={cn("text-right font-bold text-primary")}>{finalTotalPayable.toFixed(2)}</TableCell>
                               <TableCell><Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'}>{bill.paymentStatus}</Badge></TableCell>
                               <TableCell className="text-right">
                                 <DropdownMenu>
@@ -1139,12 +1124,14 @@ export default function BulkMeterDetailsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:hidden gap-4 p-4">
                     {paginatedBillingHistory.map(bill => {
                       const penaltyAmt = Number(bill.PENALTYAMT || 0);
-                      const currentBillAmt = Number(bill.THISMONTHBILLAMT ?? bill.TOTALBILLAMOUNT ?? 0);
                       const d30 = Number(bill.debit30 || 0);
                       const d30_60 = Number(bill.debit30_60 || 0);
                       const d60 = Number(bill.debit60 || 0);
                       const outstandingAmt = d30 + d30_60 + d60;
-                      const totalPayable = penaltyAmt + outstandingAmt + currentBillAmt;
+                      const currentBillAmt = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
+                        ? Number(bill.THISMONTHBILLAMT)
+                        : (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0));
+                      const finalTotalPayable = outstandingAmt + Math.max(0, currentBillAmt) + penaltyAmt;
 
                       return (
                         <Card key={bill.id} className="border shadow-sm overflow-hidden bg-slate-50/30">
@@ -1160,7 +1147,7 @@ export default function BulkMeterDetailsPage() {
                               <div><span className="text-muted-foreground font-semibold uppercase">Penalty:</span> ETB {penaltyAmt > 0 ? penaltyAmt.toFixed(2) : '—'}</div>
                               <div className="col-span-2 flex justify-between border-t pt-1 mt-1 font-bold text-primary">
                                 <span>Total Payable:</span>
-                                <span>ETB {totalPayable.toFixed(2)}</span>
+                                <span>ETB {finalTotalPayable.toFixed(2)}</span>
                               </div>
                             </div>
                             <div className="flex justify-end gap-2 pt-2 border-t mt-1">

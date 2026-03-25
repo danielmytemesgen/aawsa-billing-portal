@@ -70,6 +70,8 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
             <TableHead className="text-right">DEBIT_30_60</TableHead>
             <TableHead className="text-right">DEBIT_60</TableHead>
             <TableHead className="text-right">Outstanding (ETB)</TableHead>
+            <TableHead className="text-right">Current Bill (ETB)</TableHead>
+            <TableHead className="text-right">Penalty (ETB)</TableHead>
             <TableHead className="text-right">Total Due (ETB)</TableHead>
             <TableHead>Due Date</TableHead>
             <TableHead>Status</TableHead>
@@ -91,62 +93,9 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                 })()}</TableCell>
                 <TableCell className="text-right">{typeof bill.differenceUsage === 'number' ? bill.differenceUsage.toFixed(2) : '-'}</TableCell>
                 {(() => {
-                  let debit30 = 0;
-                  let debit60 = 0;
-                  let debit90 = 0;
-
-                  if (allBills) {
-                    const customerKey = bill.individualCustomerId || bill.CUSTOMERKEY;
-                    if (customerKey) {
-                      // Filter and sort history for this customer (Newest First)
-                      const customerHistory = allBills.filter(b => (b.individualCustomerId === customerKey || b.CUSTOMERKEY === customerKey))
-                        .sort((a, b) => new Date(b.billPeriodEndDate).getTime() - new Date(a.billPeriodEndDate).getTime());
-
-                      const fullIndex = customerHistory.findIndex(b => b.id === bill.id);
-                      if (fullIndex !== -1) {
-                        let remainingOutstanding = bill.balanceCarriedForward ?? 0;
-
-                        // 1. DEBIT_30: From immediate previous bill (index + 1)
-                        if (remainingOutstanding > 0.01) {
-                          const prev1 = customerHistory[fullIndex + 1];
-                          if (prev1) {
-                            const attributable = prev1.TOTALBILLAMOUNT;
-                            const amount = Math.min(remainingOutstanding, attributable);
-                            debit30 = amount;
-                            remainingOutstanding -= amount;
-                          } else {
-                            debit90 += remainingOutstanding;
-                            remainingOutstanding = 0;
-                          }
-                        }
-
-                        // 2. DEBIT_30_60: From 2nd previous bill (index + 2)
-                        if (remainingOutstanding > 0.01) {
-                          const prev2 = customerHistory[fullIndex + 2];
-                          if (prev2) {
-                            const attributable = prev2.TOTALBILLAMOUNT;
-                            const amount = Math.min(remainingOutstanding, attributable);
-                            debit60 = amount;
-                            remainingOutstanding -= amount;
-                          } else {
-                            debit90 += remainingOutstanding;
-                            remainingOutstanding = 0;
-                          }
-                        }
-
-                        // 3. DEBIT_>60: Remainder
-                        if (remainingOutstanding > 0.01) {
-                          debit90 += remainingOutstanding;
-                        }
-                      }
-                    }
-                  } else {
-                    // Fallback if allBills not provided? or just show '-'?
-                    // User might expect something. But without history we can't guess.
-                    // We can default everything to DEBIT_60/Outstanding if we wanted, 
-                    // but cleaner to show '-' to indicate "calculation unavailable".
-                    // The user prompt implies they want it, so I will ensure I pass allBills in the next steps.
-                  }
+                  const debit30 = bill.debit30 || (bill as any).debit_30 || 0;
+                  const debit60 = bill.debit30_60 || (bill as any).debit_30_60 || 0;
+                  const debit90 = bill.debit60 || (bill as any).debit_60 || 0;
 
                   return (
                     <>
@@ -156,11 +105,35 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                     </>
                   );
                 })()}
-                <TableCell className="text-right">{typeof bill.balanceCarriedForward === 'number' ? bill.balanceCarriedForward.toFixed(2) : '0.00'}</TableCell>
-                <TableCell className="text-right font-mono">{(() => {
-                  const billAmount = typeof bill.TOTALBILLAMOUNT === 'number' ? bill.TOTALBILLAMOUNT : 0;
-                  const outstanding = typeof bill.balanceCarriedForward === 'number' ? bill.balanceCarriedForward : 0;
-                  return (billAmount + outstanding).toFixed(2);
+                <TableCell className="text-right font-medium">{(() => {
+                  const outstanding = (
+                    (Number((bill as any).debit_30 || bill.debit30 || 0)) + 
+                    (Number((bill as any).debit_30_60 || bill.debit30_60 || 0)) + 
+                    (Number((bill as any).debit_60 || bill.debit60 || 0))
+                  );
+                  return outstanding.toFixed(2);
+                })()}</TableCell>
+                <TableCell className="text-right">{(() => {
+                  // Current = This Month if available, else Total - Saved Outstanding (for cumulative awareness)
+                  // If OutstandingAmt is also null, result is just total.
+                  const current = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
+                    ? Number(bill.THISMONTHBILLAMT)
+                    : (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0));
+                  return Math.max(0, current).toFixed(2);
+                })()}</TableCell>
+                <TableCell className="text-right text-destructive">{(Number(bill.PENALTYAMT || 0)).toFixed(2)}</TableCell>
+                <TableCell className="text-right font-bold font-mono text-primary">{(() => {
+                  const outstanding = (
+                    (Number((bill as any).debit_30 || bill.debit30 || 0)) + 
+                    (Number((bill as any).debit_30_60 || bill.debit30_60 || 0)) + 
+                    (Number((bill as any).debit_60 || bill.debit60 || 0))
+                  );
+                  const current = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
+                    ? Number(bill.THISMONTHBILLAMT)
+                    : (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0));
+                  const penalty = Number(bill.PENALTYAMT || 0);
+
+                  return (outstanding + current + penalty).toFixed(2);
                 })()}</TableCell>
                 <TableCell>{formatDate(bill.dueDate)}</TableCell>
                 <TableCell>

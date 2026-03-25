@@ -46,26 +46,10 @@ export default function RolesAndPermissionsPage() {
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
 
-  if (!hasPermission('permissions_view')) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl md:text-3xl font-bold">Roles & Permissions</h1>
-        <Alert variant="destructive">
-          <Lock className="h-4 w-4" />
-          <AlertTitle>Access Denied</AlertTitle>
-          <UIAlertDescription>
-            You do not have the required permissions to view this page.
-          </UIAlertDescription>
-        </Alert>
-      </div>
-    );
-  }
   const [isLoading, setIsLoading] = React.useState(true);
-
   const [roles, setRoles] = React.useState<DomainRole[]>([]);
   const [permissions, setPermissions] = React.useState<DomainPermission[]>([]);
   const [rolePermissions, setRolePermissions] = React.useState<DomainRolePermission[]>([]);
-
   const [selectedRoleId, setSelectedRoleId] = React.useState<string>("");
   const [selectedPermissions, setSelectedPermissions] = React.useState<Set<number>>(new Set());
   const [createRoleDialogOpen, setCreateRoleDialogOpen] = React.useState(false);
@@ -73,13 +57,33 @@ export default function RolesAndPermissionsPage() {
   const [editingPermission, setEditingPermission] = React.useState<DomainPermission | undefined>(undefined);
   const [deletingPermission, setDeletingPermission] = React.useState<DomainPermission | undefined>(undefined);
   const [isDeleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
-
   const [isSaving, setIsSaving] = React.useState(false);
   const [permissionSearchTerm, setPermissionSearchTerm] = React.useState("");
-
-  // Pagination for Manage Permissions
   const [currentPage, setCurrentPage] = React.useState(1);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+
+  const groupedPermissions = React.useMemo(() => {
+    return permissions.reduce((acc, permission) => {
+      const category = permission.category || "General";
+      if (!acc[category]) {
+        acc[category] = [];
+      }
+      acc[category].push(permission);
+      return acc;
+    }, {} as PermissionGroup);
+  }, [permissions]);
+
+  const filteredPermissions = React.useMemo(() => {
+    return permissions.filter(p => 
+      p.name.toLowerCase().includes(permissionSearchTerm.toLowerCase()) ||
+      (p.category && p.category.toLowerCase().includes(permissionSearchTerm.toLowerCase()))
+    );
+  }, [permissions, permissionSearchTerm]);
+
+  const paginatedPermissions = React.useMemo(() => {
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    return filteredPermissions.slice(startIndex, startIndex + rowsPerPage);
+  }, [filteredPermissions, currentPage, rowsPerPage]);
 
   React.useEffect(() => {
     const fetchData = async () => {
@@ -118,6 +122,21 @@ export default function RolesAndPermissionsPage() {
       setSelectedPermissions(new Set());
     }
   }, [selectedRoleId, rolePermissions]);
+
+  if (!hasPermission('permissions_view')) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl md:text-3xl font-bold">Roles & Permissions</h1>
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <UIAlertDescription>
+            You do not have the required permissions to view this page.
+          </UIAlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   const handlePermissionToggle = (permissionId: number, checked: boolean | "indeterminate") => {
     const isChecked = checked === true;
@@ -186,30 +205,7 @@ export default function RolesAndPermissionsPage() {
     setDeletingPermission(undefined);
   };
 
-  const groupedPermissions = React.useMemo(() => {
-    return permissions.reduce((acc, permission) => {
-      const category = permission.category || "General";
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(permission);
-      return acc;
-    }, {} as PermissionGroup);
-  }, [permissions]);
-
   const totalPages = Math.ceil(permissions.length / rowsPerPage);
-  
-  const filteredPermissions = React.useMemo(() => {
-    return permissions.filter(p => 
-      p.name.toLowerCase().includes(permissionSearchTerm.toLowerCase()) ||
-      (p.category && p.category.toLowerCase().includes(permissionSearchTerm.toLowerCase()))
-    );
-  }, [permissions, permissionSearchTerm]);
-
-  const paginatedPermissions = React.useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
-    return filteredPermissions.slice(startIndex, startIndex + rowsPerPage);
-  }, [filteredPermissions, currentPage, rowsPerPage]);
 
   const formatPermissionName = (name: string) => {
     return name
@@ -456,7 +452,7 @@ export default function RolesAndPermissionsPage() {
                     {paginatedPermissions.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={3} className="h-24 text-center text-slate-500 text-sm">
-                          No matching tokens found for "{permissionSearchTerm}".
+                          No matching tokens found for &quot;{permissionSearchTerm}&quot;.
                         </TableCell>
                       </TableRow>
                     )}
@@ -529,7 +525,7 @@ export default function RolesAndPermissionsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Permanent Deletion</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the permission token <strong>"{deletingPermission?.name}"</strong>? This may break role-based access for staff members currently assigned this token.
+              Are you sure you want to delete the permission token <strong>&quot;{deletingPermission?.name}&quot;</strong>? This may break role-based access for staff members currently assigned this token.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

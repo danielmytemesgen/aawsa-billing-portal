@@ -141,7 +141,7 @@ const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
                 </div>
                 {reading.notes && (
                     <div className="col-span-2 bg-gray-50 p-2 rounded-md border border-gray-100 italic text-[10px] text-gray-600 line-clamp-2">
-                        "{reading.notes}"
+                        &quot;{reading.notes}&quot;
                     </div>
                 )}
               </div>

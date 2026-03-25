@@ -55,6 +55,7 @@ export type Database = {
           debit_30_60: number | null
           debit_60: number | null
           snapshot_data: Json | null
+          branch_id: string | null
         }
         Insert: {
           id?: string
@@ -101,6 +102,7 @@ export type Database = {
           debit_30_60?: number | null
           debit_60?: number | null
           snapshot_data?: Json | null
+          branch_id?: string | null
         }
         Update: {
           id?: string
@@ -147,6 +149,7 @@ export type Database = {
           debit_30_60?: number | null
           debit_60?: number | null
           snapshot_data?: Json | null
+          branch_id?: string | null
         }
         Relationships: [
           {
@@ -160,8 +163,14 @@ export type Database = {
             foreignKeyName: "bills_individual_customer_id_fkey"
             columns: ["individual_customer_id"]
             isOneToOne: false
-            referencedRelation: "individual_customers"
             referencedColumns: ["customerKeyNumber"]
+          },
+          {
+            foreignKeyName: "bills_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
           },
         ]
       }

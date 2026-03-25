@@ -174,7 +174,7 @@ export function TariffFormDialog({ open, onOpenChange, onSubmit, defaultValues, 
                 <Info className="h-4 w-4" />
               </div>
               <p className="text-sm font-bold text-slate-600 leading-relaxed">
-                For the highest tier in the sequence, enter <span className="text-indigo-700 font-black bg-indigo-50 px-1.5 py-0.5 rounded-md">'Infinity'</span> to capture all volume above previous thresholds.
+                For the highest tier in the sequence, enter <span className="text-indigo-700 font-black bg-indigo-50 px-1.5 py-0.5 rounded-md">&apos;Infinity&apos;</span> to capture all volume above previous thresholds.
               </p>
             </div>
 

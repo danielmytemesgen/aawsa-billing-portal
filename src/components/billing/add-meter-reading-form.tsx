@@ -359,7 +359,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
               </div>
               <div>
                 <span className="text-slate-500 block text-xs">Diameter</span>
-                <span className="font-medium text-slate-900">{selectedMeterInfo.meterSize}"</span>
+                <span className="font-medium text-slate-900">{selectedMeterInfo.meterSize}&quot;</span>
               </div>
               <div className="col-span-2">
                 <span className="text-slate-500 block text-xs">Address</span>

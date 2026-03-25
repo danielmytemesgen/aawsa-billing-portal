@@ -56,20 +56,6 @@ export default function SecurityLogsPage() {
     const searchParams = useSearchParams();
     const { hasPermission } = usePermissions();
 
-    if (!hasPermission('settings_manage')) {
-        return (
-            <div className="p-6">
-                <Alert variant="destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Access Denied</AlertTitle>
-                    <UIAlertDescription>
-                        You do not have permission to access the Security Logs.
-                    </UIAlertDescription>
-                </Alert>
-            </div>
-        );
-    }
-
     const [logs, setLogs] = useState<SecurityLog[]>([]);
     const [totalLogs, setTotalLogs] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
@@ -79,7 +65,6 @@ export default function SecurityLogsPage() {
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-
     const [sessions, setSessions] = useState<CustomerSession[]>([]);
     const [sessionsLoading, setSessionsLoading] = useState(false);
 
@@ -96,6 +81,20 @@ export default function SecurityLogsPage() {
 
         fetchSecurityLogs(page, size, sort, order);
     }, [searchParams]);
+
+    if (!hasPermission('settings_manage')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to access the Security Logs.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     const fetchSecurityLogs = async (page: number, pageSize: number, sortBy: string, sortOrder: 'asc' | 'desc') => {
         setLoading(true);

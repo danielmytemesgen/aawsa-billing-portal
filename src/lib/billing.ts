@@ -46,6 +46,8 @@ const getLiveTariffFromDB = async (type: CustomerType, date: string): Promise<Ta
         vat_rate: tariff.vat_rate,
         domestic_vat_threshold_m3: parsedDomesticVatThreshold,
         additional_fees: safeParseJsonField<AdditionalFee[]>(tariff.additional_fees, 'additional_fees', 'array'),
+        fixed_tier_index: tariff.fixed_tier_index !== undefined && tariff.fixed_tier_index !== null ? Number(tariff.fixed_tier_index) : undefined,
+        use_rule_of_three: tariff.use_rule_of_three !== undefined && tariff.use_rule_of_three !== null ? Boolean(tariff.use_rule_of_three) : true,
     };
 };
 
@@ -61,7 +63,7 @@ export async function calculateBill(
     const emptyResult: BillCalculationResult = {
         totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0,
         sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0,
-        additionalFeesCharge: 0
+        additionalFeesCharge: 0, effectiveUsage: CONS < 0 ? 0 : CONS
     };
 
     if (CONS < 0 || !customerType || !billingMonth || typeof billingMonth !== 'string' || !billingMonth.match(/^\d{4}-\d{2}$/)) {

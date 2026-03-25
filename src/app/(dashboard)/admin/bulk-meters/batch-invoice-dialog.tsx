@@ -102,6 +102,7 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
                 debit30: Number(row.debit_30 ?? 0),
                 debit30_60: Number(row.debit_30_60 ?? 0),
                 debit60: Number(row.debit_60 ?? 0),
+                PENALTYAMT: Number(row.PENALTYAMT ?? 0),
                 dueDate: row.due_date,
                 paymentStatus: row.payment_status ?? 'Unpaid',
                 billPeriodStartDate: row.bill_period_start_date,
@@ -128,15 +129,20 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
         const headers = [
             "Meter Name", "Customer Key", "Month", "Previous Reading", "Current Reading",
             "Usage (m³)", "Difference Usage (m³)", "DEBIT_30", "DEBIT_30_60", "DEBIT_>60",
+            "Penalty (ETB)",
             "Base Water Charge (ETB)", "Maintenance Fee (ETB)", "Sanitation Fee (ETB)",
             "Sewerage Charge (ETB)", "Meter Rent (ETB)", "VAT (ETB)",
             "Current Bill (ETB)", "Outstanding (ETB)", "Total Amount Payable (ETB)", "Payment Status"
         ];
 
         const rows = invoiceRows.map((row: any) => {
-            const currentBill = Number(row.THISMONTHBILLAMT ?? row.TOTALBILLAMOUNT ?? 0);
-            const outstanding = Number(row.OUTSTANDINGAMT ?? row.balance_carried_forward ?? 0);
-            const totalPayable = Number(row.TOTALBILLAMOUNT ?? 0);
+            const d30 = Number(row.debit_30 || 0);
+            const d30_60 = Number(row.debit_30_60 || 0);
+            const d60 = Number(row.debit_60 || 0);
+            const outstanding = Number(row.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+            const current = Math.max(0, Number(row.THISMONTHBILLAMT ?? (Number(row.TOTALBILLAMOUNT || 0) - outstanding)));
+            const penalty = Number(row.PENALTYAMT || 0);
+            const totalPayable = outstanding + current + penalty;
             return [
                 row.name,
                 row.CUSTOMERKEY,
@@ -148,13 +154,14 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
                 Number(row.debit_30 ?? 0).toFixed(2),
                 Number(row.debit_30_60 ?? 0).toFixed(2),
                 Number(row.debit_60 ?? 0).toFixed(2),
+                penalty.toFixed(2),
                 Number(row.base_water_charge ?? 0).toFixed(2),
                 Number(row.maintenance_fee ?? 0).toFixed(2),
                 Number(row.sanitation_fee ?? 0).toFixed(2),
                 Number(row.sewerage_charge ?? 0).toFixed(2),
                 Number(row.meter_rent ?? 0).toFixed(2),
                 Number(row.vat_amount ?? 0).toFixed(2),
-                currentBill.toFixed(2),
+                current.toFixed(2),
                 outstanding.toFixed(2),
                 totalPayable.toFixed(2),
                 row.payment_status ?? 'Unpaid'

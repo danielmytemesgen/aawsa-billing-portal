@@ -11,20 +11,18 @@ import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock } from "luc
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-import { getDefaultBillingCycleDayString } from "@/lib/billing-config";
+import { BILLING_CYCLE_MODE_KEY, BILLING_DUE_DATE_OFFSET_KEY, BILLING_CYCLE_DAY_KEY } from "@/lib/billing-config";
+import { getSystemSettingsAction, updateBillingSettingsAction } from "@/lib/actions";
 
 const APP_NAME_KEY = "aawsa-app-name";
 const CURRENCY_KEY = "aawsa-default-currency";
 const DARK_MODE_KEY = "aawsa-dark-mode-default";
-const BILLING_CYCLE_DAY_KEY = "aawsa-billing-cycle-day";
 const ENABLE_OVERDUE_REMINDERS_KEY = "aawsa-enable-overdue-reminders";
 
-// Keys for new settings
 const NOTIFY_NEW_BILL_KEY = "aawsa-notify-new-bill";
 const NOTIFY_OVERDUE_KEY = "aawsa-notify-overdue";
 const EXPORT_FORMAT_KEY = "aawsa-export-format";
 const EXPORT_PREFIX_KEY = "aawsa-export-prefix";
-
 
 const billingCycleDays = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
 
@@ -32,14 +30,18 @@ export default function StaffSettingsPage() {
     const { hasPermission } = usePermissions();
     const { toast } = useToast();
 
-    // State for existing settings
+    // General settings
     const [appName, setAppName] = React.useState("AAWSA Billing Portal");
     const [defaultCurrency, setDefaultCurrency] = React.useState("ETB");
     const [enableDarkMode, setEnableDarkMode] = React.useState(false);
-    const [billingCycleDay, setBillingCycleDay] = React.useState(getDefaultBillingCycleDayString());
     const [enableOverdueReminders, setEnableOverdueReminders] = React.useState(false);
 
-    // State for new settings
+    // Billing cycle settings
+    const [cycleMode, setCycleMode] = React.useState<'once_per_month' | 'custom'>('once_per_month');
+    const [billingCycleDay, setBillingCycleDay] = React.useState("16");
+    const [dueDateOffset, setDueDateOffset] = React.useState("15");
+
+    // Notification / export settings
     const [notifyOnNewBill, setNotifyOnNewBill] = React.useState(true);
     const [notifyOnOverdue, setNotifyOnOverdue] = React.useState(true);
     const [exportFormat, setExportFormat] = React.useState("xlsx");
@@ -50,20 +52,26 @@ export default function StaffSettingsPage() {
 
     React.useEffect(() => {
         setIsMounted(true);
-        // Load existing settings
         const storedAppName = localStorage.getItem(APP_NAME_KEY);
         const storedCurrency = localStorage.getItem(CURRENCY_KEY);
         const storedDarkMode = localStorage.getItem(DARK_MODE_KEY);
-        const storedBillingCycleDay = localStorage.getItem(BILLING_CYCLE_DAY_KEY);
         const storedEnableOverdueReminders = localStorage.getItem(ENABLE_OVERDUE_REMINDERS_KEY);
 
         if (storedAppName) setAppName(storedAppName);
         if (storedCurrency) setDefaultCurrency(storedCurrency);
         if (storedDarkMode) setEnableDarkMode(storedDarkMode === "true");
-        if (storedBillingCycleDay) setBillingCycleDay(storedBillingCycleDay);
         if (storedEnableOverdueReminders) setEnableOverdueReminders(storedEnableOverdueReminders === "true");
 
-        // Load new settings
+        // Load billing cycle settings from database
+        getSystemSettingsAction().then(res => {
+            if (res.data) {
+                const s = res.data as Record<string, string>;
+                if (s.billing_cycle_mode) setCycleMode(s.billing_cycle_mode as 'once_per_month' | 'custom');
+                if (s.billing_cycle_start_day) setBillingCycleDay(s.billing_cycle_start_day);
+                if (s.billing_due_date_offset) setDueDateOffset(s.billing_due_date_offset);
+            }
+        });
+
         const storedNotifyNewBill = localStorage.getItem(NOTIFY_NEW_BILL_KEY);
         const storedNotifyOverdue = localStorage.getItem(NOTIFY_OVERDUE_KEY);
         const storedExportFormat = localStorage.getItem(EXPORT_FORMAT_KEY);
@@ -92,14 +100,14 @@ export default function StaffSettingsPage() {
             });
             return;
         }
-        // Save existing settings
         localStorage.setItem(APP_NAME_KEY, appName);
         localStorage.setItem(CURRENCY_KEY, defaultCurrency);
         localStorage.setItem(DARK_MODE_KEY, String(enableDarkMode));
-        localStorage.setItem(BILLING_CYCLE_DAY_KEY, billingCycleDay);
         localStorage.setItem(ENABLE_OVERDUE_REMINDERS_KEY, String(enableOverdueReminders));
 
-        // Save new settings
+        // Billing cycle - save to database
+        updateBillingSettingsAction({ cycleMode, startDay: billingCycleDay, dueDateOffset });
+
         localStorage.setItem(NOTIFY_NEW_BILL_KEY, String(notifyOnNewBill));
         localStorage.setItem(NOTIFY_OVERDUE_KEY, String(notifyOnOverdue));
         localStorage.setItem(EXPORT_FORMAT_KEY, exportFormat);
@@ -179,25 +187,84 @@ export default function StaffSettingsPage() {
             <Card className="shadow-lg">
                 <CardHeader>
                     <CardTitle>Billing Settings</CardTitle>
-                    <CardDescription>Manage billing cycle, tariff rates, and reminder configurations.</CardDescription>
+                    <CardDescription>Configure how billing cycles are scheduled and when bills become due.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
+
+                    {/* Cycle Mode */}
                     <div className="space-y-2">
-                        <Label htmlFor="billing-cycle-day">Billing Cycle Day</Label>
-                        <Select value={billingCycleDay} onValueChange={setBillingCycleDay} disabled={!canUpdateSettings}>
-                            <SelectTrigger id="billing-cycle-day" className="w-full md:w-[200px]">
-                                <SelectValue placeholder="Select day" />
+                        <Label htmlFor="cycle-mode">Billing Cycle Mode</Label>
+                        <Select value={cycleMode} onValueChange={(v) => setCycleMode(v as 'once_per_month' | 'custom')} disabled={!canUpdateSettings}>
+                            <SelectTrigger id="cycle-mode" className="w-full md:w-[280px]">
+                                <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                {billingCycleDays.map(day => (
-                                    <SelectItem key={day} value={day}>Day {day}</SelectItem>
-                                ))}
+                                <SelectItem value="once_per_month">Once per Month (Fixed Day)</SelectItem>
+                                <SelectItem value="custom">Custom Date Range (Multiple per Month)</SelectItem>
                             </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground">
-                            The day of the month when new bills are generated.
+                            {cycleMode === 'once_per_month'
+                                ? 'Cycle runs automatically from the configured day each month.'
+                                : 'You will pick exact start & end dates when launching each billing run.'}
                         </p>
                     </div>
+
+                    {cycleMode === 'once_per_month' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20">
+                            <div className="space-y-2">
+                                <Label htmlFor="billing-cycle-day">Cycle Start Day</Label>
+                                <Select value={billingCycleDay} onValueChange={setBillingCycleDay} disabled={!canUpdateSettings}>
+                                    <SelectTrigger id="billing-cycle-day" className="w-full">
+                                        <SelectValue placeholder="Select day" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {billingCycleDays.map(day => (
+                                            <SelectItem key={day} value={day}>Day {day}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">Day of month the billing period starts.</p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="due-date-offset">Due Date (days after cycle end)</Label>
+                                <Input
+                                    id="due-date-offset"
+                                    type="number"
+                                    min={1}
+                                    max={60}
+                                    value={dueDateOffset}
+                                    onChange={(e) => setDueDateOffset(e.target.value)}
+                                    disabled={!canUpdateSettings}
+                                    className="w-full"
+                                />
+                                <p className="text-xs text-muted-foreground">Bills due this many days after cycle ends.</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {cycleMode === 'custom' && (
+                        <div className="p-4 border rounded-lg bg-blue-50 border-blue-200 space-y-2">
+                            <div className="flex items-center gap-2">
+                                <Info className="h-4 w-4 text-blue-600" />
+                                <p className="text-sm font-semibold text-blue-800">Custom Date Range Mode Active</p>
+                            </div>
+                            <p className="text-xs text-blue-700">Start & end dates are picked per billing run — enabling multiple cycles per month.</p>
+                            <div className="space-y-2 pt-2">
+                                <Label htmlFor="due-date-offset-custom">Due Date (days after cycle end)</Label>
+                                <Input
+                                    id="due-date-offset-custom"
+                                    type="number"
+                                    min={1}
+                                    max={60}
+                                    value={dueDateOffset}
+                                    onChange={(e) => setDueDateOffset(e.target.value)}
+                                    disabled={!canUpdateSettings}
+                                    className="w-full md:w-[160px]"
+                                />
+                            </div>
+                        </div>
+                    )}
 
                     <div className="flex items-center space-x-2">
                         <Checkbox
@@ -217,7 +284,7 @@ export default function StaffSettingsPage() {
                             <h3 className="font-semibold">Current Tariff Information</h3>
                         </div>
                         <p className="text-xs text-muted-foreground mt-3">
-                            Tariff rates and structure are managed in the <span className="font-semibold">Tariff Management</span> section. This is a read-only view.
+                            Tariff rates and structure are managed in the <span className="font-semibold">Tariff Management</span> section.
                         </p>
                     </div>
                 </CardContent>

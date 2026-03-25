@@ -155,6 +155,7 @@ export const bills = pgTable('bills', {
   additionalFeesCharge: numeric('additional_fees_charge').default('0'),
   additionalFeesBreakdown: jsonb('additional_fees_breakdown'),
   snapshotData: jsonb('snapshot_data'),
+  branchId: uuid('branch_id').references(() => branches.id),
 });
 
 export const payments = pgTable('payments', {
@@ -178,6 +179,15 @@ export const tariffs = pgTable('tariffs', {
   sanitationPercentage: numeric('sanitation_percentage'),
   sewerageRatePerM3: numeric('sewerage_rate_per_m3'),
   vatRate: numeric('vat_rate').default('0.15'),
+  fixedTierIndex: integer('fixed_tier_index'), // Which tier to use for rental types (0-based), null = default (3 = 4th tier)
+  useRuleOfThree: boolean('use_rule_of_three').default(true), // If true, consumption < 3 is treated as 3
 }, (t) => ({
   unq: sql`UNIQUE(${t.customerType}, ${t.year})`, // Drizzle workaround for unique constraints in earlier versions or specific needs
 }));
+
+// 10. System Settings
+export const systemSettings = pgTable('system_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});

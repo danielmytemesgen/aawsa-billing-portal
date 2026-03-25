@@ -216,7 +216,7 @@ export default function StaffBulkMetersPage() {
         <div className="p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
           <Gauge className="mx-auto h-12 w-12 text-gray-400 mb-4" />
           <h3 className="text-lg font-semibold">No Bulk Meters Found</h3>
-          <p className="text-muted-foreground mt-1">No bulk meters assigned to: {branchName}. Click "Add New" to get started.</p>
+          <p className="text-muted-foreground mt-1">No bulk meters assigned to: {branchName}. Click &quot;Add New&quot; to get started.</p>
         </div>
       );
     }

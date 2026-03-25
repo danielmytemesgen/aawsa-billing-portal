@@ -470,7 +470,7 @@ export default function AdminNotificationsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the notification "{notificationToDelete?.title}".
+              This action cannot be undone. This will permanently delete the notification &quot;{notificationToDelete?.title}&quot;.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -485,7 +485,7 @@ export default function AdminNotificationsPage() {
           <DialogHeader>
             <DialogTitle>Edit Notification</DialogTitle>
             <DialogDescription>
-              Make changes to the notification here. Click save when you're done.
+              Make changes to the notification here. Click save when you&apos;re done.
             </DialogDescription>
           </DialogHeader>
           <Form {...editForm}>

@@ -168,7 +168,7 @@ export default function KnowledgeBasePage() {
              <div className="mt-4 p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
                 <BookOpen className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                 <h3 className="text-lg font-semibold">No Articles Found</h3>
-                <p className="text-muted-foreground mt-1">Click "Add New Article" to build your knowledge base.</p>
+                <p className="text-muted-foreground mt-1">Click &quot;Add New Article&quot; to build your knowledge base.</p>
              </div>
           ) : (
             <div className="overflow-x-auto">
@@ -196,7 +196,7 @@ export default function KnowledgeBasePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the article "{articleToDelete?.title}".
+              This action cannot be undone. This will permanently delete the article &quot;{articleToDelete?.title}&quot;.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

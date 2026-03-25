@@ -38,6 +38,8 @@ export interface TariffInfo {
     penalty_month_threshold?: number;
     bank_lending_rate?: number;
     penalty_tiered_rates?: { month: number; rate: number }[];
+    fixed_tier_index?: number | null; // Selected tier to use as a flat rate, overriding normal billing logic
+    use_rule_of_three?: boolean; // If true, consumption < 3 is treated as 3
 }
 
 export interface BillCalculationResult {
@@ -49,6 +51,7 @@ export interface BillCalculationResult {
     meterRent: number;
     sewerageCharge: number;
     additionalFeesCharge: number;
+    effectiveUsage: number;
     additionalFeesBreakdown?: Array<{ name: string; charge: number }>;
     waterTierBreakdown?: Array<{ start: number; end: number | typeof Infinity; usage: number; rate: number; charge: number }>;
     sewerageTierBreakdown?: Array<{ start: number; end: number | typeof Infinity; usage: number; rate: number; charge: number }>;
@@ -101,10 +104,12 @@ export function calculateBillFromTariff(
     const emptyResult: BillCalculationResult = {
         totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0,
         sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0,
-        additionalFeesCharge: 0
+        additionalFeesCharge: 0, effectiveUsage: CONS < 0 ? 0 : CONS
     };
 
-    const usageForBaseWaterCharge = baseWaterChargeCONS !== undefined ? baseWaterChargeCONS : CONS;
+    // --- Rule of 3: apply minimum consumption if configured ---
+    const effectiveUsage = (tariffConfig.use_rule_of_three && CONS < 3) ? 3 : CONS;
+    const usageForBaseWaterCharge = baseWaterChargeCONS !== undefined ? baseWaterChargeCONS : effectiveUsage;
     if (usageForBaseWaterCharge < 0) return emptyResult;
 
     const sortedTiers = (tariffConfig.tiers || []).sort((a, b) => {
@@ -119,14 +124,31 @@ export function calculateBillFromTariff(
     const customerType = tariffConfig.customer_type;
     const waterTierBreakdown: Array<{ start: number; end: number | typeof Infinity; usage: number; rate: number; charge: number }> = [];
 
-    if (customerType === 'Domestic') {
+    // --- Fixed tier override: applies to ALL customer types when configured ---
+    // If fixed_tier_index is set, always bill at a single flat rate from that tier.
+    const fixedTierIndex = tariffConfig.fixed_tier_index !== undefined && tariffConfig.fixed_tier_index !== null
+        ? Number(tariffConfig.fixed_tier_index)
+        : null;
+
+    if (fixedTierIndex !== null) {
+        // Use the configured tier, fall back to last tier if index is out of range
+        const fixedTier = sortedTiers.length > fixedTierIndex
+            ? sortedTiers[fixedTierIndex]
+            : sortedTiers[sortedTiers.length - 1];
+        const rate = Number(fixedTier.rate);
+        baseWaterCharge = Number(usageForBaseWaterCharge) * rate;
+        waterTierBreakdown.push({
+            start: 0,
+            end: Infinity,
+            usage: usageForBaseWaterCharge,
+            rate: rate,
+            charge: baseWaterCharge
+        });
+    } else if (customerType === 'Domestic') {
         let remainingUsage = usageForBaseWaterCharge;
         let lastLimit = 0;
         for (const tier of sortedTiers) {
-            if (remainingUsage <= 0 && lastLimit > 0) break; // Optimization but keep checking if you want to show 0 usage tiers? Usually only non-zero.
-            // Actually, better to show all tiers or just used? Typically just used or up to the current one.
-            // Let's just loop until remaining is 0, but we might want to capture the 0 usage tiers if they are "below" the current bracket? 
-            // Standard logic: fill buckets.
+            if (remainingUsage <= 0 && lastLimit > 0) break;
 
             const tierLimit = tier.limit === "Infinity" ? Infinity : Number(tier.limit);
             const tierRate = Number(tier.rate);
@@ -139,7 +161,7 @@ export function calculateBillFromTariff(
 
             baseWaterCharge += usageInThisTier * tierRate;
 
-            if (usageInThisTier > 0 || remainingUsage > 0) { // Only push if we touch this tier or it's a lower tier we passed
+            if (usageInThisTier > 0 || remainingUsage > 0) {
                 waterTierBreakdown.push({
                     start: lastLimit,
                     end: tierLimit,
@@ -154,12 +176,11 @@ export function calculateBillFromTariff(
             if (remainingUsage <= 0 && usageInThisTier === 0) break;
         }
     } else if (customerType === 'rental domestic' || customerType === 'rental Non domestic') {
-        let rate = 0;
-        if (sortedTiers.length >= 4) {
-            rate = Number(sortedTiers[3].rate);
-        } else if (sortedTiers.length > 0) {
-            rate = Number(sortedTiers[sortedTiers.length - 1].rate);
-        }
+        // Rental types default to the 4th tier (index 3) when no fixed_tier_index is configured
+        const defaultRentalIndex = 3;
+        const rate = sortedTiers.length > defaultRentalIndex
+            ? Number(sortedTiers[defaultRentalIndex].rate)
+            : sortedTiers.length > 0 ? Number(sortedTiers[sortedTiers.length - 1].rate) : 0;
         baseWaterCharge = Number(usageForBaseWaterCharge) * rate;
         waterTierBreakdown.push({
             start: 0,
@@ -314,6 +335,7 @@ export function calculateBillFromTariff(
         meterRent: roundedMeterRent,
         sewerageCharge: roundedSewerage,
         additionalFeesCharge: roundedAdditional,
+        effectiveUsage: effectiveUsage,
         additionalFeesBreakdown,
         waterTierBreakdown,
     };

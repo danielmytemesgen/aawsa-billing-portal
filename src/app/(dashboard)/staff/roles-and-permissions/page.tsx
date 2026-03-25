@@ -387,7 +387,7 @@ export default function StaffRolesAndPermissionsPage() {
                     <AlertDialogHeader>
                         <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            This action cannot be undone. This will permanently delete the permission "{deletingPermission?.name}".
+                            This action cannot be undone. This will permanently delete the permission &quot;{deletingPermission?.name}&quot;.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

@@ -103,7 +103,7 @@ export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bul
                   <TableCell>{customer.customerType}</TableCell>
                   <TableCell>
                     <div className="flex flex-col">
-                      <span>{(customer.isMinOfThreeApplied ? 3 : usage).toFixed(2)}</span>
+                      <span>{(customer.effectiveUsage ?? usage).toFixed(2)}</span>
                       {customer.isMinOfThreeApplied && (
                         <span className="text-[10px] text-amber-600 font-medium leading-none mt-1">
                           Min 3m³ applied (Raw: {customer.rawUsage?.toFixed(2)})

@@ -176,6 +176,16 @@ export default function SmsNotificationPage() {
 
     const messages = bills.map(bill => {
       const phoneNumber = bill.phoneNumber || bill.phone_number || "_PHONE_NUMBER_";
+      
+      // Calculate universal formula components
+      const d30 = Number(bill.debit_30 || 0);
+      const d30_60 = Number(bill.debit_30_60 || 0);
+      const d60 = Number(bill.debit_60 || 0);
+      const outstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+      const current = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - outstanding)));
+      const penalty = Number(bill.PENALTYAMT || 0);
+      const totalPayable = outstanding + current + penalty;
+
       const message = messageTemplate
         // Basic Information
         .replace(/{name}/g, bill.name || "")
@@ -191,10 +201,10 @@ export default function SmsNotificationPage() {
         .replace(/{differenceUsage}/g, String(bill.difference_usage || 0))
         .replace(/{meterSize}/g, String(bill.meterSize || ""))
         // Billing Amounts
-        .replace(/{totalBulkBill}/g, String(bill.TOTALBILLAMOUNT || 0))
+        .replace(/{totalBulkBill}/g, totalPayable.toFixed(2))
         .replace(/{bulkUsage}/g, String(bill.CONS || 0))
-        .replace(/{differenceBill}/g, String(bill.TOTALBILLAMOUNT || 0)) // Using total bill for now or calculate diff
-        .replace(/{outStandingbill}/g, String(bill.balance_carried_forward || 0))
+        .replace(/{differenceBill}/g, totalPayable.toFixed(2)) 
+        .replace(/{outStandingbill}/g, outstanding.toFixed(2))
         .replace(/{debit_30}/g, String(bill.debit_30 || 0))
         .replace(/{debit_30_60}/g, String(bill.debit_30_60 || 0))
         .replace(/{debit_60}/g, String(bill.debit_60 || 0))
