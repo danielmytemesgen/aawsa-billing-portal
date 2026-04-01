@@ -30,10 +30,11 @@ import { bulkMeterStatuses } from "./bulk-meter-types";
 import { paymentStatuses, customerTypes, sewerageConnections } from "@/lib/billing-calculations";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
-import { getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, useRoutes, fetchRoutes } from "@/lib/data-store";
+import { getBulkMeters, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, useRoutes, fetchRoutes } from "@/lib/data-store";
 import type { Branch } from "../branches/branch-types";
 import type { Route } from "./bulk-meter-types";
-import { Edit, PlusCircle } from "lucide-react";
+import { Edit, PlusCircle, Globe } from "lucide-react";
+import { generateBulkMeterKeys } from "@/lib/utils";
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_DIALOG_";
 
@@ -59,12 +60,24 @@ interface BulkMeterFormDialogProps {
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: BulkMeterFormValues) => void;
   defaultValues?: BulkMeter | null;
-  staffBranchName?: string; // New prop for staff users
+  staffBranchName?: string; // Legacy/Optional
 }
 
 export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValues, staffBranchName }: BulkMeterFormDialogProps) {
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
+  const [currentUser, setCurrentUser] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      setCurrentUser(JSON.parse(userJson));
+    }
+  }, []);
+
+  const userBranchId = currentUser?.branchId;
+  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
+
 
   React.useEffect(() => {
     setIsLoadingBranches(true);
@@ -103,6 +116,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
       xCoordinate: undefined,
       yCoordinate: undefined,
       routeKey: "",
+      ordinal: undefined,
     },
   });
 
@@ -122,13 +136,17 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
         paymentStatus: defaultValues.paymentStatus || "Unpaid",
         xCoordinate: defaultValues.xCoordinate ?? undefined,
         yCoordinate: defaultValues.yCoordinate ?? undefined,
+        zCoordinate: defaultValues.zCoordinate ?? undefined,
         routeKey: defaultValues.routeKey || "",
+        ordinal: defaultValues.ordinal ?? undefined,
       });
-    } else {
+    } else if (open) {
+      const existingMeters = getBulkMeters();
+      const { customerKey, instKey } = generateBulkMeterKeys(existingMeters);
       form.reset({
         name: "",
-        customerKeyNumber: "",
-        instKey: "",
+        customerKeyNumber: customerKey,
+        instKey: instKey,
         contractNumber: "",
         meterSize: undefined,
         NUMBER_OF_DIALS: undefined,
@@ -147,7 +165,9 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
         paymentStatus: "Unpaid",
         xCoordinate: undefined,
         yCoordinate: undefined,
+        zCoordinate: undefined,
         routeKey: "",
+        ordinal: undefined,
       });
     }
   }, [defaultValues, form, open, staffBranchName]);
@@ -176,6 +196,16 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
     }
   };
 
+  const xValue = form.watch("xCoordinate");
+  const yValue = form.watch("yCoordinate");
+  const hasCoordinates = !!(xValue && yValue);
+
+  const openExternalMap = () => {
+    if (hasCoordinates) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${xValue},${yValue}`, '_blank');
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[700px] max-h-[95vh] overflow-y-auto rounded-2xl shadow-2xl border-slate-200">
@@ -193,11 +223,16 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 py-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {staffBranchName ? (
+              {!isHeadOffice && userBranchId ? (
                 <FormItem>
                   <FormLabel>Branch</FormLabel>
                   <FormControl>
-                    <Input value={staffBranchName} readOnly disabled className="bg-muted/50" />
+                    <Input 
+                      value={availableBranches.find(b => b.id === userBranchId)?.name || "Current Branch"} 
+                      readOnly 
+                      disabled 
+                      className="bg-slate-50 border-slate-200 text-slate-500 font-medium cursor-not-allowed" 
+                    />
                   </FormControl>
                 </FormItem>
               ) : (
@@ -233,6 +268,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                   )}
                 />
               )}
+
               <FormField
                 control={form.control}
                 name="name"
@@ -251,9 +287,12 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="customerKeyNumber"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Customer Key Number <span className="text-destructive">*</span></FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel>Customer Key Number <span className="text-destructive">*</span></FormLabel>
+                      {!defaultValues && <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Auto-Generated</span>}
+                    </div>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} readOnly={!defaultValues} className={!defaultValues ? "bg-slate-50 border-slate-200 text-slate-500 font-medium cursor-not-allowed" : ""} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -264,9 +303,12 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="instKey"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>INST_KEY <span className="text-destructive">*</span></FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel>INST_KEY <span className="text-destructive">*</span></FormLabel>
+                      {!defaultValues && <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Auto-Generated</span>}
+                    </div>
                     <FormControl>
-                      <Input {...field} placeholder="e.g., INST-123456" />
+                      <Input {...field} readOnly={!defaultValues} className={!defaultValues ? "bg-slate-50 border-slate-200 text-slate-500 font-medium cursor-not-allowed" : ""} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -279,7 +321,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                   <FormItem>
                     <FormLabel>Contract Number <span className="text-destructive">*</span></FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} placeholder="e.g., CON-123456" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -310,6 +352,28 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                         ))}
                       </SelectContent>
                     </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ordinal"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Walk Order (Ordinal) <span className="text-muted-foreground text-xs font-normal">(Optional)</span></FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        placeholder="e.g. 1, 2, 3"
+                        {...field}
+                        value={field.value ?? ""}
+                        onChange={e => {
+                          const val = e.target.value;
+                          field.onChange(val === "" ? undefined : parseInt(val, 10));
+                        }}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -517,7 +581,21 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="xCoordinate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>X Coordinate (Optional)</FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel>X Coordinate (Optional)</FormLabel>
+                      {hasCoordinates && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-[10px] text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 rounded-full flex items-center gap-1 font-bold uppercase tracking-wider transition-colors"
+                          onClick={openExternalMap}
+                        >
+                          <Globe className="h-3 w-3" />
+                          View on Map
+                        </Button>
+                      )}
+                    </div>
                     <FormControl>
                       <Input
                         type="number"
@@ -544,6 +622,29 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                       <Input
                         type="number"
                         step="any"
+                        {...field}
+                        value={field.value ?? ""}
+                        onChange={e => {
+                          const val = e.target.value;
+                          field.onChange(val === "" ? undefined : parseFloat(val));
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="zCoordinate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Z Coordinate (Altitude/Altitude)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        step="any"
+                        placeholder="e.g., 2300"
                         {...field}
                         value={field.value ?? ""}
                         onChange={e => {

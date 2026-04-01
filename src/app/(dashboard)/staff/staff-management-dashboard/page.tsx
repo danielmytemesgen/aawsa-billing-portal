@@ -295,58 +295,80 @@ export default function StaffManagementDashboardPage() {
       <h1 className="text-2xl md:text-3xl font-bold">Staff Management Dashboard - {staffBranchName}</h1>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        <Card className="shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Bills Status (Current Cycle)</CardTitle>
-            <FileText className="h-5 w-5 text-muted-foreground" />
+        {/* Bills Status Card */}
+        <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <FileText className="h-48 w-48 text-blue-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bills (Current Cycle)</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+              <FileText className="h-4 w-4" />
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{processedStats.totalBills.toLocaleString()} Bills</div>
-            <p className="text-xs text-muted-foreground">{processedStats.paidBills} Paid / {processedStats.unpaidBills} Unpaid</p>
-            <div className="h-[120px] mt-4">
-              {isClient && (
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">{processedStats.totalBills.toLocaleString()}</div>
+              <div className="text-lg font-bold text-slate-500 mb-1">Bills</div>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mt-2">
+              <span className="text-emerald-600">{processedStats.paidBills} Paid</span> <span className="mx-2 text-slate-300">|</span> <span className="text-rose-500">{processedStats.unpaidBills} Unpaid</span>
+            </p>
+            <div className="h-[100px] mt-6 relative flex items-center justify-center">
+              {isClient && processedStats.totalBills > 0 ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={processedStats.billsData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={50} label>
+                      <Pie data={processedStats.billsData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={30} outerRadius={45} paddingAngle={4} stroke="none">
                         {processedStats.billsData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                          <Cell key={`cell-${index}`} fill={entry.fill} className="drop-shadow-sm hover:opacity-80 transition-opacity" />
                         ))}
                       </Pie>
                       <Tooltip content={<ChartTooltipContent hideLabel />} />
-                      <Legend content={<ChartLegendContent />} />
                     </PieChart>
                   </ResponsiveContainer>
                 </ChartContainer>
+              ) : (
+                <div className="text-sm font-semibold text-blue-600/80 italic w-full text-center mt-6">No bill data for this cycle</div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Customers in {staffBranchName}</CardTitle>
-            <Users className="h-5 w-5 text-muted-foreground" />
+        {/* Customers Card */}
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
+            <Users className="h-64 w-64 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider max-w-[80%] leading-tight">Customers in <br/>{staffBranchName}</CardTitle>
+            <div className="h-10 w-10 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Users className="h-5 w-5" />
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{processedStats.totalCustomers.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">Total customers assigned to your branch</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center">
-              <Users className="h-16 w-16 text-primary opacity-50" />
+          <CardContent className="px-6 pb-12 flex flex-col justify-between h-48 relative z-10">
+            <div>
+              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 mt-4 group-hover:text-emerald-900 transition-colors">{processedStats.totalCustomers.toLocaleString()}</div>
+              <p className="text-base text-slate-600 font-semibold">Total active accounts</p>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Bulk Meters in {staffBranchName}</CardTitle>
-            <Gauge className="h-5 w-5 text-muted-foreground" />
+        {/* Bulk Meters Card */}
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
+            <Gauge className="h-64 w-64 text-purple-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider max-w-[80%] leading-tight">Bulk Meters in <br/>{staffBranchName}</CardTitle>
+            <div className="h-10 w-10 shrink-0 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+              <Gauge className="h-5 w-5" />
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{processedStats.totalBulkMeters.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">Total bulk meters assigned to your branch</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center">
-              <Gauge className="h-16 w-16 text-primary opacity-50" />
+          <CardContent className="px-6 pb-12 flex flex-col justify-between h-48 relative z-10">
+            <div>
+              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 mt-4 group-hover:text-purple-900 transition-colors">{processedStats.totalBulkMeters.toLocaleString()}</div>
+              <p className="text-base text-slate-600 font-semibold">Total registered bulk meters</p>
             </div>
           </CardContent>
         </Card>

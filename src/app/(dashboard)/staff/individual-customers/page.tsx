@@ -3,7 +3,7 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, User, Search } from "lucide-react";
+import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { IndividualCustomerTable } from "@/app/(dashboard)/admin/individual-customers/individual-customer-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 import {
   getCustomers,
   addCustomer as addCustomerToStore,
@@ -137,6 +139,12 @@ export default function StaffIndividualCustomersPage() {
     );
   }, [searchTerm, branchFilteredData.customers, allBulkMeters]);
 
+  const summary = React.useMemo(() => {
+    const total = branchFilteredData.customers.length;
+    const active = branchFilteredData.customers.filter(c => c.status === 'Active').length;
+    return { total, active, inactive: total - active };
+  }, [branchFilteredData.customers]);
+
   const paginatedCustomers = searchedCustomers.slice(
     page * rowsPerPage,
     page * rowsPerPage + rowsPerPage
@@ -197,57 +205,156 @@ export default function StaffIndividualCustomersPage() {
 
   const renderContent = () => {
     if (isLoading) {
-      return <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">Loading...</div>;
+      return (
+        <div className="p-4 overflow-x-auto min-w-[1000px]">
+          <TableSkeleton columns={7} rows={10} />
+        </div>
+      );
     }
     if (!branchId && !hasPermission('customers_view_all')) {
-      return <div className="mt-4 p-4 border rounded-md bg-destructive/10 text-center text-destructive">Your user profile is not configured for a staff role or branch.</div>;
+      return (
+        <EmptyState 
+          icon={UserMinus} 
+          title="Profile Not Configured" 
+          description="Your user profile is not configured for a staff role or branch. Please contact an administrator." 
+        />
+      );
     }
     if (branchFilteredData.customers.length === 0 && !searchTerm) {
-      return <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">No customers found for your branch. Click &quot;Add New Customer&quot; to get started. <User className="inline-block ml-2 h-5 w-5" /></div>;
+      return (
+        <EmptyState 
+          icon={FileText} 
+          title="No Customers Found" 
+          description="No abstract or individual customers are registered for your branch." 
+          action={
+            hasPermission('customers_create') ? (
+              <Button onClick={handleAddCustomer} variant="outline" className="mt-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+                <PlusCircle className="mr-2 h-4 w-4" /> Add First Customer
+              </Button>
+            ) : undefined
+          }
+        />
+      );
     }
     return (
-      <IndividualCustomerTable
-        data={paginatedCustomers}
-        onEdit={handleEditCustomer}
-        onDelete={handleDeleteCustomer}
-        bulkMetersList={allBulkMeters.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))}
-        branches={allBranches}
-        canEdit={hasPermission('customers_update')}
-        canDelete={hasPermission('customers_delete')}
-      />
+      <div className="overflow-x-auto min-h-[400px]">
+        <div className="min-w-[1000px]">
+          <IndividualCustomerTable
+            data={paginatedCustomers}
+            onEdit={handleEditCustomer}
+            onDelete={handleDeleteCustomer}
+            bulkMetersList={allBulkMeters.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))}
+            branches={allBranches}
+            canEdit={hasPermission('customers_update')}
+            canDelete={hasPermission('customers_delete')}
+          />
+        </div>
+      </div>
     );
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-4">
-        <h1 className="text-2xl md:text-3xl font-bold">Individual Customers {branchName ? `(${branchName})` : ''}</h1>
-        <div className="flex gap-2 w-full md:w-auto">
-          <div className="relative flex-grow md:flex-grow-0">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Search customers..."
-              className="pl-8 w-full md:w-[250px]"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              disabled={!branchId}
-            />
-          </div>
+    <div className="space-y-8 pb-10">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Individual Customers {branchName ? `(${branchName})` : ''}</h1>
+          <p className="text-muted-foreground mt-1 text-base">Direct consumers attached to primary or bulk meters in your branch.</p>
+        </div>
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
           {hasPermission('customers_create') && (
-            <Button onClick={handleAddCustomer} disabled={!branchId}>
+            <Button onClick={handleAddCustomer} disabled={!branchId} className="flex-shrink-0 shadow-sm">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Customer
             </Button>
           )}
         </div>
       </div>
 
-      <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Customer List for {branchName || "Your Area"}</CardTitle>
-          <CardDescription>View, edit, and manage individual customer information for your branch.</CardDescription>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Users className="h-48 w-48 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Individual Customers</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Users className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{summary.total}</div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+               <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total active individual accounts</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Activity className="h-48 w-48 text-blue-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Active Accounts</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+              <Activity className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">{summary.active}</div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+               <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Currently receiving services</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group shadow-sm hover:shadow-xl border border-amber-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <UserMinus className="h-48 w-48 text-amber-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Inactive / Pending</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <UserMinus className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">{summary.inactive}</div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+               <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Requires review</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="shadow-md border-slate-200/60 overflow-hidden">
+        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+              <UserCog className="h-4 w-4" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Customer Database</CardTitle>
+              <CardDescription>Manage individual consumer registry for {branchName || "your area"}.</CardDescription>
+            </div>
+          </div>
+          <div className="relative w-full md:w-72">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Input
+              type="search"
+              placeholder="Search by key, name..."
+              className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              disabled={!branchId}
+            />
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {renderContent()}
         </CardContent>
         {searchedCustomers.length > 0 && branchId && (
@@ -260,7 +367,7 @@ export default function StaffIndividualCustomersPage() {
               setRowsPerPage(value);
               setPage(0);
             }}
-            rowsPerPageOptions={[5, 10, 25]}
+            rowsPerPageOptions={[5, 10, 25, 50, 100]}
           />
         )}
       </Card>

@@ -102,7 +102,7 @@ const PrintableBill = ({ bill, relatedData }: { bill: Bill, relatedData: any }) 
                     {/* Customer Info */}
                     <div className="grid grid-cols-2 gap-y-2">
                         <span className="font-bold">Bulk meter name:</span> <span className="text-right">{relatedData?.name || 'N/A'}</span>
-                        <span className="font-bold">Customer key number:</span> <span className="text-right">{bill.bulk_meter_id || bill.individual_customer_id}</span>
+                        <span className="font-bold">Customer key number:</span> <span className="text-right">{bill.CUSTOMERKEY || bill.individual_customer_id}</span>
                         <span className="font-bold">Contract No:</span> <span className="text-right">{relatedData?.contractNumber || 'N/A'}</span>
                         <span className="font-bold">Branch:</span> <span className="text-right">{relatedData?.branch?.name || relatedData?.branch_id || 'N/A'}</span>
                         <span className="font-bold">Sub-City:</span> <span className="text-right">{relatedData?.subCity || 'N/A'}</span>

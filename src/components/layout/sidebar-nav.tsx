@@ -50,7 +50,12 @@ function NavItemLink({ item, pathname }: { item: NavItem; pathname: string }) {
   const linkContent = (
     <>
       {IconComponent && <IconComponent className="h-5 w-5" />}
-      <span className={cn("truncate", currentDisplayState === 'collapsed' && !isMobile && 'sr-only')}>{item.title}</span>
+      <span 
+        className={cn("truncate text-black font-normal font-serif", currentDisplayState === 'collapsed' && !isMobile && 'sr-only')} 
+        style={{ fontFamily: '"Times New Roman", Times, serif' }}
+      >
+        {item.title}
+      </span>
       {item.label && currentDisplayState === 'expanded' && <span className="ml-auto text-xs text-muted-foreground">{item.label}</span>}
     </>
   );
@@ -115,7 +120,9 @@ export function SidebarNav({ items, className }: SidebarNavProps) {
                       const subLinkContent = (
                         <>
                           {SubIconComponent && <SubIconComponent className="h-4 w-4 mr-1.5 flex-shrink-0" />}
-                          {subItem.title}
+                          <span className="text-black font-normal font-serif" style={{ fontFamily: '"Times New Roman", Times, serif' }}>
+                            {subItem.title}
+                          </span>
                         </>
                       );
 

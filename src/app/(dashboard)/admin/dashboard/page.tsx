@@ -273,16 +273,26 @@ export default function AdminDashboardPage() {
       <h1 className="text-2xl md:text-3xl font-bold">Admin Dashboard</h1>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {/* Row 1: Key Performance Indicators */}
-        <Card className="bg-blue-50 border-blue-100 shadow-sm border-t-4 border-t-blue-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-bold text-blue-900 uppercase tracking-tight">Bills Status ({selectedMonth})</CardTitle>
-            <FileText className="h-5 w-5 text-blue-600" />
+        {/* Bills Status Card */}
+        <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <FileText className="h-48 w-48 text-blue-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bills Status ({selectedMonth})</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+              <FileText className="h-4 w-4" />
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-blue-700">{dynamicTotalBills.toLocaleString()} Bills</div>
-            <p className="text-xs text-blue-600/70 font-medium">{dynamicPaidBills} Paid / {dynamicUnpaidBills} Unpaid</p>
-            <div className="h-[150px] mt-4">
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">{dynamicTotalBills.toLocaleString()}</div>
+              <div className="text-lg font-bold text-slate-500 mb-1">Bills</div>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mt-2">
+              <span className="text-emerald-600">{dynamicPaidBills} Paid</span> <span className="mx-2 text-slate-300">|</span> <span className="text-rose-500">{dynamicUnpaidBills} Unpaid</span>
+            </p>
+            <div className="h-[100px] mt-6 relative flex items-center justify-center">
               {isClient && billsPaymentStatusData.some(d => d.value > 0) ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
                   <ResponsiveContainer>
@@ -293,120 +303,139 @@ export default function AdminDashboardPage() {
                         nameKey="name"
                         cx="50%"
                         cy="50%"
-                        innerRadius={40}
-                        outerRadius={60}
-                        paddingAngle={2}
+                        innerRadius={30}
+                        outerRadius={45}
+                        paddingAngle={4}
+                        stroke="none"
                       >
-                        {billsPaymentStatusData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}
+                        {billsPaymentStatusData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} className="drop-shadow-sm hover:opacity-80 transition-opacity" />))}
                       </Pie>
                       <Tooltip content={<ChartTooltipContent hideLabel />} />
-                      <Legend
-                        content={<ChartLegendContent className="text-sm font-bold gap-6" />}
-                        verticalAlign="bottom"
-                        height={40}
-                      />
                     </PieChartRecharts>
                   </ResponsiveContainer>
                 </ChartContainer>
               ) : (
-                <div className="flex h-full items-center justify-center text-xs text-blue-600/50 italic bg-white/40 rounded-lg">No bill data for this month.</div>
+                <div className="text-sm font-semibold text-blue-600/80 italic w-full text-center mt-6">No bill data for this month</div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-amber-50 border-amber-100 shadow-sm border-t-4 border-t-amber-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-bold text-amber-900 uppercase tracking-tight">Revenue Collection efficiency</CardTitle>
-            <BarChartIcon className="h-5 w-5 text-amber-600" />
+        {/* Revenue Collection Efficiency */}
+        <Card className="group shadow-sm hover:shadow-xl border border-amber-100/60 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <BarChartIcon className="h-48 w-48 text-amber-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Revenue Collection</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <BarChartIcon className="h-4 w-4" />
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-amber-700 mb-1">{revenueEfficiency.efficiency.toFixed(1)}%</div>
-            <p className="text-xs text-amber-600/70 font-medium mb-4">Collection Efficiency</p>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="mt-2 text-4xl lg:text-5xl font-black tracking-tight text-slate-800 mb-1 group-hover:text-amber-900 transition-colors">
+              {revenueEfficiency.efficiency.toFixed(1)}<span className="text-3xl text-amber-500/50">%</span>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mb-8">Collection Efficiency</p>
 
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              <div className="bg-white/60 p-2 rounded border border-amber-100">
-                <p className="text-[10px] uppercase font-bold text-slate-500">Total Billed</p>
-                <p className="text-sm font-bold text-amber-900">ETB {revenueEfficiency.billed.toLocaleString()}</p>
+            <div className="flex justify-between items-center mb-6 pt-2">
+              <div>
+                <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Total Billed</p>
+                <p className="text-base font-black text-slate-800"><span className="text-xs text-slate-400 mr-1">ETB</span>{revenueEfficiency.billed.toLocaleString()}</p>
               </div>
-              <div className="bg-white/60 p-2 rounded border border-emerald-100">
-                <p className="text-[10px] uppercase font-bold text-slate-500">Collected</p>
-                <p className="text-sm font-bold text-emerald-700">ETB {revenueEfficiency.collected.toLocaleString()}</p>
+              <div className="text-right">
+                <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Collected</p>
+                <p className="text-base font-black text-emerald-700"><span className="text-xs text-slate-400 mr-1">ETB</span>{revenueEfficiency.collected.toLocaleString()}</p>
               </div>
             </div>
 
-            <div className="h-[100px]">
+            <div className="h-[30px] flex items-center">
               {isClient && revenueEfficiency.billed > 0 ? (
-                <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
-                    <BarChart data={[
-                      { name: 'Billed', value: revenueEfficiency.billed, fill: 'hsl(var(--chart-2))' }, // Keeping chart-2/amber for consistency
-                      { name: 'Collected', value: revenueEfficiency.collected, fill: 'hsl(var(--chart-1))' } // Keeping chart-1/emerald
-                    ]} layout="vertical" margin={{ left: 0, right: 30 }} barCategoryGap={2}>
-                      <XAxis type="number" hide />
-                      <YAxis dataKey="name" type="category" width={60} tick={{ fontSize: 10, fill: '#78350f', fontWeight: 'bold' }} interval={0} />
-                      <Tooltip
-                        content={<ChartTooltipContent />}
-                        cursor={{ fill: 'transparent' }}
-                      />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24} label={{ position: 'right', fontSize: 10, fill: '#78350f', formatter: (val: number) => val.toLocaleString() }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartContainer>
+                <div className="w-full bg-amber-900/5 rounded-full h-3 overflow-hidden flex shadow-inner">
+                  <div className="bg-amber-400 h-full transition-all duration-1000 ease-out" style={{ width: `${revenueEfficiency.efficiency}%` }} />
+                </div>
               ) : (
-                <div className="flex h-full items-center justify-center text-xs text-amber-600/50 italic bg-white/40 rounded-lg">No revenue data available.</div>
+                <div className="text-sm font-semibold text-amber-600/60 italic w-full text-center mt-2">No revenue data.</div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-cyan-50 border-cyan-100 shadow-sm border-t-4 border-t-cyan-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-bold text-cyan-900 uppercase tracking-tight">Meter Reading Progress</CardTitle>
-            <Gauge className="h-5 w-5 text-cyan-600" />
+        {/* Meter Reading Progress */}
+        <Card className="group shadow-sm hover:shadow-xl border border-cyan-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Gauge className="h-48 w-48 text-cyan-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Reading Progress</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-cyan-100 flex items-center justify-center text-cyan-600">
+              <Gauge className="h-4 w-4" />
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-cyan-700">{readingProgress.percentage.toFixed(1)}%</div>
-            <p className="text-xs text-cyan-600/70 font-medium">{readingProgress.read} of {readingProgress.total} meters read</p>
-            <div className="h-[120px] mt-4 flex flex-col items-center justify-center space-y-4">
-              <div className="w-full bg-cyan-200/50 rounded-full h-4 overflow-hidden border border-cyan-300">
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="mt-2 text-4xl lg:text-5xl font-black tracking-tight text-slate-800 mb-1 group-hover:text-cyan-900 transition-colors">
+              {readingProgress.percentage.toFixed(1)}<span className="text-3xl text-cyan-500/50">%</span>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mb-8">
+              <span className="text-cyan-600 font-bold">{readingProgress.read}</span> of <span className="text-slate-500">{readingProgress.total}</span> meters read
+            </p>
+            
+            <div className="mt-4 pt-2">
+              <div className="w-full bg-cyan-900/5 rounded-full h-3 overflow-hidden shadow-inner relative mb-3">
                 <div
-                  className="bg-cyan-600 h-full transition-all duration-1000 ease-out"
+                  className="bg-cyan-500 h-full relative overflow-hidden transition-all duration-1000 ease-out"
                   style={{ width: `${readingProgress.percentage}%` }}
-                />
+                >
+                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.2)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.2)_50%,rgba(255,255,255,0.2)_75%,transparent_75%,transparent)] bg-[length:1rem_1rem] animate-[shimmer_1s_linear_infinite]" />
+                </div>
               </div>
-              <p className="text-[10px] text-cyan-600 font-bold uppercase tracking-widest italic animate-pulse">
-                {readingProgress.percentage === 100 ? "Sync Complete" : "Syncing in Progress..."}
-              </p>
+              <div className="text-[10px] text-cyan-700 font-bold uppercase tracking-widest italic flex items-center justify-center gap-2">
+                {readingProgress.percentage === 100 ? (
+                  <><div className="h-2 w-2 rounded-full bg-emerald-500" /> Sync Complete</>
+                ) : (
+                  <><div className="h-2 w-2 rounded-full bg-cyan-500 animate-pulse" /> Syncing in Progress...</>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Total Customers */}
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
+            <Users className="h-64 w-64 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Individual Customers</CardTitle>
+            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Users className="h-5 w-5" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-12 flex flex-col justify-between relative z-10">
+            <div>
+              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 group-hover:text-emerald-900 transition-colors">{dynamicTotalCustomerCount.toLocaleString()}</div>
+              <p className="text-base text-slate-600 font-semibold">Total active individual accounts</p>
             </div>
           </CardContent>
         </Card>
 
-        {/* Restore Original Row 1 Meters Stats */}
-        <Card className="bg-emerald-50 border-emerald-100 shadow-sm border-t-4 border-t-emerald-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-bold text-emerald-900 uppercase tracking-tight">Total Individual Customers</CardTitle>
-            <Users className="h-5 w-5 text-emerald-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-emerald-700">{dynamicTotalCustomerCount.toLocaleString()}</div>
-            <p className="text-xs text-emerald-600/70 font-medium">Total active individual accounts</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center bg-white/40 rounded-lg">
-              <Users className="h-16 w-16 text-emerald-600 opacity-20" />
+        {/* Total Bulk Meters */}
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
+            <Gauge className="h-64 w-64 text-purple-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Bulk Meters</CardTitle>
+            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+              <Gauge className="h-5 w-5" />
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-indigo-50 border-indigo-100 shadow-sm border-t-4 border-t-indigo-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-bold text-indigo-900 uppercase tracking-tight">Total Bulk Meters</CardTitle>
-            <Gauge className="h-5 w-5 text-indigo-600" />
           </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-indigo-700">{dynamicTotalBulkMeterCount.toLocaleString()}</div>
-            <p className="text-xs text-indigo-600/70 font-medium">Total registered bulk meters</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center bg-white/40 rounded-lg">
-              <Gauge className="h-16 w-16 text-indigo-600 opacity-20" />
+          <CardContent className="px-6 pb-12 flex flex-col justify-between relative z-10">
+            <div>
+              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 group-hover:text-purple-900 transition-colors">{dynamicTotalBulkMeterCount.toLocaleString()}</div>
+              <p className="text-base text-slate-600 font-semibold">Total registered bulk meters</p>
             </div>
           </CardContent>
         </Card>

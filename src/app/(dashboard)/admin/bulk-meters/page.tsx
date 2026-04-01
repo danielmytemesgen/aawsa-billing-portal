@@ -12,6 +12,8 @@ import type { BulkMeter } from "./bulk-meter-types";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "./bulk-meter-form-dialog";
 import { BulkMeterTable } from "./bulk-meter-table";
 import { BatchInvoiceDialog } from "./batch-invoice-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 import dynamic from 'next/dynamic';
 
 const BulkMeterMap = dynamic(() => import('@/components/maps/BulkMeterMap').then(mod => mod.BulkMeterMap), {
@@ -26,6 +28,8 @@ import {
   deleteBulkMeter as deleteBulkMeterFromStore,
   fetchBulkMetersPaginated,
   fetchBulkMetersSummary,
+  approveBulkMeter as approveBulkMeterInStore,
+  rejectBulkMeter as rejectBulkMeterInStore,
   getBranches,
   initializeBranches,
   subscribeToBranches,
@@ -107,8 +111,11 @@ export default function BulkMetersPage() {
     };
   }, [fetchSummaryStats]);
 
+  const userBranchId = currentUser?.branchId;
+  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
+
   const handleAddBulkMeter = () => {
-    setSelectedBulkMeter(null);
+    setSelectedBulkMeter(isHeadOffice ? null : { branchId: userBranchId } as any);
     setIsFormOpen(true);
   };
 
@@ -135,6 +142,38 @@ export default function BulkMetersPage() {
       setBulkMeterToDelete(null);
     }
     setIsDeleteDialogOpen(false);
+  };
+
+  const handleApproveMeter = async (meter: BulkMeter) => {
+    if (!currentUser) return;
+    try {
+      const result = await approveBulkMeterInStore(meter.customerKeyNumber, currentUser.id);
+      if (result.success) {
+        toast({ title: "Meter Approved", description: `${meter.name} is now Active.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchSummaryStats();
+      } else {
+        toast({ variant: "destructive", title: "Approval Failed", description: result.message || "Could not approve meter." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
+  };
+
+  const handleRejectMeter = async (meter: BulkMeter) => {
+    if (!currentUser) return;
+    try {
+      const result = await rejectBulkMeterInStore(meter.customerKeyNumber, currentUser.id);
+      if (result.success) {
+        toast({ title: "Meter Rejected", description: `${meter.name} has been marked as Rejected.` });
+        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchSummaryStats();
+      } else {
+        toast({ variant: "destructive", title: "Rejection Failed", description: result.message || "Could not reject meter." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
   };
 
   const handleSubmitBulkMeter = async (data: BulkMeterFormValues) => {
@@ -197,16 +236,19 @@ export default function BulkMetersPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="bg-gradient-to-br from-blue-50 to-white border-blue-100 shadow-sm transition-all hover:shadow-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Total Bulk Meters</p>
-                <p className="text-4xl font-extrabold text-slate-900">{summary.total}</p>
-              </div>
-              <div className="h-14 w-14 bg-blue-100/80 rounded-2xl flex items-center justify-center text-blue-600 rotate-3 group-hover:rotate-6 transition-transform">
-                <Gauge className="h-7 w-7" />
-              </div>
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Gauge className="h-48 w-48 text-purple-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Bulk Meters</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+              <Gauge className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-purple-900 transition-colors">{summary.total}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1"><Activity className="h-3 w-3 text-emerald-500" /> All established accounts</span>
@@ -214,40 +256,46 @@ export default function BulkMetersPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-emerald-50 to-white border-emerald-100 shadow-sm transition-all hover:shadow-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest bg-emerald-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Active Meters</p>
-                <p className="text-4xl font-extrabold text-slate-900">{summary.active}</p>
-              </div>
-              <div className="h-14 w-14 bg-emerald-100/80 rounded-2xl flex items-center justify-center text-emerald-600 -rotate-3 group-hover:rotate-0 transition-transform">
-                <CheckCircle2 className="h-7 w-7" />
-              </div>
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <CheckCircle2 className="h-48 w-48 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Active Meters</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{summary.active}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-              <span className="flex items-center gap-1 font-bold text-emerald-600">
+              <span className="flex items-center gap-1 font-bold text-emerald-600 whitespace-nowrap">
                 {Math.round((summary.active / (summary.total || 1)) * 100)}% 
               </span>
-              <span className="ml-1 italic">of total meters functional</span>
+              <span className="ml-1 italic whitespace-nowrap">of total meters functional</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-amber-50 to-white border-amber-100 shadow-sm transition-all hover:shadow-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-amber-700 uppercase tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Offline / Inactive</p>
-                <p className="text-4xl font-extrabold text-slate-900">{summary.inactive}</p>
-              </div>
-              <div className="h-14 w-14 bg-amber-100/80 rounded-2xl flex items-center justify-center text-amber-600 rotate-6 transition-transform">
-                <AlertCircle className="h-7 w-7" />
-              </div>
+        <Card className="group shadow-sm hover:shadow-xl border border-amber-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <AlertCircle className="h-48 w-48 text-amber-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Offline / Inactive</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <AlertCircle className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">{summary.inactive}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-              <span className="flex items-center gap-1 font-semibold text-amber-600">Action required</span>
-              <span className="ml-1 text-slate-400">for {summary.inactive} accounts</span>
+              <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Action required</span>
+              <span className="ml-1 text-slate-400 whitespace-nowrap">for {summary.inactive} accounts</span>
             </div>
           </CardContent>
         </Card>
@@ -317,29 +365,42 @@ export default function BulkMetersPage() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="p-0">
-            {isLoading ? (
-              <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
-                Loading bulk meters...
-              </div>
-            ) : bulkMeters.length === 0 && !searchTerm ? (
-              <div className="mt-4 p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
-                <Gauge className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                <h3 className="text-lg font-semibold">No Bulk Meters Found</h3>
-                <p className="text-muted-foreground mt-1">Click &quot;Add New&quot; to get started.</p>
-              </div>
-            ) : (
-              <BulkMeterTable
-                data={bulkMeters}
-                onEdit={handleEditBulkMeter}
+          <CardContent className="p-0 overflow-x-auto">
+            <div className="min-w-[1000px]">
+              {isLoading ? (
+                <div className="p-4">
+                  <TableSkeleton columns={8} rows={10} />
+                </div>
+              ) : bulkMeters.length === 0 ? (
+                <EmptyState 
+                  icon={Gauge} 
+                  title={searchTerm ? "No Results Found" : "No Bulk Meters Found"} 
+                  description={searchTerm ? "Try adjusting your search criteria." : "Click 'Add New Meter' to register the first bulk meter."} 
+                  className="m-4"
+                  action={
+                    (!searchTerm && hasPermission('bulk_meters_create')) ? (
+                      <Button onClick={handleAddBulkMeter} variant="outline">
+                        <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <BulkMeterTable
+                  data={bulkMeters}
+                  onEdit={handleEditBulkMeter}
                 onDelete={handleDeleteBulkMeter}
+                onApprove={handleApproveMeter}
+                onReject={handleRejectMeter}
                 branches={branches}
                 canEdit={hasPermission('bulk_meters_update')}
                 canDelete={hasPermission('bulk_meters_delete')}
+                canApprove={hasPermission('bulk_meters_approve')}
                 selectedMeters={selectedMeters}
                 onSelectionChange={setSelectedMeters}
               />
             )}
+            </div>
           </CardContent>
           <div className="bg-slate-50/50 border-t py-4 px-6">
             {totalCount > 0 && (
@@ -352,7 +413,7 @@ export default function BulkMetersPage() {
                   setRowsPerPage(value);
                   setPage(0);
                 }}
-                rowsPerPageOptions={[10, 25, 50, 100]}
+                rowsPerPageOptions={[5, 10, 25, 50, 100]}
               />
             )}
           </div>

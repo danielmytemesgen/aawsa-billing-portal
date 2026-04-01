@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileText, UploadCloud, Info, FileSpreadsheet, AlertCircle } from "lucide-react";
@@ -10,19 +11,49 @@ import { IndividualCustomerDataEntryForm } from "./individual-customer-data-entr
 import { CsvUploadSection } from "./csv-upload-section";
 import {
   bulkMeterDataEntrySchema,
+  baseBulkMeterDataSchema,
   individualCustomerDataEntrySchema,
+  baseIndividualCustomerDataSchema,
   type BulkMeterDataEntryFormValues,
   type IndividualCustomerDataEntryFormValues
 } from "./customer-data-entry-types";
-import { addBulkMeter, addCustomer, initializeBulkMeters, initializeCustomers } from "@/lib/data-store";
+import { addBulkMeter, addCustomer, initializeBulkMeters, initializeCustomers, getBulkMeters, getCustomers } from "@/lib/data-store";
+import { generateBulkMeterKeys, generateCustomerKeys } from "@/lib/utils";
 import type { BulkMeter, BulkMeterStatus } from "../bulk-meters/bulk-meter-types";
 import type { IndividualCustomer, IndividualCustomerStatus } from "../individual-customers/individual-customer-types";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import type { StaffMember } from "../staff-management/staff-types";
 
-const bulkMeterCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "branchId"];
-const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId"];
+const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "zCoordinate", "branchId", "routeKey", "ordinal"];
+const individualCustomerCsvHeaders = ["name", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId", "xCoordinate", "yCoordinate", "zCoordinate"];
+
+// Schema for CSV upload that allows auto-generated fields to be optional
+const bulkMeterCsvSchema = baseBulkMeterDataSchema.extend({
+  customerKeyNumber: z.string().optional(),
+  instKey: z.string().optional(),
+}).refine((data: any) => {
+  if (data.currentReading !== undefined && data.previousReading !== undefined) {
+    return data.currentReading >= data.previousReading;
+  }
+  return true;
+}, {
+  message: "Current Reading must be greater than or equal to Previous Reading.",
+  path: ["currentReading"],
+});
+
+const individualCustomerCsvSchema = baseIndividualCustomerDataSchema.extend({
+  customerKeyNumber: z.string().optional(),
+  instKey: z.string().optional(),
+}).refine((data: any) => {
+  if (data.currentReading !== undefined && data.previousReading !== undefined) {
+    return data.currentReading >= data.previousReading;
+  }
+  return true;
+}, {
+  message: "Current Reading must be greater than or equal to Previous Reading.",
+  path: ["currentReading"],
+});
 
 
 export default function AdminDataEntryPage() {
@@ -40,18 +71,38 @@ export default function AdminDataEntryPage() {
 
   const handleBulkMeterCsvUpload = async (data: BulkMeterDataEntryFormValues) => {
     if (!currentUser) return { success: false, message: "User not authenticated" };
+    
+    // Generate keys if missing
+    let finalData = { ...data };
+    if (!data.customerKeyNumber || !data.instKey) {
+      const existingMeters = getBulkMeters();
+      const generated = generateBulkMeterKeys(existingMeters);
+      finalData.customerKeyNumber = data.customerKeyNumber || generated.customerKey;
+      finalData.instKey = data.instKey || generated.instKey;
+    }
+
     // Admins can upload directly as 'Active', others are 'Pending Approval'
     const status: BulkMeterStatus = 'Active';
-    const bulkMeterDataWithStatus = { ...data, status };
+    const bulkMeterDataWithStatus = { ...finalData, status } as any;
     return await addBulkMeter(bulkMeterDataWithStatus);
   };
 
   const handleIndividualCustomerCsvUpload = async (data: IndividualCustomerDataEntryFormValues) => {
     if (!currentUser) return { success: false, message: "User not authenticated" };
+    
+    // Generate keys if missing
+    let finalData = { ...data };
+    if (!data.customerKeyNumber || !data.instKey) {
+      const existingCustomers = getCustomers();
+      const generated = generateCustomerKeys(existingCustomers);
+      finalData.customerKeyNumber = data.customerKeyNumber || generated.customerKey;
+      finalData.instKey = data.instKey || generated.instKey;
+    }
+
     // Admins can upload directly as 'Active', others are 'Pending Approval'
     const status: IndividualCustomerStatus = 'Active';
     const customerDataForStore = {
-      ...data,
+      ...finalData,
       status,
       paymentStatus: 'Unpaid', // Default payment status
     } as Omit<IndividualCustomer, 'created_at' | 'updated_at' | 'calculatedBill' | 'approved_by' | 'approved_at'>;
@@ -195,12 +246,12 @@ export default function AdminDataEntryPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <CsvUploadSection
-                  entryType="bulk"
-                  schema={bulkMeterDataEntrySchema}
-                  addRecordFunction={handleBulkMeterCsvUpload}
-                  expectedHeaders={bulkMeterCsvHeaders}
-                />
+                  <CsvUploadSection 
+                    entryType="bulk"
+                    schema={bulkMeterCsvSchema}
+                    addRecordFunction={handleBulkMeterCsvUpload}
+                    expectedHeaders={bulkMeterCsvHeaders}
+                  />
               </CardContent>
             </Card>
 
@@ -230,7 +281,7 @@ export default function AdminDataEntryPage() {
               <CardContent>
                 <CsvUploadSection
                   entryType="individual"
-                  schema={individualCustomerDataEntrySchema}
+                  schema={individualCustomerCsvSchema}
                   addRecordFunction={handleIndividualCustomerCsvUpload}
                   expectedHeaders={individualCustomerCsvHeaders}
                 />

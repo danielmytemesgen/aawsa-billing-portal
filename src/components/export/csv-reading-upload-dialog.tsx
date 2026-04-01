@@ -31,18 +31,19 @@ interface CsvReadingUploadDialogProps {
 }
 
 const readingCsvHeaders = [
-  "ROUND_KEY", "WALK_ORDER", "INST_KEY", "INST_TYPE_CODE", "CUST_KEY", "CUST_NAME",
+  "READ_PROC_ID", "ROUND_KEY", "WALK_ORDER", "INST_KEY", "INST_TYPE_CODE", "CUST_KEY", "CUST_NAME",
   "DISPLAY_ADDRESS", "BRANCH_NAME", "METER_KEY", "PREVIOUS_READING", "LAST_READING_DATE",
   "NUMBER_OF_DIALS", "METER_DIAMETER", "SHADOW_PCNT", "MIN_USAGE_QTY", "MIN_USAGE_AMOUNT",
   "CHARGE_GROUP", "USAGE_CODE", "SELL_CODE", "FREQUENCY", "SERVICE_CODE", "SHADOW_USAGE",
   "ESTIMATED_READING", "ESTIMATED_READING_LOW", "ESTIMATED_READING_HIGH", "ESTIMATED_READING_IND",
   "METER_READING", "READING_DATE", "METER_READER_CODE", "FAULT_CODE", "SERVICE_BILLED_UP_TO_DATE",
-  "METER_MULTIPLY_FACTOR", "LATITUDE", "LONGITUDE", "ALTITUDE", "PHONE_NUMBER"
+  "METER_MULTIPLY_FACTOR"
 ];
 const CSV_SPLIT_REGEX = /,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/;
 
 // Schema now validates for YYYY-MM format.
 const readingCsvRowSchema = z.object({
+  READ_PROC_ID: z.string().optional(),
   ROUND_KEY: z.string().optional(),
   WALK_ORDER: z.coerce.number().optional(),
   INST_KEY: z.string().optional(),
@@ -74,11 +75,7 @@ const readingCsvRowSchema = z.object({
   METER_READER_CODE: z.string().optional(),
   FAULT_CODE: z.string().optional(),
   SERVICE_BILLED_UP_TO_DATE: z.string().optional(),
-  METER_MULTIPLY_FACTOR: z.coerce.number().optional(),
-  LATITUDE: z.coerce.number().optional(),
-  LONGITUDE: z.coerce.number().optional(),
-  ALTITUDE: z.coerce.number().optional(),
-  PHONE_NUMBER: z.string().optional(),
+  METER_MULTIPLY_FACTOR: z.coerce.number().optional()
 });
 
 
@@ -109,12 +106,15 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
   const handleCsvFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
     if (selectedFile) {
-      if (selectedFile.type === "text/csv" || selectedFile.name.endsWith(".csv")) {
+      const isCsv = selectedFile.type === "text/csv" || selectedFile.name.toLowerCase().endsWith(".csv");
+      const isDat = selectedFile.name.toLowerCase().endsWith(".dat");
+      
+      if (isCsv || isDat) {
         setCsvFile(selectedFile);
         setCsvProcessingErrors([]);
         setCsvSuccessCount(0);
       } else {
-        toast({ variant: "destructive", title: "Invalid File Type", description: "Please upload a valid .csv file." });
+        toast({ variant: "destructive", title: "Invalid File Type", description: "Please upload a valid .csv or .dat file." });
         resetState();
       }
     }
@@ -131,25 +131,39 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     reader.onload = async (e) => {
       const text = e.target?.result as string;
       const lines = text.split(/\r\n|\n/).filter(line => line.trim() !== "");
-      if (lines.length < 2) {
-        localErrors.push("CSV must contain a header and at least one data row.");
+      if (lines.length === 0) {
+        localErrors.push("File is empty.");
         finalizeProcessing();
         return;
       }
 
-      const headerLine = lines[0].split(CSV_SPLIT_REGEX).map(h => h.trim().replace(/^\"|\"$/g, ''));
-      const requiredHeaders = readingCsvHeaders;
-      const missingHeaders = requiredHeaders.filter(rh => !headerLine.includes(rh));
+      const firstLineValues = lines[0].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
+      const requiredHeadersLower = readingCsvHeaders.map((h: string) => h.toLowerCase());
+      
+      // Check if first line is a header by comparing with expected set (case-insensitive)
+      const isHeaderRow = firstLineValues.every(v => requiredHeadersLower.includes(v.toLowerCase())) && firstLineValues.length >= readingCsvHeaders.length - 10;
+      
+      let dataRows = lines;
+      let headerMapping: Record<string, number> = {};
 
-      if (missingHeaders.length > 0) {
-        localErrors.push(`Invalid CSV headers. Missing: ${missingHeaders.join(", ")}`);
-        finalizeProcessing();
-        return;
+      if (isHeaderRow) {
+        // Map required headers to the index they appear at in the CSV
+        readingCsvHeaders.forEach((req: string) => {
+          const index = firstLineValues.findIndex(val => val.toLowerCase() === req.toLowerCase());
+          if (index !== -1) headerMapping[req] = index;
+        });
+        dataRows = lines.slice(1);
+      } else {
+        // If no header, assume standard order
+        readingCsvHeaders.forEach((req: string, idx: number) => { headerMapping[req] = idx; });
       }
 
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
-        const rowData = Object.fromEntries(headerLine.map((header, index) => [header, values[index]]));
+      for (let i = 0; i < dataRows.length; i++) {
+        const values = dataRows[i].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
+        const rowData = Object.fromEntries(
+          Object.entries(headerMapping).map(([header, index]) => [header, values[index]])
+        );
+
 
         try {
           const validatedRow = readingCsvRowSchema.parse(rowData);
@@ -244,11 +258,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
             meterReaderCode: validatedRow.METER_READER_CODE,
             faultCode: validatedRow.FAULT_CODE,
             serviceBilledUpToDate: parseDateHelper(validatedRow.SERVICE_BILLED_UP_TO_DATE),
-            meterMultiplyFactor: validatedRow.METER_MULTIPLY_FACTOR,
-            latitude: validatedRow.LATITUDE,
-            longitude: validatedRow.LONGITUDE,
-            altitude: validatedRow.ALTITUDE,
-            phoneNumber: validatedRow.PHONE_NUMBER,
+            meterMultiplyFactor: validatedRow.METER_MULTIPLY_FACTOR
           };
 
           let result;

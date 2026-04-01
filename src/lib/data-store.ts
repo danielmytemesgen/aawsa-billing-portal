@@ -16,6 +16,7 @@ import {
   deleteBranchAction,
   getAllCustomersAction,
   getCustomersCountAction,
+  getCustomersSummaryAction,
   createCustomerAction,
   updateCustomerAction,
   deleteCustomerAction,
@@ -240,7 +241,7 @@ export interface DomainIndividualCustomerReading {
   meterMultiplyFactor?: number;
   latitude?: number;
   longitude?: number;
-  altitude?: number;
+  zCoordinate?: number;
   phoneNumber?: string;
   isSuccess?: boolean;
   error?: string;
@@ -300,7 +301,7 @@ export interface DomainBulkMeterReading {
   meterMultiplyFactor?: number;
   latitude?: number;
   longitude?: number;
-  altitude?: number;
+  zCoordinate?: number;
   phoneNumber?: string;
   isSuccess?: boolean;
   error?: string;
@@ -527,6 +528,7 @@ const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<Do
     approved_at: dbCustomer.approved_at,
     xCoordinate: dbCustomer.x_coordinate ? Number(dbCustomer.x_coordinate) : undefined,
     yCoordinate: dbCustomer.y_coordinate ? Number(dbCustomer.y_coordinate) : undefined,
+    zCoordinate: dbCustomer.z_coordinate ? Number(dbCustomer.z_coordinate) : undefined,
   };
 };
 
@@ -611,6 +613,7 @@ const mapDomainCustomerToInsert = async (
     calculatedBill: bill,
     x_coordinate: customer.xCoordinate,
     y_coordinate: customer.yCoordinate,
+    z_coordinate: customer.zCoordinate,
   };
 };
 
@@ -640,6 +643,7 @@ const mapDomainCustomerToUpdate = async (customerWithUpdates: DomainIndividualCu
     approved_at: customerWithUpdates.approved_at,
     x_coordinate: customerWithUpdates.xCoordinate,
     y_coordinate: customerWithUpdates.yCoordinate,
+    z_coordinate: customerWithUpdates.zCoordinate,
   };
 
   const rawUsage = customerWithUpdates.currentReading - customerWithUpdates.previousReading;
@@ -683,6 +687,7 @@ const mapDbBulkMeterToDomain = async (dbBulkMeter: BulkMeterRow): Promise<BulkMe
     NUMBER_OF_DIALS: dbBulkMeter.NUMBER_OF_DIALS, // New Mapping
     branchId: dbBulkMeter.branch_id || undefined,
     routeKey: dbBulkMeter.ROUTE_KEY || undefined,
+    ordinal: dbBulkMeter.ordinal !== null && dbBulkMeter.ordinal !== undefined ? Number(dbBulkMeter.ordinal) : undefined,
     status: dbBulkMeter.status,
     paymentStatus: dbBulkMeter.paymentStatus,
     chargeGroup: dbBulkMeter.charge_group,
@@ -694,8 +699,9 @@ const mapDbBulkMeterToDomain = async (dbBulkMeter: BulkMeterRow): Promise<BulkMe
     outStandingbill: dbBulkMeter.outStandingbill ? Number(dbBulkMeter.outStandingbill) : 0,
     xCoordinate: dbBulkMeter.x_coordinate ? Number(dbBulkMeter.x_coordinate) : undefined,
     yCoordinate: dbBulkMeter.y_coordinate ? Number(dbBulkMeter.y_coordinate) : undefined,
-    approved_by: dbBulkMeter.approved_by,
-    approved_at: dbBulkMeter.approved_at,
+    zCoordinate: dbBulkMeter.z_coordinate ? Number(dbBulkMeter.z_coordinate) : undefined,
+    approved_by: dbBulkMeter.approvedBy,
+    approved_at: dbBulkMeter.approvedAt,
     location: dbBulkMeter.subCity,
   };
 };
@@ -733,6 +739,7 @@ const mapDomainBulkMeterToInsert = async (bm: Partial<BulkMeter>): Promise<BulkM
     NUMBER_OF_DIALS: bm.NUMBER_OF_DIALS, // New Mapping
     branch_id: bm.branchId,
     ROUTE_KEY: bm.routeKey || null,
+    ordinal: bm.ordinal || null,
     phoneNumber: bm.phoneNumber,
     status: bm.status || 'Active',
     // tolerate an extra 'Pending' status coming from older data; DB types may allow it
@@ -746,6 +753,7 @@ const mapDomainBulkMeterToInsert = async (bm: Partial<BulkMeter>): Promise<BulkM
     outStandingbill: bm.outStandingbill ? Number(bm.outStandingbill) : 0,
     x_coordinate: bm.xCoordinate,
     y_coordinate: bm.yCoordinate,
+    z_coordinate: bm.zCoordinate,
   };
 };
 
@@ -767,6 +775,7 @@ const mapDomainBulkMeterToUpdate = async (bulkMeterWithUpdates: BulkMeter): Prom
     NUMBER_OF_DIALS: bulkMeterWithUpdates.NUMBER_OF_DIALS, // New Mapping
     branch_id: bulkMeterWithUpdates.branchId,
     ROUTE_KEY: bulkMeterWithUpdates.routeKey || null,
+    ordinal: bulkMeterWithUpdates.ordinal || null,
     phoneNumber: bulkMeterWithUpdates.phoneNumber,
     status: bulkMeterWithUpdates.status,
     paymentStatus: (bulkMeterWithUpdates.paymentStatus as any),
@@ -775,6 +784,7 @@ const mapDomainBulkMeterToUpdate = async (bulkMeterWithUpdates: BulkMeter): Prom
     outStandingbill: Number(bulkMeterWithUpdates.outStandingbill),
     x_coordinate: bulkMeterWithUpdates.xCoordinate,
     y_coordinate: bulkMeterWithUpdates.yCoordinate,
+    z_coordinate: bulkMeterWithUpdates.zCoordinate,
     approved_by: bulkMeterWithUpdates.approved_by,
     approved_at: bulkMeterWithUpdates.approved_at,
   };
@@ -1011,7 +1021,7 @@ const mapDbIndividualReadingToDomain = (dbReading: IndividualCustomerReading): D
     meterMultiplyFactor: Number(dbReading.METER_MULTIPLY_FACTOR),
     latitude: Number(dbReading.LATITUDE),
     longitude: Number(dbReading.LONGITUDE),
-    altitude: Number(dbReading.ALTITUDE),
+    zCoordinate: Number(dbReading.ALTITUDE),
     phoneNumber: dbReading.PHONE_NUMBER,
     isSuccess: dbReading.isSuccess,
     error: dbReading.error,
@@ -1095,7 +1105,7 @@ const mapDomainIndividualReadingToDb = (mr: Partial<DomainIndividualCustomerRead
   if (mr.meterMultiplyFactor !== undefined) payload.METER_MULTIPLY_FACTOR = mr.meterMultiplyFactor;
   if (mr.latitude !== undefined) payload.LATITUDE = mr.latitude;
   if (mr.longitude !== undefined) payload.LONGITUDE = mr.longitude;
-  if (mr.altitude !== undefined) payload.ALTITUDE = mr.altitude;
+  if (mr.zCoordinate !== undefined) payload.ALTITUDE = mr.zCoordinate;
   if (mr.phoneNumber !== undefined) payload.PHONE_NUMBER = mr.phoneNumber;
   if (mr.isSuccess !== undefined) payload.isSuccess = mr.isSuccess;
   if (mr.error !== undefined) payload.error = mr.error;
@@ -1155,7 +1165,7 @@ const mapDbBulkReadingToDomain = (dbReading: BulkMeterReading): DomainBulkMeterR
     meterMultiplyFactor: Number(dbReading.METER_MULTIPLY_FACTOR),
     latitude: Number(dbReading.LATITUDE),
     longitude: Number(dbReading.LONGITUDE),
-    altitude: Number(dbReading.ALTITUDE),
+    zCoordinate: Number(dbReading.ALTITUDE),
     phoneNumber: dbReading.PHONE_NUMBER,
     isSuccess: dbReading.isSuccess,
     error: dbReading.error,
@@ -1214,7 +1224,7 @@ const mapDomainBulkReadingToDb = (mr: Partial<DomainBulkMeterReading>): Partial<
   if (mr.meterMultiplyFactor !== undefined) payload.METER_MULTIPLY_FACTOR = mr.meterMultiplyFactor;
   if (mr.latitude !== undefined) payload.LATITUDE = mr.latitude;
   if (mr.longitude !== undefined) payload.LONGITUDE = mr.longitude;
-  if (mr.altitude !== undefined) payload.ALTITUDE = mr.altitude;
+  if (mr.zCoordinate !== undefined) payload.ALTITUDE = mr.zCoordinate;
   if (mr.phoneNumber !== undefined) payload.PHONE_NUMBER = mr.phoneNumber;
   if (mr.isSuccess !== undefined) payload.isSuccess = mr.isSuccess;
   if (mr.error !== undefined) payload.error = mr.error;
@@ -1592,8 +1602,8 @@ export const initializeBulkMeters = async (force: boolean = false, options?: { l
 };
 
 export const fetchCustomersPaginated = async (limit: number, offset: number, searchTerm?: string) => {
-  const { data, error } = await getAllCustomersAction({ limit, offset, searchTerm, excludePending: true });
-  const { data: count, error: countError } = await getCustomersCountAction(searchTerm, true);
+  const { data, error } = await getAllCustomersAction({ limit, offset, searchTerm, excludePending: false });
+  const { data: count, error: countError } = await getCustomersCountAction(searchTerm, false);
   return { 
     customers: data ? await Promise.all(data.map(mapDbCustomerToDomain)) : [],
     totalCount: count || 0,
@@ -1601,9 +1611,14 @@ export const fetchCustomersPaginated = async (limit: number, offset: number, sea
   };
 };
 
+export const fetchCustomersSummary = async () => {
+  const { data, error } = await getCustomersSummaryAction();
+  return { data, error };
+};
+
 export const fetchBulkMetersPaginated = async (limit: number, offset: number, searchTerm?: string) => {
-  const { data, error } = await getAllBulkMetersAction({ limit, offset, searchTerm, excludePending: true });
-  const { data: count, error: countError } = await getBulkMetersCountAction(searchTerm, true);
+  const { data, error } = await getAllBulkMetersAction({ limit, offset, searchTerm, excludePending: false });
+  const { data: count, error: countError } = await getBulkMetersCountAction(searchTerm, false);
   return { 
     bulkMeters: data ? await Promise.all(data.map(mapDbBulkMeterToDomain)) : [],
     totalCount: count || 0,
@@ -2070,6 +2085,11 @@ export const updateStaffMember = async (email: string, updatedStaffData: Partial
   }
 
   const staffUpdatePayload = mapDomainStaffToUpdate(staffUpdateDataWithRoleId);
+  
+  if (Object.keys(staffUpdatePayload).length === 0) {
+    return { success: true };
+  }
+
   const { data: updatedDbStaff, error } = await updateStaffMemberAction(email, staffUpdatePayload);
 
   if (updatedDbStaff && !error) {
@@ -2218,7 +2238,7 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     currentReading: Number(newDbReading.METER_READING), // New Schema
     month: newDbReading.READING_DATE
       ? (newDbReading.READING_DATE instanceof Date ? format(newDbReading.READING_DATE, 'yyyy-MM') : String(newDbReading.READING_DATE).substring(0, 7))
-      : undefined
+      : (bulkMeter.month || "")
   });
 
   if (!updateResult.success) {
@@ -2932,6 +2952,19 @@ export const useBulkMeters = () => {
     initializeBulkMeters();
     return () => {
       bulkMeterListeners.delete(listener);
+    };
+  }, []);
+  return data;
+};
+
+export const useRoles = () => {
+  const [data, setData] = useState(roles);
+  useEffect(() => {
+    const listener = (newData: DomainRole[]) => setData(newData);
+    roleListeners.add(listener);
+    initializeRoles();
+    return () => {
+      roleListeners.delete(listener);
     };
   }, []);
   return data;

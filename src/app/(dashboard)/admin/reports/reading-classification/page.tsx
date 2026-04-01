@@ -307,113 +307,97 @@ export default function ReadingClassificationPage() {
     const routes = Array.from(new Set(readings.map(r => r.route))).sort();
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
-            <ReadingDetailsDialog 
-                open={isDetailsOpen} 
-                onOpenChange={setIsDetailsOpen} 
-                reading={selectedReading} 
-            />
+    <div className="space-y-6 pb-10">
+      <ReadingDetailsDialog 
+        open={isDetailsOpen} 
+        onOpenChange={setIsDetailsOpen} 
+        reading={selectedReading} 
+      />
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Reading Analytics Report</h1>
-                    <p className="text-muted-foreground mt-1">Analyze and export reading classifications across branches.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={fetchData} disabled={isLoading}>
-                        <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
-                        Refresh
-                    </Button>
-                    <Button onClick={handleExport} className="bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all">
-                        <Download className="h-4 w-4 mr-2" />
-                        Export to Excel
-                    </Button>
-                </div>
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-800">Reading Analytics Report</h1>
+          <p className="text-muted-foreground mt-1 text-base">Analyze reading classifications and detect anomalies across branches.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={fetchData} disabled={isLoading} className="h-11 rounded-xl bg-white border-slate-200">
+            <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
+            Refresh
+          </Button>
+          <Button onClick={handleExport} className="h-11 rounded-xl bg-slate-800 hover:bg-slate-900 text-white shadow-sm transition-all px-5">
+            <Download className="h-4 w-4 mr-2" />
+            Export to Excel
+          </Button>
+        </div>
+      </div>
+
+      <Card className="shadow-md border-slate-200/60 overflow-hidden rounded-3xl">
+        <CardHeader className="bg-slate-50/50 border-b pb-6 pt-6 px-6">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            <div className="flex-1 w-full max-w-md relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search key, name or reader..."
+                className="pl-10 h-11 bg-white rounded-xl border-slate-200"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
+            
+            <div className="flex flex-wrap items-center gap-3">
+              <Select value={selectedCategory} onValueChange={(v) => setSelectedCategory(v as any)}>
+                <SelectTrigger className="w-[150px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">All Categories</SelectItem>
+                  <SelectItem value="Increase">Increase</SelectItem>
+                  <SelectItem value="Decrease">Decrease</SelectItem>
+                  <SelectItem value="Zero">Zero</SelectItem>
+                  <SelectItem value="Fault">Fault/OVF</SelectItem>
+                </SelectContent>
+              </Select>
 
-            <Card className="border-none shadow-md bg-white/50 backdrop-blur-sm">
-                <CardHeader className="pb-3 border-b">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                        <div className="flex-1 max-w-sm relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search key, name or reader..."
-                                className="pl-10"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3">
-                            <div className="flex items-center gap-2">
-                                <Filter className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm font-medium">Filters:</span>
-                            </div>
+              <Select value={selectedFaultCode} onValueChange={setSelectedFaultCode}>
+                <SelectTrigger className="w-[150px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Fault Code" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">All Faults</SelectItem>
+                  {getAllFaultCodes().map(fc => (
+                    <SelectItem key={fc.code} value={fc.code}>
+                      <span className="font-bold mr-2">{fc.code}</span> - {fc.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-                            <Select value={selectedCategory} onValueChange={(v) => setSelectedCategory(v as any)}>
-                                <SelectTrigger className="w-[140px] h-9">
-                                    <SelectValue placeholder="Category" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Categories</SelectItem>
-                                    <SelectItem value="Increase">Increase</SelectItem>
-                                    <SelectItem value="Decrease">Decrease</SelectItem>
-                                    <SelectItem value="Zero">Zero</SelectItem>
-                                    <SelectItem value="Fault">Fault/OVF</SelectItem>
-                                </SelectContent>
-                            </Select>
+              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                <SelectTrigger className="w-[150px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Month" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">All Months</SelectItem>
+                  {months.map(m => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-                            <Select value={selectedFaultCode} onValueChange={setSelectedFaultCode}>
-                                <SelectTrigger className="w-[140px] h-9">
-                                    <SelectValue placeholder="Fault Code" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Faults</SelectItem>
-                                    {getAllFaultCodes().map(fc => (
-                                        <SelectItem key={fc.code} value={fc.code}>
-                                            <span className="font-bold mr-2">{fc.code}</span> - {fc.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-
-                            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                                <SelectTrigger className="w-[140px] h-9">
-                                    <SelectValue placeholder="Month" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Months</SelectItem>
-                                    {months.map(m => (
-                                        <SelectItem key={m} value={m}>{m}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-
-                            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                                <SelectTrigger className="w-[160px] h-9">
-                                    <SelectValue placeholder="Branch" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Branches</SelectItem>
-                                    {branches.map(b => (
-                                        <SelectItem key={b} value={b}>{b}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-
-                            <Select value={selectedRoute} onValueChange={setSelectedRoute}>
-                                <SelectTrigger className="w-[140px] h-9">
-                                    <SelectValue placeholder="Route" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Routes</SelectItem>
-                                    {routes.map(rt => (
-                                        <SelectItem key={rt} value={rt}>{rt}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
-                </CardHeader>
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-[160px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Branch" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {branches.map(b => (
+                    <SelectItem key={b} value={b}>{b}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
                 <CardContent className="p-0 text-primary">
                     <div className="overflow-x-auto">
                         <Table>

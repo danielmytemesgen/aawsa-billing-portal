@@ -1017,7 +1017,7 @@ export default function BulkMeterDetailsPage() {
                   setReadingHistoryRowsPerPage(value);
                   setReadingHistoryPage(0);
                 }}
-                rowsPerPageOptions={[5, 10, 25]}
+                rowsPerPageOptions={[5, 10, 25, 50, 100]}
               />
             )}
           </Card>
@@ -1172,7 +1172,7 @@ export default function BulkMeterDetailsPage() {
                   setBillingHistoryRowsPerPage(value);
                   setBillingHistoryPage(0);
                 }}
-                rowsPerPageOptions={[5, 10, 25]}
+                rowsPerPageOptions={[5, 10, 25, 50, 100]}
               />
             )}
           </Card>
@@ -1297,7 +1297,7 @@ export default function BulkMeterDetailsPage() {
                   setCustomerRowsPerPage(value);
                   setCustomerPage(0);
                 }}
-                rowsPerPageOptions={[5, 10, 15, 25]}
+                rowsPerPageOptions={[5, 10, 25, 50, 100]}
               />
             )}
           </Card>

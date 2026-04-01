@@ -12,11 +12,11 @@ function getPool() {
   if (pool) return pool;
 
   const params = {
-    host: process.env.POSTGRES_HOST || '127.0.0.1',
-    user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || '',
-    database: process.env.POSTGRES_DB || 'aawsa_billing',
-    port: Number(process.env.POSTGRES_PORT || 5432),
+    host: env.POSTGRES_HOST,
+    user: env.POSTGRES_USER,
+    password: env.POSTGRES_PASSWORD,
+    database: env.POSTGRES_DB,
+    port: env.POSTGRES_PORT,
   };
 
   pool = new Pool({

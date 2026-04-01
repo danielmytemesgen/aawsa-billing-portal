@@ -32,6 +32,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
 import { customerTypes, sewerageConnections, paymentStatuses } from "@/lib/billing-calculations";
 import type { Branch } from "../branches/branch-types";
+import { Globe } from "lucide-react";
 
 const individualCustomerFormObjectSchema = baseIndividualCustomerDataSchema.extend({
   status: z.enum(individualCustomerStatuses, { errorMap: () => ({ message: "Please select a valid status." }) }),
@@ -58,6 +59,17 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
+  const [currentUser, setCurrentUser] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      setCurrentUser(JSON.parse(userJson));
+    }
+  }, []);
+
+  const userBranchId = currentUser?.branchId;
+  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
 
   const form = useForm<IndividualCustomerFormValues>({
     resolver: zodResolver(individualCustomerFormObjectSchema),
@@ -81,6 +93,9 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
       branchId: undefined,
       status: "Active",
       paymentStatus: "Unpaid",
+      xCoordinate: undefined,
+      yCoordinate: undefined,
+      zCoordinate: undefined,
     },
   });
 
@@ -146,6 +161,9 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
         branchId: defaultValues.branchId || undefined,
         status: defaultValues.status || "Active",
         paymentStatus: defaultValues.paymentStatus || "Unpaid",
+        xCoordinate: defaultValues.xCoordinate ?? undefined,
+        yCoordinate: defaultValues.yCoordinate ?? undefined,
+        zCoordinate: defaultValues.zCoordinate ?? undefined,
       });
     } else {
       form.reset({
@@ -170,6 +188,9 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
         branchId: undefined,
         status: "Active",
         paymentStatus: "Unpaid",
+        xCoordinate: undefined,
+        yCoordinate: undefined,
+        zCoordinate: undefined,
       });
     }
   }, [defaultValues, form, open, staffBranchName]);
@@ -197,6 +218,16 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
     }
   };
 
+  const xValue = form.watch("xCoordinate");
+  const yValue = form.watch("yCoordinate");
+  const hasCoordinates = !!(xValue && yValue);
+
+  const openExternalMap = () => {
+    if (hasCoordinates) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${xValue},${yValue}`, '_blank');
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
@@ -209,11 +240,16 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 py-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {staffBranchName ? (
+              {!isHeadOffice && userBranchId ? (
                 <FormItem>
                   <FormLabel>Branch</FormLabel>
                   <FormControl>
-                    <Input value={staffBranchName} readOnly disabled className="bg-muted/50" />
+                    <Input 
+                      value={availableBranches.find(b => b.id === userBranchId)?.name || "Current Branch"} 
+                      readOnly 
+                      disabled 
+                      className="bg-slate-50 border-slate-200 text-slate-500 font-medium cursor-not-allowed" 
+                    />
                   </FormControl>
                 </FormItem>
               ) : (
@@ -249,6 +285,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
                   )}
                 />
               )}
+
               <FormField
                 control={form.control}
                 name="assignedBulkMeterId"
@@ -389,6 +426,29 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
               />
 
               <FormField control={form.control} name="sewerageConnection" render={({ field }) => (<FormItem><FormLabel>Sewerage Conn. <span className="text-destructive">*</span></FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select connection" /></SelectTrigger></FormControl><SelectContent>{sewerageConnections.map(conn => (conn !== undefined && String(conn).trim() !== "" ? <SelectItem key={String(conn)} value={String(conn)}>{conn}</SelectItem> : null))}</SelectContent></Select><FormMessage /></FormItem>)} />
+              <FormField
+                control={form.control}
+                name="xCoordinate"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center justify-between">
+                      <FormLabel>X Coordinate</FormLabel>
+                      {hasCoordinates && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 text-[10px] text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 rounded-full flex items-center gap-1 font-bold uppercase tracking-wider transition-all"
+                          onClick={openExternalMap}
+                        >
+                          <Globe className="h-3 w-3" />
+                          Map
+                        </Button>
+                      )}
+                    </div>
+                    <FormControl><Input type="number" step="any" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="yCoordinate" render={({ field }) => (<FormItem><FormLabel>Y Coordinate</FormLabel><FormControl><Input type="number" step="any" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="zCoordinate" render={({ field }) => (<FormItem><FormLabel>Z Coordinate (altitude)</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 2300" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

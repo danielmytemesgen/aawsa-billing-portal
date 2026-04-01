@@ -9,7 +9,7 @@ import {
   CardTitle,
   CardDescription
 } from "@/components/ui/card";
-import { MoreHorizontal, Edit, Trash2, Gauge, Eye, Check, User, MapPin, Hash, CreditCard, Activity, Globe } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Gauge, Eye, Check, User, MapPin, Hash, CreditCard, Activity, Globe, CheckCircle2, XCircle } from "lucide-react";
 import Link from "next/link";
 import {
   Table,
@@ -38,14 +38,16 @@ interface BulkMeterTableProps {
   onEdit: (bulkMeter: BulkMeter) => void;
   onDelete: (bulkMeter: BulkMeter) => void;
   onApprove?: (bulkMeter: BulkMeter) => void;
+  onReject?: (bulkMeter: BulkMeter) => void;
   branches: Branch[];
   canEdit: boolean;
   canDelete: boolean;
+  canApprove?: boolean;
   selectedMeters?: Set<string>;
   onSelectionChange?: (selected: Set<string>) => void;
 }
 
-export function BulkMeterTable({ data, onEdit, onDelete, onApprove, branches, canEdit, canDelete, selectedMeters, onSelectionChange }: BulkMeterTableProps) {
+export function BulkMeterTable({ data, onEdit, onDelete, onApprove, onReject, branches, canEdit, canDelete, canApprove, selectedMeters, onSelectionChange }: BulkMeterTableProps) {
   if (data.length === 0) {
     return (
       <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
@@ -197,18 +199,28 @@ export function BulkMeterTable({ data, onEdit, onDelete, onApprove, branches, ca
                 </TableCell>
                 <TableCell className="text-right pr-6 py-5">
                   <div className="flex justify-end gap-1 px-1">
-                    <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all rounded-lg">
+                    <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all rounded-lg" title="View Details">
                       <Link href={`/admin/bulk-meters/${bulkMeter.customerKeyNumber}`}>
                         <Eye className="h-4 w-4" />
                       </Link>
                     </Button>
+                    {bulkMeter.status === 'Pending Approval' && canApprove && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 transition-all rounded-lg" onClick={() => onApprove?.(bulkMeter)} title="Approve">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 transition-all rounded-lg" onClick={() => onReject?.(bulkMeter)} title="Reject">
+                          <XCircle className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
                     {canEdit && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all rounded-lg" onClick={() => onEdit(bulkMeter)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all rounded-lg" onClick={() => onEdit(bulkMeter)} title="Edit">
                         <Edit className="h-4 w-4" />
                       </Button>
                     )}
                     {canDelete && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all rounded-lg" onClick={() => onDelete(bulkMeter)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all rounded-lg" onClick={() => onDelete(bulkMeter)} title="Delete">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}

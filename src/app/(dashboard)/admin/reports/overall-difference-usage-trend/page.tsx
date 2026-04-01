@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import {
@@ -136,24 +137,42 @@ export default function OverallDifferenceUsageTrendPage() {
   }, [chartData]);
 
   return (
-    <div className="space-y-6">
-      <Card className="shadow-lg">
-        <CardHeader>
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <TrendingUp className="h-8 w-8 text-primary" />
+    <div className="space-y-6 pb-10">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-800">Difference Usage Trend</h1>
+          <p className="text-muted-foreground mt-1 text-base">Analyze discrepancy patterns between main and bulk meter readings.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={downloadPNG} className="bg-white border-slate-200 hover:bg-slate-50 shadow-sm rounded-xl px-4 h-11">
+             Download PNG
+          </Button>
+          <Button onClick={downloadCSV} className="bg-slate-800 hover:bg-slate-900 text-white shadow-sm rounded-xl px-4 h-11 transition-all">
+             Export CSV
+          </Button>
+        </div>
+      </div>
+
+      <Card className="shadow-md border-slate-200/60 overflow-hidden rounded-3xl">
+        <CardHeader className="bg-slate-50/50 border-b pb-6 pt-6 px-6">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="h-12 w-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-sm">
+                <TrendingUp className="h-6 w-6" />
+              </div>
               <div>
-                <CardTitle>Overall Difference Usage Trend</CardTitle>
-                <CardDescription>Shows the trend of difference usage by branch.</CardDescription>
+                <CardTitle className="text-xl">Trend Analysis</CardTitle>
+                <CardDescription>Usage discrepancies by branch and time period</CardDescription>
               </div>
             </div>
-            <div className="flex flex-col sm:flex-row gap-2">
+            
+            <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
               {hasPermission('reports_generate_all') && (
                 <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
-                  <SelectTrigger className="w-full md:w-[180px]">
-                    <SelectValue placeholder="Select Branch" />
+                  <SelectTrigger className="w-full sm:w-[180px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                    <SelectValue placeholder="All Branches" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-xl">
                     <SelectItem value="all">All Branches</SelectItem>
                     {branches.map((branch) => (
                       branch?.id !== undefined && branch?.id !== null ? (
@@ -166,23 +185,21 @@ export default function OverallDifferenceUsageTrendPage() {
                 </Select>
               )}
               <Select value={selectedYear} onValueChange={setSelectedYear}>
-                <SelectTrigger className="w-full md:w-[120px]">
-                  <SelectValue placeholder="Select Year" />
+                <SelectTrigger className="w-full sm:w-[130px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Year" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl">
                   <SelectItem value="all">All Years</SelectItem>
                   {years.map((year) => (
-                    <SelectItem key={year} value={year}>
-                      {year}
-                    </SelectItem>
+                    <SelectItem key={year} value={year}>{year}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger className="w-full md:w-[120px]">
-                  <SelectValue placeholder="Select Month" />
+                <SelectTrigger className="w-full sm:w-[150px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <SelectValue placeholder="Month" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl">
                   <SelectItem value="all">All Months</SelectItem>
                   {[...Array(12)].map((_, i) => (
                     <SelectItem key={i + 1} value={String(i + 1).padStart(2, '0')}>
@@ -191,10 +208,6 @@ export default function OverallDifferenceUsageTrendPage() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={downloadPNG} className="inline-flex items-center px-3 py-1.5 rounded-md border bg-white text-sm shadow-sm">Download PNG</button>
-              <button type="button" onClick={downloadCSV} className="inline-flex items-center px-3 py-1.5 rounded-md border bg-white text-sm shadow-sm">Download CSV</button>
             </div>
           </div>
         </CardHeader>
@@ -210,7 +223,13 @@ export default function OverallDifferenceUsageTrendPage() {
                   <YAxis label={{ value: 'Usage (m³)', angle: -90, position: 'insideLeft' }} />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="differenceUsage" fill="#8884d8" name="Difference Usage (m³)" />
+                  <Bar 
+                    dataKey="differenceUsage" 
+                    fill="#4f46e5" 
+                    name="Difference Usage (m³)" 
+                    radius={[6, 6, 0, 0]}
+                    barSize={40}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>

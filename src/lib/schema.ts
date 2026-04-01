@@ -58,6 +58,7 @@ export const routes = pgTable('routes', {
   branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
   readerId: uuid('reader_id').references(() => staffMembers.id, { onDelete: 'set null' }),
   description: text('description'),
+  status: text('status').default('Active'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
@@ -82,6 +83,10 @@ export const bulkMeters = pgTable('bulk_meters', {
   chargeGroup: text('charge_group'),
   routeKey: text('ROUTE_KEY').references(() => routes.routeKey, { onDelete: 'set null' }),
   sewerageConnection: text('sewerage_connection'),
+  ordinal: integer('ordinal'),
+  xCoordinate: numeric('x_coordinate'),
+  yCoordinate: numeric('y_coordinate'),
+  zCoordinate: numeric('z_coordinate'),
   approvedBy: uuid('approved_by').references(() => staffMembers.id),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
@@ -106,6 +111,9 @@ export const individualCustomers = pgTable('individual_customers', {
   numberOfDials: integer('NUMBER_OF_DIALS'),
   status: text('status').default('Active'),
   paymentStatus: text('paymentStatus').default('Unpaid'),
+  xCoordinate: numeric('x_coordinate'),
+  yCoordinate: numeric('y_coordinate'),
+  zCoordinate: numeric('z_coordinate'),
   approvedBy: uuid('approved_by').references(() => staffMembers.id),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -114,7 +122,7 @@ export const individualCustomers = pgTable('individual_customers', {
 
 // 3. Billing & Readings
 export const bills = pgTable('bills', {
-  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  id: uuid('id').default(sql`gen_random_uuid()`),
   billKey: text('BILLKEY'),
   customerKey: text('CUSTOMERKEY'), // For bulk meters
   customerName: text('CUSTOMERNAME'),
@@ -156,11 +164,14 @@ export const bills = pgTable('bills', {
   additionalFeesBreakdown: jsonb('additional_fees_breakdown'),
   snapshotData: jsonb('snapshot_data'),
   branchId: uuid('branch_id').references(() => branches.id),
-});
+}, (t) => ({
+  pk: primaryKey({ columns: [t.id, t.monthYear] }),
+}));
 
 export const payments = pgTable('payments', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
-  billId: uuid('bill_id').references(() => bills.id),
+  billId: uuid('bill_id'),
+  billMonthYear: text('bill_month_year'), // Must match the partition key of bills
   individualCustomerId: text('individual_customer_id').references(() => individualCustomers.customerKeyNumber),
   amountPaid: numeric('amount_paid', { precision: 12, scale: 2 }).notNull(),
   paymentMethod: text('payment_method'),

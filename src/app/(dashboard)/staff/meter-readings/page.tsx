@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Activity, ListPlus, Database } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/components/billing/add-meter-reading-form";
 import MeterReadingsTable from "@/components/billing/meter-readings-table";
@@ -316,11 +316,17 @@ export default function StaffMeterReadingsPage() {
     bulkPage * bulkRowsPerPage + bulkRowsPerPage
   );
 
+  const currentMonthYear = format(new Date(), "yyyy-MM");
+  const recentIndividualCount = individualReadings.filter(r => r.monthYear === currentMonthYear).length;
+  const recentBulkCount = bulkReadings.filter(r => r.monthYear === currentMonthYear).length;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-4">
-        <h1 className="text-2xl md:text-3xl font-bold">Meter Readings Management</h1>
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Meter Readings Management</h1>
+          <p className="text-muted-foreground mt-1 text-base">Record, view, and manage all meter readings.</p>
+        </div>
         <div className="flex gap-2 w-full md:w-auto flex-wrap justify-end">
           <div className="relative flex-grow md:flex-grow-0">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -375,18 +381,104 @@ export default function StaffMeterReadingsPage() {
           )}
         </div>
       </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Database className="h-48 w-48 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Readings</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Database className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">
+                {recentIndividualCount + recentBulkCount}
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+               <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total recorded this month</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Activity className="h-48 w-48 text-blue-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Individual Readings</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+              <Activity className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">
+                {recentIndividualCount}
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+               <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Individual customer meters this month</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="group shadow-sm hover:shadow-xl border border-amber-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <ListPlus className="h-48 w-48 text-amber-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bulk Readings</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <ListPlus className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">
+                {recentBulkCount}
+              </div>
+            </div>
+            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+               <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Bulk meters this month</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="individual">Individual Readings ({filteredIndividualReadings.length})</TabsTrigger>
-          <TabsTrigger value="bulk">Bulk Meter Readings ({filteredBulkReadings.length})</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 p-1 bg-slate-100 rounded-xl h-auto">
+          <TabsTrigger 
+            value="individual"
+            className="rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
+          >
+            Individual Readings ({filteredIndividualReadings.length})
+          </TabsTrigger>
+          <TabsTrigger 
+            value="bulk"
+            className="rounded-lg data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
+          >
+            Bulk Meter Readings ({filteredBulkReadings.length})
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="individual">
-          <Card className="shadow-lg">
-            <CardHeader>
-              <CardTitle>Individual Customer Reading List</CardTitle>
-              <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
+          <Card className="shadow-md border-slate-200/60 overflow-hidden">
+            <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Individual Customer Reading List</CardTitle>
+                  <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0 overflow-x-auto">
               {isLoading && paginatedIndividualReadings.length === 0 ? (
                 <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
                   Loading meter readings...
@@ -410,12 +502,19 @@ export default function StaffMeterReadingsPage() {
           </Card>
         </TabsContent>
         <TabsContent value="bulk">
-          <Card className="shadow-lg">
-            <CardHeader>
-              <CardTitle>Bulk Meter Reading List</CardTitle>
-              <CardDescription>View and manage all recorded readings for bulk meters.</CardDescription>
+          <Card className="shadow-md border-slate-200/60 overflow-hidden">
+            <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                  <ListPlus className="h-4 w-4" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Bulk Meter Reading List</CardTitle>
+                  <CardDescription>View and manage all recorded readings for bulk meters.</CardDescription>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0 overflow-x-auto">
               {isLoading && paginatedBulkReadings.length === 0 ? (
                 <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
                   Loading meter readings...

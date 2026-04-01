@@ -20,6 +20,8 @@ export const PERMISSIONS = {
     BULK_METERS_VIEW_ALL: 'bulk_meters_view_all',
     BULK_METERS_VIEW_BRANCH: 'bulk_meters_view_branch',
     STAFF_VIEW: 'staff_view',
+    STAFF_VIEW_ALL: 'staff_view_all',
+    STAFF_VIEW_BRANCH: 'staff_view_branch',
     STAFF_CREATE: 'staff_create',
     STAFF_UPDATE: 'staff_update',
     STAFF_DELETE: 'staff_delete',
@@ -29,6 +31,7 @@ export const PERMISSIONS = {
     REPORTS_GENERATE_ALL: 'reports_generate_all',
     REPORTS_GENERATE_BRANCH: 'reports_generate_branch',
     METER_READINGS_ANALYTICS_VIEW: 'meter_readings_analytics_view',
+    ROUTES_VIEW_ALL: 'routes_view_all',
 } as const;
 
 export const BRANCHES = {

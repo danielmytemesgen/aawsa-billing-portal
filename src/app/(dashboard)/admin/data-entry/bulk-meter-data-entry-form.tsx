@@ -17,7 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { bulkMeterDataEntrySchema, type BulkMeterDataEntryFormValues, meterSizeOptions, subCityOptions, woredaOptions } from "./customer-data-entry-types";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, initializeCustomers, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches } from "@/lib/data-store";
+import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, initializeCustomers, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, getBulkMeters } from "@/lib/data-store";
+import { generateBulkMeterKeys } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse } from "date-fns";
 import type { Branch } from "../branches/branch-types";
@@ -34,7 +35,8 @@ import {
   Droplets,
   Package,
   GitBranch,
-  Network
+  Network,
+  Globe
 } from "lucide-react";
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_";
@@ -53,6 +55,13 @@ export function BulkMeterDataEntryForm() {
       setAvailableBranches(getBranches());
       setIsLoadingBranches(false);
     });
+
+    // Auto-generate keys for new entries
+    const existingMeters = getBulkMeters();
+    const { customerKey, instKey } = generateBulkMeterKeys(existingMeters);
+    form.setValue("customerKeyNumber", customerKey);
+    form.setValue("instKey", instKey);
+
     const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
       setAvailableBranches(updatedBranches);
       setIsLoadingBranches(false);
@@ -81,8 +90,21 @@ export function BulkMeterDataEntryForm() {
       sewerageConnection: "No",
       xCoordinate: undefined,
       yCoordinate: undefined,
+      zCoordinate: undefined,
+      ordinal: undefined,
     },
   });
+
+  const xValue = form.watch("xCoordinate");
+  const yValue = form.watch("yCoordinate");
+  const hasCoordinates = !!(xValue && yValue);
+
+  const openExternalMap = () => {
+    if (hasCoordinates) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${xValue},${yValue}`, '_blank');
+    }
+  };
+
 
   async function onSubmit(data: BulkMeterDataEntryFormValues) {
     const result = await addBulkMeterToStore(data);
@@ -181,11 +203,14 @@ export function BulkMeterDataEntryForm() {
                 name="customerKeyNumber"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Cust. Key No. <span className="text-destructive">*</span></FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Cust. Key No. <span className="text-destructive">*</span></FormLabel>
+                      <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Auto-Generated</span>
+                    </div>
                     <div className="premium-input-group">
                       <Hash className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Enter customer key number" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
+                        <Input placeholder="Auto-generated" {...field} readOnly className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 backdrop-blur-sm cursor-not-allowed text-slate-500" />
                       </FormControl>
                     </div>
                     <FormMessage />
@@ -197,11 +222,14 @@ export function BulkMeterDataEntryForm() {
                 name="instKey"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">INST_KEY <span className="text-destructive">*</span></FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">INST_KEY <span className="text-destructive">*</span></FormLabel>
+                      <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Auto-Generated</span>
+                    </div>
                     <div className="premium-input-group">
                       <Hash className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="e.g., INST-123456" {...field} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" />
+                        <Input placeholder="Auto-generated" {...field} readOnly className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 backdrop-blur-sm cursor-not-allowed text-slate-500" />
                       </FormControl>
                     </div>
                     <FormMessage />
@@ -564,7 +592,21 @@ export function BulkMeterDataEntryForm() {
                 name="xCoordinate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">X Coordinate (Optional)</FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">X Coordinate (Optional)</FormLabel>
+                      {hasCoordinates && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-[10px] text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 rounded-full flex items-center gap-1 font-bold uppercase tracking-wider transition-colors"
+                          onClick={openExternalMap}
+                        >
+                          <Globe className="h-3 w-3" />
+                          View on Map
+                        </Button>
+                      )}
+                    </div>
                     <div className="premium-input-group">
                       <Crosshair className="h-4 w-4" />
                       <FormControl>
@@ -599,6 +641,33 @@ export function BulkMeterDataEntryForm() {
                           type="number"
                           step="any"
                           placeholder="e.g., 38.763611"
+                          {...field}
+                          value={field.value ?? ""}
+                          onChange={e => {
+                            const val = e.target.value;
+                            field.onChange(val === "" ? undefined : parseFloat(val));
+                          }}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="zCoordinate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Z Coordinate (Altitude)</FormLabel>
+                    <div className="premium-input-group">
+                      <Globe className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="e.g., 2300"
                           {...field}
                           value={field.value ?? ""}
                           onChange={e => {

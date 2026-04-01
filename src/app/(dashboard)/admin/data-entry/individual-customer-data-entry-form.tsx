@@ -54,7 +54,9 @@ import {
   CreditCard,
   Briefcase,
   GitBranch,
-  Network
+  Network,
+  Crosshair,
+  Globe
 } from "lucide-react";
 
 const FormSchemaForAdminDataEntry = baseIndividualCustomerDataSchema.extend({
@@ -128,8 +130,23 @@ export function IndividualCustomerDataEntryForm() {
       sewerageConnection: undefined,
       status: "Active",
       paymentStatus: "Unpaid",
+      xCoordinate: undefined,
+      yCoordinate: undefined,
+      zCoordinate: undefined,
     },
   });
+
+  const xValue = form.watch("xCoordinate");
+  const yValue = form.watch("yCoordinate");
+  const hasCoordinates = !!(xValue && yValue);
+
+  const openExternalMap = () => {
+    if (hasCoordinates) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${xValue},${yValue}`, '_blank');
+    }
+  };
+
+
 
   async function onSubmit(data: AdminDataEntryFormValues) {
     const submissionData = {
@@ -504,6 +521,50 @@ export function IndividualCustomerDataEntryForm() {
                       <FormControl><SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"><SelectValue placeholder="Select connection" /></SelectTrigger></FormControl>
                       <SelectContent className="rounded-xl">{sewerageConnections.map(conn => <SelectItem key={conn} value={conn}>{conn}</SelectItem>)}</SelectContent>
                     </Select>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="xCoordinate" render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center justify-between">
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">X Coordinate</FormLabel>
+                    {hasCoordinates && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-[10px] text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 rounded-full flex items-center gap-1 font-bold uppercase tracking-wider transition-all"
+                        onClick={openExternalMap}
+                      >
+                        <Globe className="h-3 w-3" />
+                        Map
+                      </Button>
+                    )}
+                  </div>
+                  <div className="premium-input-group">
+                    <Crosshair className="h-4 w-4" />
+                    <FormControl><Input type="number" step="any" placeholder="e.g., 9.005401" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" /></FormControl>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="yCoordinate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Y Coordinate</FormLabel>
+                  <div className="premium-input-group">
+                    <Crosshair className="h-4 w-4" />
+                    <FormControl><Input type="number" step="any" placeholder="e.g., 38.763611" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" /></FormControl>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="zCoordinate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Z Coordinate (altitude)</FormLabel>
+                  <div className="premium-input-group">
+                    <Globe className="h-4 w-4" />
+                    <FormControl><Input type="number" step="any" placeholder="e.g., 2300" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm" /></FormControl>
                   </div>
                   <FormMessage />
                 </FormItem>

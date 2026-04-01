@@ -261,16 +261,19 @@ export default function StaffBulkMetersPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="bg-gradient-to-br from-blue-50 to-white border-blue-100 shadow-sm transition-all hover:shadow-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Total Bulk Meters</p>
-                <p className="text-4xl font-extrabold text-slate-900">{branchFilteredBulkMeters.length}</p>
-              </div>
-              <div className="h-14 w-14 bg-blue-100/80 rounded-2xl flex items-center justify-center text-blue-600 rotate-3 group-hover:rotate-6 transition-transform">
-                <Gauge className="h-7 w-7" />
-              </div>
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Gauge className="h-48 w-48 text-purple-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Bulk Meters</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+              <Gauge className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-purple-900 transition-colors">{branchFilteredBulkMeters.length}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1"><Activity className="h-3 w-3 text-emerald-500" /> All established accounts</span>
@@ -278,40 +281,46 @@ export default function StaffBulkMetersPage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-emerald-50 to-white border-emerald-100 shadow-sm transition-all hover:shadow-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest bg-emerald-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Active Meters</p>
-                <p className="text-4xl font-extrabold text-slate-900">{branchFilteredBulkMeters.filter(m => m.status === 'Active').length}</p>
-              </div>
-              <div className="h-14 w-14 bg-emerald-100/80 rounded-2xl flex items-center justify-center text-emerald-600 -rotate-3 group-hover:rotate-0 transition-transform">
-                <CheckCircle2 className="h-7 w-7" />
-              </div>
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <CheckCircle2 className="h-48 w-48 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Active Meters</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{branchFilteredBulkMeters.filter(m => m.status === 'Active').length}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-              <span className="flex items-center gap-1 font-bold text-emerald-600">
+              <span className="flex items-center gap-1 font-bold text-emerald-600 whitespace-nowrap">
                 {Math.round((branchFilteredBulkMeters.filter(m => m.status === 'Active').length / (branchFilteredBulkMeters.length || 1)) * 100)}% 
               </span>
-              <span className="ml-1 italic">of total meters functional</span>
+              <span className="ml-1 italic whitespace-nowrap">of total meters functional</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-amber-50 to-white border-amber-100 shadow-sm transition-all hover:shadow-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-amber-700 uppercase tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-sm inline-block mb-2">Offline / Inactive</p>
-                <p className="text-4xl font-extrabold text-slate-900">{branchFilteredBulkMeters.filter(m => m.status !== 'Active').length}</p>
-              </div>
-              <div className="h-14 w-14 bg-amber-100/80 rounded-2xl flex items-center justify-center text-amber-600 rotate-6 transition-transform">
-                <AlertCircle className="h-7 w-7" />
-              </div>
+        <Card className="group shadow-sm hover:shadow-xl border border-amber-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <AlertCircle className="h-48 w-48 text-amber-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Offline / Inactive</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <AlertCircle className="h-4 w-4" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">{branchFilteredBulkMeters.filter(m => m.status !== 'Active').length}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-              <span className="flex items-center gap-1 font-semibold text-amber-600">Action required</span>
-              <span className="ml-1 text-slate-400">for {branchFilteredBulkMeters.filter(m => m.status !== 'Active').length} accounts</span>
+              <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Action required</span>
+              <span className="ml-1 text-slate-400 whitespace-nowrap">for {branchFilteredBulkMeters.filter(m => m.status !== 'Active').length} accounts</span>
             </div>
           </CardContent>
         </Card>
@@ -396,7 +405,7 @@ export default function StaffBulkMetersPage() {
                   setRowsPerPage(value);
                   setPage(0);
                 }}
-                rowsPerPageOptions={[5, 10, 25]}
+                rowsPerPageOptions={[5, 10, 25, 50, 100]}
               />
             )}
           </div>

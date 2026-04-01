@@ -273,7 +273,7 @@ export default function TariffManagementPage() {
   const handleSubmitTierForm = (data: TariffFormValues) => {
     if (!editingTierType) return;
     const newRateValue = parseFloat(data.rate);
-    const newMaxConsumptionValue = data.maxConsumption === "Infinity" ? Infinity : parseFloat(data.maxConsumption);
+    const newMaxConsumptionValue = data.maxConsumption === "Infinity" ? "Infinity" : parseFloat(data.maxConsumption);
 
     let updatedTiers: (TariffTier | SewerageTier)[];
     const tiersToUpdate = editingTierType === 'water' ? activeWaterTiers : activeSewerageTiers;
@@ -554,114 +554,109 @@ export default function TariffManagementPage() {
       </div>
 
       {/* Stats Header */}
-      <div className="grid gap-6 md:grid-cols-4">
-        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500" />
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-black text-blue-800 uppercase tracking-widest bg-blue-100 px-3 py-1 rounded-md mb-3 inline-block">Effective Date</p>
-                <p className="text-3xl font-black text-slate-900">{currentEffectiveDate}</p>
-              </div>
-              <div className="h-14 w-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
-                <Calendar className="h-7 w-7" />
+      <div className="grid gap-4 md:grid-cols-4">
+        {/* Effective Date Card */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-blue-700 p-5 text-white shadow-lg shadow-blue-200">
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="absolute -right-2 -bottom-6 h-20 w-20 rounded-full bg-white/5" />
+          <div className="relative z-10">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-black uppercase tracking-widest text-blue-200">Effective Date</p>
+              <div className="h-9 w-9 bg-white/20 rounded-xl flex items-center justify-center">
+                <Calendar className="h-4.5 w-4.5 text-white" />
               </div>
             </div>
-            <div className="mt-5 flex items-center text-sm font-bold text-slate-500">
+            <p className="text-2xl font-black tracking-tight">{currentEffectiveDate}</p>
+            <div className="mt-3">
               {isLatestTariff ? (
-                <span className="flex items-center gap-1.5 text-emerald-700">
-                  <span className="h-2.5 w-2.5 bg-emerald-500 rounded-full animate-pulse" />
+                <span className="inline-flex items-center gap-1.5 text-xs font-black text-emerald-200 bg-white/20 px-2.5 py-1 rounded-lg">
+                  <span className="h-1.5 w-1.5 bg-emerald-300 rounded-full animate-pulse" />
                   Currently Active
                 </span>
               ) : (
-                <span className="text-amber-700 italic">Historical Archive</span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-black text-amber-200 bg-white/20 px-2.5 py-1 rounded-lg">Historical</span>
               )}
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-black text-indigo-800 uppercase tracking-widest bg-indigo-100 px-3 py-1 rounded-md mb-3 inline-block">Tariff Category</p>
-                <p className="text-3xl font-black text-slate-900">{currentTariffType}</p>
-              </div>
-              <div className="h-14 w-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
-                <LayoutGrid className="h-7 w-7" />
-              </div>
-            </div>
-            <div className="mt-5 font-bold text-sm text-slate-500">
-              Primary pricing model
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-violet-500" />
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-black text-violet-800 uppercase tracking-widest bg-violet-100 px-3 py-1 rounded-md mb-3 inline-block">Water Tiers</p>
-                <p className="text-4xl font-black text-slate-900">{activeWaterTiers.length}</p>
-              </div>
-              <div className="h-14 w-14 bg-violet-50 rounded-2xl flex items-center justify-center text-violet-600">
-                <TrendingUp className="h-7 w-7" />
-              </div>
-            </div>
-            <div className="mt-5 flex items-center gap-1.5 text-sm font-bold text-violet-700 italic">
-              {currentTariffType === 'Domestic' || currentTariffType === 'rental domestic' 
-                ? "Progressive pricing" 
-                : "Total volume pricing"}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="group relative overflow-hidden bg-white border-none shadow-md hover:shadow-xl transition-all duration-300">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500" />
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-black text-emerald-800 uppercase tracking-widest bg-emerald-100 px-3 py-1 rounded-md mb-3 inline-block">Custom Fees</p>
-                <p className="text-4xl font-black text-slate-900">{activeTariffInfo?.additional_fees?.length || 0}</p>
-              </div>
-              <div className="h-14 w-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
-                <Percent className="h-7 w-7" />
-              </div>
-            </div>
-            <div className="mt-5 text-sm font-bold text-emerald-700">
-              Active extra charges
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Control Toolbar */}
-      <div className="flex flex-wrap items-center gap-6 bg-slate-50 border border-slate-200 p-6 rounded-3xl">
-        <div className="space-y-2 flex-grow min-w-[200px]">
-          <Label htmlFor="tariff-date" className="text-xs font-black uppercase text-slate-700 tracking-widest ml-1">Tariff Version</Label>
-          <div className="flex items-center gap-2">
-            <Select value={currentEffectiveDate} onValueChange={setCurrentEffectiveDate}>
-              <SelectTrigger id="tariff-date" className="h-14 bg-white font-bold text-lg rounded-2xl border-slate-200 shadow-sm transition-all focus:ring-4 focus:ring-indigo-500/20">
-                <SelectValue placeholder="Select a version" />
-              </SelectTrigger>
-              <SelectContent className="rounded-2xl font-bold text-lg">
-                {availableDates.map(date => (
-                  <SelectItem key={`tariff-date-${date}`} value={date} className="py-2">{date}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
         </div>
 
+        {/* Category Card */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 p-5 text-white shadow-lg shadow-indigo-200">
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="relative z-10">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-black uppercase tracking-widest text-indigo-200">Category</p>
+              <div className="h-9 w-9 bg-white/20 rounded-xl flex items-center justify-center">
+                <LayoutGrid className="h-4.5 w-4.5 text-white" />
+              </div>
+            </div>
+            <p className="text-xl font-black tracking-tight leading-tight">{currentTariffType}</p>
+            <p className="mt-3 text-xs font-bold text-indigo-200">Primary pricing model</p>
+          </div>
+        </div>
+
+        {/* Water Tiers Card */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 to-purple-700 p-5 text-white shadow-lg shadow-violet-200">
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="relative z-10">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-black uppercase tracking-widest text-violet-200">Water Tiers</p>
+              <div className="h-9 w-9 bg-white/20 rounded-xl flex items-center justify-center">
+                <TrendingUp className="h-4.5 w-4.5 text-white" />
+              </div>
+            </div>
+            <p className="text-4xl font-black">{activeWaterTiers.length}</p>
+            <p className="mt-3 text-xs font-bold text-violet-200">
+              {currentTariffType === 'Domestic' || currentTariffType === 'rental domestic' ? "Progressive pricing" : "Volume pricing"}
+            </p>
+          </div>
+        </div>
+
+        {/* Custom Fees Card */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-600 p-5 text-white shadow-lg shadow-emerald-200">
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="relative z-10">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-black uppercase tracking-widest text-emerald-200">Custom Fees</p>
+              <div className="h-9 w-9 bg-white/20 rounded-xl flex items-center justify-center">
+                <Percent className="h-4.5 w-4.5 text-white" />
+              </div>
+            </div>
+            <p className="text-4xl font-black">{activeTariffInfo?.additional_fees?.length || 0}</p>
+            <p className="mt-3 text-xs font-bold text-emerald-200">Active extra charges</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Control Toolbar */}
+      <div className="flex flex-wrap items-end gap-5 bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
         <div className="space-y-2 flex-grow min-w-[200px]">
-          <Label htmlFor="customer-category" className="text-xs font-black uppercase text-slate-700 tracking-widest ml-1">Customer Category</Label>
+          <Label htmlFor="tariff-date" className="text-[11px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-1.5">
+            <Calendar className="h-3.5 w-3.5" /> Tariff Version
+          </Label>
+          <Select value={currentEffectiveDate} onValueChange={setCurrentEffectiveDate}>
+            <SelectTrigger id="tariff-date" className="h-12 bg-slate-50 font-bold text-base rounded-xl border-slate-200 shadow-sm transition-all focus:ring-2 focus:ring-indigo-500/30">
+              <SelectValue placeholder="Select a version" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl font-bold">
+              {availableDates.map(date => (
+                <SelectItem key={`tariff-date-${date}`} value={date} className="py-2">{date}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="h-10 w-px bg-slate-200 self-center hidden md:block" />
+
+        <div className="space-y-2 flex-grow min-w-[200px]">
+          <Label htmlFor="customer-category" className="text-[11px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-1.5">
+            <LayoutGrid className="h-3.5 w-3.5" /> Customer Category
+          </Label>
           <Select value={currentTariffType} onValueChange={(value) => setCurrentTariffType(value as any)}>
-            <SelectTrigger id="customer-category" className="h-14 bg-white font-bold text-lg rounded-2xl border-slate-200 shadow-sm transition-all focus:ring-4 focus:ring-indigo-500/20">
+            <SelectTrigger id="customer-category" className="h-12 bg-slate-50 font-bold text-base rounded-xl border-slate-200 shadow-sm transition-all focus:ring-2 focus:ring-indigo-500/30">
               <SelectValue placeholder="Select a category" />
             </SelectTrigger>
-            <SelectContent className="rounded-2xl font-bold text-lg">
+            <SelectContent className="rounded-xl font-bold">
               <SelectItem value="Domestic" className="py-2">Domestic</SelectItem>
               <SelectItem value="Non-domestic" className="py-2">Non-domestic</SelectItem>
               <SelectItem value="rental Non domestic" className="py-2">Rental Non-domestic</SelectItem>
@@ -669,6 +664,13 @@ export default function TariffManagementPage() {
             </SelectContent>
           </Select>
         </div>
+
+        {!isLatestTariff && (
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+            <Info className="h-4 w-4 text-amber-600 flex-shrink-0" />
+            <p className="text-sm font-bold text-amber-700">View-only: historical archive</p>
+          </div>
+        )}
       </div>
 
       {isDataLoading ? <p>Loading tariffs...</p> : !activeTariffInfo ?
@@ -1028,7 +1030,7 @@ export default function TariffManagementPage() {
                       </Button>
                     )}
                   </div>
-                  <div className="bg-slate-50/50 p-1 rounded-3xl border border-slate-100 overflow-hidden">
+                  <div className="mt-4">
                     <TariffRateTable
                       rates={activeSewerageTiers}
                       onEdit={(rate) => handleEditTier(rate, 'sewerage')}

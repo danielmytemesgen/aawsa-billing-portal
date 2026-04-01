@@ -18,6 +18,7 @@ import {
   dbGetBulkMetersSummary,
   dbUpdateBulkMeter,
   dbCountCustomers,
+  dbGetCustomersSummary,
   dbCreateStaffMember,
   dbDeleteStaffMember,
   dbGetAllStaffMembers,
@@ -133,6 +134,34 @@ const generateBillKey = (billId: string) => {
   const idNumeric = parseInt(idHex, 16);
   return isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
 };
+
+/**
+ * Determines the effective branch ID to filter by, enforcing strict isolation.
+ * If the session user is assigned to a branch, they are restricted to that branch.
+ * Only Head Office users (no branchId in session) can see all branches.
+ */
+/**
+ * Determines the effective branch ID to filter by, enforcing strict isolation.
+ * If the session user is assigned to a branch, they are restricted to that branch,
+ * UNLESS they have the appropriate 'view_all' permission.
+ */
+function getEffectiveBranchId(session: any, optionsBranchId?: string, permissionViewAll?: string): string | undefined {
+  const perms = session.permissions || [];
+  
+  // 1. If user has the specific 'view_all' permission, they can use the requested branchId from options.
+  if (permissionViewAll && perms.includes(permissionViewAll)) {
+    return optionsBranchId;
+  }
+  
+  // 2. If user is tied to a specific branch AND doesn't have the override permission, they are LOCKED to it.
+  if (session.branchId && session.branchId !== 'all') {
+    return session.branchId;
+  }
+  
+  // 3. Otherwise (Head Office / Global Admin), they can use the requested branchId from options.
+  return optionsBranchId;
+}
+
 
 type RoleRow = PublicTables['roles']['Row'];
 type PermissionRow = PublicTables['permissions']['Row'];
@@ -256,23 +285,26 @@ const wrap = async <T>(fn: () => Promise<T>) => {
   }
 };
 
-const checkPermission = async (permission: string) => {
+const checkPermission = async (permission?: string) => {
   const session = await getSession();
   if (!session || !session.id) {
     throw new Error('User not authenticated');
   }
-  const permissions = session.permissions || [];
 
+  // Refresh permissions from DB to avoid staleness
+  const perms = await dbGetStaffPermissions(session.id);
+  
   // Granular RBAC: Check if the permission exists in the user's assigned permissions.
   // Bypass if user has 'bill:manage_all' and it's a bill-related permission
-  if (permissions.includes('bill:manage_all') && permission.startsWith('bill:')) {
-    return session;
+  if (permission && perms.includes('bill:manage_all') && permission.startsWith('bill:')) {
+    return { ...session, permissions: perms };
   }
 
-  if (!permissions.includes(permission)) {
+  if (permission && !perms.includes(permission)) {
     throw new Error(`Forbidden: Missing permission ${permission}`);
   }
-  return session;
+
+  return { ...session, permissions: perms };
 };
 
 const verifyBillBranchAccess = async (billId: string, session: any) => {
@@ -328,11 +360,7 @@ export async function getAllCustomersAction(options?: { branchId?: string; limit
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const branchId = isManagement ? options?.branchId : session.branchId;
-
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'customers_view_all');
     return await dbGetAllCustomers({ branchId, ...options });
   });
 }
@@ -342,21 +370,31 @@ export async function getCustomersCountAction(searchTerm?: string, excludePendin
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const branchId = isManagement ? undefined : session.branchId;
-
+    const branchId = getEffectiveBranchId(session, undefined, 'customers_view_all');
     return await dbCountCustomers({ branchId, searchTerm, excludePending });
   });
 }
+
+export async function getCustomersSummaryAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, undefined, 'customers_view_all');
+    return await dbGetCustomersSummary(branchId);
+  });
+}
+
 export async function createCustomerAction(customer: IndividualCustomerInsert) {
   return await wrap(async () => {
     const session = await checkPermission('customers_create');
     // If user has restricted creation permission, it must be for their branch and pending approval
     if (session.permissions?.includes('customers_create_restricted')) {
-      customer.branch_id = customer.branch_id || session.branchId;
+      customer.branch_id = customer.branch_id || (customer as any).branchId || session.branchId;
       customer.status = 'Pending Approval';
+    } else {
+      // For non-restricted users, ensure branchId from form is mapped to branch_id
+      customer.branch_id = customer.branch_id || (customer as any).branchId;
     }
     const result = await dbCreateIndividualCustomer(customer);
     await logSecurityEventAction({
@@ -423,11 +461,7 @@ export async function getAllBulkMetersAction(options?: { branchId?: string; limi
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const branchId = isManagement ? options?.branchId : session.branchId;
-
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'bulk_meters_view_all');
     return await dbGetAllBulkMeters({ branchId, ...options });
   });
 }
@@ -437,11 +471,7 @@ export async function getBulkMetersCountAction(searchTerm?: string, excludePendi
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const branchId = isManagement ? undefined : session.branchId;
-
+    const branchId = getEffectiveBranchId(session, undefined, 'bulk_meters_view_all');
     return await dbCountBulkMeters({ branchId, searchTerm, excludePending });
   });
 }
@@ -450,9 +480,8 @@ export async function getBulkMetersSummaryAction() {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
-    const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('bulk_meters_view_all') || perms.includes('dashboard_view_all');
-    const branchId = !hasGlobalAccess ? (session.branchId ?? undefined) : undefined;
+
+    const branchId = getEffectiveBranchId(session, undefined, 'bulk_meters_view_all');
     return await dbGetBulkMetersSummary(branchId);
   });
 }
@@ -462,8 +491,11 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
     const session = await checkPermission('bulk_meters_create');
     // If user has restricted creation permission, it must be for their branch and pending approval
     if (session.permissions?.includes('bulk_meters_create_restricted')) {
-      bulkMeter.branch_id = bulkMeter.branch_id || session.branchId;
+      bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId || session.branchId;
       bulkMeter.status = 'Pending Approval';
+    } else {
+      // For non-restricted users, ensure branchId from form is mapped to branch_id
+      bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId;
     }
     const result = await dbCreateBulkMeter(bulkMeter);
     await logSecurityEventAction({
@@ -486,6 +518,7 @@ export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter
     return result;
   });
 }
+
 export async function deleteBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission('bulk_meters_delete');
@@ -533,27 +566,30 @@ export async function rejectBulkMeterAction(customerKeyNumber: string) {
 
 export async function getAllStaffMembersAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase()?.trim();
-    const perms = session.permissions || [];
-
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const hasBranchAccess = perms.includes('staff_view_branch') || perms.includes('dashboard_view_branch');
-
-    if (!isManagement && !hasBranchAccess && !perms.includes('staff_view')) {
-      throw new Error('Forbidden: No staff permissions');
-    }
-
-    // Branch isolation: If not management, filter by branchId
-    const filterBranchId = isManagement ? undefined : session.branchId;
+    const session = await checkPermission('staff_view');
+    
+    // Determine the branch isolation:
+    // If the user has 'staff_view_all', they can see everyone.
+    // Otherwise, they are locked to their own branch.
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    
     return await dbGetAllStaffMembers(filterBranchId);
   });
 }
 export async function createStaffMemberAction(staffMember: StaffMemberInsert) {
   return await wrap(async () => {
-    await checkPermission('staff_create');
+    const session = await checkPermission('staff_create');
+
+    // Mapping fix: set 'branch' (text) from form's 'branchName' or 'branchId' (fallback)
+    if (!(staffMember as any).branch) {
+        (staffMember as any).branch = (staffMember as any).branchName || (staffMember as any).branchId;
+    }
+
+    // Only override if no branch is specified in the form
+    if (!(staffMember as any).branch && session.branchId) {
+        (staffMember as any).branch = session.branchId;
+    }
+    
     const result = await dbCreateStaffMember(staffMember);
     await logSecurityEventAction({
       event: 'Create Staff Member',
@@ -564,8 +600,11 @@ export async function createStaffMemberAction(staffMember: StaffMemberInsert) {
 }
 export async function updateStaffMemberAction(email: string, staffMember: StaffMemberUpdate) {
   return await wrap(async () => {
-    await checkPermission('staff_update');
-    const result = await dbUpdateStaffMember(email, staffMember);
+    const session = await checkPermission('staff_update');
+    
+    const branchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    const result = await dbUpdateStaffMember(email, staffMember, branchId);
+    
     await logSecurityEventAction({
       event: 'Update Staff Member',
       details: { email, updates: staffMember }
@@ -576,7 +615,10 @@ export async function updateStaffMemberAction(email: string, staffMember: StaffM
 export async function deleteStaffMemberAction(email: string) {
   return await wrap(async () => {
     const session = await checkPermission('staff_delete');
-    await dbDeleteStaffMember(email, session.id);
+    
+    const branchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    await dbDeleteStaffMember(email, session.id, branchId);
+    
     await logSecurityEventAction({
       event: 'Delete Staff Member',
       severity: 'warning',
@@ -591,20 +633,19 @@ export async function getAllBillsAction(options?: { branchId?: string; excludeUn
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const perms = session.permissions || [];
-
-    const hasBillPerm = perms.includes('bill:manage_all') ||
-      perms.includes('bill:view_branch') ||
-      perms.some((p: string) => p.startsWith('bill:')) ||
-      perms.includes('dashboard_view_all') ||
-      perms.includes('dashboard_view_branch');
-
+    const perms = await dbGetStaffPermissions(session.id);
+    
+    // Check for any billing-related permission
+    const hasBillPerm = perms.includes('bill:manage_all') || 
+                       perms.includes('bill:view_branch') || 
+                       perms.some((p: string) => p.startsWith('bill:'));
+                       
     if (!hasBillPerm) {
-      throw new Error('Forbidden: No billing permissions');
+      throw new Error('Forbidden: Missing billing permissions');
     }
 
     // Apply branch filtering if they don't have global access
-    const branchId = options?.branchId ?? (!perms.includes('bill:manage_all') ? session.branchId : undefined);
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'bill:manage_all');
 
     return await dbGetAllBills({ ...options, branchId });
   });
@@ -649,6 +690,14 @@ export async function createBillAction(bill: BillInsert) {
       }
       if (cust?.branchId) {
         bill.branch_id = cust.branchId;
+      }
+    }
+
+    // Branch Isolation Verification for Bill Creation
+    const perms = session.permissions || [];
+    if (!perms.includes('bill:manage_all')) {
+      if (session.branchId && session.branchId !== 'all' && bill.branch_id !== session.branchId) {
+        throw new Error('Forbidden: Cannot create bill for a customer in a different branch.');
       }
     }
 
@@ -1010,14 +1059,16 @@ export async function deleteBillAction(id: string) {
 }
 export async function getBillByIdAction(id: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    // Basic auth check, branch isolation handles whether they can see it
+    const session = await checkPermission(); 
+    
+    // Check if user has global read access based on new bill/dashboard patterns
+    let viewAllPermission: string | undefined = undefined;
+    if (session.permissions?.includes('bill:manage_all') || session.permissions?.includes('dashboard_view_all')) {
+      viewAllPermission = 'bill:manage_all'; // Use as a proxy token to allow global access in the helper
+    }
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-    const isTopManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const branchId = !isTopManagement ? session.branchId : undefined;
-
+    const branchId = getEffectiveBranchId(session, undefined, viewAllPermission);
     return await dbGetBillByIdQuery(id, branchId);
   });
 }
@@ -1025,8 +1076,7 @@ export async function getBillByIdAction(id: string) {
 
 export async function submitBillAction(id: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
     const perms = session.permissions || [];
 
     if (!(perms.includes('bill:submit') || perms.includes('bill:create') || perms.includes('bill:manage_all'))) {
@@ -1113,8 +1163,7 @@ export async function rejectBillAction(id: string, reason: string) {
 
 export async function postBillAction(id: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
     const perms = session.permissions || [];
 
     if (!(perms.includes('bill:post') || perms.includes('bill:send') || perms.includes('bill:manage_all'))) {
@@ -1181,22 +1230,8 @@ export async function getAllIndividualCustomerReadingsAction() {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-
-    const hasPerm = isManagement ||
-      perms.includes('meter_readings_view_all') ||
-      perms.includes('meter_readings_view_branch') ||
-      perms.includes('dashboard_view_branch');
-
-    if (!hasPerm) {
-      throw new Error('Forbidden: No reading permissions');
-    }
-
     // Branch isolation
-    const filterBranchId = isManagement || perms.includes('meter_readings_view_all') ? undefined : session.branchId;
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'meter_readings_view_all');
     return await dbGetAllIndividualCustomerReadings(filterBranchId);
   });
 }
@@ -1240,22 +1275,8 @@ export async function getAllBulkMeterReadingsAction() {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-
-    const hasPerm = isManagement ||
-      perms.includes('meter_readings_view_all') ||
-      perms.includes('meter_readings_view_branch') ||
-      perms.includes('dashboard_view_branch');
-
-    if (!hasPerm) {
-      throw new Error('Forbidden: No reading permissions');
-    }
-
     // Branch isolation
-    const filterBranchId = isManagement || perms.includes('meter_readings_view_all') ? undefined : session.branchId;
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'meter_readings_view_all');
     return await dbGetAllBulkMeterReadings(filterBranchId);
   });
 }
@@ -1315,10 +1336,10 @@ export async function getAllPaymentsAction() {
   });
 }
 export async function createPaymentAction(payment: PaymentInsert) {
-  return await wrap(async () => {
-    await checkPermission('payments_create');
-    // 1. Create Payment
-    const result = await dbCreatePayment(payment);
+    return await wrap(async () => {
+      await checkPermission('payments_create');
+      // 1. Create Payment
+      const result = await dbCreatePayment(payment);
 
     // 2. Update Bill Status and Meter Balance
     if (payment.bill_id) {
@@ -1424,18 +1445,8 @@ export async function getAllReportLogsAction() {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
-    const perms: string[] = session.permissions || [];
-
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const hasPerm = isManagement || perms.includes('reports_view') || perms.includes('reports_view_branch');
-
-    if (!hasPerm) {
-      throw new Error('Forbidden: No report permissions');
-    }
-
     // Branch isolation
-    const filterBranchId = isManagement ? undefined : session.branchId;
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'reports_view_all');
     return await dbGetAllReportLogs(filterBranchId);
   });
 }
@@ -1840,20 +1851,33 @@ export async function getCustomerReadingsAction(
 }
 
 // Route Server Actions
-export async function getAllRoutesAction() {
-  return await wrap(() => dbGetAllRoutes());
+export async function getAllRoutesAction(options?: { branchId?: string }) {
+  return await wrap(async () => {
+    const session = await checkPermission('routes_view');
+    
+    // Determine branch isolation:
+    // If the user has 'routes_view_all', they can see everything.
+    // Otherwise, they are locked to their own branchId.
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'routes_view_all');
+
+    return await dbGetAllRoutes(branchId);
+  });
 }
 
 export async function createRouteAction(route: RouteInsert) {
   return await wrap(async () => {
-    // Check for any of the authorized permissions
-    const hasSettings = await checkPermission('settings_manage').then(() => true).catch(() => false);
-    const hasMeterReadings = await checkPermission('meter_readings_view_all').then(() => true).catch(() => false);
-    const hasStaffView = await checkPermission('staff_view').then(() => true).catch(() => false);
+    const session = await checkPermission('routes_create');
 
-    if (!hasSettings && !hasMeterReadings && !hasStaffView) {
-      throw new Error('Unauthorized: Insufficient permissions to create routes.');
+    // Map branchId to branch_id if needed
+    if (!route.branch_id && (route as any).branchId) {
+      route.branch_id = (route as any).branchId;
     }
+    
+    // Enforce branch creation rules if lacking global oversight
+    if (!session.permissions?.includes('routes_view_all') && session.branchId && session.branchId !== 'all') {
+      route.branch_id = session.branchId;
+    }
+
     const result = await dbCreateRoute(route);
     await logSecurityEventAction({ event: 'Create Route', details: { route } });
     return result;
@@ -1862,14 +1886,8 @@ export async function createRouteAction(route: RouteInsert) {
 
 export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpdate) {
   return await wrap(async () => {
-    // Check for any of the authorized permissions
-    const hasSettings = await checkPermission('settings_manage').then(() => true).catch(() => false);
-    const hasMeterReadings = await checkPermission('meter_readings_view_all').then(() => true).catch(() => false);
-    const hasStaffView = await checkPermission('staff_view').then(() => true).catch(() => false);
-
-    if (!hasSettings && !hasMeterReadings && !hasStaffView) {
-      throw new Error('Unauthorized: Insufficient permissions to update routes.');
-    }
+    const session = await checkPermission('routes_update');
+    
     const result = await dbUpdateRoute(routeKey, routeUpdates);
     await logSecurityEventAction({ event: 'Update Route', details: { routeKey, routeUpdates } });
     return result;
@@ -1878,17 +1896,8 @@ export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpd
 
 export async function deleteRouteAction(routeKey: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission('routes_delete');
 
-    // Check for any of the authorized permissions
-    const hasSettings = await checkPermission('settings_manage').then(() => true).catch(() => false);
-    const hasMeterReadings = await checkPermission('meter_readings_view_all').then(() => true).catch(() => false);
-    const hasStaffView = await checkPermission('staff_view').then(() => true).catch(() => false);
-
-    if (!hasSettings && !hasMeterReadings && !hasStaffView) {
-      throw new Error('Unauthorized: Insufficient permissions to delete routes.');
-    }
     await dbDeleteRoute(routeKey, session.id);
     await logSecurityEventAction({ event: 'Delete Route', severity: 'warning', details: { routeKey } });
   });
@@ -2060,21 +2069,19 @@ export async function deleteFaultCodeAction(id: string) {
 
 export async function getRecycleBinItemsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const role = session.role?.toLowerCase()?.trim();
+    const session = await checkPermission();
+    
     const perms: string[] = session.permissions || [];
-
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const hasPerm = isManagement || perms.includes('settings_view');
+    const hasPerm = perms.includes('dashboard_view_all') || perms.includes('settings_view') || perms.includes('settings_manage');
 
     if (!hasPerm) {
       throw new Error('Forbidden: No settings permissions');
     }
 
-    // Branch isolation
-    const filterBranchId = isManagement ? undefined : session.branchId;
+    // Branch isolation using our standard helper token `dashboard_view_all`
+    const viewAllToken = perms.includes('dashboard_view_all') ? 'dashboard_view_all' : undefined;
+    const filterBranchId = getEffectiveBranchId(session, undefined, viewAllToken);
+    
     return await dbGetRecycleBinItems(filterBranchId);
   });
 }
@@ -2110,8 +2117,7 @@ export async function permanentlyDeleteFromRecycleBinAction(recycleBinId: string
 
 export async function getDashboardMetricsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
 
     const perms = session.permissions || [];
     const canViewAll = perms.includes('dashboard_view_all');
@@ -2122,7 +2128,7 @@ export async function getDashboardMetricsAction() {
     }
 
     // Pass branchId if they can only see their branch
-    const branchId = !canViewAll ? session.branchId : undefined;
+    const branchId = getEffectiveBranchId(session, undefined, 'dashboard_view_all');
 
     return await dbGetDashboardMetrics(branchId);
   });
@@ -2261,7 +2267,22 @@ export async function startBillingJobAction(payload: {
     // 1. Check for active jobs to avoid duplicates
     const activeJobs = await dbGetActiveBillingJobs(payload.monthYear, payload.type);
     if (activeJobs.length > 0) {
-      throw new Error(`A billing job for ${payload.monthYear} is already ${activeJobs[0].status}.`);
+      const job = activeJobs[0];
+      const updatedAt = new Date(job.updated_at || job.created_at).getTime();
+      const now = Date.now();
+      const isStale = (now - updatedAt) > 30 * 60 * 1000; // 30 mins stale threshold
+
+      if (isStale) {
+        // Auto-fail stale job to allow a new one to start
+        await dbUpdateBillingJob(job.id, { 
+          status: 'failed', 
+          error_log: 'Job automatically marked as failed due to inactivity (stale job).',
+          updated_at: new Date()
+        });
+        console.log(`Auto-reset stale billing job ${job.id} for ${payload.monthYear}`);
+      } else {
+        throw new Error(`A billing job for ${payload.monthYear} is already ${job.status}.`);
+      }
     }
 
     // 2. Count total items to process
@@ -2282,7 +2303,10 @@ export async function startBillingJobAction(payload: {
       month_year: payload.monthYear,
       total_items: totalItems,
       carry_balance: payload.carryBalance,
-      branch_id: payload.branchId
+      branch_id: payload.branchId,
+      period_start_date: payload.periodStartDate,
+      period_end_date: payload.periodEndDate,
+      due_date_offset_days: payload.dueDateOffsetDays
     });
 
     await logSecurityEventAction({
@@ -2302,14 +2326,10 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     if (!job) throw new Error("Job not found");
     if (job.status === 'completed' || job.status === 'failed') return job;
 
-    const os = await import('os');
-    const workerId = os.hostname();
-
-    // Update status to processing and set worker_id
-    await dbUpdateBillingJob(jobId, { 
-      status: 'processing', 
-      worker_id: workerId,
-      updated_at: new Date() 
+    // Update status to processing
+    await dbUpdateBillingJob(jobId, {
+      status: 'processing',
+      updated_at: new Date()
     });
 
     // 1. Fetch unprocessed items
@@ -2321,14 +2341,18 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     }
 
     if (items.length === 0) {
-      // Job complete!
       return await dbUpdateBillingJob(jobId, { status: 'completed', updated_at: new Date() });
     }
 
     // 2. Prepare Batch Constants (Tariffs, Dates, etc.)
     const { calculateDebtAging } = await import('./billing-utils');
-    const { dbGetLatestApplicableTariff, dbGetBillsByBulkMeterId, dbGetBillsByIndividualCustomerId } = await import('./db-queries');
-    
+    const {
+      dbGetLatestApplicableTariff,
+      dbGetCustomersByBulkMeterIds,
+      dbGetBillsByBulkMeterIds,
+      dbGetBillsByIndividualCustomerIds,
+    } = await import('./db-queries');
+
     const lookupDate = `${job.month_year}-28`;
     const { buildBillingPeriod } = await import('./billing-config');
     const period = buildBillingPeriod({
@@ -2340,28 +2364,52 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     const periodStartDate = period.startDate;
     const periodEndDate = period.endDate;
     const dueDate = period.dueDate;
+    const pStart = new Date(periodStartDate).getTime();
+    const pEnd = new Date(periodEndDate).getTime();
+
+    // ─────────────────────────────────────────────────────────────
+    // PERFORMANCE: Pre-fetch all data needed for this chunk in bulk
+    // This replaces ~(chunkSize * 2) individual queries with 2 total.
+    // ─────────────────────────────────────────────────────────────
+    const customerKeys = items.map((i: any) => i.customerKeyNumber);
+
+    // Pre-fetch 1: all sub-customers for every bulk meter in this chunk (1 query)
+    const subCustomersMap = job.type === 'bulk_meters'
+      ? await dbGetCustomersByBulkMeterIds(customerKeys)
+      : new Map<string, any[]>();
+
+    // Pre-fetch 2: all historical bills for every meter in this chunk (1 query)
+    const historicalBillsMap = job.type === 'bulk_meters'
+      ? await dbGetBillsByBulkMeterIds(customerKeys)
+      : await dbGetBillsByIndividualCustomerIds(customerKeys);
+
+    // Pre-fetch 3: cache tariffs by charge group (avoids repeated DB hits per unique type)
+    const tariffCache = new Map<string, any>();
+    const uniqueChargeGroups = [...new Set(items.map((i: any) => i.charge_group || i.customerType || 'Non-domestic'))];
+    await Promise.all(uniqueChargeGroups.map(async (cg) => {
+      const tariff = await dbGetLatestApplicableTariff(cg, lookupDate);
+      tariffCache.set(cg, tariff);
+    }));
 
     const billsToInsert: any[] = [];
     let lastId = job.last_processed_id;
 
-    // 3. Process each item in the chunk
+    // 3. Process each item using pre-fetched in-memory data (no DB calls inside loop)
     for (const item of items) {
       try {
         const customerKey = item.customerKeyNumber;
         const chargeGroup = (item.charge_group || item.customerType || 'Non-domestic') as CustomerType;
-        const sewerageConn = (item.sewerage_connection || item.sewerage_connection || 'No') as SewerageConnection;
+        const sewerageConn = (item.sewerage_connection || 'No') as SewerageConnection;
 
         // Calculate Usage
         let usage = (item.currentReading || item.current_reading || 0) - (item.previousReading || item.previous_reading || 0);
         let diffUsage = usage;
 
         if (job.type === 'bulk_meters') {
-          // For bulk meters, we usually subtract individual usage, 
-          // but for high-scale batching, we might simplify or do a separate pass.
-          // For now, let's assume usage is already provided or simplified.
-          // In a real scenario, we'd fetch associated customers here.
-          const associatedCustomers = await dbGetCustomersByBulkMeterId(customerKey);
-          const totalIndivUsage = associatedCustomers.reduce((sum, cust) => sum + ((cust.current_reading ?? 0) - (cust.previous_reading ?? 0)), 0);
+          // Use pre-fetched sub-customers instead of a per-meter query
+          const associatedCustomers = subCustomersMap.get(customerKey) || [];
+          const totalIndivUsage = associatedCustomers.reduce((sum: number, cust: any) =>
+            sum + ((cust.current_reading ?? 0) - (cust.previous_reading ?? 0)), 0);
           diffUsage = usage - totalIndivUsage;
         }
 
@@ -2373,36 +2421,31 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           job.month_year
         );
 
-        // Update diffUsage to the effective usage (including Rule of 3 if applicable)
         diffUsage = billBreakdown.effectiveUsage;
 
-        // Arrears & Aging
-        const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
-        const historicalBills = job.type === 'bulk_meters' 
-          ? await dbGetBillsByBulkMeterId(customerKey)
-          : await dbGetBillsByIndividualCustomerId(customerKey);
+        // Use pre-fetched historical bills instead of a per-meter query
+        const historicalBills = historicalBillsMap.get(customerKey) || [];
 
-        // Strict Safety Check: Overlap Protection
+        // Overlap Protection
         const hasOverlap = historicalBills.some((bill: any) => {
           if (!bill.bill_period_start_date || !bill.bill_period_end_date) return false;
           const bStart = new Date(bill.bill_period_start_date).getTime();
           const bEnd = new Date(bill.bill_period_end_date).getTime();
-          const pStart = new Date(periodStartDate).getTime();
-          const pEnd = new Date(periodEndDate).getTime();
           return pStart <= bEnd && pEnd >= bStart;
         });
 
         if (hasOverlap) {
-          console.log(`Skipping meter ${customerKey}: Billing period overlaps with an existing bill (${periodStartDate} to ${periodEndDate}).`);
-          continue; // Skip processing this meter
+          console.log(`Skipping meter ${customerKey}: billing period overlaps an existing bill.`);
+          lastId = customerKey; // still advance cursor
+          continue;
         }
 
+        const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
         const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills);
-        
+
         const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
         const totalPayable = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
 
-        // Create Bill Object
         const billId = crypto.randomUUID();
         const bill: any = {
           id: billId,
@@ -2439,7 +2482,6 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         lastId = customerKey;
       } catch (err) {
         console.error(`Error processing item ${item.customerKeyNumber}:`, err);
-        // Continue to next item, but we could log to job.error_log
       }
     }
 
@@ -2455,7 +2497,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
       updated_at: new Date()
     });
 
-    // If we processed fewer items than chunk size, it means we reached the end
+    // If we processed fewer items than chunk size, the job is complete
     if (items.length < chunkSize) {
       return await dbUpdateBillingJob(jobId, { status: 'completed', updated_at: new Date() });
     }
@@ -2466,6 +2508,35 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
 
 export async function getBillingJobStatusAction(jobId: string) {
   return await wrap(() => dbGetBillingJob(jobId));
+}
+
+/**
+ * Manually resets any stuck (pending or processing) billing jobs for a month.
+ */
+export async function resetStuckBillingJobsAction(monthYear: string, type: 'bulk_meters' | 'individual_customers') {
+  return await wrap(async () => {
+    await checkPermission('billing:close_cycle');
+    
+    const activeJobs = await dbGetActiveBillingJobs(monthYear, type);
+    if (activeJobs.length === 0) {
+      return { success: true, message: "No active jobs found to reset." };
+    }
+
+    for (const job of activeJobs) {
+      await dbUpdateBillingJob(job.id, {
+        status: 'failed',
+        error_log: 'Job manually reset by administrator.',
+        updated_at: new Date()
+      });
+    }
+
+    await logSecurityEventAction({
+      event: 'Reset Billing Jobs',
+      details: { monthYear, type, resetCount: activeJobs.length }
+    });
+
+    return { success: true, resetCount: activeJobs.length };
+  });
 }
 
 /**
@@ -2590,26 +2661,26 @@ export async function updateBillingSettingsAction(payload: {
     // Assuming settings_update or similar perms, for now use generic check if needed, or allow admin
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
-    
+
     // Check if user is admin or has specific permission
     const isGlobalAdmin = session.role === 'Admin' && (!session.branchId || session.branchId === 'all');
     if (!isGlobalAdmin && !(session.permissions || []).includes('settings_update')) {
-       // Allow if they are Admin role for now, or just generic admin check
-       if (session.role?.toLowerCase() !== 'admin') {
-           throw new Error('Unauthorized to update settings');
-       }
+      // Allow if they are Admin role for now, or just generic admin check
+      if (session.role?.toLowerCase() !== 'admin') {
+        throw new Error('Unauthorized to update settings');
+      }
     }
-    
+
     const { dbUpdateSystemSetting } = await import('./db-queries');
     await dbUpdateSystemSetting('billing_cycle_mode', payload.cycleMode);
     await dbUpdateSystemSetting('billing_cycle_start_day', payload.startDay);
     await dbUpdateSystemSetting('billing_due_date_offset', payload.dueDateOffset);
-    
+
     await logSecurityEventAction({
       event: 'Updated Billing Settings',
       details: payload
     });
-    
+
     return { success: true };
   });
 }

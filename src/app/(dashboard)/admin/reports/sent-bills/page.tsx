@@ -20,9 +20,8 @@ import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Alert, AlertTitle } from "@/components/ui/alert";
-import { Lock } from "lucide-react";
-
+import { EmptyState } from "@/components/ui/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 
 export default function SentBillsReportPage() {
   const { hasPermission } = usePermissions();
@@ -109,34 +108,43 @@ export default function SentBillsReportPage() {
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser]);
 
   return (
-    <div className="space-y-6">
-      <Card className="shadow-lg">
-        <CardHeader>
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Send className="h-8 w-8 text-primary" />
+    <div className="space-y-6 pb-10">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Sent Bills Report</h1>
+          <p className="text-muted-foreground mt-1 text-base">Comprehensive history of all bills sent to customers across the system.</p>
+        </div>
+      </div>
+
+      <Card className="shadow-md border-slate-200/60 overflow-hidden rounded-3xl">
+        <CardHeader className="bg-slate-50/50 border-b pb-6 pt-6 px-6">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="h-12 w-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">
+                <Send className="h-6 w-6" />
+              </div>
               <div>
-                <CardTitle>List of All Sent Bills</CardTitle>
-                <CardDescription>A comprehensive, real-time list of all generated bills in the system.</CardDescription>
+                <CardTitle className="text-xl">Dispatch History</CardTitle>
+                <CardDescription>Full log of generated bill records</CardDescription>
               </div>
             </div>
-            <div className="flex gap-2 w-full md:w-auto">
-              <div className="relative flex-grow md:flex-grow-0">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+              <div className="relative flex-grow sm:w-[300px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   type="search"
                   placeholder="Search by Customer Key..."
-                  className="pl-8"
+                  className="pl-10 h-11 bg-white rounded-xl border-slate-200"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
               {hasPermission('reports_generate_all') && (
                 <Select value={selectedBranchId || undefined} onValueChange={setSelectedBranchId}>
-                  <SelectTrigger className="w-full md:w-[200px]">
-                    <SelectValue placeholder="Select Branch" />
+                  <SelectTrigger className="w-full sm:w-[220px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                    <SelectValue placeholder="All Branches" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-xl">
                     <SelectItem value="all">All Branches</SelectItem>
                     {branches.map((branch) => (
                       branch?.id !== undefined && branch?.id !== null ? (
@@ -151,14 +159,22 @@ export default function SentBillsReportPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center p-8 text-muted-foreground">Loading all bills...</div>
-          ) : (
-            <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
-          )}
+        <CardContent className="overflow-x-auto">
+          <div className="min-w-[800px]">
+            {isLoading ? (
+              <TableSkeleton columns={7} rows={10} />
+            ) : bills.length === 0 ? (
+              <EmptyState 
+                icon={Send} 
+                title="No Sent Bills Found" 
+                description="There are currently no sent bills matching your filters or search criteria." 
+              />
+            ) : (
+              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
+            )}
+          </div>
         </CardContent>
-        {totalBills > 0 && (
+        {!isLoading && totalBills > 0 && (
           <TablePagination
             count={totalBills}
             page={page}

@@ -49,6 +49,7 @@ export function StaffTable({ data, onEdit, onDelete, canEdit, canDelete }: Staff
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Email</TableHead>
+            <TableHead>Role</TableHead>
             <TableHead>Branch</TableHead>
             <TableHead>Status</TableHead>
             {showActionsColumn && <TableHead className="text-right">Actions</TableHead>}
@@ -59,6 +60,11 @@ export function StaffTable({ data, onEdit, onDelete, canEdit, canDelete }: Staff
             <TableRow key={staff.email}>
               <TableCell className="font-medium">{staff.name}</TableCell>
               <TableCell>{staff.email}</TableCell>
+              <TableCell>
+                <Badge variant="outline" className="capitalize">
+                  {staff.role}
+                </Badge>
+              </TableCell>
               <TableCell>{staff.branchName}</TableCell>
               <TableCell>
                 <Badge variant={staff.status === 'Active' ? 'default' : staff.status === 'Inactive' ? 'destructive' : 'secondary'}>

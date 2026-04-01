@@ -47,6 +47,7 @@ export const baseIndividualCustomerDataSchema = z.object({
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
   xCoordinate: z.coerce.number().optional(),
   yCoordinate: z.coerce.number().optional(),
+  zCoordinate: z.coerce.number().optional(),
 });
 
 export const individualCustomerDataEntrySchema = baseIndividualCustomerDataSchema.refine(data => data.currentReading >= data.previousReading, {
@@ -75,9 +76,11 @@ export const baseBulkMeterDataSchema = z.object({
   chargeGroup: z.string({ required_error: "Charge group is required." }),
   sewerageConnection: z.enum(sewerageConnections).default("No"),
   routeKey: z.string().optional(),
+  ordinal: z.coerce.number().int().min(1, { message: "Ordinal must be a positive integer." }).optional(),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
   xCoordinate: z.coerce.number().optional(),
   yCoordinate: z.coerce.number().optional(),
+  zCoordinate: z.coerce.number().optional(),
 });
 
 export const bulkMeterDataEntrySchema = baseBulkMeterDataSchema.refine(data => data.currentReading >= data.previousReading, {

@@ -15,7 +15,7 @@ const client = new Client({
 
 async function run() {
   await client.connect();
-  const sql = fs.readFileSync(path.join(__dirname, 'database/migrations/030_create_system_settings.sql'), 'utf8');
+  const sql = fs.readFileSync(path.join(__dirname, 'database/migrations/034_add_billing_jobs_table.sql'), 'utf8');
   await client.query(sql);
   console.log('Migration OK');
   await client.end();

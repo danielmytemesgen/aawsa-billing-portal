@@ -56,6 +56,17 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
   const [availableRoles, setAvailableRoles] = React.useState<DomainRole[]>([]);
   const [isLoadingRoles, setIsLoadingRoles] = React.useState(true);
+  const [currentUser, setCurrentUser] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      setCurrentUser(JSON.parse(userJson));
+    }
+  }, []);
+
+  const userBranchName = currentUser?.branchName;
+  const isHeadOffice = !userBranchName || currentUser?.role?.toLowerCase().includes("head office");
 
   React.useEffect(() => {
     if (open) {
@@ -196,29 +207,44 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
                 </FormItem>
               )}
             />
-             <FormField
-              control={form.control}
-              name="branchName"
-              render={({ field }) => (
+             {!isHeadOffice && userBranchName ? (
                 <FormItem>
                   <FormLabel>Branch</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value} defaultValue={field.value} disabled={isLoadingBranches}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder={isLoadingBranches ? "Loading branches..." : "Select a branch"} />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Head Office">Head Office</SelectItem>
-                      {availableBranches.filter(b => b.name && b.name !== '').map((branch, idx) => (
-                        <SelectItem key={branch.id ?? `branch-${idx}`} value={String(branch.name)}>{branch.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
+                   <FormControl>
+                    <Input 
+                      value={userBranchName} 
+                      readOnly 
+                      disabled 
+                      className="bg-slate-50 border-slate-200 text-slate-500 font-medium cursor-not-allowed" 
+                    />
+                  </FormControl>
                 </FormItem>
+              ) : (
+                <FormField
+                  control={form.control}
+                  name="branchName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Branch</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value} defaultValue={field.value} disabled={isLoadingBranches}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder={isLoadingBranches ? "Loading branches..." : "Select a branch"} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="Head Office">Head Office</SelectItem>
+                          {availableBranches.filter(b => b.name && b.name !== '').map((branch, idx) => (
+                            <SelectItem key={branch.id ?? `branch-${idx}`} value={String(branch.name)}>{branch.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               )}
-            />
+
             <FormField
               control={form.control}
               name="role"

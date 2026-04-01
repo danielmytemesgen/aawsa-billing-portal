@@ -28,7 +28,7 @@ export function TablePagination({
   rowsPerPage,
   onPageChange,
   onRowsPerPageChange,
-  rowsPerPageOptions = [10, 25, 50, 100],
+  rowsPerPageOptions = [5, 10, 25, 50, 100],
 }: TablePaginationProps) {
   const totalPages = Math.ceil(count / rowsPerPage);
 

@@ -31,7 +31,8 @@ import {
     processBillingJobChunkAction, 
     getBillingJobStatusAction,
     getAllBranchesAction,
-    getSystemSettingsAction
+    getSystemSettingsAction,
+    resetStuckBillingJobsAction
 } from "@/lib/actions";
 import { format } from "date-fns";
 import { BILLING_DUE_DATE_OFFSET_DAYS } from "@/lib/billing-config";
@@ -67,6 +68,8 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
 
     const [branches, setBranches] = React.useState<any[]>([]);
     const [selectedBranch, setSelectedBranch] = React.useState<string>("all");
+    const [isStuck, setIsStuck] = React.useState(false);
+    const [isResetting, setIsResetting] = React.useState(false);
 
     React.useEffect(() => {
         if (open) {
@@ -156,6 +159,11 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 if (startRes.error) {
                     const errorMsg = typeof startRes.error === 'string' ? startRes.error : (startRes.error?.message || "Unknown error");
                     toast({ variant: "destructive", title: "Job Failed to Start", description: errorMsg });
+                    
+                    if (errorMsg.toLowerCase().includes("already pending") || errorMsg.toLowerCase().includes("already processing")) {
+                        setIsStuck(true);
+                    }
+                    
                     setIsProcessing(false);
                     return;
                 }
@@ -193,7 +201,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
      */
     const runChunkedProcessing = async (jobId: string) => {
         try {
-            const chunkRes = await processBillingJobChunkAction(jobId, 500); // 500 at a time
+            const chunkRes = await processBillingJobChunkAction(jobId, 1000); // 1000 at a time (bulk-fetch optimized)
             
             if (chunkRes.data) {
                 const updatedJob = chunkRes.data;
@@ -221,6 +229,23 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         } catch (err) {
             console.error("Chunk error:", err);
             setIsProcessing(false);
+        }
+    };
+
+    const handleResetJob = async () => {
+        setIsResetting(true);
+        try {
+            const res = await resetStuckBillingJobsAction(monthYear, isBulk ? 'bulk_meters' : 'individual_customers');
+            if (res.data?.success) {
+                toast({ title: "Job Reset", description: "The stuck job has been cleared. You can now try running the cycle again." });
+                setIsStuck(false);
+            } else {
+                toast({ variant: "destructive", title: "Reset Failed", description: res.error?.message || "Could not reset the job." });
+            }
+        } catch (error) {
+            toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred during reset." });
+        } finally {
+            setIsResetting(false);
         }
     };
 
@@ -378,6 +403,23 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                             <p className="text-[10px] text-muted-foreground text-center italic">
                                 Do not close this dialog until processing is complete.
                             </p>
+                        </div>
+                    )}
+
+                    {isStuck && !isProcessing && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-md space-y-2">
+                            <p className="text-xs text-amber-800 font-medium">A billing job for this month is already active or stuck.</p>
+                            <p className="text-[10px] text-amber-700">If the job was interrupted or is taking too long (over 30 mins), you can reset it below.</p>
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="w-full text-xs border-amber-300 hover:bg-amber-100 text-amber-900"
+                                onClick={handleResetJob}
+                                disabled={isResetting}
+                            >
+                                {isResetting ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCcw className="mr-2 h-3 w-3" />}
+                                Reset Stuck Job
+                            </Button>
                         </div>
                     )}
                 </div>

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from '@/lib/xlsx';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp } from "lucide-react";
+import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -1135,6 +1135,7 @@ export default function AdminReportsPage() {
           setSelectedBranch(parsedUser.branchId);
         }
       }
+
       setIsLoading(false);
     };
     initializeData();
@@ -1281,38 +1282,47 @@ export default function AdminReportsPage() {
     );
   }
 
-  //...
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-bold">Generate Reports</h1>
+    <div className="space-y-8 pb-10">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Reports & Analytics</h1>
+          <p className="text-muted-foreground mt-1 text-base">Generate, view, and export comprehensive system reports.</p>
+        </div>
       </div>
 
-      <Card className="shadow-lg">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <TrendingUp className="h-8 w-8 text-primary" />
-            <div>
-              <CardTitle>Overall Difference Usage Trend</CardTitle>
-              <CardDescription>Shows the trend of difference usage by branch.</CardDescription>
-            </div>
+
+
+      <Card className="shadow-md border-slate-200/60 overflow-hidden">
+        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-row items-center gap-4">
+          <div className="h-10 w-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">
+            <TrendingUp className="h-5 w-5" />
+          </div>
+          <div>
+            <CardTitle className="text-lg">Overall Difference Usage Trend</CardTitle>
+            <CardDescription>Shows the trend of difference usage by branch.</CardDescription>
           </div>
         </CardHeader>
-        <CardContent>
-          <Link href="/admin/reports/overall-difference-usage-trend">
-            <Button>View Report</Button>
+        <CardContent className="p-6">
+          <Link href="/admin/reports/overall-difference-usage-trend" passHref>
+            <Button variant="default" className="shadow-sm">View Trend Report</Button>
           </Link>
         </CardContent>
       </Card>
 
 
-      <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Manual Report Generation</CardTitle>
-          <CardDescription>Select a report type and apply filters to generate and download.</CardDescription>
+      <Card className="shadow-md border-slate-200/60 overflow-hidden">
+        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-row items-center gap-4">
+          <div className="h-10 w-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-sm">
+            <FileSpreadsheet className="h-5 w-5" />
+          </div>
+          <div>
+            <CardTitle className="text-lg">Manual Report Generation</CardTitle>
+            <CardDescription>Select a report type and apply filters to generate and download.</CardDescription>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="p-6 space-y-8">
           <div className="space-y-2">
             <Label htmlFor="report-type">Select Report Type</Label>
             <Select value={selectedReportId || undefined} onValueChange={(value) => {
@@ -1500,39 +1510,109 @@ export default function AdminReportsPage() {
         </Card>
       )}
 
-      {/* Data Archiving Section */}
-      <Card className="shadow-lg border-amber-500/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Archive className="h-6 w-6 text-amber-600" /> Data Archiving</CardTitle>
-          <CardDescription>Free up database storage by archiving old records. This is a two-step process: first export the data, then confirm deletion.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>1. Export Bill Records Before Date</Label>
-            <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-              <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
-              <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate}>
-                <Download className="mr-2 h-4 w-4" /> Export Archive File
-              </Button>
+      {/* Advanced Maintenance Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-10">
+        {/* Data Archiving Section */}
+        <Card className="shadow-md border-slate-200/60 overflow-hidden relative group transition-all duration-300 hover:shadow-lg">
+          <div className="absolute top-0 left-0 w-1 h-full bg-amber-500" />
+          <CardHeader className="bg-slate-50/50 border-b pb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
+                <Archive className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Data Archiving</CardTitle>
+                <CardDescription>Free up database storage by archiving old records.</CardDescription>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              This will generate and download an XLSX file of all bill records before the selected date.
-            </p>
-          </div>
-
-          {archivableBills.length > 0 && (
-            <div className="space-y-2 p-4 border-l-4 border-destructive rounded-r-md bg-destructive/10">
-              <Label className="text-destructive">2. Confirm Deletion of Archived Records</Label>
-              <p className="text-sm text-destructive/80">
-                You have exported {archivableBills.length} records. Please ensure you have securely saved the downloaded file. This action is irreversible.
+          </CardHeader>
+          <CardContent className="p-6 space-y-6">
+            <div className="space-y-3">
+              <Label className="text-sm font-semibold text-slate-700">1. Export Bill Records Before Date</Label>
+              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
+                <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate} className="bg-slate-800 hover:bg-slate-900 shadow-sm">
+                  <Download className="mr-2 h-4 w-4" /> Export Archive
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground bg-slate-100 p-2 rounded-lg inline-block">
+                This will generate and download an XLSX file of all bill records before the selected date.
               </p>
-              <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating}>
-                <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
-              </Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+
+            {archivableBills.length > 0 && (
+              <div className="space-y-3 p-4 border animate-in fade-in slide-in-from-top-2 border-red-200 rounded-2xl bg-red-50/50">
+                <div className="flex items-center gap-2 text-red-700 font-bold">
+                  <AlertCircle className="h-4 w-4" />
+                  <span className="text-sm">2. Confirm Deletion of Archived Records</span>
+                </div>
+                <p className="text-xs text-red-600 leading-relaxed">
+                  You have exported {archivableBills.length} records. Please ensure you have securely saved the downloaded file. This action is irreversible.
+                </p>
+                <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating} size="sm" className="w-full rounded-xl">
+                  <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Database Synchronization Section */}
+        <Card className="shadow-md border-slate-200/60 overflow-hidden relative group transition-all duration-300 hover:shadow-lg">
+          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
+          <CardHeader className="bg-slate-50/50 border-b pb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">
+                <RefreshCw className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">System Synchronization</CardTitle>
+                <CardDescription>Recalculate aging debt buckets and payable mappings.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-6 space-y-6">
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl flex gap-3">
+              <Zap className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-blue-800">Refresh Billing State</p>
+                <p className="text-xs text-blue-600 mt-1 leading-relaxed">
+                  Run this to ensure all existing records (aging debt, total payables) correctly reflect the latest system business logic.
+                </p>
+              </div>
+            </div>
+
+            <Button
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md h-12"
+              disabled={isGenerating}
+              onClick={async () => {
+                try {
+                  const result = await syncAllBillsAgingDebtAction();
+                  if (result.data?.success) {
+                    await initializeBills(true);
+                    await initializeBulkMeters(true);
+                    toast({
+                      title: "Synchronization Complete",
+                      description: `Successfully synchronized ${result.data.updatedCount} records.`,
+                    });
+                  } else {
+                    throw new Error(result.error?.message || "Sync failed");
+                  }
+                } catch (error: any) {
+                  toast({
+                    title: "Sync Error",
+                    description: error.message,
+                    variant: "destructive",
+                  });
+                }
+              }}
+            >
+              <RefreshCw className={cn("mr-2 h-4 w-4 shadow-sm", isGenerating && "animate-spin")} />
+              Sync Financial Database
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
 
       <AlertDialog open={isArchiveDeleteConfirmationOpen} onOpenChange={setIsArchiveDeleteConfirmationOpen}>
         <AlertDialogContent>
@@ -1548,59 +1628,6 @@ export default function AdminReportsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {/* Database Synchronization Section */}
-      <Card className="shadow-lg border-blue-500/50 mt-6 mb-8">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <RefreshCw className="h-6 w-6 text-blue-600" /> Database Synchronization
-          </CardTitle>
-          <CardDescription>
-            Recalculate and synchronize aging debt buckets (`debit_30`, `debit_30_60`, `debit_60`) and total payable mappings for all historical bills.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Alert variant="default" className="border-blue-200 bg-blue-50 dark:bg-blue-900/10">
-            <Zap className="h-5 w-5 text-blue-600" />
-            <AlertTitle>Synchronization Recommendation</AlertTitle>
-            <UIAlertDescription>
-              Run this synchronization once after updating the billing logic to ensure all existing records correctly reflect the new aging debt calculation and total payable mappings. This process may take a moment depending on the number of records.
-            </UIAlertDescription>
-          </Alert>
-
-          <Button
-            className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white"
-            disabled={isGenerating}
-            onClick={async () => {
-              try {
-                const result = await syncAllBillsAgingDebtAction();
-                if (result.data?.success) {
-                  // FORCE REFRESH AFTER SYNC
-                  await initializeBills(true);
-                  await initializeBulkMeters(true);
-
-                  toast({
-                    title: "Synchronization Complete",
-                    description: `Successfully synchronized ${result.data.updatedCount} bill records. Data has been refreshed.`,
-                    variant: "default",
-                  });
-                } else {
-                  const errorMsg = result.error?.message || result.error || "Unknown error during sync";
-                  throw new Error(errorMsg);
-                }
-              } catch (error: any) {
-                toast({
-                  title: "Synchronization Failed",
-                  description: error.message || "An error occurred while synchronizing data.",
-                  variant: "destructive",
-                });
-              }
-            }}
-          >
-            <RefreshCw className={cn("mr-2 h-4 w-4", isGenerating && "animate-spin")} />
-            Synchronize All Bills
-          </Button>
-        </CardContent>
-      </Card>
     </div>
   );
 }

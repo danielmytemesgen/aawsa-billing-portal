@@ -3,12 +3,11 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
-import { ChevronLeft, ChevronRight, GripVertical } from "lucide-react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Button, type ButtonProps } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface SidebarContextValue {
@@ -46,16 +45,11 @@ export function SidebarProvider({ children, defaultOpen = true }: SidebarProvide
   }, [isMobile, defaultOpen])
 
   const toggleSidebar = () => {
-    if (isMobile) {
-      setState(prev => prev === "expanded" ? "collapsed" : "expanded")
-    } else {
-      setState(prev => prev === "expanded" ? "collapsed" : "expanded")
-    }
+    setState(prev => prev === "expanded" ? "collapsed" : "expanded")
   }
 
-
   const contextValue: SidebarContextValue = {
-    state: isMobile ? (state === "expanded" ? "mobile" : "collapsed") : state, // Refined mobile state
+    state: isMobile ? (state === "expanded" ? "mobile" : "collapsed") : state,
     setState,
     toggleSidebar,
     isMobile,
@@ -69,12 +63,12 @@ export function SidebarProvider({ children, defaultOpen = true }: SidebarProvide
 }
 
 const sidebarVariants = cva(
-  "fixed inset-y-0 left-0 z-40 flex h-full flex-col bg-background transition-all duration-300 ease-in-out",
+  "fixed inset-y-0 left-0 z-40 flex h-full flex-col transition-all duration-300 ease-in-out",
   {
     variants: {
       variant: {
-        default: "border-r",
-        sidebar: "border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+        default: "border-r bg-background",
+        sidebar: "border-r border-sidebar-border bg-background text-sidebar-foreground",
       },
       state: {
         expanded: "w-64",
@@ -101,7 +95,6 @@ const sidebarVariants = cva(
   }
 )
 
-
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof sidebarVariants> {
   collapsible?: boolean | 'icon';
 }
@@ -112,17 +105,16 @@ const Sidebar = React.forwardRef<HTMLDivElement, SidebarProps>(
 
     let currentVisualState: "expanded" | "collapsed" | "mobile" = "expanded";
     if (isMobile) {
-      currentVisualState = sidebarState === "mobile" ? "mobile" : "collapsed"; // mobile state means expanded overlay
+      currentVisualState = sidebarState === "mobile" ? "mobile" : "collapsed";
     } else {
       currentVisualState = sidebarState as "expanded" | "collapsed";
     }
-
 
     return (
       <>
         {isMobile && currentVisualState === "mobile" && (
           <div
-            className="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm transition-opacity no-print"
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity no-print"
             onClick={toggleSidebar}
           />
         )}
@@ -130,7 +122,8 @@ const Sidebar = React.forwardRef<HTMLDivElement, SidebarProps>(
           ref={ref}
           className={cn(
             sidebarVariants({ variant, state: currentVisualState, collapsible: collapsible as boolean }),
-            isMobile && currentVisualState === "mobile" && "shadow-xl",
+            "shadow-sm",
+            isMobile && currentVisualState === "mobile" && "shadow-2xl",
             isMobile && currentVisualState === "collapsed" && "-translate-x-full",
             className)}
           data-collapsible={collapsible === "icon" ? "icon" : collapsible}
@@ -153,8 +146,8 @@ const SidebarHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
       <div
         ref={ref}
         className={cn(
-          "flex items-center justify-between p-3",
-          currentDisplayState === "collapsed" && !isMobile && "justify-center",
+          "flex items-center justify-between px-3 py-4 border-b",
+          currentDisplayState === "collapsed" && !isMobile && "justify-center px-2",
           className
         )}
         {...props}
@@ -167,7 +160,7 @@ SidebarHeader.displayName = "SidebarHeader";
 
 const SidebarContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex-1 overflow-y-auto overflow-x-hidden", className)} {...props} />
+    <div ref={ref} className={cn("flex-1 overflow-y-auto overflow-x-hidden py-2 scroll-smooth", className)} {...props} />
   )
 )
 SidebarContent.displayName = "SidebarContent"
@@ -180,7 +173,11 @@ const SidebarFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
     return (
       <div
         ref={ref}
-        className={cn("p-3 mt-auto", currentDisplayState === "collapsed" && !isMobile && "p-2", className)}
+        className={cn(
+          "mt-auto border-t p-3",
+          currentDisplayState === "collapsed" && !isMobile && "p-2",
+          className
+        )}
         {...props}
       />
     )
@@ -192,8 +189,6 @@ SidebarFooter.displayName = "SidebarFooter"
 const SidebarTrigger = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, children, ...props }, ref) => {
     const { toggleSidebar, state, isMobile } = useSidebar()
-
-    // Ensure trigger is always available on mobile to open/close sidebar
     const effectiveState = isMobile ? (state === "mobile" ? "expanded" : "collapsed") : state;
 
     return (
@@ -257,8 +252,8 @@ const SidebarGroup = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLD
       <div
         ref={ref}
         className={cn(
-          "flex flex-col",
-          currentDisplayState === "expanded" ? "gap-1 p-2" : "gap-1 p-1 items-center",
+          "flex flex-col mb-1",
+          currentDisplayState === "expanded" ? "gap-0.5 px-2 py-1" : "gap-1 px-1 py-1 items-center",
           className
         )}
         {...props}
@@ -270,7 +265,7 @@ SidebarGroup.displayName = "SidebarGroup"
 
 
 const SidebarGroupLabel = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
-  ({ className, ...props }, ref) => {
+  ({ className, children, ...props }, ref) => {
     const { state, isMobile } = useSidebar()
     const currentDisplayState = isMobile ? (state === "mobile" ? "expanded" : "collapsed") : state;
     if (currentDisplayState === "collapsed" && !isMobile) return null
@@ -278,9 +273,14 @@ const SidebarGroupLabel = React.forwardRef<HTMLParagraphElement, React.HTMLAttri
     return (
       <p
         ref={ref}
-        className={cn("px-2 py-1 text-xs font-semibold text-muted-foreground", className)}
+        className={cn(
+          "px-2 py-1.5 text-sm font-bold text-foreground",
+          className
+        )}
         {...props}
-      />
+      >
+        {children}
+      </p>
     )
   }
 )
@@ -289,7 +289,7 @@ SidebarGroupLabel.displayName = "SidebarGroupLabel"
 
 const SidebarMenu = React.forwardRef<HTMLUListElement, React.HTMLAttributes<HTMLUListElement>>(
   ({ className, ...props }, ref) => (
-    <ul ref={ref} className={cn("space-y-1", className)} {...props} />
+    <ul ref={ref} className={cn("space-y-0.5", className)} {...props} />
   )
 )
 SidebarMenu.displayName = "SidebarMenu"
@@ -303,7 +303,7 @@ const SidebarMenuItem = React.forwardRef<HTMLLIElement, React.HTMLAttributes<HTM
 SidebarMenuItem.displayName = "SidebarMenuItem"
 
 
-interface SidebarMenuButtonProps extends ButtonProps { // ButtonProps includes asChild?
+interface SidebarMenuButtonProps extends ButtonProps {
   isActive?: boolean;
   tooltip?: React.ReactNode;
 }
@@ -325,17 +325,18 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
     const buttonElement = (
       <Button
         ref={ref}
-        variant={isActive ? "secondary" : variant}
+        variant="ghost"
         size={currentDisplayState === "collapsed" && !isMobile ? "icon" : size}
         className={cn(
-          "w-full justify-start gap-2",
-          currentDisplayState === "collapsed" && !isMobile && "h-9 w-9",
-          isActive && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent/90",
-          !isActive && "hover:bg-sidebar-accent/50",
+          "w-full justify-start gap-3 rounded-lg text-[15px] font-semibold transition-colors",
+          "text-muted-foreground hover:text-foreground hover:bg-accent",
+          currentDisplayState === "collapsed" && !isMobile && "h-10 w-10 justify-center p-0",
+          isActive && "bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700",
+          !isActive && "hover:bg-accent",
           className
         )}
-        {...props} // Pass down other props
-        asChild={asChild} // Pass down the asChild prop
+        {...props}
+        asChild={asChild}
         onClick={handleClick}
       >
         {children}
@@ -347,7 +348,11 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
         <TooltipProvider delayDuration={0}>
           <Tooltip>
             <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
-            <TooltipContent side="right" sideOffset={5} className="bg-popover text-popover-foreground">
+            <TooltipContent
+              side="right"
+              sideOffset={8}
+              className="text-xs font-medium"
+            >
               {tooltip}
             </TooltipContent>
           </Tooltip>
@@ -369,7 +374,10 @@ const SidebarMenuSub = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTM
     return (
       <div
         ref={ref}
-        className={cn("ml-4 mt-1 space-y-1 border-l border-border pl-2", className)}
+        className={cn(
+          "ml-4 mt-0.5 space-y-0.5 border-l pl-3",
+          className
+        )}
         {...props}
       />
     )
@@ -401,15 +409,16 @@ const SidebarMenuSubButton = React.forwardRef<HTMLButtonElement, ButtonProps & {
     return (
       <Button
         ref={ref}
-        variant={isActive ? "secondary" : variant}
+        variant="ghost"
         size={size}
         className={cn(
-          "w-full justify-start gap-2",
-          isActive && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent/90",
-          !isActive && "hover:bg-sidebar-accent/50",
-          className)}
-        {...props} // Pass down other props
-        asChild={asChild} // Pass down the asChild prop
+          "w-full justify-start gap-2 text-sm font-medium rounded-md transition-colors",
+          "text-muted-foreground hover:text-foreground hover:bg-accent",
+          isActive && "bg-blue-50 text-blue-600 font-bold hover:bg-blue-100",
+          className
+        )}
+        {...props}
+        asChild={asChild}
         onClick={handleClick}
       >
         {children}

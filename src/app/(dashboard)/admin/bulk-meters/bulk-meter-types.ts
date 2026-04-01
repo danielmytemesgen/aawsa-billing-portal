@@ -22,6 +22,7 @@ export type BulkMeter = z.infer<typeof baseBulkMeterDataSchema> & {
   differenceBill?: number;
   xCoordinate?: number;
   yCoordinate?: number;
+  zCoordinate?: number;
   chargeGroup: string; // Changed to string
   sewerageConnection: SewerageConnection;
   approved_by?: string | null;
@@ -29,6 +30,7 @@ export type BulkMeter = z.infer<typeof baseBulkMeterDataSchema> & {
   woreda: string;
   location: string;
   routeKey?: string | null;
+  ordinal?: number | null;
 };
 
 export interface Route {
@@ -36,6 +38,7 @@ export interface Route {
   branchId?: string | null;
   readerId?: string | null;
   description?: string | null;
+  status?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }

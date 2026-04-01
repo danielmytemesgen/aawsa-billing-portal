@@ -82,19 +82,42 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
       }
 
       const headerLine = lines[0].split(CSV_SPLIT_REGEX).map(h => h.trim().replace(/^"|"$/g, ''));
-      if (headerLine.length !== expectedHeaders.length || !expectedHeaders.every((h, i) => h === headerLine[i])) {
-        localErrors.push(`Invalid CSV headers. Expected: "${expectedHeaders.join(", ")}".`);
-        setProcessingErrors(localErrors);
-        setIsProcessing(false);
-        return;
+      
+      // Flexible Header Check: 
+      // Ensure all REQUIRED headers in 'expectedHeaders' are present (case-insensitive)
+      const normalizedCSVHeaders = headerLine.map(h => h.toLowerCase());
+      const normalizedExpectedHeaders = expectedHeaders.map(h => h.toLowerCase());
+
+      const missingHeaders = expectedHeaders.filter(h => !normalizedCSVHeaders.includes(h.toLowerCase()));
+      
+      // If any of the expected headers are missing, we check if they are optional in the schema.
+      // For now, we'll keep it simple: warn if major headers are missing, but allow proceeding 
+      // if the schema validation (zod) passes later.
+      if (missingHeaders.length > 0) {
+        console.warn("Some expected headers are missing from CSV:", missingHeaders);
+        // We could fail here, but let's be more flexible and only fail if the actual
+        // data processing fails validation.
       }
 
       const totalRows = lines.length - 1;
       for (let i = 1; i < lines.length; i++) {
         const values = lines[i].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
-        const rowData = Object.fromEntries(headerLine.map((header, index) => [header, values[index] || undefined]));
+        
+        // Map the CSV values to the expected header keys by matching them case-insensitively
+        const rowData: Record<string, any> = {};
+        
+        // Use the original expectedHeaders as keys for our data object
+        expectedHeaders.forEach((expectedHeader) => {
+          const indexInCSV = normalizedCSVHeaders.indexOf(expectedHeader.toLowerCase());
+          if (indexInCSV !== -1) {
+            rowData[expectedHeader] = values[indexInCSV] || undefined;
+          } else {
+            rowData[expectedHeader] = undefined;
+          }
+        });
 
         try {
+          // Validate using the passed schema
           const validatedData = schema.parse(rowData);
           const result = await addRecordFunction(validatedData);
           if (result && result.success) {

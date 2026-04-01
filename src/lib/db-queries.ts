@@ -19,7 +19,7 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
         LEFT JOIN
             permissions p ON rp.permission_id = p.id
         WHERE
-            sm.email = $1
+            LOWER(TRIM(sm.email)) = LOWER(TRIM($1))
     `;
 
     const params = [email];
@@ -117,21 +117,22 @@ export const dbGetBranchById = async (id: string) => {
 };
 
 export const dbGetAllCustomers = async (options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
-    let sql = 'SELECT * FROM individual_customers WHERE deleted_at IS NULL';
+    let sql = 'SELECT ic.*, b.name as branch_name FROM individual_customers ic LEFT JOIN branches b ON ic.branch_id = b.id WHERE ic.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
 
     if (options?.branchId) {
-        sql += ` AND branch_id = $${paramIndex++}`;
+        sql += ` AND ic.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
     }
 
     if (options?.excludePending) {
-        sql += " AND status != 'Pending Approval'";
+        sql += " AND ic.status != 'Pending Approval'";
     }
 
     if (options?.searchTerm) {
-        sql += ` AND (name ILIKE $${paramIndex} OR "METER_KEY" ILIKE $${paramIndex} OR "contractNumber" ILIKE $${paramIndex})`;
+        // Search by Name, Meter Key, Customer Key, or Branch Name (via join)
+        sql += ` AND (ic.name ILIKE $${paramIndex} OR ic."METER_KEY" ILIKE $${paramIndex} OR ic."customerKeyNumber" ILIKE $${paramIndex} OR ic."contractNumber" ILIKE $${paramIndex} OR b.name ILIKE $${paramIndex})`;
         params.push(`%${options.searchTerm}%`);
         paramIndex++;
     }
@@ -152,21 +153,22 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; limit?: n
 };
 
 export const dbCountCustomers = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean }) => {
-    let sql = 'SELECT COUNT(*) as total FROM individual_customers WHERE deleted_at IS NULL';
+    let sql = 'SELECT COUNT(*) as total FROM individual_customers ic LEFT JOIN branches b ON ic.branch_id = b.id WHERE ic.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
 
     if (options?.branchId) {
-        sql += ` AND branch_id = $${paramIndex++}`;
+        sql += ` AND ic.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
     }
 
     if (options?.excludePending) {
-        sql += " AND status != 'Pending Approval'";
+        sql += " AND ic.status != 'Pending Approval'";
     }
 
     if (options?.searchTerm) {
-        sql += ` AND (name ILIKE $${paramIndex} OR "METER_KEY" ILIKE $${paramIndex} OR "contractNumber" ILIKE $${paramIndex})`;
+        // Search by Name, Meter Key, Customer Key, or Branch Name
+        sql += ` AND (ic.name ILIKE $${paramIndex} OR ic."METER_KEY" ILIKE $${paramIndex} OR ic."customerKeyNumber" ILIKE $${paramIndex} OR ic."contractNumber" ILIKE $${paramIndex} OR b.name ILIKE $${paramIndex})`;
         params.push(`%${options.searchTerm}%`);
         paramIndex++;
     }
@@ -175,16 +177,104 @@ export const dbCountCustomers = async (options?: { branchId?: string; searchTerm
     return parseInt(rows[0]?.total || '0', 10);
 };
 
+export const dbGetCustomersSummary = async (branchId?: string) => {
+    let sql = "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'Active') as active FROM individual_customers WHERE deleted_at IS NULL";
+    const params = [];
+    if (branchId) {
+        sql += ' AND branch_id = $1';
+        params.push(branchId);
+    }
+    const rows: any = await query(sql, params);
+    const total = parseInt(rows[0]?.total || '0', 10);
+    const active = parseInt(rows[0]?.active || '0', 10);
+    return {
+        total,
+        active,
+        inactive: total - active
+    };
+};
+
 export const dbGetCustomersByBulkMeterId = async (bulkMeterId: string) => {
     return await query('SELECT * FROM individual_customers WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL', [bulkMeterId]);
 };
 
+/**
+ * Batch version: fetch all individual customers for multiple bulk meter IDs in one query.
+ * Returns a Map<bulkMeterId, customer[]> for O(1) lookups in the processing loop.
+ */
+export const dbGetCustomersByBulkMeterIds = async (bulkMeterIds: string[]): Promise<Map<string, any[]>> => {
+    if (bulkMeterIds.length === 0) return new Map();
+    const placeholders = bulkMeterIds.map((_, i) => `$${i + 1}`).join(',');
+    const rows: any[] = await query(
+        `SELECT * FROM individual_customers WHERE "assignedBulkMeterId" IN (${placeholders}) AND deleted_at IS NULL`,
+        bulkMeterIds
+    );
+    const map = new Map<string, any[]>();
+    for (const row of rows) {
+        const key = row.assignedBulkMeterId;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(row);
+    }
+    return map;
+};
+
+/**
+ * Batch version: fetch the most recent bills for multiple bulk meters in one query.
+ * Returns a Map<customerKeyNumber, bill[]> for O(1) lookups.
+ */
+export const dbGetBillsByBulkMeterIds = async (customerKeys: string[]): Promise<Map<string, any[]>> => {
+    if (customerKeys.length === 0) return new Map();
+    const placeholders = customerKeys.map((_, i) => `$${i + 1}`).join(',');
+    const rows: any[] = await query(
+        `SELECT * FROM bills WHERE "CUSTOMERKEY" IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`,
+        customerKeys
+    );
+    const map = new Map<string, any[]>();
+    for (const row of rows) {
+        const key = row.CUSTOMERKEY;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(row);
+    }
+    return map;
+};
+
+/**
+ * Batch version: fetch all bills for multiple individual customers in one query.
+ * Returns a Map<individual_customer_id, bill[]> for O(1) lookups.
+ */
+export const dbGetBillsByIndividualCustomerIds = async (customerKeys: string[]): Promise<Map<string, any[]>> => {
+    if (customerKeys.length === 0) return new Map();
+    const placeholders = customerKeys.map((_, i) => `$${i + 1}`).join(',');
+    const rows: any[] = await query(
+        `SELECT * FROM bills WHERE individual_customer_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`,
+        customerKeys
+    );
+    const map = new Map<string, any[]>();
+    for (const row of rows) {
+        const key = row.individual_customer_id;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(row);
+    }
+    return map;
+};
+
 export const dbCreateIndividualCustomer = async (customer: any) => {
-    const keys = Object.keys(customer);
+    const cleanCust = { ...customer };
+    // Map camelCase to DB column names
+    if (cleanCust.meterNumber !== undefined) {
+        cleanCust.METER_KEY = cleanCust.meterNumber;
+        // Keep meterNumber for legacy if column still exists, but METER_KEY is primary
+    }
+    if (cleanCust.routeKey !== undefined) {
+        cleanCust.ROUTE_KEY = cleanCust.routeKey;
+        delete cleanCust.routeKey;
+    }
+
+    const keys = Object.keys(cleanCust);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO individual_customers (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => customer[k]));
-    return rows[0] || customer;
+    const rows: any = await query(sql, keys.map(k => cleanCust[k]));
+    return rows[0] || cleanCust;
 };
 
 export const dbUpdateCustomer = async (customerKeyNumber: string, customer: any) => {
@@ -217,21 +307,22 @@ export const dbGetCustomersByBookNumber = async (bookNumber: string) => {
 };
 
 export const dbGetAllBulkMeters = async (options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
-    let sql = 'SELECT * FROM bulk_meters WHERE deleted_at IS NULL';
+    let sql = 'SELECT bm.*, b.name as branch_name FROM bulk_meters bm LEFT JOIN branches b ON bm.branch_id = b.id WHERE bm.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
 
     if (options?.branchId) {
-        sql += ` AND branch_id = $${paramIndex++}`;
+        sql += ` AND bm.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
     }
 
     if (options?.excludePending) {
-        sql += " AND status != 'Pending Approval'";
+        sql += " AND bm.status != 'Pending Approval'";
     }
 
     if (options?.searchTerm) {
-        sql += ` AND (name ILIKE $${paramIndex} OR "METER_KEY" ILIKE $${paramIndex} OR "contractNumber" ILIKE $${paramIndex})`;
+        // Search by Name, Meter Key, Customer Key, or Branch Name
+        sql += ` AND (bm.name ILIKE $${paramIndex} OR bm."METER_KEY" ILIKE $${paramIndex} OR bm."customerKeyNumber" ILIKE $${paramIndex} OR bm."contractNumber" ILIKE $${paramIndex} OR b.name ILIKE $${paramIndex})`;
         params.push(`%${options.searchTerm}%`);
         paramIndex++;
     }
@@ -252,21 +343,22 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; limit?: 
 };
 
 export const dbCountBulkMeters = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean }) => {
-    let sql = 'SELECT COUNT(*) as total FROM bulk_meters WHERE deleted_at IS NULL';
+    let sql = 'SELECT COUNT(*) as total FROM bulk_meters bm LEFT JOIN branches b ON bm.branch_id = b.id WHERE bm.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
 
     if (options?.branchId) {
-        sql += ` AND branch_id = $${paramIndex++}`;
+        sql += ` AND bm.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
     }
 
     if (options?.excludePending) {
-        sql += " AND status != 'Pending Approval'";
+        sql += " AND bm.status != 'Pending Approval'";
     }
 
     if (options?.searchTerm) {
-        sql += ` AND (name ILIKE $${paramIndex} OR "METER_KEY" ILIKE $${paramIndex} OR "contractNumber" ILIKE $${paramIndex})`;
+        // Search by Name, Meter Key, Customer Key, or Branch Name
+        sql += ` AND (bm.name ILIKE $${paramIndex} OR bm."METER_KEY" ILIKE $${paramIndex} OR bm."customerKeyNumber" ILIKE $${paramIndex} OR bm."contractNumber" ILIKE $${paramIndex} OR b.name ILIKE $${paramIndex})`;
         params.push(`%${options.searchTerm}%`);
         paramIndex++;
     }
@@ -277,11 +369,20 @@ export const dbCountBulkMeters = async (options?: { branchId?: string; searchTer
 
 export const dbCreateBulkMeter = async (bulkMeter: any) => {
     const cleanBm = { ...bulkMeter };
-    // Map camelCase routeKey to snake_case ROUTE_KEY for DB if needed
+    // Map camelCase to DB column names 
+    if (cleanBm.meterNumber !== undefined) {
+        cleanBm.METER_KEY = cleanBm.meterNumber;
+        // Keep meterNumber for legacy if column still exists, but METER_KEY is primary
+    }
     if (cleanBm.routeKey !== undefined) {
         cleanBm.ROUTE_KEY = cleanBm.routeKey;
         delete cleanBm.routeKey;
     }
+    if (cleanBm.roundKey !== undefined) {
+        cleanBm.ROUND_KEY = cleanBm.roundKey;
+        delete cleanBm.roundKey;
+    }
+
     const keys = Object.keys(cleanBm);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO bulk_meters (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
@@ -329,7 +430,8 @@ export const dbDeleteBulkMeter = async (customerKeyNumber: string, deletedBy?: s
 };
 
 export const dbGetBulkMetersSummary = async (branchId?: string) => {
-    let sql = "SELECT COUNT(*) FILTER (WHERE status != 'Pending Approval') as total, COUNT(*) FILTER (WHERE status = 'Active') as active FROM bulk_meters WHERE deleted_at IS NULL";
+    // Total includes everything not deleted. Active is just status='Active'.
+    let sql = "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'Active') as active FROM bulk_meters WHERE deleted_at IS NULL";
     const params = [];
     if (branchId) {
         sql += ' AND branch_id = $1';
@@ -371,20 +473,45 @@ export const dbCreateStaffMember = async (staffMember: any) => {
     return rows[0] || staffMember;
 };
 
-export const dbUpdateStaffMember = async (email: string, staffMember: any) => {
+export const dbUpdateStaffMember = async (email: string, staffMember: any, branchId?: string) => {
     const keys = Object.keys(staffMember);
+    if (keys.length === 0) return null;
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE staff_members SET ${setClause} WHERE email = $${keys.length + 1} RETURNING *`, [...keys.map(k => staffMember[k]), email]);
+    
+    let sql = `UPDATE staff_members SET ${setClause} WHERE LOWER(TRIM(email)) = LOWER(TRIM($${keys.length + 1}))`;
+    const params = [...keys.map(k => staffMember[k]), email];
+    
+    if (branchId) {
+        sql += ` AND branch_id = $${keys.length + 2}`;
+        params.push(branchId);
+    }
+    
+    sql += ' RETURNING *';
+    const rows = await query(sql, params);
     return rows[0] ?? null;
 };
 
-export const dbDeleteStaffMember = async (email: string, deletedBy?: string) => {
+export const dbDeleteStaffMember = async (email: string, deletedBy?: string, branchId?: string) => {
     return await withTransaction(async (client) => {
-        const staffRes = await client.query('SELECT * FROM staff_members WHERE email = $1', [email]);
+        let selectSql = 'SELECT * FROM staff_members WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))';
+        const selectParams = [email];
+        if (branchId) {
+            selectSql += ' AND branch_id = $2';
+            selectParams.push(branchId);
+        }
+        
+        const staffRes = await client.query(selectSql, selectParams);
         const staff = staffRes.rows[0];
         if (!staff) return false;
 
-        await client.query('UPDATE staff_members SET deleted_at = now(), deleted_by = $2 WHERE email = $1', [email, deletedBy]);
+        let deleteSql = 'UPDATE staff_members SET deleted_at = now(), deleted_by = $2 WHERE LOWER(TRIM(email)) = LOWER(TRIM($1))';
+        const deleteParams = [email, deletedBy];
+        if (branchId) {
+            deleteSql += ' AND branch_id = $3';
+            deleteParams.push(branchId);
+        }
+
+        await client.query(deleteSql, deleteParams);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
             ['staff', staff.id, staff.name, deletedBy, JSON.stringify(staff)]);
         return true;
@@ -647,7 +774,7 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string) => {
     if (branchId) {
         return await query(`
             SELECT r.* FROM individual_customer_readings r
-            JOIN individual_customers ic ON r.individual_customer_id = ic."customerKeyNumber"
+            JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
             WHERE r.deleted_at IS NULL AND ic.branch_id = $1
         `, [branchId]);
     }
@@ -693,7 +820,7 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string) => {
     if (branchId) {
         return await query(`
             SELECT r.* FROM bulk_meter_readings r
-            JOIN bulk_meters bm ON r.bulk_meter_id = bm."customerKeyNumber"
+            JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
             WHERE r.deleted_at IS NULL AND bm.branch_id = $1
         `, [branchId]);
     }
@@ -741,8 +868,8 @@ export const dbGetBulkMeterReadingsByMeter = async (meterKey: string) => {
 };
 
 export const dbGetMeterReadings = async (branchId?: string) => {
-    let individualSql = 'SELECT r.* FROM individual_customer_readings r JOIN individual_customers ic ON r.individual_customer_id = ic."customerKeyNumber" WHERE r.deleted_at IS NULL';
-    let bulkSql = 'SELECT r.* FROM bulk_meter_readings r JOIN bulk_meters bm ON r.bulk_meter_id = bm."customerKeyNumber" WHERE r.deleted_at IS NULL';
+    let individualSql = 'SELECT r.* FROM individual_customer_readings r JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber" WHERE r.deleted_at IS NULL';
+    let bulkSql = 'SELECT r.* FROM bulk_meter_readings r JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber" WHERE r.deleted_at IS NULL';
     const params = [];
 
     if (branchId) {
@@ -1221,22 +1348,6 @@ export const dbDeleteFaultCode = async (id: string, deletedBy?: string) => {
     });
 };
 
-export const dbGetReaderAssignments = async (staffId: string) => {
-    return await query('SELECT * FROM reader_assignments WHERE staff_id = $1 AND status != \'Completed\'', [staffId]);
-};
-
-export const dbCreateReaderAssignment = async (assignment: any) => {
-    const keys = Object.keys(assignment);
-    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
-    const sql = `INSERT INTO reader_assignments (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => assignment[k]));
-    return rows[0] || assignment;
-};
-
-export const dbUpdateAssignmentStatus = async (id: string, status: string) => {
-    const rows = await query('UPDATE reader_assignments SET status = $1, updated_at = now() WHERE id = $2 RETURNING *', [status, id]);
-    return rows[0] ?? null;
-};
 
 // =====================================================
 // Route Management Queries
@@ -1570,7 +1681,7 @@ export const dbValidateApiKey = async (apiKey: string) => {
 // 12. BILLING JOBS (Scalability Phase 2)
 // -----------------------------------------------------------------
 
-export const dbCreateBillingJob = async (job: { type: string; month_year: string; total_items: number; carry_balance: boolean; branch_id?: string }) => {
+export const dbCreateBillingJob = async (job: { type: string; month_year: string; total_items: number; carry_balance: boolean; branch_id?: string; period_start_date?: string; period_end_date?: string; due_date_offset_days?: number }) => {
     const keys = Object.keys(job);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO billing_jobs (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
@@ -1656,35 +1767,71 @@ export const dbGetUnprocessedIndividualCustomersForJob = async (job: any, limit:
 export const dbBatchInsertBills = async (bills: any[]) => {
     if (bills.length === 0) return [];
 
-    // Map all fields in the bills table
-    const columns = [
-        'id', 'BILLKEY', 'CUSTOMERKEY', 'CUSTOMERNAME', 'CUSTOMERTIN', 'CUSTOMERBRANCH',
-        'REASON', 'CURRREAD', 'PREVREAD', 'CONS', 'TOTALBILLAMOUNT', 'THISMONTHBILLAMT',
-        'OUTSTANDINGAMT', 'PENALTYAMT', 'DRACCTNO', 'CRACCTNO', 'individual_customer_id',
-        'bill_period_start_date', 'bill_period_end_date', 'month_year', 'difference_usage',
-        'base_water_charge', 'sewerage_charge', 'maintenance_fee', 'sanitation_fee',
-        'meter_rent', 'balance_carried_forward', 'amount_paid', 'due_date', 'payment_status',
-        'status', 'bill_number', 'notes', 'vat_amount', 'additional_fees_charge', 'additional_fees_breakdown',
-        'debit_30', 'debit_30_60', 'debit_60'
+    // Map all fields in the bills table with their PostgreSQL types.
+    // Explicit types are REQUIRED for unnest() — without them PostgreSQL
+    // cannot resolve the overload when the array contains only null values.
+    const columnDefs: { name: string; pgType: string }[] = [
+        { name: 'id',                       pgType: 'uuid' },
+        { name: 'BILLKEY',                  pgType: 'text' },
+        { name: 'CUSTOMERKEY',              pgType: 'text' },
+        { name: 'CUSTOMERNAME',             pgType: 'text' },
+        { name: 'CUSTOMERTIN',              pgType: 'text' },
+        { name: 'CUSTOMERBRANCH',           pgType: 'text' },
+        { name: 'REASON',                   pgType: 'text' },
+        { name: 'CURRREAD',                 pgType: 'numeric' },
+        { name: 'PREVREAD',                 pgType: 'numeric' },
+        { name: 'CONS',                     pgType: 'numeric' },
+        { name: 'TOTALBILLAMOUNT',          pgType: 'numeric' },
+        { name: 'THISMONTHBILLAMT',         pgType: 'numeric' },
+        { name: 'OUTSTANDINGAMT',           pgType: 'numeric' },
+        { name: 'PENALTYAMT',              pgType: 'numeric' },
+        { name: 'DRACCTNO',                pgType: 'text' },
+        { name: 'CRACCTNO',                pgType: 'text' },
+        { name: 'individual_customer_id',  pgType: 'text' },
+        { name: 'bill_period_start_date',  pgType: 'date' },
+        { name: 'bill_period_end_date',    pgType: 'date' },
+        { name: 'month_year',              pgType: 'text' },
+        { name: 'difference_usage',        pgType: 'numeric' },
+        { name: 'base_water_charge',       pgType: 'numeric' },
+        { name: 'sewerage_charge',         pgType: 'numeric' },
+        { name: 'maintenance_fee',         pgType: 'numeric' },
+        { name: 'sanitation_fee',          pgType: 'numeric' },
+        { name: 'meter_rent',              pgType: 'numeric' },
+        { name: 'balance_carried_forward', pgType: 'numeric' },
+        { name: 'amount_paid',             pgType: 'numeric' },
+        { name: 'due_date',                pgType: 'date' },
+        { name: 'payment_status',          pgType: 'text' },
+        { name: 'status',                  pgType: 'text' },
+        { name: 'bill_number',             pgType: 'text' },
+        { name: 'notes',                   pgType: 'text' },
+        { name: 'vat_amount',              pgType: 'numeric' },
+        { name: 'additional_fees_charge',          pgType: 'numeric' },
+        { name: 'additional_fees_breakdown',       pgType: 'jsonb' },
+        { name: 'debit_30',                pgType: 'numeric' },
+        { name: 'debit_30_60',             pgType: 'numeric' },
+        { name: 'debit_60',                pgType: 'numeric' },
     ];
 
-    const placeholders = columns.map((col, i) => {
-        // We use unnest for better performance in batch inserts
-        return `unnest($${i + 1})`;
-    }).join(', ');
+    const colNames = columnDefs.map(c => `"${c.name}"`).join(', ');
+    // Each placeholder is cast to its explicit type so PostgreSQL can resolve unnest()
+    const placeholders = columnDefs.map((c, i) => `unnest($${i + 1}::${c.pgType}[])`).join(', ');
 
     const sql = `
-        INSERT INTO bills (${columns.map(c => `"${c}"`).join(', ')})
+        INSERT INTO bills (${colNames})
         SELECT ${placeholders}
         RETURNING *
     `;
 
-    // Flatten data for UNNEST
-    const columnData = columns.map(col => bills.map(b => (b as any)[col] ?? null));
+    // Build one array per column
+    const columnData = columnDefs.map(c => bills.map(b => {
+        const val = (b as any)[c.name];
+        return val === undefined ? null : val;
+    }));
 
     const rows = await query(sql, columnData);
     return rows;
 };
+
 
 // --- Paginated Reports ---
 
