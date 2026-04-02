@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,44 +17,57 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Key, ArrowRight, ShieldCheck, HelpCircle } from "lucide-react";
 import { getCustomerAccountAction } from "@/lib/actions";
 
+// Client-side rate limiter: max 5 attempts per 15 minutes
+const MAX_ATTEMPTS = 5;
+const WINDOW_MS = 15 * 60 * 1000;
+
 export function CustomerAuthForm() {
     const router = useRouter();
     const [customerKeyNumber, setCustomerKeyNumber] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
 
+    // Track login attempts in a ref so it persists across renders without causing re-renders
+    const attemptsRef = useRef<{ count: number; windowStart: number }>({ count: 0, windowStart: Date.now() });
+
+    const checkClientRateLimit = (): boolean => {
+        const now = Date.now();
+        const attempts = attemptsRef.current;
+        if (now - attempts.windowStart > WINDOW_MS) {
+            attemptsRef.current = { count: 1, windowStart: now };
+            return true;
+        }
+        if (attempts.count >= MAX_ATTEMPTS) {
+            const minutesLeft = Math.ceil((WINDOW_MS - (now - attempts.windowStart)) / 60000);
+            setError(`Too many attempts. Please try again in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}.`);
+            return false;
+        }
+        attemptsRef.current.count += 1;
+        return true;
+    };
+
+    const getDeviceName = (): string => {
+        const ua = navigator.userAgent;
+        if (/mobile/i.test(ua)) return 'Mobile Device';
+        if (/tablet/i.test(ua)) return 'Tablet';
+        return 'Desktop';
+    };
+
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        if (!checkClientRateLimit()) return;
+
         setIsLoading(true);
 
         try {
             const { data: individualData } = await getCustomerAccountAction(customerKeyNumber);
 
-            // Helper function to get device name
-            const getDeviceName = () => {
-                const ua = navigator.userAgent;
-                if (/mobile/i.test(ua)) return 'Mobile Device';
-                if (/tablet/i.test(ua)) return 'Tablet';
-                return 'Desktop';
-            };
-
-            // Helper function to get IP and location
-            const getIpAndLocation = async () => {
-                try {
-                    const response = await fetch('https://ipapi.co/json/');
-                    const data = await response.json();
-                    return {
-                        ip: data.ip || 'unknown',
-                        location: `${data.city || ''}, ${data.country_name || ''}`.trim() || 'unknown'
-                    };
-                } catch {
-                    return { ip: 'unknown', location: 'unknown' };
-                }
-            };
-
-            const { ip, location } = await getIpAndLocation();
             const deviceName = getDeviceName();
+            // IP and location are resolved server-side; no third-party client call needed
+            const ip = 'server-resolved';
+            const location = 'server-resolved';
 
             if (individualData && individualData.status === "Active") {
                 const { createCustomerSessionAction } = await import("@/lib/actions");
@@ -74,6 +87,7 @@ export function CustomerAuthForm() {
                     customerType: "individual",
                     sessionId: session?.id
                 }));
+                attemptsRef.current = { count: 0, windowStart: Date.now() };
                 router.push("/customer/dashboard");
                 return;
             }
@@ -99,6 +113,7 @@ export function CustomerAuthForm() {
                     customerType: "bulk",
                     sessionId: session?.id
                 }));
+                attemptsRef.current = { count: 0, windowStart: Date.now() };
                 router.push("/customer/dashboard");
                 return;
             }

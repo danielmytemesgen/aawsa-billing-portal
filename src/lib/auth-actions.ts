@@ -1,9 +1,10 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { getStaffMemberForAuth } from './db-queries';
 import { encrypt } from './auth';
 import { redirect } from 'next/navigation';
+import { checkRateLimit, resetRateLimit } from './rate-limiter';
 
 export async function loginAction(formData: FormData) {
     const email = formData.get('email') as string;
@@ -13,11 +14,24 @@ export async function loginAction(formData: FormData) {
         return { success: false, message: 'Email and password are required.' };
     }
 
+    // Rate limit by email to prevent brute force
+    const rateLimitKey = `staff_login:${email.toLowerCase()}`;
+    const { allowed, retryAfterSeconds } = checkRateLimit(rateLimitKey);
+    if (!allowed) {
+        return {
+            success: false,
+            message: `Too many login attempts. Please try again in ${Math.ceil((retryAfterSeconds ?? 900) / 60)} minutes.`
+        };
+    }
+
     const user = await getStaffMemberForAuth(email, password);
 
     if (!user) {
         return { success: false, message: 'Invalid email or password.' };
     }
+
+    // Successful login — clear the rate limit counter
+    resetRateLimit(rateLimitKey);
 
     // Create the session
     const expires = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours from now

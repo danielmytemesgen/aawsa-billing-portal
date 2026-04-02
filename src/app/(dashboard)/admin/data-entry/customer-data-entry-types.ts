@@ -32,18 +32,32 @@ export const baseIndividualCustomerDataSchema = z.object({
   customerType: z.enum(customerTypes, { errorMap: () => ({ message: "Please select a valid customer type." }) }),
   bookNumber: z.string().min(1, { message: "Book Number is required." }),
   ordinal: z.coerce.number().int().min(1, { message: "Ordinal must be a positive integer." }),
-  NUMBER_OF_DIALS: z.coerce.number().int().min(1, { message: "Number of Dials must be a positive integer." }).optional(), // New field
+  NUMBER_OF_DIALS: z.coerce.number().int().min(1, { message: "Number of Dials must be a positive integer." }).optional(),
   meterSize: z.coerce.number().positive({ message: "Meter Size must be a positive number (inch)." }),
-  meterNumber: z.string().min(1, { message: "METER_KEY is required." }).regex(/^[A-Za-z&%!]{1,3}-\d+$/, { message: "METER_KEY must be in format: XXX-XXXXXXX (e.g., MET-2822965 or A&M-12345)" }),
+  // Relaxed regex: prefix of 1+ alphanumeric/special chars, dash, then digits
+  meterNumber: z.string().min(1, { message: "METER_KEY is required." }).regex(
+    /^[A-Za-z0-9&%!]{1,}-\d+$/,
+    { message: "METER_KEY must be in format: PREFIX-NUMBER (e.g., MET-2822965, METER-123, A&M-12345)" }
+  ),
   previousReading: z.coerce.number().min(0, { message: "Previous Reading cannot be negative." }),
   currentReading: z.coerce.number().min(0, { message: "Current Reading cannot be negative." }),
-  month: z.string().regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format." }),
+  // Validate actual month range (01-12), not just format
+  month: z.string()
+    .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format." })
+    .refine(val => {
+      const month = parseInt(val.split('-')[1], 10);
+      return month >= 1 && month <= 12;
+    }, { message: "Month must be between 01 and 12." })
+    .refine(val => {
+      const year = parseInt(val.split('-')[0], 10);
+      return year >= 2000 && year <= new Date().getFullYear() + 1;
+    }, { message: "Year must be between 2000 and next year." }),
   specificArea: z.string().min(1, { message: "Specific Area is required." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
   woreda: z.string().min(1, { message: "Woreda is required." }),
   sewerageConnection: z.enum(sewerageConnections, { errorMap: () => ({ message: "Please select sewerage connection status." }) }),
   assignedBulkMeterId: z.string().optional().describe("The ID of the bulk meter this individual customer is assigned to."),
-  branchId: z.string().optional().describe("The ID of the branch this customer belongs to."), // New field
+  branchId: z.string().optional().describe("The ID of the branch this customer belongs to."),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
   xCoordinate: z.coerce.number().optional(),
   yCoordinate: z.coerce.number().optional(),
@@ -67,7 +81,16 @@ export const baseBulkMeterDataSchema = z.object({
   meterNumber: z.string().min(1, { message: "Meter Number is required." }),
   previousReading: z.coerce.number().min(0, { message: "Previous Reading cannot be negative." }),
   currentReading: z.coerce.number().min(0, { message: "Current Reading cannot be negative." }),
-  month: z.string().regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format." }),
+  month: z.string()
+    .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format." })
+    .refine(val => {
+      const month = parseInt(val.split('-')[1], 10);
+      return month >= 1 && month <= 12;
+    }, { message: "Month must be between 01 and 12." })
+    .refine(val => {
+      const year = parseInt(val.split('-')[0], 10);
+      return year >= 2000 && year <= new Date().getFullYear() + 1;
+    }, { message: "Year must be between 2000 and next year." }),
   specificArea: z.string().min(1, { message: "Specific Area is required." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
   woreda: z.string().min(1, { message: "Woreda is required." }),

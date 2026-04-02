@@ -66,9 +66,20 @@ export async function calculateBill(
         additionalFeesCharge: 0, effectiveUsage: CONS < 0 ? 0 : CONS
     };
 
-    if (CONS < 0 || !customerType || !billingMonth || typeof billingMonth !== 'string' || !billingMonth.match(/^\d{4}-\d{2}$/)) {
+    if (!customerType || !billingMonth || typeof billingMonth !== 'string' || !billingMonth.match(/^\d{4}-\d{2}$/)) {
         console.error(`Invalid input for bill calculation. Usage: ${CONS}, Type: ${customerType}, Month: ${billingMonth}`);
         return emptyResult;
+    }
+
+    // Negative consumption means individual sub-meter readings exceed bulk meter reading.
+    // This is a data integrity problem (bad reading, meter rollover, or data entry error).
+    // We must NOT silently return a zero bill — throw so the caller can surface the issue.
+    if (CONS < 0) {
+        throw new Error(
+            `Negative consumption detected (${CONS} m³) for ${customerType} in ${billingMonth}. ` +
+            `Individual sub-meter usage exceeds bulk meter reading. ` +
+            `Please verify meter readings before generating a bill.`
+        );
     }
 
     // Use the last day of the month as the reference date for finding the applicable tariff

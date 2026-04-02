@@ -1066,8 +1066,8 @@ export default function StaffReportsPage() {
     if (storedUser) {
       try {
         const parsedUser: User = JSON.parse(storedUser);
-        const role = parsedUser.role.toLowerCase();
-        if ((role === "staff" || role === "reader" || role === "staff management") && parsedUser.branchId && parsedUser.branchName) {
+        // Branch-scoped if the user has a branchId assigned — no role string comparison needed
+        if (parsedUser.branchId && parsedUser.branchName) {
           setStaffBranchName(parsedUser.branchName);
           setStaffBranchId(parsedUser.branchId);
         }

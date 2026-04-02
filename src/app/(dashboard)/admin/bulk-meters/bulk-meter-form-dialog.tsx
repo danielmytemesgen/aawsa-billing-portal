@@ -76,7 +76,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
   }, []);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
+  const isHeadOffice = !userBranchId;
 
 
   React.useEffect(() => {
@@ -447,7 +447,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="previousReading"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Initial Previous Reading <span className="text-destructive">*</span></FormLabel>
+                    <FormLabel>Previous Reading <span className="text-destructive">*</span></FormLabel>
                     <FormControl>
                       <Input
                         type="number"
@@ -469,7 +469,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="currentReading"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Initial Current Reading <span className="text-destructive">*</span></FormLabel>
+                    <FormLabel>Current Reading <span className="text-destructive">*</span></FormLabel>
                     <FormControl>
                       <Input
                         type="number"
@@ -491,7 +491,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="month"
                 render={({ field }) => (
                   <FormItem className="flex flex-col">
-                    <FormLabel>Initial Reading Month <span className="text-destructive">*</span></FormLabel>
+                    <FormLabel>Reading Month <span className="text-destructive">*</span></FormLabel>
                     <DatePicker
                       date={field.value && isValid(parse(field.value, 'yyyy-MM', new Date())) ? parse(field.value, 'yyyy-MM', new Date()) : undefined}
                       setDate={(selectedDate) => {
@@ -639,7 +639,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 name="zCoordinate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Z Coordinate (Altitude/Altitude)</FormLabel>
+                    <FormLabel>Z Coordinate (Altitude)</FormLabel>
                     <FormControl>
                       <Input
                         type="number"

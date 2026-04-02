@@ -2,7 +2,10 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-const secretKey = process.env.SESSION_SECRET || "default_secret_key_change_me_in_production";
+const secretKey = process.env.SESSION_SECRET;
+if (!secretKey) {
+    throw new Error("SESSION_SECRET environment variable is not set. Application cannot start securely.");
+}
 const key = new TextEncoder().encode(secretKey);
 
 export async function encrypt(payload: any) {

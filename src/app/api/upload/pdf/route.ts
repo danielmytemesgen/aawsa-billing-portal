@@ -2,9 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { getSession } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    // Only authenticated staff can upload files
+    const session = await getSession();
+    if (!session || !session.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const file = formData.get('pdf') as File;
 

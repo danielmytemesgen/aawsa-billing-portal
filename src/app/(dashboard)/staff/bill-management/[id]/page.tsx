@@ -26,6 +26,15 @@ import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 // Mock types
 type Bill = {
@@ -219,6 +228,10 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
     const [calculatedPreview, setCalculatedPreview] = useState<{ usage: number, amount: number } | null>(null);
     const [isCalculating, setIsCalculating] = useState(false);
 
+    // Reject / Correct reason dialog state
+    const [rejectDialog, setRejectDialog] = useState<{ open: boolean; action: 'reject' | 'correct' }>({ open: false, action: 'reject' });
+    const [rejectReason, setRejectReason] = useState('');
+
     // Auto-print logic
     useEffect(() => {
         if (isPrintMode && !loading && bill) {
@@ -230,8 +243,6 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
     }, [isPrintMode, loading, bill]);
 
     useEffect(() => {
-        if (id) loadData();
-
         if (id) loadData();
     }, [id]);
 
@@ -338,44 +349,63 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
 
     const handleAction = async (action: 'submit' | 'approve' | 'reject' | 'post' | 'correct') => {
         if (!bill) return;
+
+        // Reject and correct need a reason — open the dialog instead of prompt()
+        if (action === 'reject' || action === 'correct') {
+            setRejectReason('');
+            setRejectDialog({ open: true, action });
+            return;
+        }
+
         setLoading(true);
         try {
             let res: any;
             if (action === 'submit') res = await submitBillAction(bill.id);
             if (action === 'approve') res = await approveBillAction(bill.id);
-            if (action === 'reject') res = await rejectBillAction(bill.id, 'Returned for rework');
             if (action === 'post') res = await postBillAction(bill.id);
-            if (action === 'correct') {
-                const reason = prompt("Enter reason for correction:");
-                if (reason === null) {
-                    setLoading(false);
-                    return;
-                }
-                res = await correctBillAction(bill.id, reason);
-            }
 
             if (res?.error) {
-                toast({
-                    title: "Action Failed",
-                    description: res.error.message || "An unexpected error occurred.",
-                    variant: "destructive"
-                });
+                toast({ title: "Action Failed", description: res.error.message || "An unexpected error occurred.", variant: "destructive" });
             } else {
-                toast({
-                    title: "Success",
-                    description: `Bill ${action}ed successfully.`,
-                });
+                toast({ title: "Success", description: `Bill ${action}ed successfully.` });
                 await loadData();
             }
         } catch (error: any) {
-            console.error(error);
-            toast({
-                title: "Error",
-                description: error.message || "Failed to perform action.",
-                variant: "destructive"
-            });
+            toast({ title: "Error", description: error.message || "Failed to perform action.", variant: "destructive" });
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleRejectConfirm = async () => {
+        if (!bill || !rejectReason.trim()) return;
+        setRejectDialog({ open: false, action: 'reject' });
+        setLoading(true);
+        try {
+            let res: any;
+            if (rejectDialog.action === 'reject') res = await rejectBillAction(bill.id, rejectReason);
+            if (rejectDialog.action === 'correct') res = await correctBillAction(bill.id, rejectReason);
+
+            if (res?.error) {
+                toast({ title: "Action Failed", description: res.error.message || "An unexpected error occurred.", variant: "destructive" });
+            } else {
+                if (rejectDialog.action === 'correct' && res?.data?.replacementBillId) {
+                    toast({
+                        title: "Credit Note Issued",
+                        description: `Credit note ${res.data.creditNoteNumber} created. Original bill reversed. Redirecting to correction draft...`,
+                    });
+                    // Navigate to the new replacement draft bill
+                    setTimeout(() => router.push(`${basePath}/${res.data.replacementBillId}`), 1500);
+                } else {
+                    toast({ title: "Success", description: `Bill ${rejectDialog.action}ed successfully.` });
+                    await loadData();
+                }
+            }
+        } catch (error: any) {
+            toast({ title: "Error", description: error.message || "Failed to perform action.", variant: "destructive" });
+        } finally {
+            setLoading(false);
+            setRejectReason('');
         }
     };
 
@@ -407,7 +437,7 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
                     </div>
                 </div>
                 <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => router.push(`/staff/bill-management/${bill.id}?print=true`)}>
+                    <Button variant="outline" onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                         <Printer className="mr-2 h-4 w-4" /> Print Bill
                     </Button>
                 </div>
@@ -684,6 +714,44 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
                     </Card>
                 </div>
             </div>
+
+            {/* Reject / Correct Reason Dialog */}
+            <Dialog open={rejectDialog.open} onOpenChange={(open) => setRejectDialog(prev => ({ ...prev, open }))}>
+                <DialogContent className="sm:max-w-[420px]">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {rejectDialog.action === 'reject' ? 'Reject & Request Rework' : 'Correct Bill'}
+                        </DialogTitle>
+                        <DialogDescription>
+                            {rejectDialog.action === 'reject'
+                                ? 'Provide a reason so the staff member knows what to fix.'
+                                : 'Provide a reason for the correction. This will be logged in the amendment trail.'}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-2">
+                        <Textarea
+                            placeholder="Enter reason..."
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                            className="min-h-[100px]"
+                            autoFocus
+                        />
+                        {rejectReason.trim().length === 0 && (
+                            <p className="text-xs text-red-500 mt-1">Reason is required.</p>
+                        )}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setRejectDialog(prev => ({ ...prev, open: false }))}>Cancel</Button>
+                        <Button
+                            variant={rejectDialog.action === 'reject' ? 'destructive' : 'default'}
+                            onClick={handleRejectConfirm}
+                            disabled={!rejectReason.trim()}
+                        >
+                            {rejectDialog.action === 'reject' ? 'Reject & Return' : 'Confirm Correction'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

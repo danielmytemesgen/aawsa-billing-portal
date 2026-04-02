@@ -320,9 +320,8 @@ export default function StaffBulkMeterDetailsPage() {
     if (storedUser) {
       try {
         const parsedUser: UserAuth = JSON.parse(storedUser);
-        const role = (parsedUser.role || "").toLowerCase().trim();
-        // Treat plain "staff", "reader" and "staff management" as branch-scoped roles
-        if ((role === "staff" || role === "reader" || role === "staff management") && parsedUser.branchId) {
+        // Branch-scoped if the user has a branchId assigned — no role string comparison needed
+        if (parsedUser.branchId) {
           if (isMounted) setStaffBranchId(parsedUser.branchId);
           localBranchId = parsedUser.branchId;
         }

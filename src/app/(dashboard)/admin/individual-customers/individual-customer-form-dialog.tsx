@@ -69,7 +69,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
   }, []);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
+  const isHeadOffice = !userBranchId;
 
   const form = useForm<IndividualCustomerFormValues>({
     resolver: zodResolver(individualCustomerFormObjectSchema),
@@ -236,8 +236,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
           <DialogDescription>
             {defaultValues ? "Update the details of the customer." : "Fill in the details to add a new customer."}
           </DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
+        </DialogHeader>        <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 py-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {!isHeadOffice && userBranchId ? (
@@ -270,7 +269,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
+                          <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None (Manual Location)</SelectItem>
                           {availableBranches.map((branch) => (
                             branch.id && String(branch.id).trim() !== "" ? (
                               <SelectItem key={String(branch.id)} value={String(branch.id)}>
@@ -326,7 +325,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="customerKeyNumber" render={({ field }) => (<FormItem><FormLabel>Cust. Key No. <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} disabled={!!defaultValues} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="customerKeyNumber" render={({ field }) => (<FormItem><div className="flex items-center justify-between"><FormLabel>Cust. Key No. <span className="text-destructive">*</span></FormLabel>{!defaultValues && <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Manual Entry</span>}</div><FormControl><Input {...field} disabled={!!defaultValues} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="instKey" render={({ field }) => (<FormItem><FormLabel>INST_KEY <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} placeholder="e.g., INST-12345" /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="contractNumber" render={({ field }) => (<FormItem><FormLabel>Contract No. <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>)} />
 
@@ -432,7 +431,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
                 render={({ field }) => (
                   <FormItem>
                     <div className="flex items-center justify-between">
-                      <FormLabel>X Coordinate</FormLabel>
+                      <FormLabel>X Coordinate (Optional)</FormLabel>
                       {hasCoordinates && (
                         <Button
                           type="button"
@@ -442,13 +441,13 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
                           onClick={openExternalMap}
                         >
                           <Globe className="h-3 w-3" />
-                          Map
+                          View on Map
                         </Button>
                       )}
                     </div>
                     <FormControl><Input type="number" step="any" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="yCoordinate" render={({ field }) => (<FormItem><FormLabel>Y Coordinate</FormLabel><FormControl><Input type="number" step="any" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="zCoordinate" render={({ field }) => (<FormItem><FormLabel>Z Coordinate (altitude)</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 2300" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="yCoordinate" render={({ field }) => (<FormItem><FormLabel>Y Coordinate (Optional)</FormLabel><FormControl><Input type="number" step="any" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="zCoordinate" render={({ field }) => (<FormItem><FormLabel>Z Coordinate (Altitude)</FormLabel><FormControl><Input type="number" step="any" placeholder="e.g., 2300" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} /></FormControl><FormMessage /></FormItem>)} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

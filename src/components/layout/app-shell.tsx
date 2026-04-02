@@ -72,36 +72,36 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
 
   return (
     <header className={cn(
-      "sticky top-0 z-30 flex h-16 items-center gap-4 border-b px-4 transition-all no-print",
+      "sticky top-0 z-30 flex h-14 sm:h-16 items-center gap-2 sm:gap-4 border-b px-3 sm:px-4 transition-all no-print",
       "bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-md sm:px-6"
     )}>
-      <SidebarTrigger className="text-white hover:bg-white/20 -ml-2 h-10 w-10">
-        <Menu className="h-6 w-6" />
+      <SidebarTrigger className="text-white hover:bg-white/20 -ml-1 h-10 w-10 flex-shrink-0">
+        <Menu className="h-5 w-5 sm:h-6 sm:w-6" />
         <span className="sr-only">Toggle Menu</span>
       </SidebarTrigger>
 
-      <div className="flex flex-1 items-center justify-between">
-        <Link href={dashboardHref} className="flex items-center gap-2 text-lg font-bold truncate">
-          <div className="bg-white p-1 rounded-sm shadow-sm flex items-center justify-center">
+      <div className="flex flex-1 items-center justify-between min-w-0">
+        <Link href={dashboardHref} className="flex items-center gap-2 font-bold min-w-0">
+          <div className="bg-white p-1 rounded-sm shadow-sm flex items-center justify-center flex-shrink-0">
             <Image
               src="https://veiethiopia.com/photo/partner/par2.png"
               alt="AAWSA Logo"
-              width={36}
-              height={22}
+              width={32}
+              height={20}
               className="flex-shrink-0 transition-transform active:scale-95"
             />
           </div>
-          <span className="truncate transition-colors text-white text-base md:text-lg">
+          <span className="truncate text-white text-sm sm:text-base md:text-lg hidden xs:block">
             AAWSA Bulk Bill
           </span>
         </Link>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
           {user && <NotificationBell user={user} className="text-white hover:bg-white/10" />}
           {user && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="overflow-hidden rounded-full h-9 w-9 text-white hover:bg-white/20">
-                  <UserCircle className="h-6 w-6" />
+                <Button variant="ghost" size="icon" className="overflow-hidden rounded-full h-9 w-9 text-white hover:bg-white/20 flex-shrink-0">
+                  <UserCircle className="h-5 w-5 sm:h-6 sm:w-6" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -168,20 +168,22 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
 
   return (
     <SidebarProvider defaultOpen>
-      <Sidebar variant="sidebar" collapsible="icon" className={cn("border-r border-sidebar-border bg-sidebar text-sidebar-foreground no-print")}>
-        <SidebarHeader className="p-2">
-        </SidebarHeader>
-        <SidebarContent>
+      <Sidebar
+        variant="sidebar"
+        collapsible={true}
+        className={cn("border-r border-sidebar-border bg-sidebar text-sidebar-foreground no-print")}
+      >
+        <SidebarHeader className="p-2" />
+        <SidebarContent className="overflow-y-auto">
           {sidebar}
         </SidebarContent>
-
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset className="min-w-0 flex flex-col">
         <AppHeaderContent user={user} appName={appName} onLogout={handleLogout} />
-        <main className="flex-1 p-4 sm:p-6 space-y-6 bg-background">
+        <main className="flex-1 p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 bg-background overflow-x-hidden">
           {children}
         </main>
-        <footer className="text-xs text-center text-muted-foreground p-4 no-print">
+        <footer className="text-xs text-center text-muted-foreground p-3 sm:p-4 no-print">
           Design and Developed by Daniel Temesgen
           &copy; {currentYear} {appName}. All rights reserved.
         </footer>

@@ -44,15 +44,17 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    // Don't clear the file input element before reading event.target.files —
-    // doing so loses the selection in some browsers. Only reset transient UI state
-    // (errors/progress/counts) so a new selection is clean.
     setProcessingErrors([]);
     setSuccessCount(0);
     setIsProcessing(false);
 
     const selectedFile = event.target.files?.[0];
     if (selectedFile) {
+      // File size limit: 10MB
+      if (selectedFile.size > 10 * 1024 * 1024) {
+        toast({ variant: "destructive", title: "File Too Large", description: "CSV file must be under 10MB." });
+        return;
+      }
       if (selectedFile.type === "text/csv" || selectedFile.name.endsWith(".csv")) {
         setFile(selectedFile);
       } else {
@@ -133,8 +135,7 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
             localErrors.push(`Row ${i + 1}: An unexpected error occurred during processing. ${(error as Error).message}`);
           }
         }
-        setProcessingProgress(((i) / totalRows) * 100);
-      }
+        setProcessingProgress(((i) / totalRows) * 100);      }
 
       setSuccessCount(localSuccessCount);
       setProcessingErrors(localErrors);
@@ -163,6 +164,10 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
           e.stopPropagation();
           const droppedFile = e.dataTransfer.files?.[0];
           if (droppedFile) {
+            if (droppedFile.size > 10 * 1024 * 1024) {
+              toast({ variant: "destructive", title: "File Too Large", description: "CSV file must be under 10MB." });
+              return;
+            }
             if (droppedFile.type === "text/csv" || droppedFile.name.endsWith(".csv")) {
               setFile(droppedFile);
             } else {

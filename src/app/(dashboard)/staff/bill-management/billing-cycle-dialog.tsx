@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from "react";
-import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange } from "lucide-react";
+import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -29,7 +29,6 @@ import {
     runBillingCycleAction, 
     startBillingJobAction, 
     processBillingJobChunkAction, 
-    getBillingJobStatusAction,
     getAllBranchesAction,
     getSystemSettingsAction,
     resetStuckBillingJobsAction
@@ -52,6 +51,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     const [bulkMeters, setBulkMeters] = React.useState<any[]>([]);
     const [isLoadingMeters, setIsLoadingMeters] = React.useState(false);
     const [searchTerm, setSearchTerm] = React.useState("");
+    const [negativeConsumptionWarning, setNegativeConsumptionWarning] = React.useState<string | null>(null);
 
     // Cycle config read from settings
     const [cycleMode, setCycleModeState] = React.useState<'once_per_month' | 'custom'>('once_per_month');
@@ -77,6 +77,11 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             setProcessedCount(0);
             setTotalCount(0);
             setCurrentJobId(null);
+            setIsStuck(false);
+            setNegativeConsumptionWarning(null);
+            setSelectedMeterId("");
+            setSearchTerm("");
+            setIsBulk(false);
 
             // Read cycle config from database
             getSystemSettingsAction().then(res => {
@@ -99,7 +104,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     async function loadMeters() {
         setIsLoadingMeters(true);
         const [res, branchRes] = await Promise.all([
-            getAllBulkMetersAction(),
+            getAllBulkMetersAction({ excludePending: false }), // load all so count is accurate
             getAllBranchesAction()
         ]);
         if (res.data) setBulkMeters(res.data);
@@ -139,6 +144,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
 
         setIsProcessing(true);
         setProcessedCount(0);
+        setNegativeConsumptionWarning(null);
 
         // Build period override for custom mode
         const periodOverride = cycleMode === 'custom'
@@ -185,8 +191,16 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     toast({ title: "Cycle Closed", description: "Billing cycle for selected meter closed successfully." });
                     onComplete?.();
                     onOpenChange(false);
+                    setIsProcessing(false);
                 } else {
-                    toast({ variant: "destructive", title: "Action Failed", description: res.error?.message || "Unknown error" });
+                    const errMsg: string = res.error?.message || "Unknown error";
+                    // Detect negative consumption — surface a detailed staff attention warning
+                    if (errMsg.toLowerCase().includes("negative")) {
+                        setNegativeConsumptionWarning(errMsg);
+                    } else {
+                        toast({ variant: "destructive", title: "Action Failed", description: errMsg });
+                    }
+                    setIsProcessing(false);
                 }
             }
         } catch (error) {
@@ -208,12 +222,19 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 setProcessedCount(updatedJob.processed_items);
                 
                 if (updatedJob.status === 'completed') {
+                    const failedCount = updatedJob.error_log
+                        ? updatedJob.error_log.split('\n').filter(Boolean).length
+                        : 0;
                     toast({
                         title: "Bulk Cycle Complete",
-                        description: `Successfully processed ${updatedJob.processed_items} meters.`
+                        description: failedCount > 0
+                            ? `Processed ${updatedJob.processed_items} meters. ${failedCount} meter(s) had errors — check the job log.`
+                            : `Successfully processed ${updatedJob.processed_items} meters.`,
+                        variant: failedCount > 0 ? "destructive" : "default"
                     });
                     onComplete?.();
-                    setTimeout(() => onOpenChange(false), 2000); // Give time to see 100%
+                    setIsProcessing(false);
+                    setTimeout(() => onOpenChange(false), 2000);
                 } else if (updatedJob.status === 'failed') {
                     toast({ variant: "destructive", title: "Job Failed", description: updatedJob.error_log || "Unknown error during processing." });
                     setIsProcessing(false);
@@ -279,6 +300,31 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                             Apply to ALL bulk meters (Bulk Cycle)
                         </Label>
                     </div>
+
+                    {/* ⚠️ Bulk cycle scope warning — shown as soon as isBulk is checked */}
+                    {isBulk && !isProcessing && (
+                        <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg space-y-2">
+                            <div className="flex items-center gap-2 text-amber-800 font-semibold text-xs">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                <span>Bulk Cycle — This will affect ALL meters</span>
+                            </div>
+                            <p className="text-[11px] text-amber-700 leading-relaxed">
+                                You are about to run the billing cycle for{" "}
+                                <span className="font-bold">
+                                    {selectedBranch === "all"
+                                        ? `all ${bulkMeters.filter(m => m.status === "Active").length} active bulk meters`
+                                        : `all active bulk meters in the selected branch (${bulkMeters.filter(m => m.status === "Active" && m.branch_id === selectedBranch).length} meters)`}
+                                </span>.
+                                This will generate draft bills for every meter in scope.
+                                Make sure all meter readings are up to date before proceeding.
+                            </p>
+                            <ul className="text-[11px] text-amber-700 list-disc list-inside space-y-0.5">
+                                <li>Verify the billing month is correct before running.</li>
+                                <li>Meters with negative consumption will be skipped and logged.</li>
+                                <li>This action cannot be undone without manually deleting each bill.</li>
+                            </ul>
+                        </div>
+                    )}
 
                     {/* Single meter picker */}
                     {!isBulk && (
@@ -399,7 +445,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                                 <span>Processing Batch...</span>
                                 <span>{processedCount} / {totalCount}</span>
                             </div>
-                            <Progress value={(processedCount / totalCount) * 100} className="h-2" />
+                            <Progress value={totalCount > 0 ? (processedCount / totalCount) * 100 : 0} className="h-2" />
                             <p className="text-[10px] text-muted-foreground text-center italic">
                                 Do not close this dialog until processing is complete.
                             </p>
@@ -420,6 +466,30 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                                 {isResetting ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCcw className="mr-2 h-3 w-3" />}
                                 Reset Stuck Job
                             </Button>
+                        </div>
+                    )}
+
+                    {/* ⚠️ Negative Consumption Staff Warning */}
+                    {negativeConsumptionWarning && (
+                        <div className="p-4 bg-red-50 border border-red-300 rounded-lg space-y-3">
+                            <div className="flex items-center gap-2 text-red-700 font-semibold text-sm">
+                                <AlertTriangle className="h-5 w-5 shrink-0" />
+                                <span>⚠️ Attention Required — Negative Consumption Detected</span>
+                            </div>
+                            <p className="text-xs text-red-700 leading-relaxed">
+                                The total usage recorded by individual sub-meters <strong>exceeds</strong> the bulk meter reading for this period.
+                                This means the bill <strong>cannot be generated</strong> until the readings are corrected.
+                            </p>
+                            <div className="bg-red-100 rounded p-3 space-y-1">
+                                <p className="text-[11px] font-bold text-red-800 uppercase tracking-wide">What to do:</p>
+                                <ul className="text-[11px] text-red-700 space-y-1 list-disc list-inside">
+                                    <li>Go to <strong>Meter Readings</strong> and verify the current &amp; previous readings for this bulk meter.</li>
+                                    <li>Check all individual sub-meter readings assigned to this bulk meter.</li>
+                                    <li>Look for data entry errors, meter rollovers, or misassigned readings.</li>
+                                    <li>Correct the readings, then re-run the billing cycle.</li>
+                                </ul>
+                            </div>
+                            <p className="text-[10px] text-red-500 italic">{negativeConsumptionWarning}</p>
                         </div>
                     )}
                 </div>

@@ -884,17 +884,39 @@ export default function BulkMeterDetailsPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1.5 text-sm">
+                {/* ⚠️ Negative Consumption Warning — shown when sub-meter total exceeds bulk meter reading */}
+                {rawDifference < 0 && (
+                  <div className="mb-3 p-3 rounded-lg bg-red-50 border border-red-300 space-y-2">
+                    <div className="flex items-center gap-2 text-red-700 font-semibold text-xs">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      <span>⚠️ Attention Required — Negative Consumption</span>
+                    </div>
+                    <p className="text-[11px] text-red-700 leading-relaxed">
+                      Individual sub-meter total (<span className="font-bold">{totalIndividualUsage.toFixed(2)} m³</span>) exceeds
+                      bulk meter reading (<span className="font-bold">{bulkUsage.toFixed(2)} m³</span>).
+                      A bill <span className="font-bold">cannot be generated</span> until readings are corrected.
+                    </p>
+                    <ul className="text-[11px] text-red-600 list-disc list-inside space-y-0.5">
+                      <li>Verify current &amp; previous readings for this bulk meter.</li>
+                      <li>Check all assigned individual sub-meter readings for errors.</li>
+                      <li>Look for data entry mistakes or meter rollovers.</li>
+                      <li>Correct the readings, then re-run the billing cycle.</li>
+                    </ul>
+                  </div>
+                )}
                 {/* Difference Usage highlight */}
                 <div className={cn(
                   "flex items-center justify-between px-3 py-2 rounded-md border font-semibold",
-                  isMinOfThreeApplied
-                    ? "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400"
-                    : "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400"
+                  rawDifference < 0
+                    ? "bg-red-500/10 border-red-500/40 text-red-700 dark:text-red-400"
+                    : isMinOfThreeApplied
+                      ? "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400"
+                      : "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400"
                 )}>
                   <span>Difference Usage</span>
                   <div className="text-right">
-                    <div>{differenceUsage?.toFixed(2)} m³</div>
-                    {isMinOfThreeApplied && (
+                    <div>{rawDifference < 0 ? rawDifference.toFixed(2) : differenceUsage?.toFixed(2)} m³</div>
+                    {isMinOfThreeApplied && rawDifference >= 0 && (
                       <div className="text-xs font-normal opacity-70">actual: {rawDifference.toFixed(2)} m³</div>
                     )}
                   </div>

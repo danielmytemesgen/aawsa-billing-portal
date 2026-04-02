@@ -42,16 +42,25 @@ interface SidebarNavProps {
 
 function NavItemLink({ item, pathname }: { item: NavItem; pathname: string }) {
   const IconComponent = item.iconName ? (icons[item.iconName] as unknown as React.ComponentType<LucideProps>) : null;
-  const { state: sidebarState, isMobile } = useSidebar();
+  const { state: sidebarState, isMobile, setState } = useSidebar();
   const currentDisplayState = isMobile ? (sidebarState === "mobile" ? "expanded" : "collapsed") : sidebarState;
 
   const isActive = item.matcher ? item.matcher(pathname, item.href) : pathname === item.href || (item.href !== '/' && pathname.startsWith(`${item.href}/`) && (pathname.length === item.href.length || pathname[item.href.length] === '/'));
 
+  // Close sidebar on mobile after navigation
+  const handleClick = () => {
+    if (isMobile) setState("collapsed");
+  };
+
   const linkContent = (
     <>
-      {IconComponent && <IconComponent className="h-5 w-5" />}
-      <span 
-        className={cn("truncate text-black font-normal font-serif", currentDisplayState === 'collapsed' && !isMobile && 'sr-only')} 
+      {IconComponent && <IconComponent className={cn("h-5 w-5 flex-shrink-0", isActive && "text-white")} />}
+      <span
+        className={cn(
+          "truncate font-normal font-serif",
+          isActive ? "text-white" : "text-black",
+          currentDisplayState === 'collapsed' && !isMobile && 'sr-only'
+        )}
         style={{ fontFamily: '"Times New Roman", Times, serif' }}
       >
         {item.title}
@@ -65,15 +74,16 @@ function NavItemLink({ item, pathname }: { item: NavItem; pathname: string }) {
       isActive={isActive}
       disabled={item.disabled}
       className={cn(
-        "w-full justify-start",
+        "w-full justify-start min-h-[44px]", // 44px min touch target
         isActive && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent/90 hover:text-sidebar-accent-foreground",
         !isActive && "hover:bg-sidebar-accent/50"
       )}
       tooltip={currentDisplayState === 'collapsed' && !isMobile ? item.title : undefined}
-      asChild // SidebarMenuButton gets asChild
+      asChild
     >
       <Link
         href={item.href}
+        onClick={handleClick}
         target={item.external ? '_blank' : undefined}
         rel={item.external ? 'noopener noreferrer' : undefined}
       >
@@ -87,9 +97,8 @@ function NavItemLink({ item, pathname }: { item: NavItem; pathname: string }) {
 
 export function SidebarNav({ items, className }: SidebarNavProps) {
   const pathname = usePathname();
-  const { state: sidebarState, isMobile } = useSidebar();
+  const { state: sidebarState, isMobile, setState } = useSidebar();
   const currentDisplayState = isMobile ? (sidebarState === "mobile" ? "expanded" : "collapsed") : sidebarState;
-
 
   if (!items?.length) {
     return null;
@@ -100,7 +109,10 @@ export function SidebarNav({ items, className }: SidebarNavProps) {
       {items.map((group, index) => (
         <SidebarGroup key={group.title || index} className="p-0">
           {group.title && (
-            <SidebarGroupLabel className={cn(currentDisplayState === 'collapsed' && !isMobile ? 'hidden' : 'px-2 py-1 text-sm font-bold text-black', 'transition-opacity duration-200')}>
+            <SidebarGroupLabel className={cn(
+              currentDisplayState === 'collapsed' && !isMobile ? 'hidden' : 'px-2 py-1 text-sm font-bold text-black',
+              'transition-opacity duration-200'
+            )}>
               {group.title}
             </SidebarGroupLabel>
           )}
@@ -119,8 +131,8 @@ export function SidebarNav({ items, className }: SidebarNavProps) {
 
                       const subLinkContent = (
                         <>
-                          {SubIconComponent && <SubIconComponent className="h-4 w-4 mr-1.5 flex-shrink-0" />}
-                          <span className="text-black font-normal font-serif" style={{ fontFamily: '"Times New Roman", Times, serif' }}>
+                          {SubIconComponent && <SubIconComponent className={cn("h-4 w-4 mr-1.5 flex-shrink-0", isSubItemActive && "text-white")} />}
+                          <span className={cn("font-normal font-serif", isSubItemActive ? "text-white" : "text-black")} style={{ fontFamily: '"Times New Roman", Times, serif' }}>
                             {subItem.title}
                           </span>
                         </>
@@ -131,11 +143,12 @@ export function SidebarNav({ items, className }: SidebarNavProps) {
                           <SidebarMenuSubButton
                             isActive={isSubItemActive}
                             className={cn(
+                              "min-h-[40px]", // touch target
                               isSubItemActive && "bg-sidebar-accent text-sidebar-accent-foreground font-medium hover:bg-sidebar-accent/90"
                             )}
                             asChild
                           >
-                            <Link href={subItem.href}>
+                            <Link href={subItem.href} onClick={() => isMobile && setState("collapsed")}>
                               {subLinkContent}
                             </Link>
                           </SidebarMenuSubButton>

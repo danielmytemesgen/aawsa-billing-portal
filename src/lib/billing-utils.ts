@@ -2,15 +2,20 @@ import { TariffInfo } from "./billing-calculations";
 
 /**
  * Calculates debt aging and penalties based on FIFO logic and historical bills.
- * Credit payments are assumed to have already been applied to the outstanding balance.
- * This function determines how the current outstanding balance is distributed across aging buckets
- * and calculates any penalties applicable from the 3rd month onwards.
- * 
+ * Age is determined by the bill's actual month_year field, not array position,
+ * so gaps in billing history are handled correctly.
+ *
  * @param outstandingBalance The current total outstanding balance before the new bill.
  * @param historicalBills Sorted list of historical bills (most recent first).
  * @param tariff Optional tariff configuration to fetch penalty rates.
+ * @param currentMonthYear The billing month being processed (e.g. "2024-05"). Defaults to now.
  */
-export function calculateDebtAging(outstandingBalance: number, historicalBills: any[], tariff?: TariffInfo) {
+export function calculateDebtAging(
+    outstandingBalance: number,
+    historicalBills: any[],
+    tariff?: TariffInfo,
+    currentMonthYear?: string
+) {
     let debit30 = 0;    // Amount from 1 month old bill
     let debit30_60 = 0; // Amount from 2 months old bill
     let debit60 = 0;    // Sum of all amounts from 3+ months old bills
@@ -25,6 +30,22 @@ export function calculateDebtAging(outstandingBalance: number, historicalBills: 
         { month: 5, rate: 0.15 },
         { month: 6, rate: 0.20 },
     ];
+
+    // Determine reference month for age calculation
+    const refDate = currentMonthYear
+        ? new Date(`${currentMonthYear}-01`)
+        : new Date();
+
+    const getAgeMonths = (bill: any): number => {
+        // Prefer month_year field (e.g. "2024-03"), fall back to created_at
+        const raw = bill.month_year || bill.created_at;
+        if (!raw) return 1;
+        const billDate = new Date(typeof raw === 'string' && raw.length === 7 ? `${raw}-01` : raw);
+        if (isNaN(billDate.getTime())) return 1;
+        const yearDiff = refDate.getFullYear() - billDate.getFullYear();
+        const monthDiff = refDate.getMonth() - billDate.getMonth();
+        return Math.max(1, yearDiff * 12 + monthDiff);
+    };
 
     if (outstandingBalance > 0.01 && historicalBills.length > 0) {
         let maxAgeMonths = 0;
@@ -44,12 +65,13 @@ export function calculateDebtAging(outstandingBalance: number, historicalBills: 
 
             if (amountForBucket <= 0) continue;
 
-            const billAgeMonths = i + 1; // 1 = most recent, 2 = previous, etc.
+            // Use actual date-based age instead of array index to handle billing gaps correctly
+            const billAgeMonths = getAgeMonths(bill);
             maxAgeMonths = Math.max(maxAgeMonths, billAgeMonths);
             cumulativePenaltyBase += amountForBucket;
             remainingOutstanding -= amountForBucket;
 
-            // Bucket assignment: each bucket holds ONLY its own month's amount
+            // Bucket assignment based on real age
             if (billAgeMonths === 1) {
                 debit30 += amountForBucket;
             } else if (billAgeMonths === 2) {

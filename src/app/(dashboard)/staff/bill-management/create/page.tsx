@@ -67,8 +67,8 @@ export default function CreateBillPage() {
                 console.log("Bulk meter found:", res.data);
                 setCustomer(res.data);
                 setSearchStatus('found');
-                setValue('PREVREAD', Number(res.data.currentReading));
-                setValue('CURRREAD', Number(res.data.currentReading));
+                setValue('PREVREAD', Number(res.data.previousReading ?? res.data.currentReading ?? 0));
+                setValue('CURRREAD', Number(res.data.currentReading ?? 0));
             } else {
                 console.log("Bulk meter not found for ID:", id);
                 setSearchStatus('not-found');
@@ -144,31 +144,47 @@ export default function CreateBillPage() {
     };
 
     const onSubmit = async (data: BillFormValues, actionType: 'paid' | 'carry') => {
-        if (!calculationResult) {
-            await handleCalculate();
-            if (!calculationResult) return;
-        }
-
         setIsSubmitting(true);
         try {
-            // Construct BillInsert object
+            // Always recalculate fresh on submit to avoid stale preview values
+            const rawUsage = data.CURRREAD - data.PREVREAD;
+            if (rawUsage < 0) {
+                toast({ title: "Invalid Readings", description: "Current reading cannot be less than previous reading.", variant: "destructive" });
+                setIsSubmitting(false);
+                return;
+            }
+
+            const calcRes = await calculateBillAction(
+                rawUsage,
+                customer?.charge_group || "Non-domestic",
+                customer?.sewerage_connection || "No",
+                customer?.meterSize,
+                data.month_year
+            );
+
+            if (!calcRes.data) {
+                toast({ title: "Calculation Failed", description: "Could not calculate bill. Check tariff configuration.", variant: "destructive" });
+                setIsSubmitting(false);
+                return;
+            }
+
+            const freshResult = { ...calcRes.data, bulkUsage: rawUsage };
             const billData = {
                 CUSTOMERKEY: data.CUSTOMERKEY,
                 individual_customer_id: null,
                 month_year: data.month_year,
                 PREVREAD: data.PREVREAD,
                 CURRREAD: data.CURRREAD,
-                CONS: calculationResult.bulkUsage,
-                difference_usage: calculationResult.effectiveUsage,
-                // Fix #7: THISMONTHBILLAMT = the current month charge only (before outstanding)
-                THISMONTHBILLAMT: calculationResult.totalBill,
-                TOTALBILLAMOUNT: calculationResult.totalBill,
-                base_water_charge: calculationResult.baseWaterCharge,
-                sewerage_charge: calculationResult.sewerageCharge,
-                meter_rent: calculationResult.meterRent,
-                maintenance_fee: calculationResult.maintenanceFee,
-                sanitation_fee: calculationResult.sanitationFee,
-                vat_amount: calculationResult.vatAmount,
+                CONS: freshResult.bulkUsage,
+                difference_usage: freshResult.effectiveUsage,
+                THISMONTHBILLAMT: freshResult.totalBill,
+                TOTALBILLAMOUNT: freshResult.totalBill,
+                base_water_charge: freshResult.baseWaterCharge,
+                sewerage_charge: freshResult.sewerageCharge,
+                meter_rent: freshResult.meterRent,
+                maintenance_fee: freshResult.maintenanceFee,
+                sanitation_fee: freshResult.sanitationFee,
+                vat_amount: freshResult.vatAmount,
                 bill_number: `BILL-${Date.now()}`,
                 bill_period_start_date: getBillingPeriodStartDate(data.month_year),
                 bill_period_end_date: getBillingPeriodEndDate(data.month_year),
@@ -181,7 +197,7 @@ export default function CreateBillPage() {
                 customerKeyNumber: data.CUSTOMERKEY,
                 previousReading: data.CURRREAD,
                 currentReading: data.CURRREAD,
-                outStandingbill: actionType === 'carry' ? (Number(calculationResult.totalBill || 0) + Number(customer?.outStandingbill || 0)) : 0,
+                outStandingbill: actionType === 'carry' ? (Number(freshResult.totalBill || 0) + Number(customer?.outStandingbill || 0)) : 0,
                 paymentStatus: actionType === 'paid' ? 'Paid' : 'Unpaid',
             };
 

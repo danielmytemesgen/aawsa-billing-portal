@@ -322,7 +322,13 @@ const verifyBillBranchAccess = async (billId: string, session: any) => {
   return bill;
 };
 
-export async function getBranchByIdAction(id: string) { return await wrap(() => dbGetBranchById(id)); }
+export async function getBranchByIdAction(id: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetBranchById(id);
+  });
+}
 
 export async function getAllBranchesAction() {
   return await wrap(async () => {
@@ -455,7 +461,13 @@ export async function rejectCustomerAction(customerKeyNumber: string) {
   });
 }
 
-export async function getCustomerByIdAction(customerKeyNumber: string) { return await wrap(() => dbGetCustomerById(customerKeyNumber)); }
+export async function getCustomerByIdAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetCustomerById(customerKeyNumber);
+  });
+}
 export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) {
   return await wrap(async () => {
     const session = await getSession();
@@ -485,7 +497,13 @@ export async function getBulkMetersSummaryAction() {
     return await dbGetBulkMetersSummary(branchId);
   });
 }
-export async function getBulkMeterByIdAction(customerKeyNumber: string) { return await wrap(() => dbGetBulkMeterById(customerKeyNumber)); }
+export async function getBulkMeterByIdAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetBulkMeterById(customerKeyNumber);
+  });
+}
 export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
   return await wrap(async () => {
     const session = await checkPermission('bulk_meters_create');
@@ -672,24 +690,24 @@ export async function createBillAction(bill: BillInsert) {
       if (bm && bm.status !== 'Active') {
         throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
       }
-      if (bm?.branchId && !bill.CUSTOMERBRANCH) {
-        const branch = await dbGetBranchById(bm.branchId);
+      if (bm?.branch_id && !bill.CUSTOMERBRANCH) {
+        const branch = await dbGetBranchById(bm.branch_id);
         bill.CUSTOMERBRANCH = branch?.name;
       }
-      if (bm?.branchId) {
-        bill.branch_id = bm.branchId;
+      if (bm?.branch_id) {
+        bill.branch_id = bm.branch_id;
       }
     } else if (bill.individual_customer_id) {
       const cust = await dbGetCustomerById(bill.individual_customer_id);
       if (cust && cust.status !== 'Active') {
         throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
       }
-      if (cust?.branchId && !bill.CUSTOMERBRANCH) {
-        const branch = await dbGetBranchById(cust.branchId);
+      if (cust?.branch_id && !bill.CUSTOMERBRANCH) {
+        const branch = await dbGetBranchById(cust.branch_id);
         bill.CUSTOMERBRANCH = branch?.name;
       }
-      if (cust?.branchId) {
-        bill.branch_id = cust.branchId;
+      if (cust?.branch_id) {
+        bill.branch_id = cust.branch_id;
       }
     }
 
@@ -857,8 +875,16 @@ export async function runBillingCycleAction(payload: {
     const activeTariffRow = await dbGetLatestApplicableTariff(chargeGroup, lookupDate);
 
     // 4. Calculate Bill using the centralized engine
-    // We pass the raw difference usage (CONS) to calculateBill, which now respects the use_rule_of_three tariff config
+    // Guard against negative difference usage (individual readings exceed bulk meter reading).
+    // This indicates a data integrity problem and must not silently produce a zero bill.
     const rawDifferenceUsage = bmUsage - totalIndivUsage;
+    if (rawDifferenceUsage < 0) {
+      throw new Error(
+        `Negative difference usage (${rawDifferenceUsage} m³) for bulk meter ${payload.bulkMeterId} in ${payload.monthYear}. ` +
+        `Total individual sub-meter usage (${totalIndivUsage} m³) exceeds bulk meter consumption (${bmUsage} m³). ` +
+        `Please verify all meter readings before running the billing cycle.`
+      );
+    }
     const billingResult = await calculateBill(
       rawDifferenceUsage,
       chargeGroup,
@@ -868,6 +894,7 @@ export async function runBillingCycleAction(payload: {
     );
 
     const differenceUsageForCycle = billingResult.effectiveUsage;
+    // differenceBillAmount is used as THISMONTHBILLAMT in the bill insert below
     const differenceBillAmount = billingResult.totalBill;
 
     const balanceFromPreviousPeriods = Number(bulkMeter.outStandingbill || 0);
@@ -892,7 +919,7 @@ export async function runBillingCycleAction(payload: {
       };
     }
 
-    const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, activeTariff);
+    const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, activeTariff, payload.monthYear);
 
     const { buildBillingPeriod } = await import('./billing-config');
     const period = buildBillingPeriod({
@@ -935,7 +962,7 @@ export async function runBillingCycleAction(payload: {
     const billInsert: BillInsert = {
       CUSTOMERKEY: bulkMeter.customerKeyNumber,
       CUSTOMERBRANCH: branchName,
-      branch_id: bulkMeter.branchId,
+      branch_id: bulkMeter.branch_id,
       bill_period_start_date: periodStartDate,
       bill_period_end_date: periodEndDate,
       month_year: payload.monthYear,
@@ -1222,7 +1249,11 @@ export async function correctBillAction(id: string, reason: string) {
 }
 
 export async function getBillWorkflowLogsAction(billId: string) {
-  return await wrap(() => dbGetBillWorkflowLogsQuery(billId));
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetBillWorkflowLogsQuery(billId);
+  });
 }
 
 export async function getAllIndividualCustomerReadingsAction() {
@@ -1725,8 +1756,12 @@ export async function calculateBillAction(
   sewerageCONS?: number,
   baseWaterChargeCONS?: number
 ) {
-  const size = typeof meterSize === 'string' ? parseFloat(meterSize) : meterSize;
-  return await wrap(() => calculateBill(consumption, customerType, sewerageConnection, size || 0, billingMonth, sewerageCONS, baseWaterChargeCONS));
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const size = typeof meterSize === 'string' ? parseFloat(meterSize) : meterSize;
+    return await calculateBill(consumption, customerType, sewerageConnection, size || 0, billingMonth, sewerageCONS, baseWaterChargeCONS);
+  });
 }
 
 import { dbLogSecurityEvent } from './db-queries';
@@ -1904,7 +1939,11 @@ export async function deleteRouteAction(routeKey: string) {
 }
 
 export async function getRouteByKeyAction(routeKey: string) {
-  return await wrap(() => dbGetRouteByKey(routeKey));
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetRouteByKey(routeKey);
+  });
 }
 
 export async function getBulkMeterReadingsAction(
@@ -2025,7 +2064,13 @@ export async function getAllFaultCodesAction() {
     return await dbGetAllFaultCodes();
   });
 }
-export async function getFaultCodeByIdAction(id: string) { return await wrap(() => dbGetFaultCodeById(id)); }
+export async function getFaultCodeByIdAction(id: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetFaultCodeById(id);
+  });
+}
 
 export async function createFaultCodeAction(faultCode: FaultCodeInsert) {
   return await wrap(async () => {
@@ -2184,7 +2229,7 @@ export async function syncAllBillsAgingDebtAction() {
     const hasManageAll = perms.includes('bill:manage_all');
     const branchId = !hasManageAll ? session.branchId : undefined;
 
-    const bills = await dbGetAllBills(branchId);
+    const bills = await dbGetAllBills({ branchId });
     const { calculateDebtAging } = await import('./billing-utils');
 
     let count = 0;
@@ -2393,6 +2438,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
 
     const billsToInsert: any[] = [];
     let lastId = job.last_processed_id;
+    const failedItems: string[] = [];
 
     // 3. Process each item using pre-fetched in-memory data (no DB calls inside loop)
     for (const item of items) {
@@ -2441,7 +2487,8 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         }
 
         const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
-        const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills);
+        // Pass job.month_year so age is calculated relative to the billing month, not server time
+        const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, undefined, job.month_year);
 
         const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
         const totalPayable = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
@@ -2480,8 +2527,12 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
 
         billsToInsert.push(bill);
         lastId = customerKey;
-      } catch (err) {
-        console.error(`Error processing item ${item.customerKeyNumber}:`, err);
+      } catch (err: any) {
+        // Log the failure but continue processing remaining meters
+        const reason = err?.message || String(err);
+        console.error(`Error processing item ${item.customerKeyNumber}: ${reason}`);
+        failedItems.push(`${item.customerKeyNumber}: ${reason}`);
+        lastId = item.customerKeyNumber; // advance cursor so we don't retry this item
       }
     }
 
@@ -2490,12 +2541,19 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
       await dbBatchInsertBills(billsToInsert);
     }
 
-    // 5. Update Job Progress
-    const updatedJob = await dbUpdateBillingJob(jobId, {
+    // 5. Update Job Progress — count only successfully billed items, log any failures
+    const successCount = billsToInsert.length;
+    const jobUpdate: any = {
       processed_items: job.processed_items + items.length,
       last_processed_id: lastId,
       updated_at: new Date()
-    });
+    };
+    if (failedItems.length > 0) {
+      // Append to existing error_log so failures accumulate across chunks
+      const existingLog = job.error_log ? job.error_log + '\n' : '';
+      jobUpdate.error_log = existingLog + failedItems.join('\n');
+    }
+    const updatedJob = await dbUpdateBillingJob(jobId, jobUpdate);
 
     // If we processed fewer items than chunk size, the job is complete
     if (items.length < chunkSize) {
@@ -2507,7 +2565,10 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
 }
 
 export async function getBillingJobStatusAction(jobId: string) {
-  return await wrap(() => dbGetBillingJob(jobId));
+  return await wrap(async () => {
+    await checkPermission('billing:close_cycle');
+    return await dbGetBillingJob(jobId);
+  });
 }
 
 /**

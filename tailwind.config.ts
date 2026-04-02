@@ -8,6 +8,9 @@ export default {
   ],
   theme: {
   	extend: {
+      screens: {
+        'xs': '480px', // extra small — phones in landscape / large phones
+      },
   		colors: {
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
