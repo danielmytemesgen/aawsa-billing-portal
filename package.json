@@ -11,7 +11,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf node_modules package-lock.json",
-    "supabase": "supabase"
+    "supabase": "supabase",
+    "prepare": "husky"
   },
   "dependencies": {
     "@genkit-ai/googleai": "^1.6.2",

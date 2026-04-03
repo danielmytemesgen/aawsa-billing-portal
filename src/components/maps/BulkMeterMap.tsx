@@ -34,11 +34,11 @@ const BulkMeterMapComponent: React.FC<BulkMeterMapProps> = ({ bulkMeters, branch
         const hasCoordinates = meter.yCoordinate != null && meter.xCoordinate != null;
         const customerKeyMatch =
             !filters.customerKeyNumber ||
-            meter.customerKeyNumber.toLowerCase().includes(filters.customerKeyNumber.toLowerCase());
+            meter.customerKeyNumber?.toLowerCase().includes(filters.customerKeyNumber.toLowerCase());
         const contractNumberMatch =
             !filters.contractNumber ||
-            meter.contractNumber.toLowerCase().includes(filters.contractNumber.toLowerCase());
-        return hasCoordinates && customerKeyMatch && contractNumberMatch;
+            meter.contractNumber?.toLowerCase().includes(filters.contractNumber.toLowerCase());
+        return hasCoordinates && !!customerKeyMatch && !!contractNumberMatch;
     }), [bulkMeters, filters]);
 
     const position: [number, number] = [9.03, 38.74];

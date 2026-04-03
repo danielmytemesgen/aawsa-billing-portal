@@ -1225,26 +1225,88 @@ export async function correctBillAction(id: string, reason: string) {
     const session = await checkPermission('bill:correct');
     await verifyBillBranchAccess(id, session);
 
-    return await withTransaction(async (client) => {
-      const billRes = await dbGetBillByIdQuery(id);
-      const currentStatus = billRes?.status || 'Posted';
+    const { 
+      dbGetBillById, 
+      dbUpdateBillStatus, 
+      dbCreateBillWorkflowLog, 
+      dbCreateCreditNote, 
+      dbCreateBill, 
+      dbUpdateBulkMeter, 
+      dbUpdateCustomer 
+    } = await import('./db-queries');
 
-      const bill = await dbUpdateBillStatus(id, 'Rework', null, null, client);
+    return await withTransaction(async (client) => {
+      const originalBill = await dbGetBillById(id);
+      if (!originalBill) throw new Error("Original bill not found");
+      if (originalBill.status !== 'Posted') throw new Error("Only posted bills can be corrected with a credit note");
+
+      // 1. Mark original bill as reversed
+      await dbUpdateBillStatus(id, 'Reversed', null, null, client);
+
+      // 2. Reconcile balance (revert the addition of debt from the original bill)
+      const totalAmt = Number(originalBill.TOTALBILLAMOUNT || 0);
+      const paidAmt = Number(originalBill.amount_paid || 0);
+      const unpaidAmt = Number((totalAmt - paidAmt).toFixed(2));
+
+      if (unpaidAmt > 0) {
+        if (originalBill.CUSTOMERKEY) {
+          await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalBill.CUSTOMERKEY]);
+        } else if (originalBill.individual_customer_id) {
+          await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalBill.individual_customer_id]);
+        }
+      }
+
+      // 3. Create Credit Note
+      const creditNoteNumber = `CN-${Date.now()}`;
+      const creditNote = await dbCreateCreditNote({
+        bill_id: id,
+        credit_note_number: creditNoteNumber,
+        original_bill_data: JSON.stringify(originalBill),
+        reason: reason,
+        amount: originalBill.TOTALBILLAMOUNT,
+        created_by: session.id
+      }, client);
+
+      // 4. Create Replacement Draft Bill
+      const billData: any = { ...originalBill };
+      delete billData.id;
+      delete billData.created_at;
+      delete billData.updated_at;
+      delete billData.BILLKEY;
+      delete billData.amount_paid;
+      billData.status = 'Draft';
+      billData.bill_number = `CORR-${originalBill.bill_number || Date.now()}`;
+      billData.notes = `Correction of ${originalBill.bill_number}. Reason: ${reason}`;
+
+      const replacementBill = await dbCreateBill(billData, client);
+
       await dbCreateBillWorkflowLog({
         bill_id: id,
-        from_status: currentStatus,
-        to_status: 'Rework',
+        from_status: 'Posted',
+        to_status: 'Reversed',
         changed_by: session.id,
-        reason: reason || 'Correction requested'
+        reason: `Correction: ${reason}`
       }, client);
 
       await logSecurityEventAction({
         event: 'Correct Bill',
         severity: 'warning',
-        details: { id, reason }
+        details: { id, creditNoteNumber, replacementBillId: replacementBill.id }
       });
-      return bill;
+
+      return {
+        success: true,
+        creditNoteNumber,
+        replacementBillId: replacementBill.id
+      };
     });
+  });
+}
+
+export async function getCreditNoteByBillIdAction(billId: string) {
+  return await wrap(async () => {
+    const { dbGetCreditNoteByBillId } = await import('./db-queries');
+    return await dbGetCreditNoteByBillId(billId);
   });
 }
 

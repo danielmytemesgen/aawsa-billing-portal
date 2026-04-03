@@ -202,3 +202,15 @@ export const systemSettings = pgTable('system_settings', {
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+// 11. Credit Notes
+export const creditNotes = pgTable('credit_notes', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  billId: uuid('bill_id').references(() => bills.id, { onDelete: 'cascade' }),
+  creditNoteNumber: text('credit_note_number').notNull().unique(),
+  originalBillData: jsonb('original_bill_data'),
+  reason: text('reason').notNull(),
+  amount: numeric('amount').notNull().default('0.00'),
+  replacementBillId: uuid('replacement_bill_id'),
+  createdBy: uuid('created_by').references(() => staffMembers.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});

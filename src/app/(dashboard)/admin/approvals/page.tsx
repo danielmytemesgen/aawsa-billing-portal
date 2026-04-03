@@ -186,7 +186,10 @@ export default function ApprovalsPage() {
     let failCount = 0;
 
     for (const meter of pendingBulkMeters) {
-      const result = await approveBulkMeter(meter.customerKeyNumber, currentUser.id);
+      const customerKey = meter.customerKeyNumber;
+      if (!customerKey) continue;
+      
+      const result = await approveBulkMeter(customerKey, currentUser.id);
       if (result.success) successCount++;
       else failCount++;
     }

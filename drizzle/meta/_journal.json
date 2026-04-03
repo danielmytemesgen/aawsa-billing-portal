@@ -15,6 +15,13 @@
       "when": 1775052599741,
       "tag": "0001_cold_rictor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775198098092,
+      "tag": "0002_credit_notes_table",
+      "breakpoints": true
     }
   ]
 }

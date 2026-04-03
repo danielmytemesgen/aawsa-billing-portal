@@ -2190,3 +2190,21 @@ export const dbUpdateSystemSetting = async (key: string, value: string) => {
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
     `, [key, value]);
 };
+
+export const dbCreateCreditNote = async (data: any, client?: any) => {
+    const keys = Object.keys(data);
+    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
+    const sql = `INSERT INTO credit_notes (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
+    const params = keys.map(k => data[k]);
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0];
+    }
+    const rows = await query(sql, params);
+    return rows[0];
+};
+
+export const dbGetCreditNoteByBillId = async (billId: string) => {
+    const rows = await query('SELECT * FROM credit_notes WHERE bill_id = $1 LIMIT 1', [billId]);
+    return rows[0] || null;
+};
