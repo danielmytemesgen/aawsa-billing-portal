@@ -6,7 +6,7 @@ import Link from "next/link";
 import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from '@/lib/xlsx';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart } from "lucide-react";
+import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart, FileDown, RefreshCw as RefreshCwIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -45,8 +45,10 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { cn } from "@/lib/utils";
 import { ReportDataView } from './report-data-view';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { calculateBillAction, syncAllBillsAgingDebtAction } from "@/lib/actions";
+import { calculateBillAction, syncAllBillsAgingDebtAction, getAllBranchesAction } from "@/lib/actions";
+import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
 import { RefreshCw, Zap } from "lucide-react";
+import { format as formatDate } from "date-fns";
 import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
 
 
@@ -1100,6 +1102,12 @@ export default function AdminReportsPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [user, setUser] = React.useState<StaffMember | null>(null);
 
+  // --- Batch PDF Generator state ---
+  const [pdfJobs, setPdfJobs] = React.useState<any[]>([]);
+  const [isStartingPdf, setIsStartingPdf] = React.useState(false);
+  const [selectedPdfMonth, setSelectedPdfMonth] = React.useState(formatDate(new Date(), "yyyy-MM"));
+  const [selectedPdfBranch, setSelectedPdfBranch] = React.useState("all");
+
   const [archiveCutoffDate, setArchiveCutoffDate] = React.useState<Date | undefined>();
   const [archivableBills, setArchivableBills] = React.useState<DomainBill[]>([]);
   const [isArchiveDeleteConfirmationOpen, setIsArchiveDeleteConfirmationOpen] = React.useState(false);
@@ -1136,10 +1144,42 @@ export default function AdminReportsPage() {
         }
       }
 
+      // Load PDF jobs
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+
       setIsLoading(false);
     };
     initializeData();
   }, [isLockedToBranch]);
+
+  const handleStartPdfBatch = async () => {
+    setIsStartingPdf(true);
+    const result = await startBatchPdfGenerationAction(
+      selectedPdfMonth,
+      selectedPdfBranch === "all" ? null : selectedPdfBranch
+    );
+    if (result.success) {
+      toast({ title: "Job Started", description: "PDF generation is running in the background." });
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+    } else {
+      toast({ title: "Failed to Start", description: result.error, variant: "destructive" });
+    }
+    setIsStartingPdf(false);
+  };
+
+  const handleDeletePdfJob = async (id: string) => {
+    if (!confirm("Are you sure you want to remove this PDF job from the list?")) return;
+    const result = await deletePdfJobAction(id);
+    if (result.success) {
+      toast({ title: "Job Deleted", description: "The PDF job record was removed." });
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+    } else {
+      toast({ title: "Failed to Delete", description: result.error, variant: "destructive" });
+    }
+  };
 
   React.useEffect(() => {
     setSelectedColumns(new Set(selectedReport?.headers || []));
@@ -1281,68 +1321,172 @@ export default function AdminReportsPage() {
       </div>
     );
   }
-
-
   return (
-    <div className="space-y-8 pb-10">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Reports & Analytics</h1>
-          <p className="text-muted-foreground mt-1 text-base">Generate, view, and export comprehensive system reports.</p>
+    <div className="space-y-8 pb-12">
+
+      {/* ── Hero Header ── */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-500 p-8 text-white shadow-xl">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
+                <BarChart3 className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-sm font-medium bg-white/20 px-3 py-1 rounded-full">AAWSA Billing Portal</span>
+            </div>
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Reports &amp; Analytics</h1>
+            <p className="mt-2 text-blue-100 text-base max-w-xl">Generate, view, and export comprehensive system reports. Manage data archiving and financial synchronization.</p>
+          </div>
+          <div className="flex flex-wrap gap-3 shrink-0">
+            <div className="bg-white/15 backdrop-blur rounded-xl px-5 py-4 text-center min-w-[100px]">
+              <div className="text-2xl font-bold">{availableReports.length}</div>
+              <div className="text-xs text-blue-100 mt-0.5">Report Types</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Quick-Access Cards ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { icon: FileDown,        label: 'Batch PDF',       color: 'from-violet-500 to-purple-600', desc: 'Generate invoices' },
+          { icon: TrendingUp,      label: 'Usage Trend',     color: 'from-cyan-500 to-blue-500',     desc: 'Difference analysis' },
+          { icon: FileSpreadsheet, label: 'Manual Reports',  color: 'from-indigo-500 to-blue-600',   desc: 'XLSX / CSV export' },
+          { icon: Archive,         label: 'Data Archiving',  color: 'from-amber-500 to-orange-500',  desc: 'Manage records' },
+        ].map(({ icon: Icon, label, color, desc }) => (
+          <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 text-white shadow-lg cursor-default group transition-transform hover:-translate-y-0.5`}>
+            <div className="absolute -right-4 -bottom-4 h-20 w-20 rounded-full bg-white/10 group-hover:bg-white/15 transition-colors" />
+            <Icon className="h-6 w-6 mb-3 drop-shadow" />
+            <p className="font-semibold text-sm leading-tight">{label}</p>
+            <p className="text-[11px] text-white/75 mt-0.5">{desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Batch PDF Generator Card */}
+      {/* ── Section 1: Batch PDF Generator ── */}
+      <div className="relative rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-violet-500 to-purple-600 rounded-l-2xl" />
+        <div className="pl-6 pr-6 pt-6 pb-0 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center shadow-sm shrink-0">
+            <FileDown className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-800">Batch PDF Generator</h2>
+            <p className="text-sm text-slate-500">Generate printable PDF batches for 700k+ monthly invoices.</p>
+          </div>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="pdf-month" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Month / Year</Label>
+              <input id="pdf-month" type="month" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 transition" value={selectedPdfMonth} onChange={(e) => setSelectedPdfMonth(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pdf-branch" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Branch</Label>
+              <Select value={selectedPdfBranch} onValueChange={setSelectedPdfBranch}>
+                <SelectTrigger id="pdf-branch" className="rounded-xl border-slate-200 bg-slate-50"><SelectValue placeholder="All Branches" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Button className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md text-white font-semibold" onClick={handleStartPdfBatch} disabled={isStartingPdf}>
+            {isStartingPdf ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
+            {isStartingPdf ? 'Starting…' : 'Start Batch PDF Generation'}
+          </Button>
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Recent PDF Jobs</h3>
+            <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+              {pdfJobs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  <FileDown className="h-8 w-8 mb-2 opacity-30" />
+                  <p className="text-sm">No recent jobs found</p>
+                </div>
+              ) : pdfJobs.map((job) => (
+                <div key={job.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-700 truncate">{job.month_year} — {job.branch_id || 'All Branches'}</p>
+                    <p className="text-xs text-slate-400">{job.generated_bills} / {job.total_bills} bills · {formatDate(new Date(job.created_at), 'HH:mm, MMM d')}</p>
+                    {job.error_message && <p className="text-xs text-red-500 mt-0.5 italic">{job.error_message}</p>}
+                    {job.file_paths && job.file_paths.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {job.file_paths.map((path: string, idx: number) => (
+                          <a key={idx} href={path} download className="flex items-center gap-1 text-violet-600 hover:text-violet-800 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-lg text-[10px] font-medium">
+                            <Download className="h-2.5 w-2.5" /> Batch {idx + 1}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide', job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : job.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-600 animate-pulse')}>{job.status}</span>
+                    {(job.status === 'completed' || job.status === 'failed') && (
+                      <button onClick={() => handleDeletePdfJob(job.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-lg hover:bg-red-50" title="Remove"><Trash2 className="h-3.5 w-3.5" /></button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Section 2: Usage Trend ── */}
+      <div className="relative rounded-2xl border border-cyan-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-cyan-500 to-blue-500 rounded-l-2xl" />
+        <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-11 w-11 rounded-xl bg-cyan-100 text-cyan-600 flex items-center justify-center shadow-sm shrink-0"><TrendingUp className="h-5 w-5" /></div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Overall Difference Usage Trend</h2>
+              <p className="text-sm text-slate-500">Visualise bulk vs individual usage difference grouped by branch and period.</p>
+            </div>
+          </div>
+          <Link href="/admin/reports/overall-difference-usage-trend" passHref>
+            <Button className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-md font-semibold shrink-0">
+              <TrendingUp className="h-4 w-4 mr-2" /> View Trend Report
+            </Button>
+          </Link>
         </div>
       </div>
 
 
-
-      <Card className="shadow-md border-slate-200/60 overflow-hidden">
-        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-row items-center gap-4">
-          <div className="h-10 w-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">
-            <TrendingUp className="h-5 w-5" />
-          </div>
+      {/* ── Section 3: Manual Report Generator ── */}
+      <div className="relative rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-indigo-500 to-blue-600 rounded-l-2xl" />
+        <div className="pl-6 pr-6 pt-6 pb-4 border-b border-slate-100 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-sm shrink-0"><FileSpreadsheet className="h-5 w-5" /></div>
           <div>
-            <CardTitle className="text-lg">Overall Difference Usage Trend</CardTitle>
-            <CardDescription>Shows the trend of difference usage by branch.</CardDescription>
+            <h2 className="text-lg font-bold text-slate-800">Manual Report Generation</h2>
+            <p className="text-sm text-slate-500">Select a report type, apply filters, and export as XLSX or CSV.</p>
           </div>
-        </CardHeader>
-        <CardContent className="p-6">
-          <Link href="/admin/reports/overall-difference-usage-trend" passHref>
-            <Button variant="default" className="shadow-sm">View Trend Report</Button>
-          </Link>
-        </CardContent>
-      </Card>
-
-
-      <Card className="shadow-md border-slate-200/60 overflow-hidden">
-        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-row items-center gap-4">
-          <div className="h-10 w-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-sm">
-            <FileSpreadsheet className="h-5 w-5" />
-          </div>
-          <div>
-            <CardTitle className="text-lg">Manual Report Generation</CardTitle>
-            <CardDescription>Select a report type and apply filters to generate and download.</CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="p-6 space-y-8">
-          <div className="space-y-2">
-            <Label htmlFor="report-type">Select Report Type</Label>
-            <Select value={selectedReportId || undefined} onValueChange={(value) => {
-              setSelectedReportId(value);
-              setReportData(null);
-            }}>
-              <SelectTrigger id="report-type" className="w-full md:w-[400px]">
+        </div>
+        <div className="p-6 space-y-6">
+          {/* Report-type dropdown picker */}
+          <div className="space-y-1.5">
+            <Label htmlFor="report-type" className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3 block">Select Report Type</Label>
+            <Select 
+              value={selectedReportId || undefined} 
+              onValueChange={(value) => { 
+                setSelectedReportId(value); 
+                setReportData(null); 
+              }}
+            >
+              <SelectTrigger id="report-type" className="w-full md:w-[400px] rounded-xl border-slate-200 bg-slate-50">
                 <SelectValue placeholder="Choose a report..." />
               </SelectTrigger>
               <SelectContent>
                 {availableReports.map((report, idx) => {
-                  const safeReportId = report.id && String(report.id).trim() !== '' ? String(report.id) : `report-fallback-${idx}`;
-                  if (!report.id || String(report.id).trim() === '') {
-                    console.warn('availableReports contains a report with empty id, using fallback id:', report);
-                  }
+                  const safeId = report.id && String(report.id).trim() !== '' ? String(report.id) : `report-fallback-${idx}`;
                   return (
-                    <SelectItem key={safeReportId} value={safeReportId} disabled={!report.getData}>
+                    <SelectItem key={safeId} value={safeId} disabled={!report.getData}>
                       <div className="flex items-center gap-2">
                         <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-                        {report.name}
+                        <span>{report.name.replace(' (XLSX)', '').replace(' (CSV)', '')}</span>
                       </div>
                     </SelectItem>
                   );
@@ -1351,280 +1495,208 @@ export default function AdminReportsPage() {
             </Select>
           </div>
 
+          {/* Filters panel – shown when a report is selected */}
           {selectedReport && (
-            <Card className="bg-muted/50">
-              <CardHeader>
-                <CardTitle>{selectedReport.name}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">{selectedReport.description}</p>
-                {selectedReport.getData ? (
-                  <div className="mt-4 space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
-                      <div className="space-y-2">
-                        <Label htmlFor="branch-filter">Filter by Branch</Label>
-                        <Select
-                          value={selectedBranch || undefined}
-                          onValueChange={setSelectedBranch}
-                          disabled={isLoading || !canSelectAllBranches}
-                        >
-                          <SelectTrigger id="branch-filter" className={!canSelectAllBranches ? 'cursor-not-allowed' : ''}>
-                            {isLockedToBranch && <Lock className="mr-2 h-4 w-4" />}
-                            <SelectValue placeholder="Select a branch" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {canSelectAllBranches && <SelectItem value="all">All Branches</SelectItem>}
-                            {branches
-                              .filter(b => b && b.id && String(b.id).trim() !== '')
-                              .map((branch) => (
-                                <SelectItem key={String(branch.id)} value={String(branch.id)}>{branch.name}</SelectItem>
-                              ))}
-                            {branches.filter(b => !b || !b.id || String(b.id).trim() === '').length > 0 && (
-                              <SelectItem value="__invalid_branch__" disabled>Invalid branch entry</SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="charge-group-filter">Filter by Charge Group</Label>
-                        <Select
-                          value={selectedChargeGroup}
-                          onValueChange={setSelectedChargeGroup}
-                        >
-                          <SelectTrigger id="charge-group-filter">
-                            <SelectValue placeholder="Select a charge group" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All Charge Groups</SelectItem>
-                            {customerTypes.map((type) => (
-                              <SelectItem key={type} value={type}>{type}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="date-range-filter">Filter by Date</Label>
-                        <DateRangePicker
-                          date={dateRange}
-                          onDateChange={setDateRange}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Select Columns</Label>
-                        <Popover open={isColumnSelectorOpen} onOpenChange={setIsColumnSelectorOpen}>
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant="outline"
-                              role="combobox"
-                              aria-expanded={isColumnSelectorOpen}
-                              className="w-full justify-between"
-                              disabled={!selectedReport.headers}
-                            >
-                              {selectedColumns.size} of {selectedReport.headers?.length} selected
-                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-full p-0">
-                            <Command>
-                              <CommandInput placeholder="Search columns..." />
-                              <CommandEmpty>No column found.</CommandEmpty>
-                              <CommandList>
-                                <CommandGroup>
-                                  {selectedReport.headers?.map((header) => (
-                                    <CommandItem
-                                      key={header}
-                                      value={header}
-                                      onSelect={() => {
-                                        setSelectedColumns(prev => {
-                                          const newSet = new Set(prev);
-                                          if (newSet.has(header)) {
-                                            newSet.delete(header);
-                                          } else {
-                                            newSet.add(header);
-                                          }
-                                          return newSet;
-                                        });
-                                      }}
-                                    >
-                                      <Check
-                                        className={cn(
-                                          "mr-2 h-4 w-4",
-                                          selectedColumns.has(header) ? "opacity-100" : "opacity-0"
-                                        )}
-                                      />
-                                      {header.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
-                      </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5 space-y-5 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div>
+                <p className="text-sm font-bold text-slate-700">{selectedReport.name.replace(' (XLSX)', '').replace(' (CSV)', '')}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{selectedReport.description}</p>
+              </div>
+              {selectedReport.getData ? (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="branch-filter" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Branch</Label>
+                      <Select value={selectedBranch || undefined} onValueChange={setSelectedBranch} disabled={isLoading || !canSelectAllBranches}>
+                        <SelectTrigger id="branch-filter" className={cn('rounded-xl border-slate-200 bg-white', !canSelectAllBranches && 'cursor-not-allowed opacity-70')}>
+                          {isLockedToBranch && <Lock className="mr-2 h-3.5 w-3.5 text-slate-400" />}<SelectValue placeholder="Select branch" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {canSelectAllBranches && <SelectItem value="all">All Branches</SelectItem>}
+                          {branches.filter(b => b && b.id && String(b.id).trim() !== '').map((branch) => (
+                            <SelectItem key={String(branch.id)} value={String(branch.id)}>{branch.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="charge-group-filter" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Charge Group</Label>
+                      <Select value={selectedChargeGroup} onValueChange={setSelectedChargeGroup}>
+                        <SelectTrigger id="charge-group-filter" className="rounded-xl border-slate-200 bg-white"><SelectValue placeholder="All charge groups" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Charge Groups</SelectItem>
+                          {customerTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Range</Label>
+                      <DateRangePicker date={dateRange} onDateChange={setDateRange} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Columns</Label>
+                      <Popover open={isColumnSelectorOpen} onOpenChange={setIsColumnSelectorOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" role="combobox" className="w-full justify-between rounded-xl border-slate-200 bg-white text-sm" disabled={!selectedReport.headers}>
+                            <span className="text-slate-600">{selectedColumns.size} / {selectedReport.headers?.length} cols</span>
+                            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-0">
+                          <Command>
+                            <CommandInput placeholder="Search columns…" />
+                            <CommandEmpty>No column found.</CommandEmpty>
+                            <CommandList>
+                              <CommandGroup>
+                                {selectedReport.headers?.map((header) => (
+                                  <CommandItem key={header} value={header} onSelect={() => {
+                                    setSelectedColumns(prev => { const s = new Set(prev); s.has(header) ? s.delete(header) : s.add(header); return s; });
+                                  }}>
+                                    <Check className={cn('mr-2 h-4 w-4', selectedColumns.has(header) ? 'opacity-100 text-indigo-500' : 'opacity-0')} />
+                                    {header.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </div>
-                ) : (
-                  <Alert variant="default" className="mt-4 border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/30">
-                    <Info className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                    <AlertTitle className="text-blue-700 dark:text-blue-300">Coming Soon</AlertTitle>
-                    <UIAlertDescription className="text-blue-600 dark:text-blue-400">
-                      This report is currently under development and will be available in a future update.
-                    </UIAlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {selectedReport && selectedReport.getData && (
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={handleViewReport} disabled={isGenerating || !selectedReportId}>
-                <Eye className="mr-2 h-4 w-4" />
-                View Report
-              </Button>
-              <Button onClick={handleGenerateReport} disabled={isGenerating || !selectedReportId}>
-                <Download className="mr-2 h-4 w-4" />
-                {isGenerating ? "Generating..." : `Generate & Download ${selectedReport.name.replace(" (XLSX)", "")}`}
-              </Button>
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    <Button onClick={handleViewReport} disabled={isGenerating || !selectedReportId} variant="outline" className="rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold">
+                      <Eye className="mr-2 h-4 w-4" /> Preview Data
+                    </Button>
+                    <Button onClick={handleGenerateReport} disabled={isGenerating || !selectedReportId} className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white shadow-md font-semibold">
+                      <Download className="mr-2 h-4 w-4" />
+                      {isGenerating ? 'Generating…' : `Download ${selectedReport.name.includes('CSV') ? 'CSV' : 'XLSX'}`}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-3 rounded-xl bg-blue-50 border border-blue-100 p-4">
+                  <Info className="h-5 w-5 text-blue-500 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-blue-700">Coming Soon</p>
+                    <p className="text-xs text-blue-500">This report is under development and will be available in a future update.</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {!selectedReportId && (
-            <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
-              Please select a report type to see details and generate.
+            <div className="flex flex-col items-center justify-center py-10 text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+              <FileSpreadsheet className="h-10 w-10 mb-3 opacity-25" />
+              <p className="text-sm font-medium">Select a report type above to get started</p>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
+      {/* ── Report Data Preview ── */}
       {reportData && selectedColumns.size > 0 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Report Preview: {selectedReport?.name.replace(" (XLSX)", "")}</CardTitle>
-            <CardDescription>Displaying {reportData.length} row(s) with {selectedColumns.size} column(s).</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ReportDataView data={reportData} headers={Array.from(selectedColumns)} />
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-800">Preview: {selectedReport?.name.replace(' (XLSX)', '').replace(' (CSV)', '')}</h2>
+              <p className="text-xs text-slate-500 mt-0.5">{reportData.length} row{reportData.length !== 1 ? 's' : ''} · {selectedColumns.size} column{selectedColumns.size !== 1 ? 's' : ''}</p>
+            </div>
+            <Button size="sm" onClick={handleGenerateReport} disabled={isGenerating} className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-sm font-semibold text-xs">
+              <Download className="h-3.5 w-3.5 mr-1.5" /> Export
+            </Button>
+          </div>
+          <div className="p-6"><ReportDataView data={reportData} headers={Array.from(selectedColumns)} /></div>
+        </div>
       )}
 
-      {/* Advanced Maintenance Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-10">
-        {/* Data Archiving Section */}
-        <Card className="shadow-md border-slate-200/60 overflow-hidden relative group transition-all duration-300 hover:shadow-lg">
-          <div className="absolute top-0 left-0 w-1 h-full bg-amber-500" />
-          <CardHeader className="bg-slate-50/50 border-b pb-4">
-            <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm">
-                <Archive className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="text-lg">Data Archiving</CardTitle>
-                <CardDescription>Free up database storage by archiving old records.</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-6 space-y-6">
-            <div className="space-y-3">
-              <Label className="text-sm font-semibold text-slate-700">1. Export Bill Records Before Date</Label>
-              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
-                <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate} className="bg-slate-800 hover:bg-slate-900 shadow-sm">
-                  <Download className="mr-2 h-4 w-4" /> Export Archive
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground bg-slate-100 p-2 rounded-lg inline-block">
-                This will generate and download an XLSX file of all bill records before the selected date.
-              </p>
-            </div>
+      {/* ── Section 4: Advanced Data Tools ── */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Settings2 className="h-4 w-4 text-slate-400" />
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Advanced Data Tools</h2>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-            {archivableBills.length > 0 && (
-              <div className="space-y-3 p-4 border animate-in fade-in slide-in-from-top-2 border-red-200 rounded-2xl bg-red-50/50">
-                <div className="flex items-center gap-2 text-red-700 font-bold">
-                  <AlertCircle className="h-4 w-4" />
-                  <span className="text-sm">2. Confirm Deletion of Archived Records</span>
+          {/* Data Archiving */}
+          <div className="relative rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+            <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-amber-400 to-orange-500 rounded-l-2xl" />
+            <div className="pl-6 pr-6 pt-5 pb-1 border-b border-slate-100 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm shrink-0"><Archive className="h-4 w-4" /></div>
+              <div>
+                <h3 className="font-bold text-slate-800">Data Archiving</h3>
+                <p className="text-xs text-slate-500">Free up storage by exporting and purging old records.</p>
+              </div>
+            </div>
+            <div className="p-6 space-y-5">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Step 1 — Export Records Before Date</Label>
+                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                  <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
+                  <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate} className="rounded-xl bg-slate-800 hover:bg-slate-900 text-white shadow-sm font-semibold">
+                    <Download className="mr-2 h-4 w-4" /> Export Archive
+                  </Button>
                 </div>
-                <p className="text-xs text-red-600 leading-relaxed">
-                  You have exported {archivableBills.length} records. Please ensure you have securely saved the downloaded file. This action is irreversible.
-                </p>
-                <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating} size="sm" className="w-full rounded-xl">
-                  <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
-                </Button>
+                <p className="text-xs text-slate-400 bg-amber-50 border border-amber-100 p-2.5 rounded-xl">Downloads an XLSX of all records before the selected date. Save this file before deleting.</p>
               </div>
-            )}
-          </CardContent>
-        </Card>
+              {archivableBills.length > 0 && (
+                <div className="space-y-3 p-4 border border-red-200 rounded-2xl bg-red-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="flex items-center gap-2 text-red-700 font-bold text-sm"><AlertCircle className="h-4 w-4" />Step 2 — Confirm Permanent Deletion</div>
+                  <p className="text-xs text-red-600 leading-relaxed">{archivableBills.length} records exported. Verify your file is saved. <strong>This cannot be undone.</strong></p>
+                  <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating} className="w-full rounded-xl font-semibold">
+                    <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
 
-        {/* Database Synchronization Section */}
-        <Card className="shadow-md border-slate-200/60 overflow-hidden relative group transition-all duration-300 hover:shadow-lg">
-          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
-          <CardHeader className="bg-slate-50/50 border-b pb-4">
-            <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">
-                <RefreshCw className="h-5 w-5" />
-              </div>
+          {/* System Synchronization */}
+          <div className="relative rounded-2xl border border-blue-200 bg-white shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+            <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-blue-500 to-indigo-600 rounded-l-2xl" />
+            <div className="pl-6 pr-6 pt-5 pb-1 border-b border-slate-100 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm shrink-0"><RefreshCw className="h-4 w-4" /></div>
               <div>
-                <CardTitle className="text-lg">System Synchronization</CardTitle>
-                <CardDescription>Recalculate aging debt buckets and payable mappings.</CardDescription>
+                <h3 className="font-bold text-slate-800">System Synchronization</h3>
+                <p className="text-xs text-slate-500">Recalculate aging debt buckets and payable mappings.</p>
               </div>
             </div>
-          </CardHeader>
-          <CardContent className="p-6 space-y-6">
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl flex gap-3">
-              <Zap className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-blue-800">Refresh Billing State</p>
-                <p className="text-xs text-blue-600 mt-1 leading-relaxed">
-                  Run this to ensure all existing records (aging debt, total payables) correctly reflect the latest system business logic.
-                </p>
+            <div className="p-6 space-y-5">
+              <div className="rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 p-5 flex gap-4">
+                <Zap className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-blue-800">Refresh Billing State</p>
+                  <p className="text-xs text-blue-600 mt-1 leading-relaxed">Ensures all records (aging debt, total payables) correctly reflect the latest system business logic. Safe to run at any time.</p>
+                </div>
               </div>
+              <Button className="w-full h-12 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md font-semibold" disabled={isGenerating}
+                onClick={async () => {
+                  try {
+                    const result = await syncAllBillsAgingDebtAction();
+                    if (result.data?.success) {
+                      await initializeBills(true); await initializeBulkMeters(true);
+                      toast({ title: 'Synchronization Complete', description: `Successfully synchronized ${result.data.updatedCount} records.` });
+                    } else { throw new Error(result.error?.message || 'Sync failed'); }
+                  } catch (error: any) { toast({ title: 'Sync Error', description: error.message, variant: 'destructive' }); }
+                }}>
+                <RefreshCw className={cn('mr-2 h-4 w-4', isGenerating && 'animate-spin')} />
+                {isGenerating ? 'Syncing…' : 'Sync Financial Database'}
+              </Button>
             </div>
+          </div>
 
-            <Button
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md h-12"
-              disabled={isGenerating}
-              onClick={async () => {
-                try {
-                  const result = await syncAllBillsAgingDebtAction();
-                  if (result.data?.success) {
-                    await initializeBills(true);
-                    await initializeBulkMeters(true);
-                    toast({
-                      title: "Synchronization Complete",
-                      description: `Successfully synchronized ${result.data.updatedCount} records.`,
-                    });
-                  } else {
-                    throw new Error(result.error?.message || "Sync failed");
-                  }
-                } catch (error: any) {
-                  toast({
-                    title: "Sync Error",
-                    description: error.message,
-                    variant: "destructive",
-                  });
-                }
-              }}
-            >
-              <RefreshCw className={cn("mr-2 h-4 w-4 shadow-sm", isGenerating && "animate-spin")} />
-              Sync Financial Database
-            </Button>
-          </CardContent>
-        </Card>
+        </div>
       </div>
 
       <AlertDialog open={isArchiveDeleteConfirmationOpen} onOpenChange={setIsArchiveDeleteConfirmationOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="rounded-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. You are about to permanently delete {archivableBills.length} bill records from the database. Have you downloaded and verified the archive file?
-            </AlertDialogDescription>
+            <AlertDialogDescription>This action <strong>cannot be undone</strong>. You are about to permanently delete {archivableBills.length} bill records. Have you downloaded and verified the archive file?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmArchiveDeletion} className="bg-destructive hover:bg-destructive/90">Yes, Delete Records</AlertDialogAction>
+            <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmArchiveDeletion} className="bg-destructive hover:bg-destructive/90 rounded-xl">Yes, Delete Records</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

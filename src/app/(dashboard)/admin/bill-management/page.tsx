@@ -1,6 +1,8 @@
 
-import BillManagementPage from "@/app/(dashboard)/staff/bill-management/page";
+'use client';
+
+import { BillManagementContent } from "@/components/billing/BillManagementContent";
 
 export default function AdminBillManagementPage() {
-    return <BillManagementPage basePath="/admin/bill-management" />;
+    return <BillManagementContent basePath="/admin/bill-management" />;
 }

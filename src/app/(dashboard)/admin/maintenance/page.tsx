@@ -13,41 +13,23 @@ import {
   Trash2, 
   AlertTriangle,
   RefreshCw,
-  CheckCircle2,
-  FileDown,
-  Download
+  CheckCircle2
 } from "lucide-react";
-import { getSystemStatsAction, archiveOldRecordsAction, getAllBranchesAction } from "@/lib/actions";
-import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
+import { getSystemStatsAction, archiveOldRecordsAction } from "@/lib/actions";
+
 import { useToast } from "@/hooks/use-toast";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format } from "date-fns";
 
 export default function MaintenancePage() {
   const [stats, setStats] = React.useState<any>(null);
-  const [branches, setBranches] = React.useState<any[]>([]);
-  const [pdfJobs, setPdfJobs] = React.useState<any[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isArchiving, setIsArchiving] = React.useState(false);
-  const [isStartingPdf, setIsStartingPdf] = React.useState(false);
-  
-  const [selectedMonth, setSelectedMonth] = React.useState(format(new Date(), "yyyy-MM"));
-  const [selectedBranch, setSelectedBranch] = React.useState("all");
 
   const { toast } = useToast();
 
   const fetchStats = async () => {
     setIsLoading(true);
-    const [statsRes, branchRes, pdfRes] = await Promise.all([
-      getSystemStatsAction(),
-      getAllBranchesAction(),
-      getActivePdfJobsAction()
-    ]);
-    
+    const statsRes = await getSystemStatsAction();
     if (statsRes.success) setStats(statsRes.stats);
-    if (!branchRes.error && branchRes.data) setBranches(branchRes.data);
-    if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
-    
     setIsLoading(false);
   };
 
@@ -76,44 +58,6 @@ export default function MaintenancePage() {
       });
     }
     setIsArchiving(false);
-  };
-
-  const handleStartPdfBatch = async () => {
-    setIsStartingPdf(true);
-    const result = await startBatchPdfGenerationAction(selectedMonth, selectedBranch === "all" ? null : selectedBranch);
-    if (result.success) {
-      toast({
-        title: "Job Started",
-        description: "PDF generation is running in the background.",
-      });
-      fetchStats();
-    } else {
-      toast({
-        title: "Failed to Start",
-        description: result.error,
-        variant: "destructive",
-      });
-    }
-    setIsStartingPdf(false);
-  };
-
-  const handleDeleteJob = async (id: string) => {
-    if (!confirm("Are you sure you want to remove this PDF job from the list?")) return;
-    
-    const result = await deletePdfJobAction(id);
-    if (result.success) {
-      toast({
-        title: "Job Deleted",
-        description: "The PDF job record was removed.",
-      });
-      fetchStats();
-    } else {
-      toast({
-        title: "Failed to Delete",
-        description: result.error,
-        variant: "destructive",
-      });
-    }
   };
 
   return (
@@ -174,108 +118,6 @@ export default function MaintenancePage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {/* PDF Batch Generator */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileDown className="h-5 w-5 text-primary" />
-              Batch PDF Generator
-            </CardTitle>
-            <CardDescription>
-              Generate printable PDF batches for 700k+ monthly invoices.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Month/Year</label>
-                <input 
-                  type="month" 
-                  className="w-full rounded-md border p-2 text-sm"
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Branch</label>
-                <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Branches" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Branches</SelectItem>
-                    {branches.map(b => (
-                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            
-            <Button 
-              className="w-full" 
-              onClick={handleStartPdfBatch} 
-              disabled={isStartingPdf}
-            >
-              {isStartingPdf ? (
-                <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <FileDown className="h-4 w-4 mr-2" />
-              )}
-              Start Batch PDF Generation
-            </Button>
-
-            <div className="space-y-2 mt-6">
-              <h3 className="text-sm font-semibold border-b pb-1">Recent PDF Jobs</h3>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
-                {pdfJobs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-4 italic">No recent jobs found.</p>
-                ) : (
-                  pdfJobs.map(job => (
-                    <div key={job.id} className="text-xs border rounded p-2 bg-muted/30">
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="font-bold">{job.month_year} - {job.branch_id || 'All'}</span>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={job.status === 'completed' ? 'default' : job.status === 'failed' ? 'destructive' : 'outline'}>
-                            {job.status}
-                          </Badge>
-                          {(job.status === 'completed' || job.status === 'failed') && (
-                            <Button variant="ghost" size="icon" className="h-[22px] w-[22px] text-destructive rounded hover:bg-destructive/10 -mr-1" onClick={() => handleDeleteJob(job.id)} title="Remove Job">
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex justify-between text-muted-foreground">
-                        <span>{job.generated_bills} / {job.total_bills} bills</span>
-                        <span>{format(new Date(job.created_at), "HH:mm, MMM d")}</span>
-                      </div>
-                      {job.file_paths && job.file_paths.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {job.file_paths.map((path: string, idx: number) => (
-                            <a 
-                              key={idx} 
-                              href={path} 
-                              download 
-                              className="flex items-center gap-1 text-primary hover:underline bg-white px-2 py-1 rounded border"
-                            >
-                              <Download className="h-3 w-3" />
-                              Batch {idx + 1}
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                      {job.error_message && (
-                        <p className="text-destructive mt-1 text-[10px] italic">{job.error_message}</p>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Archival Management */}
         <Card className="border-orange-200 bg-orange-50/50">
           <CardHeader>
