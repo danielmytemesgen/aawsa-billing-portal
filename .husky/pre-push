@@ -1,6 +1,6 @@
 #!/bin/sh
 echo "🔍 Running TypeScript type check before push..."
-npx tsc --noEmit
+npm run typecheck
 if [ $? -ne 0 ]; then
   echo ""
   echo "❌ TypeScript errors found. Push blocked."
