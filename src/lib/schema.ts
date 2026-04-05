@@ -192,6 +192,9 @@ export const tariffs = pgTable('tariffs', {
   vatRate: numeric('vat_rate').default('0.15'),
   fixedTierIndex: integer('fixed_tier_index'), // Which tier to use for rental types (0-based), null = default (3 = 4th tier)
   useRuleOfThree: boolean('use_rule_of_three').default(true), // If true, consumption < 3 is treated as 3
+  penaltyMonthThreshold: integer('penalty_month_threshold').default(3),
+  bankLendingRate: numeric('bank_lending_rate').default('0.15'),
+  penaltyTieredRates: jsonb('penalty_tiered_rates').default([]),
 }, (t) => ({
   unq: sql`UNIQUE(${t.customerType}, ${t.year})`, // Drizzle workaround for unique constraints in earlier versions or specific needs
 }));
@@ -202,15 +205,4 @@ export const systemSettings = pgTable('system_settings', {
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
-// 11. Credit Notes
-export const creditNotes = pgTable('credit_notes', {
-  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
-  billId: uuid('bill_id').references(() => bills.id, { onDelete: 'cascade' }),
-  creditNoteNumber: text('credit_note_number').notNull().unique(),
-  originalBillData: jsonb('original_bill_data'),
-  reason: text('reason').notNull(),
-  amount: numeric('amount').notNull().default('0.00'),
-  replacementBillId: uuid('replacement_bill_id'),
-  createdBy: uuid('created_by').references(() => staffMembers.id),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+

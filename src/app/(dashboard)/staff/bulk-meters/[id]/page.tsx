@@ -96,6 +96,8 @@ export default function StaffBulkMeterDetailsPage() {
   const [isBillDeleteDialogOpen, setIsBillDeleteDialogOpen] = React.useState(false);
   const [billToDelete, setBillToDelete] = React.useState<DomainBill | null>(null);
 
+  const [activeTariff, setActiveTariff] = useState<any>(null);
+
   const [showSlip, setShowSlip] = React.useState(false);
   const [isPrinting, setIsPrinting] = React.useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
@@ -366,18 +368,22 @@ export default function StaffBulkMeterDetailsPage() {
           setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
             const dateA = new Date(a.readingDate).getTime();
             const dateB = new Date(b.readingDate).getTime();
+            if (dateB !== dateA) return dateB - dateA;
+            const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return cB - cA;
+          }));
+
+          const { getTariff, initializeTariffs } = await import('@/lib/data-store');
+          await initializeTariffs();
+          const tariff = getTariff(foundBM.chargeGroup as any, format(new Date(), 'yyyy-MM'));
+          setActiveTariff(tariff);
+
+          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+            const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+            const dateB = new Date(b.billPeriodEndDate || 0).getTime();
             if (dateB !== dateA) {
               return dateB - dateA;
-            }
-            const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return creationB - creationA;
-          }));
-          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
-            const dateA = new Date(a.billPeriodEndDate);
-            const dateB = new Date(b.billPeriodEndDate);
-            if (dateB.getTime() !== dateA.getTime()) {
-              return dateB.getTime() - dateA.getTime();
             }
             const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
             const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -418,18 +424,24 @@ export default function StaffBulkMeterDetailsPage() {
           setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
             const dateA = new Date(a.readingDate).getTime();
             const dateB = new Date(b.readingDate).getTime();
+            if (dateB !== dateA) return dateB - dateA;
+            const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return cB - cA;
+          }));
+
+          import('@/lib/data-store').then(({ getTariff, initializeTariffs }) => {
+            initializeTariffs().then(() => {
+                const t = getTariff(foundBM.chargeGroup as any, format(new Date(), 'yyyy-MM'));
+                setActiveTariff(t);
+            });
+          });
+
+          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+            const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+            const dateB = new Date(b.billPeriodEndDate || 0).getTime();
             if (dateB !== dateA) {
               return dateB - dateA;
-            }
-            const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return creationB - creationA;
-          }));
-          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
-            const dateA = new Date(a.billPeriodEndDate);
-            const dateB = new Date(b.billPeriodEndDate);
-            if (dateB.getTime() !== dateA.getTime()) {
-              return dateB.getTime() - dateA.getTime();
             }
             const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
             const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -457,6 +469,132 @@ export default function StaffBulkMeterDetailsPage() {
   useEffect(() => {
     calculateMemoizedDetails(bulkMeter, associatedCustomers, branches, billingHistory, billForPrintView);
   }, [bulkMeter, associatedCustomers, branches, billingHistory, billForPrintView, calculateMemoizedDetails]);
+
+  // GLOBAL BILLING HISTORY RECONSTRUCTION (incremental from oldest to newest)
+  const reconstructedHistoryMap = React.useMemo(() => {
+    if (!billingHistory.length || !activeTariff) return new Map();
+
+    const results = new Map();
+    let carriedForwardUnpaid = 0; // The core debt base (Arrears from previous month)
+
+    // Process from OLDEST to NEWEST
+    const historyOldestFirst = [...billingHistory].sort((a, b) => {
+      const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+      const dateB = new Date(b.billPeriodEndDate || 0).getTime();
+      if (dateA !== dateB) return dateA - dateB;
+      const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return cA - cB;
+    });
+
+    // Tracking aging buckets (unpaid monthly charges)
+    let d30_bucket = 0;
+    let d30_60_bucket = 0;
+    let d60_bucket = 0;
+    let billIndexCounter = 0;
+
+    for (const bill of historyOldestFirst) {
+      // SKIP or VOID records that are marked as Deleted or Void
+      const isVoided = bill.status === 'Deleted' || bill.status === 'Void';
+
+      const threshold = activeTariff.penalty_month_threshold ?? 3;
+      const bankRate = Number(activeTariff.bank_lending_rate ?? 0.15);
+      const tieredRates = Array.isArray(activeTariff.penalty_tiered_rates) ? activeTariff.penalty_tiered_rates : [];
+      
+      // 1. Current Arrears Base (everything unpaid from row before)
+      const arrearsSum = carriedForwardUnpaid;
+
+      // 2. Penalty Calculation
+      // Determine the \"max age\" of the debt to pick a tiered rate
+      let penalty = 0;
+      let maxAge = 0;
+      
+      // Determine maxAge based on which buckets have debt
+      if (d60_bucket > 0.01) maxAge = 3;
+      else if (d30_60_bucket > 0.01) maxAge = 2;
+      else if (d30_bucket > 0.01) maxAge = 1;
+
+      // Track the total number of billing cycles we've carried debt forward
+      // This allows maxAge to exceed 3 for tiered penalties (Month 4, 5, etc.)
+      const totalMissedCycles = billIndexCounter;
+      maxAge = Math.max(maxAge, totalMissedCycles);
+
+      // Rule: if there's significant debt that doesn't fit in month buckets (legacy), treat as old
+      const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
+      if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
+
+      if (maxAge >= threshold) {
+          const applicableTier = [...tieredRates].sort((a, b) => b.month - a.month).find(t => maxAge >= t.month);
+          const totalRate = bankRate + Number(applicableTier?.rate || 0);
+          penalty = arrearsSum * totalRate;
+      }
+      
+      // 3. Current Month Monthly Part (0 if voided)
+      const currentMonthlyCharge = isVoided ? 0 : Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - Number(bill.OUTSTANDINGAMT || 0) - Number(bill.PENALTYAMT || 0)));
+      
+      // 4. Totals for THIS row
+      const outstandingWithPenalty = arrearsSum + penalty;
+      const totalPayable = outstandingWithPenalty + Math.max(0, currentMonthlyCharge);
+
+      // Save results for this row (by Bill ID)
+      results.set(bill.id, {
+        d30: d30_bucket,
+        d30_60: d30_60_bucket,
+        d60: d60_bucket + legacyDebt,
+        penalty,
+        outstanding: outstandingWithPenalty,
+        currentMonthly: currentMonthlyCharge,
+        totalPayable
+      });
+
+      // 5. Calculate Carried Forward UNPAID for the NEXT Month
+      // If voided, we assume no payment was possible/recorded against THIS specific record
+      const amtPaid = isVoided ? 0 : Number(bill.amountPaid || 0);
+      carriedForwardUnpaid = Math.max(0, totalPayable - amtPaid);
+
+      // 6. Update Aging Buckets for the NEXT cycle
+      // We assume payments cover oldest debt first
+      let remainingPayment = amtPaid;
+      
+      // Deduct from d60 and legacy
+      const totalD60AndLegacy = d60_bucket + legacyDebt;
+      const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
+      const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
+      remainingPayment -= paidAgainstOldest;
+
+      // Deduct from penalty
+      const paidAgainstPenalty = Math.min(remainingPayment, penalty);
+      remainingPayment -= paidAgainstPenalty;
+
+      // Deduct from d30_60
+      const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
+      const remaining_d30_60 = Math.max(0, d30_60_bucket - paidAgainstD30_60);
+      remainingPayment -= paidAgainstD30_60;
+
+      // Deduct from d30
+      const paidAgainstD30 = Math.min(remainingPayment, d30_bucket);
+      const remaining_d30 = Math.max(0, d30_bucket - paidAgainstD30);
+      remainingPayment -= paidAgainstD30;
+
+      // Deduct from current monthly
+      const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
+      const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
+
+      // Shift for next month's view:
+      d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
+      d30_60_bucket = remaining_d30;
+      d30_bucket = remaining_current;
+      
+      // Increment counter for next month if we still have debt
+      if (carriedForwardUnpaid > 0.01) {
+        billIndexCounter++;
+      } else {
+        billIndexCounter = 0;
+      }
+    }
+
+    return results;
+  }, [billingHistory, activeTariff]);
 
   const {
     bmPreviousReading,
@@ -1114,30 +1252,38 @@ export default function StaffBulkMeterDetailsPage() {
                       <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-sm">
                         <p>Usage:</p><p className="text-right font-medium">{displayUsage} m³</p>
                         {(() => {
-                          const fullIndex = billingHistory.findIndex(b => b.id === bill.id);
-                          let d30 = 0, d60 = 0, d90 = 0;
-                          const getUnpaid = (b: any) => b.paymentStatus === 'Paid' ? 0 : Number(b.TOTALBILLAMOUNT) - Number(b.amountPaid || 0);
-
-                          if (fullIndex < billingHistory.length - 1) d30 = getUnpaid(billingHistory[fullIndex + 1]);
-                          if (fullIndex < billingHistory.length - 2) d60 = getUnpaid(billingHistory[fullIndex + 2]);
-                          if (fullIndex < billingHistory.length - 3) {
-                            for (let j = fullIndex + 3; j < billingHistory.length; j++) d90 += getUnpaid(billingHistory[j]);
+                          const recon = reconstructedHistoryMap.get(bill.id);
+                          if (!recon) {
+                            return (
+                              <>
+                                <p>Debit 30:</p><p className="text-right font-medium">— ETB</p>
+                                <p>Debit 30-60:</p><p className="text-right font-medium">— ETB</p>
+                                <p>Debit 60+:</p><p className="text-right font-medium">— ETB</p>
+                                <p>Penalty:</p><p className="text-right font-medium">0.00 ETB</p>
+                                <p className="font-semibold">Outstanding:</p><p className="text-right font-semibold">0.00 ETB</p>
+                                <p>Current Bill:</p><p className="text-right font-medium">0.00 ETB</p>
+                                <div className="col-span-2 flex justify-between border-t pt-1 mt-1 font-bold text-primary">
+                                  <span>Total Payable:</span>
+                                  <span>ETB 0.00</span>
+                                </div>
+                              </>
+                            );
                           }
-                          if (fullIndex === billingHistory.length - 1) d90 = bill.balanceCarriedForward ?? 0;
- 
-                          const totalOutstanding = d30 + d60 + d90;
-                          const currentBill = (bill.THISMONTHBILLAMT !== undefined && bill.THISMONTHBILLAMT !== null)
-                            ? Number(bill.THISMONTHBILLAMT)
-                            : (Number(bill.TOTALBILLAMOUNT || 0) - (bill.OUTSTANDINGAMT || 0));
-                          const penalty = Number(bill.PENALTYAMT || 0);
-                          const totalPayableForHistory = totalOutstanding + Math.max(0, currentBill) + penalty;
+
+                          const fmt = (val: number) => val > 0.01 ? val.toFixed(2) : '—';
 
                           return (
                             <>
-                              <p>Outstanding:</p><p className="text-right font-medium">{totalOutstanding.toFixed(2)} ETB</p>
-                              <p>Penalty:</p><p className="text-right font-medium text-destructive">{penalty.toFixed(2)} ETB</p>
-                              <p>Current Bill:</p><p className="text-right font-medium">{Math.max(0, currentBill).toFixed(2)} ETB</p>
-                              <p className="font-bold">Total Payable:</p><p className="text-right font-bold">{totalPayableForHistory.toFixed(2)} ETB</p>
+                              <p>Debit 30:</p><p className="text-right font-medium">{fmt(recon.d30)} ETB</p>
+                              <p>Debit 30-60:</p><p className="text-right font-medium">{fmt(recon.d30_60)} ETB</p>
+                              <p>Debit 60+:</p><p className="text-right font-medium">{fmt(recon.d60)} ETB</p>
+                              <p>Penalty:</p><p className="text-right font-medium text-destructive">{fmt(recon.penalty)} ETB</p>
+                              <p className="font-semibold">Outstanding:</p><p className="text-right font-semibold">{recon.outstanding.toFixed(2)} ETB</p>
+                              <p>Current Bill:</p><p className="text-right font-medium">{Math.max(0, recon.currentMonthly).toFixed(2)} ETB</p>
+                              <div className="col-span-2 flex justify-between border-t pt-1 mt-1 font-bold text-primary">
+                                <span>Total Payable:</span>
+                                <span>ETB {recon.totalPayable.toFixed(2)}</span>
+                              </div>
                             </>
                           );
                         })()}
@@ -1150,9 +1296,14 @@ export default function StaffBulkMeterDetailsPage() {
                 }) : <p className="text-muted-foreground text-sm text-center py-4">No billing history found.</p>}
               </div>
 
-              {/* Desktop View: Table */}
-              <div className="overflow-x-auto hidden md:block">{billingHistory.length > 0 ? (<Table><TableHeader><TableRow><TableHead>Month</TableHead><TableHead>Date Billed</TableHead><TableHead className="text-right">Prev. Reading</TableHead><TableHead className="text-right">Curr. Reading</TableHead><TableHead>Usage (m³)</TableHead><TableHead>Diff. Usage (m³)</TableHead><TableHead className="text-right">DEBIT_30</TableHead><TableHead className="text-right">DEBIT_30_60</TableHead><TableHead className="text-right">DEBIT_60</TableHead><TableHead className="text-right">Penalty</TableHead><TableHead className="text-right">Outstanding (ETB)</TableHead>
-                <TableHead className="text-right">Current Bill (ETB)</TableHead><TableHead className="text-right">Total Payable (ETB)</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{paginatedBillingHistory.map((bill, _billIndex) => {
+              {/* Legend note below desktop table */}
+              <div className="hidden md:block mx-4 mb-2 mt-1 p-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 text-[10px] text-muted-foreground italic">
+                <span className="font-semibold not-italic text-foreground/70">📝 Note: </span>
+                Debit_30 = bill 1 month old &nbsp;|&nbsp; Debit_30_60 = bill 2 months old &nbsp;|&nbsp; Debit_60 = bill 3+ months old &nbsp;|&nbsp;
+                Penalty applies to bills 3+ months old only &nbsp;|&nbsp; Outstanding = all unpaid debt + current penalty
+              </div>
+              <div className="overflow-x-auto hidden md:block">{billingHistory.length > 0 ? (<Table><TableHeader><TableRow><TableHead>Month</TableHead><TableHead>Date Billed</TableHead><TableHead className="text-right">Prev. Read</TableHead><TableHead className="text-right">Curr. Read</TableHead><TableHead>Usage (m³)</TableHead><TableHead className="text-right text-orange-600 font-bold">Diff. Usage</TableHead><TableHead className="text-right">Debit_30</TableHead><TableHead className="text-right">Debit_30_60</TableHead><TableHead className="text-right">Debit_60</TableHead><TableHead className="text-right">Penalty</TableHead><TableHead className="text-right">Outstanding</TableHead>
+                <TableHead className="text-right">Current Bill</TableHead><TableHead className="text-right">Total Payable</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{paginatedBillingHistory.map((bill, _billIndex) => {
                   const usageForBill = bill.CONS ?? (bill.CURRREAD - bill.PREVREAD);
                   const displayUsage = !isNaN(usageForBill) ? usageForBill.toFixed(2) : "N/A";
                   const diffUsageValue = bill.differenceUsage ?? (usageForBill - (associatedCustomers.reduce((sum, cust) => sum + ((cust.currentReading ?? 0) - (cust.previousReading ?? 0)), 0)));
@@ -1172,61 +1323,33 @@ export default function StaffBulkMeterDetailsPage() {
                       <TableCell className={cn("text-right", diffUsageValue < 0 ? "text-amber-600" : "text-green-600")}>{displayDiffUsage}</TableCell>
 
                       {(() => {
-                        // Dynamic Aging Debt Reconstruction: 
-                        // Instead of relying on persisted buckets (which might be wrong/stale),
-                        // we calculate them by looking at the unpaid amounts of older bills in the current history.
-                        const fullIndex = billingHistory.findIndex(b => b.id === bill.id);
-
-                        let debit30 = 0;
-                        let debit60 = 0;
-                        let debit90 = 0;
-
-                        // Unpaid amount helper function
-                        const getUnpaidAmount = (b: any) => {
-                          if (b.paymentStatus === 'Paid') return 0;
-                          return Number(b.TOTALBILLAMOUNT) - Number(b.amountPaid || 0);
-                        };
-
-                        // Row i+1 is the candidate for DEBIT_30
-                        if (fullIndex < billingHistory.length - 1) {
-                          debit30 = getUnpaidAmount(billingHistory[fullIndex + 1]);
+                        const recon = reconstructedHistoryMap.get(bill.id);
+                        if (!recon) {
+                          // Fallback if map entry not found (shouldn't happen)
+                          return (
+                            <>
+                              <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
+                              <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
+                              <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
+                              <TableCell className="text-right text-destructive font-medium">—</TableCell>
+                              <TableCell className="text-right">0.00</TableCell>
+                              <TableCell className="text-right font-medium">0.00</TableCell>
+                              <TableCell className="text-right font-bold text-red-700">0.00</TableCell>
+                            </>
+                          );
                         }
 
-                        // Row i+2 is the candidate for DEBIT_30_60
-                        if (fullIndex < billingHistory.length - 2) {
-                          debit60 = getUnpaidAmount(billingHistory[fullIndex + 2]);
-                        }
-
-                        // Row i+3 and beyond are the candidate for DEBIT_60
-                        if (fullIndex < billingHistory.length - 3) {
-                          for (let j = fullIndex + 3; j < billingHistory.length; j++) {
-                            debit90 += getUnpaidAmount(billingHistory[j]);
-                          }
-                        }
-
-                        // Also add any "balanceCarriedForward" from the oldest bill in the list if it has any unexplained debt
-                        const oldestBill = billingHistory[billingHistory.length - 1];
-                        if (fullIndex === billingHistory.length - 1) {
-                          // For the oldest bill itself, we show its persisted balance carried forward as debit90
-                          debit90 = oldestBill.balanceCarriedForward ?? 0;
-                        }
-
-                        const currentBill = (bill.THISMONTHBILLAMT !== undefined && bill.THISMONTHBILLAMT !== null)
-                          ? Number(bill.THISMONTHBILLAMT)
-                          : (Number(bill.TOTALBILLAMOUNT || 0) - (bill.OUTSTANDINGAMT || 0));
-                        const penalty = Number(bill.PENALTYAMT || 0);
-                        const currentOutstanding = debit30 + debit60 + debit90;
-                        const totalPayableForHistory = currentOutstanding + Math.max(0, currentBill) + penalty;
+                        const fmt = (val: number) => val > 0.01 ? val.toFixed(2) : '—';
 
                         return (
                           <>
-                            <TableCell className="text-right text-xs text-muted-foreground">{debit30 > 0 ? debit30.toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right text-xs text-muted-foreground">{debit60 > 0 ? debit60.toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right text-xs text-muted-foreground">{debit90 > 0 ? debit90.toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right text-destructive font-medium">{penalty > 0 ? penalty.toFixed(2) : '-'}</TableCell>
-                            <TableCell className="text-right">{currentOutstanding.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-medium">{Math.max(0, currentBill).toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-bold text-red-700">{totalPayableForHistory.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground">{fmt(recon.d30)}</TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground">{fmt(recon.d30_60)}</TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground">{fmt(recon.d60)}</TableCell>
+                            <TableCell className="text-right text-destructive font-medium">{fmt(recon.penalty)}</TableCell>
+                            <TableCell className="text-right">{recon.outstanding.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-medium">{Math.max(0, recon.currentMonthly).toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-bold text-red-700">{recon.totalPayable.toFixed(2)}</TableCell>
                           </>
                         );
                       })()}

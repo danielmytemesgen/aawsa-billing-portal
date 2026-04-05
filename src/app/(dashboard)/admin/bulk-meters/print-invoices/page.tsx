@@ -75,13 +75,12 @@ export default function PrintInvoicesPage() {
       `}</style>
 
       {invoiceData.map(({ meter, bill }) => {
-        const d30 = Number(bill.debit_30 || 0);
-        const d30_60 = Number(bill.debit_30_60 || 0);
-        const d60 = Number(bill.debit_60 || 0);
-        const outstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-        const current = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - outstanding)));
         const penalty = Number(bill.PENALTYAMT || 0);
-        const totalPayable = outstanding + current + penalty;
+        const outstanding = Number(bill.OUTSTANDINGAMT || 0);
+        // Arrears is the debt base BEFORE this month's penalty
+        const arrears = Math.max(0, outstanding - penalty);
+        const current = Math.max(0, Number(bill.THISMONTHBILLAMT || 0));
+        const totalPayable = outstanding + current;
 
         return (
           <div key={meter.customerKeyNumber} className="invoice-page-wrapper">
@@ -155,9 +154,9 @@ export default function PrintInvoicesPage() {
                 <div className="print-banner">Total Amount Payable:</div>
                 <table className="print-table">
                   <tbody>
-                    <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {current.toFixed(2)}</td></tr>
-                    <tr><td>Penalty (ETB):</td><td>ETB {Number(bill.PENALTYAMT || 0).toFixed(2)}</td></tr>
-                    <tr><td>Outstanding (ETB):</td><td>ETB {outstanding.toFixed(2)}</td></tr>
+                    <tr className="print-table-total"><td>Current Monthly Bill:</td><td>ETB {current.toFixed(2)}</td></tr>
+                    <tr><td>Penalty:</td><td>ETB {penalty.toFixed(2)}</td></tr>
+                    <tr><td>Debt Carried Forward (Arrears):</td><td>ETB {arrears.toFixed(2)}</td></tr>
                     <tr className="print-table-total" style={{ fontSize: '14pt' }}>
                       <td>Total Amount Payable:</td>
                       <td>ETB {totalPayable.toFixed(2)}</td>

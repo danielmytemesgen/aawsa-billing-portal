@@ -38,7 +38,7 @@ export default function AdminSettingsPage() {
   const [enableOverdueReminders, setEnableOverdueReminders] = React.useState(false);
 
   // Billing cycle settings
-  const [cycleMode, setCycleMode] = React.useState<'once_per_month' | 'custom'>('once_per_month');
+  const [cycleMode, setCycleMode] = React.useState<'once_per_month' | 'custom' | 'unlimited'>('once_per_month');
   const [billingCycleDay, setBillingCycleDay] = React.useState("16");
   const [dueDateOffset, setDueDateOffset] = React.useState("15");
 
@@ -67,7 +67,7 @@ export default function AdminSettingsPage() {
     getSystemSettingsAction().then(res => {
       if (res.data) {
         const s = res.data as Record<string, string>;
-        if (s.billing_cycle_mode) setCycleMode(s.billing_cycle_mode as 'once_per_month' | 'custom');
+        if (s.billing_cycle_mode) setCycleMode(s.billing_cycle_mode as 'once_per_month' | 'custom' | 'unlimited');
         if (s.billing_cycle_start_day) setBillingCycleDay(s.billing_cycle_start_day);
         if (s.billing_due_date_offset) setDueDateOffset(s.billing_due_date_offset);
       }
@@ -195,19 +195,22 @@ export default function AdminSettingsPage() {
           {/* Cycle Mode */}
           <div className="space-y-2">
             <Label htmlFor="cycle-mode">Billing Cycle Mode</Label>
-            <Select value={cycleMode} onValueChange={(v) => setCycleMode(v as 'once_per_month' | 'custom')} disabled={!canUpdateSettings}>
+            <Select value={cycleMode} onValueChange={(v) => setCycleMode(v as 'once_per_month' | 'custom' | 'unlimited')} disabled={!canUpdateSettings}>
               <SelectTrigger id="cycle-mode" className="w-full md:w-[260px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="once_per_month">Once per Month (Fixed Day)</SelectItem>
                 <SelectItem value="custom">Custom Date Range (Multiple per Month)</SelectItem>
+                <SelectItem value="unlimited">Unlimited bill per day</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
               {cycleMode === 'once_per_month'
                 ? 'Cycle runs automatically from the configured day each month.'
-                : 'You will pick exact start & end dates when launching each billing run.'}
+                : cycleMode === 'custom'
+                ? 'You will pick exact start & end dates when launching each billing run.'
+                : 'Allow generating an unlimited number of bills per day.'}
             </p>
           </div>
 
@@ -254,6 +257,30 @@ export default function AdminSettingsPage() {
                 <p className="text-sm font-semibold text-blue-800">Custom Date Range Mode Active</p>
               </div>
               <p className="text-xs text-blue-700">When running a billing cycle, you will manually specify the period start and end dates. This allows multiple billing runs within the same month.</p>
+              <div className="space-y-2 pt-2">
+                <Label htmlFor="due-date-offset-custom">Due Date (days after cycle end)</Label>
+                <Input
+                  id="due-date-offset-custom"
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={dueDateOffset}
+                  onChange={(e) => setDueDateOffset(e.target.value)}
+                  disabled={!canUpdateSettings}
+                  className="w-full md:w-[160px]"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Unlimited mode info */}
+          {cycleMode === 'unlimited' && (
+            <div className="p-4 border rounded-lg bg-green-50 border-green-200 space-y-2">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-green-600" />
+                <p className="text-sm font-semibold text-green-800">Unlimited Bills per Day Active</p>
+              </div>
+              <p className="text-xs text-green-700">You can generate as many bills as required at any time for any billing period.</p>
               <div className="space-y-2 pt-2">
                 <Label htmlFor="due-date-offset-custom">Due Date (days after cycle end)</Label>
                 <Input

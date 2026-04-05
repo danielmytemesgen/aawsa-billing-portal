@@ -71,26 +71,28 @@ export function PenaltyDialog({
         },
     });
 
-    const [tiers, setTiers] = React.useState(defaultValues.penalty_tiered_rates.map(t => ({ ...t, rate: t.rate * 100 })));
-
-    const handleAddTier = () => {
-        const lastMonth = tiers.length > 0 ? tiers[tiers.length - 1].month : 2;
-        setTiers([...tiers, { month: lastMonth + 1, rate: 0 }]);
-    };
-
-    const handleRemoveTier = (index: number) => {
-        setTiers(tiers.filter((_, i) => i !== index));
-    };
-
     const onFormSubmit = (values: PenaltyFormValues) => {
         onSubmit({
             penalty_month_threshold: values.penalty_month_threshold,
             bank_lending_rate: values.bank_lending_rate / 100,
-            penalty_tiered_rates: tiers.map(t => ({
+            penalty_tiered_rates: values.penalty_tiered_rates.map(t => ({
                 month: t.month,
                 rate: t.rate / 100
             })).sort((a, b) => a.month - b.month)
         });
+    };
+
+    const formTiers = form.watch("penalty_tiered_rates");
+
+    const handleAddTier = () => {
+        const currentTiers = form.getValues("penalty_tiered_rates");
+        const lastMonth = currentTiers.length > 0 ? currentTiers[currentTiers.length - 1].month : 2;
+        form.setValue("penalty_tiered_rates", [...currentTiers, { month: lastMonth + 1, rate: 0 }]);
+    };
+
+    const handleRemoveTier = (index: number) => {
+        const currentTiers = form.getValues("penalty_tiered_rates");
+        form.setValue("penalty_tiered_rates", currentTiers.filter((_, i) => i !== index));
     };
 
     return (
@@ -181,31 +183,31 @@ export function PenaltyDialog({
                             </div>
 
                             <div className="space-y-3 p-4 rounded-3xl bg-slate-900/50 border border-slate-800 max-h-[220px] overflow-y-auto">
-                                {tiers.map((tier, index) => (
+                                {formTiers.map((tier, index) => (
                                     <div key={index} className="flex items-center gap-3">
-                                        <div className="flex-1 flex items-center bg-slate-800/80 border border-slate-700/50 rounded-xl px-5 h-14 focus-within:ring-2 focus-within:ring-rose-500/50 transition-all">
+                                        <div className="flex-1 flex items-center bg-slate-800/80 border border-slate-700/50 rounded-xl px-5 h-14 focus-within:ring-2 focus-within:ring-rose-500/50 transition-all font-black">
                                             <span className="text-xs font-black uppercase text-slate-500 mr-2 tracking-widest">Month +</span>
                                             <Input
                                                 type="number"
                                                 value={tier.month}
                                                 className="h-9 border-none focus-visible:ring-0 px-1 w-full bg-transparent text-white font-black text-lg"
                                                 onChange={e => {
-                                                    const newTiers = [...tiers];
+                                                    const newTiers = [...formTiers];
                                                     newTiers[index].month = parseInt(e.target.value) || 0;
-                                                    setTiers(newTiers);
+                                                    form.setValue("penalty_tiered_rates", newTiers);
                                                 }}
                                             />
                                         </div>
-                                        <div className="flex-1 flex items-center bg-slate-800/80 border border-slate-700/50 rounded-xl px-5 h-14 focus-within:ring-2 focus-within:ring-rose-500/50 transition-all">
+                                        <div className="flex-1 flex items-center bg-slate-800/80 border border-slate-700/50 rounded-xl px-5 h-14 focus-within:ring-2 focus-within:ring-rose-500/50 transition-all font-black">
                                             <span className="text-xs font-black uppercase text-slate-500 mr-2 tracking-widest">Rate</span>
                                             <Input
                                                 type="number"
                                                 value={tier.rate}
                                                 className="h-9 border-none focus-visible:ring-0 px-1 w-full bg-transparent text-white font-black tabular-nums text-right text-lg"
                                                 onChange={e => {
-                                                    const newTiers = [...tiers];
+                                                    const newTiers = [...formTiers];
                                                     newTiers[index].rate = parseFloat(e.target.value) || 0;
-                                                    setTiers(newTiers);
+                                                    form.setValue("penalty_tiered_rates", newTiers);
                                                 }}
                                             />
                                             <span className="text-sm font-black text-rose-500 ml-2">%</span>

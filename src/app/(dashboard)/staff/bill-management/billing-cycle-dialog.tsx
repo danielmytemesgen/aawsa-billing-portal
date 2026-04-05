@@ -45,6 +45,7 @@ interface BillingCycleDialogProps {
 export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCycleDialogProps) {
     const { toast } = useToast();
     const [isBulk, setIsBulk] = React.useState(false);
+    const [allowOverlap, setAllowOverlap] = React.useState(false);
     const [selectedMeterId, setSelectedMeterId] = React.useState<string>("");
     const [monthYear, setMonthYear] = React.useState(format(new Date(), "yyyy-MM"));
     const [isProcessing, setIsProcessing] = React.useState(false);
@@ -54,7 +55,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     const [negativeConsumptionWarning, setNegativeConsumptionWarning] = React.useState<string | null>(null);
 
     // Cycle config read from settings
-    const [cycleMode, setCycleModeState] = React.useState<'once_per_month' | 'custom'>('once_per_month');
+    const [cycleMode, setCycleModeState] = React.useState<'once_per_month' | 'custom' | 'unlimited'>('once_per_month');
     const [dueDateOffsetDays, setDueDateOffsetDays] = React.useState(BILLING_DUE_DATE_OFFSET_DAYS);
 
     // Custom date range fields
@@ -82,12 +83,13 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             setSelectedMeterId("");
             setSearchTerm("");
             setIsBulk(false);
+            setAllowOverlap(false);
 
             // Read cycle config from database
             getSystemSettingsAction().then(res => {
                 if (res.data) {
                     const s = res.data as Record<string, string>;
-                    if (s.billing_cycle_mode) setCycleModeState(s.billing_cycle_mode as 'once_per_month' | 'custom');
+                    if (s.billing_cycle_mode) setCycleModeState(s.billing_cycle_mode as 'once_per_month' | 'custom' | 'unlimited');
                     if (s.billing_due_date_offset) setDueDateOffsetDays(parseInt(s.billing_due_date_offset, 10));
                 }
             });
@@ -123,7 +125,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             return;
         }
 
-        if (cycleMode === 'custom') {
+        if (cycleMode === 'custom' || cycleMode === 'unlimited') {
             if (!customStartDate || !customEndDate) {
                 toast({ variant: "destructive", title: "Error", description: "Please set both period start and end dates." });
                 return;
@@ -146,8 +148,8 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         setProcessedCount(0);
         setNegativeConsumptionWarning(null);
 
-        // Build period override for custom mode
-        const periodOverride = cycleMode === 'custom'
+        // Build period override for custom/unlimited mode
+        const periodOverride = (cycleMode === 'custom' || cycleMode === 'unlimited')
             ? { periodStartDate: customStartDate, periodEndDate: customEndDate }
             : {};
 
@@ -159,6 +161,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     carryBalance,
                     branchId: selectedBranch === "all" ? undefined : selectedBranch,
                     dueDateOffsetDays,
+                    allowOverlap,
                     ...periodOverride,
                 });
 
@@ -184,6 +187,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     carryBalance,
                     monthYear,
                     dueDateOffsetDays,
+                    allowOverlap,
                     ...periodOverride,
                 });
 
@@ -277,28 +281,42 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 <DialogHeader>
                     <div className="flex items-center gap-2">
                         <DialogTitle>Run Billing Cycle</DialogTitle>
-                        <Badge variant={cycleMode === 'custom' ? 'secondary' : 'outline'} className="text-[10px]">
-                            {cycleMode === 'custom' ? 'Custom Range' : 'Once/Month'}
+                        <Badge variant={cycleMode === 'unlimited' ? 'default' : cycleMode === 'custom' ? 'secondary' : 'outline'} className="text-[10px]">
+                            {cycleMode === 'unlimited' ? 'Unlimited / Day' : cycleMode === 'custom' ? 'Custom Range' : 'Once/Month'}
                         </Badge>
                     </div>
                     <DialogDescription>
                         {cycleMode === 'custom'
                             ? 'Specify an exact date range for this billing run. Multiple runs per month are supported.'
+                            : cycleMode === 'unlimited'
+                            ? 'You can generate as many bills as required at any time for any billing period.'
                             : 'Close the current billing cycle and generate draft bills for bulk meters.'}
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-5 py-4">
-                    {/* Bulk toggle */}
-                    <div className="flex items-center space-x-2">
-                        <Checkbox
-                            id="isBulk"
-                            checked={isBulk}
-                            onCheckedChange={(checked) => setIsBulk(checked as boolean)}
-                        />
-                        <Label htmlFor="isBulk" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                            Apply to ALL bulk meters (Bulk Cycle)
-                        </Label>
+                    {/* Bulk toggle & Allow Overlap */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="isBulk"
+                                checked={isBulk}
+                                onCheckedChange={(checked) => setIsBulk(checked as boolean)}
+                            />
+                            <Label htmlFor="isBulk" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                Apply to ALL bulk meters (Bulk Cycle)
+                            </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="allowOverlap"
+                                checked={allowOverlap}
+                                onCheckedChange={(checked) => setAllowOverlap(checked as boolean)}
+                            />
+                            <Label htmlFor="allowOverlap" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-amber-600">
+                                Allow Overlap
+                            </Label>
+                        </div>
                     </div>
 
                     {/* ⚠️ Bulk cycle scope warning — shown as soon as isBulk is checked */}
@@ -388,11 +406,13 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                             )}
                         </div>
                     ) : (
-                        /* Custom date range mode */
-                        <div className="space-y-4 p-4 border rounded-lg bg-blue-50/60 border-blue-100">
-                            <div className="flex items-center gap-2 text-blue-700">
+                        /* Custom/Unlimited date range mode */
+                        <div className={`space-y-4 p-4 border rounded-lg ${cycleMode === 'unlimited' ? 'bg-green-50/60 border-green-100' : 'bg-blue-50/60 border-blue-100'}`}>
+                            <div className={`flex items-center gap-2 ${cycleMode === 'unlimited' ? 'text-green-700' : 'text-blue-700'}`}>
                                 <CalendarRange className="h-4 w-4" />
-                                <span className="text-xs font-semibold uppercase tracking-wide">Custom Billing Period</span>
+                                <span className="text-xs font-semibold uppercase tracking-wide">
+                                    {cycleMode === 'unlimited' ? 'Unlimited Billing Period' : 'Custom Billing Period'}
+                                </span>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-1">
@@ -432,7 +452,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                                     </Select>
                                 </div>
                             )}
-                            <p className="text-[10px] text-blue-600 italic">
+                            <p className={`text-[10px] italic ${cycleMode === 'unlimited' ? 'text-green-600' : 'text-blue-600'}`}>
                                 Due date: {dueDateOffsetDays} days after period end. Configured in Settings → Billing Settings.
                             </p>
                         </div>

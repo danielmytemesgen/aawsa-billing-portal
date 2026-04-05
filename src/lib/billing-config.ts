@@ -15,7 +15,7 @@ export const BILLING_CYCLE_DAY_KEY = 'aawsa-billing-cycle-day';
 export const BILLING_CYCLE_MODE_KEY = 'aawsa-billing-cycle-mode';
 export const BILLING_DUE_DATE_OFFSET_KEY = 'aawsa-billing-due-date-offset';
 
-export type BillingCycleMode = 'once_per_month' | 'custom';
+export type BillingCycleMode = 'once_per_month' | 'custom' | 'unlimited';
 
 export interface BillingCycleConfig {
     mode: BillingCycleMode;

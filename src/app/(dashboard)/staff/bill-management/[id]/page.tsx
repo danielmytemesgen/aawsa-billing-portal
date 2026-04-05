@@ -391,8 +391,8 @@ export default function BillDetailsPage({ basePath = '/staff/bill-management' }:
             } else {
                 if (rejectDialog.action === 'correct' && res?.data?.replacementBillId) {
                     toast({
-                        title: "Credit Note Issued",
-                        description: `Credit note ${res.data.creditNoteNumber} created. Original bill reversed. Redirecting to correction draft...`,
+                        title: "Correction Initiated",
+                        description: `Original bill reversed. Redirecting to draft for correction...`,
                     });
                     // Navigate to the new replacement draft bill
                     setTimeout(() => router.push(`${basePath}/${res.data.replacementBillId}`), 1500);

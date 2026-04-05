@@ -236,14 +236,19 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     }
 
     // Stats Calculations based on filtered data
+    // Per business rules: Outstanding = all unpaid debt + current penalty
+    // Total Payable = Outstanding + Current Bill
     const getBillTotalPayable = (b: any) => {
         const d30 = Number(b.debit30 || b.debit_30 || 0);
         const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
         const d60 = Number(b.debit60 || b.debit_60 || 0);
-        const outstanding = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-        const current = Math.max(0, Number(b.THISMONTHBILLAMT ?? (Number(b.TOTALBILLAMOUNT || 0) - outstanding)));
+        const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
         const penalty = Number(b.PENALTYAMT || 0);
-        return outstanding + current + penalty;
+        // Outstanding = all unpaid debt + current penalty
+        const outstanding = totalUnpaidDebt + penalty;
+        const current = Math.max(0, Number(b.THISMONTHBILLAMT ?? (Number(b.TOTALBILLAMOUNT || 0) - totalUnpaidDebt)));
+        // Total Payable = Outstanding + Current Bill
+        return outstanding + current;
     };
 
     const totalOutstandingUnpaid = filteredForStats
@@ -429,9 +434,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-5 space-y-4">
-                        <AgingBar label="0-30 Days" value={aging.zeroToThirty} total={totalOutstandingUnpaid} color="bg-amber-400" />
-                        <AgingBar label="31-60 Days" value={aging.thirtyToSixty} total={totalOutstandingUnpaid} color="bg-orange-500" />
-                        <AgingBar label="60+ Days" value={aging.sixtyPlus} total={totalOutstandingUnpaid} color="bg-red-600" />
+                        <AgingBar label="Debit 30 (1 Mo)" value={aging.zeroToThirty} total={totalOutstandingUnpaid} color="bg-amber-400" />
+                        <AgingBar label="Debit 30-60 (2 Mo)" value={aging.thirtyToSixty} total={totalOutstandingUnpaid} color="bg-orange-500" />
+                        <AgingBar label="Debit 60+ (3+ Mo)" value={aging.sixtyPlus} total={totalOutstandingUnpaid} color="bg-red-600" />
                     </CardContent>
                 </Card>
 
@@ -649,6 +654,7 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false }: { b
     if (bills.length === 0) return null;
 
     return (
+        <>
         <div className="overflow-x-auto">
             <Table>
                 <TableHeader>
@@ -661,13 +667,13 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false }: { b
                         <TableHead className="text-right">Curr. Reading</TableHead>
                         <TableHead className="text-right">Usage (m³)</TableHead>
                         <TableHead className="text-right">Diff. Usage (m³)</TableHead>
-                        <TableHead className="text-right text-[10px]">DEBIT_30</TableHead>
-                        <TableHead className="text-right text-[10px]">DEBIT_30_60</TableHead>
-                        <TableHead className="text-right text-[10px]">DEBIT_&gt;60</TableHead>
-                        <TableHead className="text-right">Outstanding (ETB)</TableHead>
-                        <TableHead className="text-right">Current Bill (ETB)</TableHead>
-                        <TableHead className="text-right">Penalty (ETB)</TableHead>
-                        <TableHead className="text-right">Total Payable (ETB)</TableHead>
+                        <TableHead className="text-right text-[10px]">Debit_30</TableHead>
+                        <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
+                        <TableHead className="text-right text-[10px]">Debit_60</TableHead>
+                        <TableHead className="text-right">Penalty</TableHead>
+                        <TableHead className="text-right">Outstanding</TableHead>
+                        <TableHead className="text-right">Current Bill</TableHead>
+                        <TableHead className="text-right whitespace-nowrap">Total Payable</TableHead>
                         <TableHead className="text-center">Status</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -679,10 +685,13 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false }: { b
                         const d30 = Number(bill.debit_30 || bill.debit30 || 0);
                         const d30_60 = Number(bill.debit_30_60 || bill.debit30_60 || 0);
                         const d60 = Number(bill.debit_60 || bill.debit60 || 0);
-                        const currentOutstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-                        const currentBillAmt = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - currentOutstanding)));
+                        const totalUnpaidDebt = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
                         const penaltyAmt = Number(bill.PENALTYAMT || 0);
-                        const totalPayable = currentOutstanding + currentBillAmt + penaltyAmt;
+                        // Outstanding = all unpaid debt + current penalty
+                        const currentOutstanding = totalUnpaidDebt + penaltyAmt;
+                        const currentBillAmt = Math.max(0, Number(bill.THISMONTHBILLAMT ?? (Number(bill.TOTALBILLAMOUNT || 0) - totalUnpaidDebt)));
+                        // Total Payable = Outstanding (debt + penalty) + Current Bill
+                        const totalPayable = currentOutstanding + currentBillAmt;
 
                         return (
                             <TableRow key={bill.id}>
@@ -707,9 +716,9 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false }: { b
                                 <TableCell className="text-right text-[10px] text-gray-500">{Number(bill.debit_30 || bill.debit30 || 0).toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-[10px] text-gray-500">{Number(bill.debit_30_60 || bill.debit30_60 || 0).toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-[10px] text-gray-500">{Number(bill.debit_60 || bill.debit60 || 0).toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-xs text-destructive font-medium">{penaltyAmt.toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs text-destructive font-medium">{penaltyAmt.toFixed(2)}</TableCell>
                                 <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">
                                     {totalPayable.toFixed(2)}
                                 </TableCell>
@@ -756,6 +765,11 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false }: { b
                 </TableBody>
             </Table>
         </div>
+        <div className="mx-4 mb-3 mt-1 p-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 text-[10px] text-muted-foreground italic">
+            <span className="font-semibold not-italic text-foreground/70">📝 Note: </span>
+            Debit_30 = bill 1 month old  |  Debit_30_60 = bill 2 months old  |  Debit_60 = bill 3+ months old  |  Penalty applies to bills 3+ months old only  |  Outstanding = all unpaid debt + current penalty
+        </div>
+        </>
     );
 }
 

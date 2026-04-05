@@ -851,6 +851,7 @@ export async function runBillingCycleAction(payload: {
   periodStartDate?: string;
   periodEndDate?: string;
   dueDateOffsetDays?: number;
+  allowOverlap?: boolean;
 }) {
   return await wrap(async () => {
     const session = await checkPermission('billing:close_cycle');
@@ -942,7 +943,7 @@ export async function runBillingCycleAction(payload: {
       return pStart <= bEnd && pEnd >= bStart;
     });
 
-    if (hasOverlap) {
+    if (hasOverlap && !payload.allowOverlap) {
       throw new Error(`Billing period overlaps with an existing bill (${periodStartDate} to ${periodEndDate}).`);
     }
 
@@ -1228,8 +1229,7 @@ export async function correctBillAction(id: string, reason: string) {
     const { 
       dbGetBillById, 
       dbUpdateBillStatus, 
-      dbCreateBillWorkflowLog, 
-      dbCreateCreditNote, 
+      dbCreateBillWorkflowLog,
       dbCreateBill, 
       dbUpdateBulkMeter, 
       dbUpdateCustomer 
@@ -1238,7 +1238,7 @@ export async function correctBillAction(id: string, reason: string) {
     return await withTransaction(async (client) => {
       const originalBill = await dbGetBillById(id);
       if (!originalBill) throw new Error("Original bill not found");
-      if (originalBill.status !== 'Posted') throw new Error("Only posted bills can be corrected with a credit note");
+      if (originalBill.status !== 'Posted') throw new Error("Only posted bills can be corrected");
 
       // 1. Mark original bill as reversed
       await dbUpdateBillStatus(id, 'Reversed', null, null, client);
@@ -1256,16 +1256,7 @@ export async function correctBillAction(id: string, reason: string) {
         }
       }
 
-      // 3. Create Credit Note
-      const creditNoteNumber = `CN-${Date.now()}`;
-      const creditNote = await dbCreateCreditNote({
-        bill_id: id,
-        credit_note_number: creditNoteNumber,
-        original_bill_data: JSON.stringify(originalBill),
-        reason: reason,
-        amount: originalBill.TOTALBILLAMOUNT,
-        created_by: session.id
-      }, client);
+      // 3. Skip Credit Note creation (removed per user request)
 
       // 4. Create Replacement Draft Bill
       const billData: any = { ...originalBill };
@@ -1291,24 +1282,18 @@ export async function correctBillAction(id: string, reason: string) {
       await logSecurityEventAction({
         event: 'Correct Bill',
         severity: 'warning',
-        details: { id, creditNoteNumber, replacementBillId: replacementBill.id }
+        details: { id, replacementBillId: replacementBill.id }
       });
 
       return {
         success: true,
-        creditNoteNumber,
         replacementBillId: replacementBill.id
       };
     });
   });
 }
 
-export async function getCreditNoteByBillIdAction(billId: string) {
-  return await wrap(async () => {
-    const { dbGetCreditNoteByBillId } = await import('./db-queries');
-    return await dbGetCreditNoteByBillId(billId);
-  });
-}
+
 
 export async function getBillWorkflowLogsAction(billId: string) {
   return await wrap(async () => {
@@ -2367,6 +2352,7 @@ export async function startBillingJobAction(payload: {
   periodStartDate?: string;
   periodEndDate?: string;
   dueDateOffsetDays?: number;
+  allowOverlap?: boolean;
 }) {
   return await wrap(async () => {
     await checkPermission('billing:close_cycle');
@@ -2413,7 +2399,8 @@ export async function startBillingJobAction(payload: {
       branch_id: payload.branchId,
       period_start_date: payload.periodStartDate,
       period_end_date: payload.periodEndDate,
-      due_date_offset_days: payload.dueDateOffsetDays
+      due_date_offset_days: payload.dueDateOffsetDays,
+      allow_overlap: payload.allowOverlap
     });
 
     await logSecurityEventAction({
@@ -2542,7 +2529,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           return pStart <= bEnd && pEnd >= bStart;
         });
 
-        if (hasOverlap) {
+        if (hasOverlap && !(job as any).allow_overlap) {
           console.log(`Skipping meter ${customerKey}: billing period overlaps an existing bill.`);
           lastId = customerKey; // still advance cursor
           continue;
@@ -2776,7 +2763,7 @@ export async function getSystemSettingsAction() {
 }
 
 export async function updateBillingSettingsAction(payload: {
-  cycleMode: 'once_per_month' | 'custom';
+  cycleMode: 'once_per_month' | 'custom' | 'unlimited';
   startDay: string;
   dueDateOffset: string;
 }) {

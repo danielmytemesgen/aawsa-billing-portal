@@ -520,7 +520,7 @@ export const dbDeleteStaffMember = async (email: string, deletedBy?: string, bra
 
 export const dbGetDistinctBillingMonths = async () => {
     return await query(`
-      SELECT DISTINCT month_year FROM bills
+      SELECT DISTINCT month_year FROM bills WHERE deleted_at IS NULL
       UNION
       SELECT DISTINCT month FROM bulk_meters
       ORDER BY month_year DESC
@@ -656,9 +656,9 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
 
         if (unpaidAmt > 0) {
             if (bill.CUSTOMERKEY) {
-                await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.CUSTOMERKEY]);
+                await client.query('UPDATE bulk_meters SET "outStandingbill" = GREATEST(0, COALESCE("outStandingbill", 0) - $1) WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.CUSTOMERKEY]);
             } else if (bill.individual_customer_id) {
-                await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.individual_customer_id]);
+                await client.query('UPDATE individual_customers SET "outStandingbill" = GREATEST(0, COALESCE("outStandingbill", 0) - $1) WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.individual_customer_id]);
             }
         }
 
@@ -1409,7 +1409,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
     const billStatusSql = `
         SELECT payment_status as status, COUNT(*) as count 
         FROM bills 
-        WHERE month_year = $1 AND status = 'Posted' ${branchFilter}
+        WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL ${branchFilter}
         GROUP BY payment_status
     `;
     const billStatuses = await query(billStatusSql, params);
@@ -1420,7 +1420,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             SUM(COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))) + COALESCE("THISMONTHBILLAMT", GREATEST(0, COALESCE("TOTALBILLAMOUNT", 0) - COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))))) as total_billed,
             SUM(CASE WHEN payment_status = 'Paid' THEN (COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))) + COALESCE("THISMONTHBILLAMT", GREATEST(0, COALESCE("TOTALBILLAMOUNT", 0) - COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))))) ELSE 0 END) as total_collected
         FROM bills
-        WHERE status = 'Posted' AND month_year = $1 ${branchFilter}
+        WHERE status = 'Posted' AND month_year = $1 AND deleted_at IS NULL ${branchFilter}
     `;
     const revenueData: any = await query(revenueSql, params);
     const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
@@ -1593,7 +1593,23 @@ export const dbRestoreFromRecycleBin = async (recycleBinId: string) => {
             case 'customer': tableName = 'individual_customers'; idColumn = '"customerKeyNumber"'; break;
             case 'bulk_meter': tableName = 'bulk_meters'; idColumn = '"customerKeyNumber"'; break;
             case 'route': tableName = 'routes'; idColumn = 'route_key'; break;
-            case 'bill': tableName = 'bills'; idColumn = 'id'; break;
+            case 'bill': {
+                // When restoring a bill, add its unpaid amount back to the customer's outstanding balance
+                const originalData = rb.original_data || {};
+                const totalAmt = Number(originalData.TOTALBILLAMOUNT || 0);
+                const paidAmt = Number(originalData.amount_paid || 0);
+                const unpaidAmt = Number((totalAmt - paidAmt).toFixed(2));
+                if (unpaidAmt > 0) {
+                    if (originalData.CUSTOMERKEY) {
+                        await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) + $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalData.CUSTOMERKEY]);
+                    } else if (originalData.individual_customer_id) {
+                        await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) + $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalData.individual_customer_id]);
+                    }
+                }
+                tableName = 'bills';
+                idColumn = 'id';
+                break;
+            }
             case 'reading_individual': tableName = 'individual_customer_readings'; idColumn = 'id'; break;
             case 'reading_bulk': tableName = 'bulk_meter_readings'; idColumn = 'id'; break;
             case 'payment': tableName = 'payments'; idColumn = 'id'; break;
@@ -1625,7 +1641,13 @@ export const dbPermanentlyDeleteFromRecycleBin = async (recycleBinId: string) =>
             case 'customer': tableName = 'individual_customers'; idColumn = '"customerKeyNumber"'; break;
             case 'bulk_meter': tableName = 'bulk_meters'; idColumn = '"customerKeyNumber"'; break;
             case 'route': tableName = 'routes'; idColumn = 'route_key'; break;
-            case 'bill': tableName = 'bills'; idColumn = 'id'; break;
+            case 'bill':
+                // Delete related records first to avoid foreign key constraints
+                await client.query('DELETE FROM bill_workflow_logs WHERE bill_id = $1', [rb.entity_id]);
+                await client.query('DELETE FROM payments WHERE bill_id = $1', [rb.entity_id]);
+                tableName = 'bills';
+                idColumn = 'id';
+                break;
             case 'reading_individual': tableName = 'individual_customer_readings'; idColumn = 'id'; break;
             case 'reading_bulk': tableName = 'bulk_meter_readings'; idColumn = 'id'; break;
             case 'payment': tableName = 'payments'; idColumn = 'id'; break;
@@ -1681,7 +1703,7 @@ export const dbValidateApiKey = async (apiKey: string) => {
 // 12. BILLING JOBS (Scalability Phase 2)
 // -----------------------------------------------------------------
 
-export const dbCreateBillingJob = async (job: { type: string; month_year: string; total_items: number; carry_balance: boolean; branch_id?: string; period_start_date?: string; period_end_date?: string; due_date_offset_days?: number }) => {
+export const dbCreateBillingJob = async (job: { type: string; month_year: string; total_items: number; carry_balance: boolean; branch_id?: string; period_start_date?: string; period_end_date?: string; due_date_offset_days?: number; allow_overlap?: boolean }) => {
     const keys = Object.keys(job);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO billing_jobs (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
@@ -2191,20 +2213,4 @@ export const dbUpdateSystemSetting = async (key: string, value: string) => {
     `, [key, value]);
 };
 
-export const dbCreateCreditNote = async (data: any, client?: any) => {
-    const keys = Object.keys(data);
-    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
-    const sql = `INSERT INTO credit_notes (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const params = keys.map(k => data[k]);
-    if (client) {
-        const res = await client.query(sql, params);
-        return res.rows[0];
-    }
-    const rows = await query(sql, params);
-    return rows[0];
-};
 
-export const dbGetCreditNoteByBillId = async (billId: string) => {
-    const rows = await query('SELECT * FROM credit_notes WHERE bill_id = $1 LIMIT 1', [billId]);
-    return rows[0] || null;
-};

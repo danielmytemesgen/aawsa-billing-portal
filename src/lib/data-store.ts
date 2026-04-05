@@ -1690,9 +1690,13 @@ export const getTariff = (customerType: CustomerType, effectiveDate: string): Ta
     console.warn("DataStore: getTariff called but tariffs array is empty. This indicates tariffs haven't been initialized yet.");
     return undefined;
   }
-  const tariff = tariffs.find(t => t.customer_type === customerType && t.effective_date === effectiveDate);
+  const sortedTariffs = tariffs
+    .filter(t => t.customer_type === customerType && t.effective_date <= effectiveDate)
+    .sort((a, b) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime());
+    
+  const tariff = sortedTariffs[0];
   if (!tariff) {
-    console.warn(`DataStore: No tariff found for customer type "${customerType}" and effective date "${effectiveDate}" in the local store.`);
+    console.warn(`DataStore: No active tariff found for customer type "${customerType}" on or before effective date "${effectiveDate}" in the local store.`);
     return undefined;
   }
 
@@ -1722,6 +1726,9 @@ export const getTariff = (customerType: CustomerType, effectiveDate: string): Ta
     additional_fees: parseJsonField(tariff.additional_fees, 'additional_fees'),
     fixed_tier_index: tariff.fixed_tier_index !== undefined && tariff.fixed_tier_index !== null ? Number(tariff.fixed_tier_index) : undefined,
     use_rule_of_three: tariff.use_rule_of_three !== undefined && tariff.use_rule_of_three !== null ? Boolean(tariff.use_rule_of_three) : undefined,
+    penalty_month_threshold: tariff.penalty_month_threshold !== undefined && tariff.penalty_month_threshold !== null ? Number(tariff.penalty_month_threshold) : undefined,
+    bank_lending_rate: tariff.bank_lending_rate !== undefined && tariff.bank_lending_rate !== null ? Number(tariff.bank_lending_rate) : undefined,
+    penalty_tiered_rates: parseJsonField(tariff.penalty_tiered_rates, 'penalty_tiered_rates'),
   };
 };
 
@@ -2521,6 +2528,9 @@ export const updateTariff = async (customerType: CustomerType, effectiveDate: st
   // Pass fixed_tier_index — use explicit null-check because 0 is a valid value
   if ((tariff as any).fixed_tier_index !== undefined) (updatePayload as any).fixed_tier_index = (tariff as any).fixed_tier_index;
   if ((tariff as any).use_rule_of_three !== undefined) (updatePayload as any).use_rule_of_three = (tariff as any).use_rule_of_three;
+  if (tariff.penalty_month_threshold !== undefined) (updatePayload as any).penalty_month_threshold = tariff.penalty_month_threshold;
+  if (tariff.bank_lending_rate !== undefined) (updatePayload as any).bank_lending_rate = tariff.bank_lending_rate;
+  if (tariff.penalty_tiered_rates !== undefined) (updatePayload as any).penalty_tiered_rates = tariff.penalty_tiered_rates;
 
   // Serialize JSON fields to strings so the DB layer stores valid JSON
   if (updatePayload.tiers && typeof updatePayload.tiers !== 'string') {
@@ -2534,6 +2544,9 @@ export const updateTariff = async (customerType: CustomerType, effectiveDate: st
   }
   if ((updatePayload as any).additional_fees && typeof (updatePayload as any).additional_fees !== 'string') {
     try { (updatePayload as any).additional_fees = JSON.stringify((updatePayload as any).additional_fees); } catch (e) { /* keep as-is */ }
+  }
+  if ((updatePayload as any).penalty_tiered_rates && typeof (updatePayload as any).penalty_tiered_rates !== 'string') {
+    try { (updatePayload as any).penalty_tiered_rates = JSON.stringify((updatePayload as any).penalty_tiered_rates); } catch (e) { /* keep as-is */ }
   }
 
   // If no fields to update, return no-op
@@ -2568,12 +2581,18 @@ export const addTariff = async (tariffData: Omit<TariffInfo, 'id'>): Promise<Sto
     meter_rent_prices: tariffData.meter_rent_prices,
     vat_rate: tariffData.vat_rate,
     domestic_vat_threshold_m3: tariffData.domestic_vat_threshold_m3,
+    penalty_month_threshold: tariffData.penalty_month_threshold,
+    bank_lending_rate: tariffData.bank_lending_rate,
+    penalty_tiered_rates: tariffData.penalty_tiered_rates,
+    additional_fees: tariffData.additional_fees as any,
   };
   // Ensure JSON fields are serialized
   try {
     if (payload.tiers && typeof payload.tiers !== 'string') payload.tiers = JSON.stringify(payload.tiers as any);
     if ((payload as any).sewerage_tiers && typeof (payload as any).sewerage_tiers !== 'string') (payload as any).sewerage_tiers = JSON.stringify((payload as any).sewerage_tiers);
     if (payload.meter_rent_prices && typeof payload.meter_rent_prices !== 'string') payload.meter_rent_prices = JSON.stringify(payload.meter_rent_prices as any);
+    if (payload.penalty_tiered_rates && typeof payload.penalty_tiered_rates !== 'string') payload.penalty_tiered_rates = JSON.stringify(payload.penalty_tiered_rates as any);
+    if (payload.additional_fees && typeof payload.additional_fees !== 'string') payload.additional_fees = JSON.stringify(payload.additional_fees as any);
   } catch (e) {
     // ignore serialization errors here; DB layer will throw if invalid
   }
