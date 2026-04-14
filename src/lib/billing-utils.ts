@@ -45,14 +45,11 @@ export function normalizeTariff(tariffRow: any): TariffInfo {
         vat_rate: Number(tariffRow.vat_rate ?? 0),
         domestic_vat_threshold_m3: parsedDomesticVatThreshold,
         additional_fees: safeParseJsonField<AdditionalFee[]>(tariffRow.additional_fees, 'additional_fees', 'array'),
-        // Keep field undefined (not null) if not set so calcBillFromTariff treats it as no fixed tier
+        // Strictly respect the database configuration
         fixed_tier_index: tariffRow.fixed_tier_index !== undefined && tariffRow.fixed_tier_index !== null
             ? Number(tariffRow.fixed_tier_index)
             : undefined,
-        // Default to true (rule of three ON) when not explicitly set
-        use_rule_of_three: tariffRow.use_rule_of_three !== undefined && tariffRow.use_rule_of_three !== null
-            ? Boolean(tariffRow.use_rule_of_three)
-            : true,
+        use_rule_of_three: Boolean(tariffRow.use_rule_of_three),
         // Penalty fields (passed through as-is; calculateDebtAging reads them)
         penalty_month_threshold: tariffRow.penalty_month_threshold !== undefined && tariffRow.penalty_month_threshold !== null
             ? Number(tariffRow.penalty_month_threshold)
