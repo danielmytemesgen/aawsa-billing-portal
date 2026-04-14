@@ -1,0 +1,2852 @@
+'use server'
+import { isManagementRole, PERMISSIONS } from '@/lib/constants/auth';
+import fs from 'fs';
+import {
+  dbCreateBranch,
+  dbDeleteBranch,
+  dbGetAllBranches,
+  dbUpdateBranch,
+  dbCreateIndividualCustomer,
+  dbDeleteCustomer,
+  dbGetAllCustomers,
+  dbGetCustomersByBulkMeterId,
+  dbUpdateCustomer,
+  dbCreateBulkMeter,
+  dbDeleteBulkMeter,
+  dbGetAllBulkMeters,
+  dbCountBulkMeters,
+  dbGetBulkMetersSummary,
+  dbUpdateBulkMeter,
+  dbBatchRolloverBulkMeters,
+  dbBatchRolloverIndividualCustomersOfBulkMeters,
+  dbBatchRolloverIndividualCustomers,
+  dbCountCustomers,
+
+  dbGetCustomersSummary,
+  dbCreateStaffMember,
+  dbDeleteStaffMember,
+  dbGetAllStaffMembers,
+  dbUpdateStaffMember,
+  getStaffMemberForAuth as dbGetStaffMemberForAuth,
+  dbCreateBill,
+  dbDeleteBill,
+  dbGetAllBills,
+  dbUpdateBill,
+  dbCreateIndividualCustomerReading,
+  dbDeleteIndividualCustomerReading,
+  dbGetAllIndividualCustomerReadings,
+  dbUpdateIndividualCustomerReading,
+  dbCreateBulkMeterReading,
+  dbDeleteBulkMeterReading,
+  dbGetAllBulkMeterReadings,
+  dbUpdateBulkMeterReading,
+  dbCreatePayment,
+  dbDeletePayment,
+  dbGetAllPayments,
+  dbUpdatePayment,
+  dbCreateReportLog,
+  dbDeleteReportLog,
+  dbGetAllReportLogs,
+  dbUpdateReportLog,
+  dbCreateNotification,
+  dbDeleteNotification,
+  dbGetAllNotifications,
+  dbUpdateNotification,
+  dbGetAllRoles,
+  dbCreateRole,
+  dbGetAllPermissions,
+  dbCreatePermission,
+  dbUpdatePermission,
+  dbDeletePermission,
+  dbGetAllRolePermissions,
+  dbRpcUpdateRolePermissions,
+  dbGetAllTariffs,
+  dbGetTariffByTypeAndDate,
+  dbCreateTariff,
+  dbCreateBillingJob,
+  dbUpdateBillingJob,
+  dbGetBillingJob,
+  dbGetActiveBillingJobs,
+  dbGetUnprocessedMetersForJob,
+  dbGetUnprocessedIndividualCustomersForJob,
+  dbBatchInsertBills,
+  dbUpdateTariff,
+  dbCreateKnowledgeBaseArticle,
+  dbUpdateKnowledgeBaseArticle,
+  dbDeleteKnowledgeBaseArticle,
+  dbGetAllKnowledgeBaseArticles,
+  dbUpdateBillStatus,
+  dbCreateBillWorkflowLog,
+  dbGetBillWorkflowLogs as dbGetBillWorkflowLogsQuery,
+  dbGetBillById as dbGetBillByIdQuery,
+  dbGetCustomerById,
+  dbGetBulkMeterById,
+  dbGetBranchById,
+  dbGetStaffPermissions,
+  dbGetIndividualCustomerReadingsByCustomer,
+  dbGetBulkMeterReadingsByMeter,
+  dbCreateCustomerSession,
+  dbRevokeCustomerSession,
+  dbGetActiveCustomerSessions,
+  dbIsCustomerSessionValid,
+  dbLogCustomerPageView,
+  dbCreateFaultCode,
+  dbUpdateFaultCode,
+  dbDeleteFaultCode,
+  dbGetAllFaultCodes,
+  dbGetFaultCodeById,
+  dbGetBillsByCustomerId,
+  dbGetBillsByBulkMeterId,
+  dbGetAllRoutes,
+  dbGetRouteByKey,
+  dbCreateRoute,
+  dbUpdateRoute,
+  dbDeleteRoute,
+  dbGetDashboardMetrics,
+  dbGetTotalPaymentsForBill,
+  dbGetDistinctBillingMonths,
+  dbGetBillsByMonth,
+  dbGetBillsWithBulkMeterInfoByMonth,
+  dbGetMostRecentBillsForBulkMeters,
+  dbGetRecycleBinItems,
+  dbRestoreFromRecycleBin,
+  dbPermanentlyDeleteFromRecycleBin,
+  dbGetUnsettledBillsPaginated,
+  dbGetBillsByCustomerKey,
+  dbGetUnsettledBillsCount,
+  dbGetPaidBillsPaginated,
+  dbGetPaidBillsCount,
+  dbGetAllSentBillsPaginated,
+  dbGetAllSentBillsCount,
+  dbArchiveOldRecords,
+  dbGetSystemStats,
+  dbRunDataAudit,
+} from './db-queries';
+import { withTransaction } from './db';
+
+import { calculateBill, type CustomerType, type SewerageConnection } from './billing';
+import { encrypt, getSession } from './auth';
+import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
+import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from './billing-config';
+
+import type { Database } from '@/types/db';
+
+// Helper types to extract Row, Insert, and Update types from the database definition
+type PublicTables = Database['public']['Tables'];
+
+const generateBillKey = (billId: string) => {
+  const idHex = (billId || "").replace(/-/g, '').substring(0, 8);
+  const idNumeric = parseInt(idHex, 16);
+  return isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
+};
+
+/**
+ * Determines the effective branch ID to filter by, enforcing strict isolation.
+ * If the session user is assigned to a branch, they are restricted to that branch.
+ * Only Head Office users (no branchId in session) can see all branches.
+ */
+/**
+ * Determines the effective branch ID to filter by, enforcing strict isolation.
+ * If the session user is assigned to a branch, they are restricted to that branch,
+ * UNLESS they have the appropriate 'view_all' permission.
+ */
+function getEffectiveBranchId(session: any, optionsBranchId?: string, permissionViewAll?: string): string | undefined {
+  const perms = session.permissions || [];
+  
+  // 1. If user has the specific 'view_all' permission, they can use the requested branchId from options.
+  if (permissionViewAll && perms.includes(permissionViewAll)) {
+    return optionsBranchId;
+  }
+  
+  // 2. If user is tied to a specific branch AND doesn't have the override permission, they are LOCKED to it.
+  if (session.branchId && session.branchId !== 'all') {
+    return session.branchId;
+  }
+  
+  // 3. Otherwise (Head Office / Global Admin), they can use the requested branchId from options.
+  return optionsBranchId;
+}
+
+
+type RoleRow = PublicTables['roles']['Row'];
+type PermissionRow = PublicTables['permissions']['Row'];
+type RolePermissionRow = PublicTables['role_permissions']['Row'];
+type RoleInsert = PublicTables['roles']['Insert'];
+type PermissionInsert = PublicTables['permissions']['Insert'];
+type PermissionUpdate = PublicTables['permissions']['Update'];
+type Branch = PublicTables['branches']['Row'];
+type BulkMeterRow = PublicTables['bulk_meters']['Row'];
+type IndividualCustomer = PublicTables['individual_customers']['Row'];
+type StaffMember = PublicTables['staff_members']['Row'];
+type Bill = PublicTables['bills']['Row'];
+type IndividualCustomerReading = PublicTables['individual_customer_readings']['Row'];
+type BulkMeterReading = PublicTables['bulk_meter_readings']['Row'];
+type Payment = PublicTables['payments']['Row'];
+type ReportLog = PublicTables['reports']['Row'];
+type NotificationRow = PublicTables['notifications']['Row'];
+type TariffRow = PublicTables['tariffs']['Row'] & { effective_date: string; year?: number };
+type KnowledgeBaseArticleRow = PublicTables['knowledge_base_articles']['Row'];
+
+type BranchInsert = PublicTables['branches']['Insert'];
+type BranchUpdate = PublicTables['branches']['Update'];
+type BulkMeterInsert = PublicTables['bulk_meters']['Insert'];
+type BulkMeterUpdate = PublicTables['bulk_meters']['Update'];
+type IndividualCustomerInsert = PublicTables['individual_customers']['Insert'];
+type IndividualCustomerUpdate = PublicTables['individual_customers']['Update'];
+type StaffMemberInsert = PublicTables['staff_members']['Insert'];
+type StaffMemberUpdate = PublicTables['staff_members']['Update'];
+type BillInsert = PublicTables['bills']['Insert'];
+type BillUpdate = PublicTables['bills']['Update'];
+type IndividualCustomerReadingInsert = PublicTables['individual_customer_readings']['Insert'];
+type IndividualCustomerReadingUpdate = PublicTables['individual_customer_readings']['Update'];
+type BulkMeterReadingInsert = PublicTables['bulk_meter_readings']['Insert'];
+type BulkMeterReadingUpdate = PublicTables['bulk_meter_readings']['Update'];
+type PaymentInsert = PublicTables['payments']['Insert'];
+type PaymentUpdate = PublicTables['payments']['Update'];
+type ReportLogInsert = PublicTables['reports']['Insert'];
+type ReportLogUpdate = PublicTables['reports']['Update'];
+type NotificationInsert = PublicTables['notifications']['Insert'];
+type NotificationUpdate = PublicTables['notifications']['Update'];
+type TariffInsert = PublicTables['tariffs']['Insert'];
+type TariffUpdate = PublicTables['tariffs']['Update'];
+type KnowledgeBaseArticleInsert = PublicTables['knowledge_base_articles']['Insert'];
+type KnowledgeBaseArticleUpdate = PublicTables['knowledge_base_articles']['Update'];
+
+// Manually define FaultCode types since they are not in the generated Database type yet
+export interface FaultCodeRow {
+  id: string;
+  code: string;
+  description: string | null;
+  category: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FaultCodeInsert {
+  id?: string;
+  code: string;
+  description?: string | null;
+  category?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FaultCodeUpdate {
+  code?: string;
+  description?: string | null;
+  category?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RouteRow {
+  route_key: string;
+  branch_id?: string | null;
+  reader_id?: string | null;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RouteInsert {
+  route_key: string;
+  branch_id?: string | null;
+  reader_id?: string | null;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface RouteUpdate {
+  route_key?: string;
+  branch_id?: string | null;
+  reader_id?: string | null;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type { RoleRow, PermissionRow, RolePermissionRow, Branch, BulkMeterRow, IndividualCustomer, StaffMember, Bill, IndividualCustomerReading, BulkMeterReading, Payment, ReportLog, NotificationRow, BranchInsert, BranchUpdate, BulkMeterInsert, BulkMeterUpdate, IndividualCustomerInsert, IndividualCustomerUpdate, StaffMemberInsert, StaffMemberUpdate, BillInsert, BillUpdate, IndividualCustomerReadingInsert, IndividualCustomerReadingUpdate, BulkMeterReadingInsert, BulkMeterReadingUpdate, PaymentInsert, PaymentUpdate, ReportLogInsert, ReportLogUpdate, NotificationInsert, NotificationUpdate, TariffRow, TariffInsert, TariffUpdate, KnowledgeBaseArticleInsert, KnowledgeBaseArticleUpdate, KnowledgeBaseArticleRow };
+
+
+const wrap = async <T>(fn: () => Promise<T>) => {
+  try {
+    const data = await fn();
+    return { data, error: null } as any;
+  } catch (e) {
+    console.error("Server Action Error in wrap:", e);
+    // Write to file for immediate visibility
+    try {
+      fs.appendFileSync('server-error.log', new Date().toISOString() + ' : ' + (e instanceof Error ? e.stack : String(e)) + '\n');
+    } catch (fsErr) { }
+
+    // Ensure the full error is serialized, not just a generic object
+    const errorObject = e instanceof Error
+      ? { name: e.name, message: e.message, stack: e.stack }
+      : typeof e === 'object' && e !== null
+        ? e
+        : { message: String(e) };
+    return { data: null, error: errorObject } as any;
+  }
+};
+
+const checkPermission = async (permission?: string) => {
+  const session = await getSession();
+  if (!session || !session.id) {
+    throw new Error('User not authenticated');
+  }
+
+  // Refresh permissions from DB to avoid staleness
+  const perms = await dbGetStaffPermissions(session.id);
+  
+  // Granular RBAC: Check if the permission exists in the user's assigned permissions.
+  // Bypass if user has 'bill:manage_all' and it's a bill-related permission
+  if (permission && perms.includes('bill:manage_all') && permission.startsWith('bill:')) {
+    return { ...session, permissions: perms };
+  }
+
+  if (permission && !perms.includes(permission)) {
+    throw new Error(`Forbidden: Missing permission ${permission}`);
+  }
+
+  return { ...session, permissions: perms };
+};
+
+const verifyBillBranchAccess = async (billId: string, session: any) => {
+  const perms = session.permissions || [];
+  // Bypass branch filtering if user has 'bill:manage_all'
+  if (perms.includes('bill:manage_all')) {
+    return;
+  }
+
+  // Try to find the bill specifically within the user's branch
+  const bill = await dbGetBillByIdQuery(billId, session.branchId);
+  if (!bill) {
+    throw new Error('Forbidden: Access to this bill is restricted to its own branch');
+  }
+  return bill;
+};
+
+export async function getBranchByIdAction(id: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetBranchById(id);
+  });
+}
+
+export async function getAllBranchesAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetAllBranches();
+  });
+}
+export async function createBranchAction(branch: BranchInsert) {
+  return await wrap(async () => {
+    await checkPermission('branches_create');
+    const result = await dbCreateBranch(branch);
+    await logSecurityEventAction({ event: 'Create Branch', details: { branch } });
+    return result;
+  });
+}
+export async function updateBranchAction(id: string, branch: BranchUpdate) {
+  return await wrap(async () => {
+    await checkPermission('branches_update');
+    const result = await dbUpdateBranch(id, branch);
+    await logSecurityEventAction({ event: 'Update Branch', details: { id, updates: branch } });
+    return result;
+  });
+}
+export async function deleteBranchAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('branches_delete');
+    await dbDeleteBranch(id, session.id);
+    await logSecurityEventAction({ event: 'Delete Branch', severity: 'warning', details: { id } });
+  });
+}
+
+export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'customers_view_all');
+    return await dbGetAllCustomers({ branchId, ...options });
+  });
+}
+
+export async function getCustomersCountAction(searchTerm?: string, excludePending?: boolean) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, undefined, 'customers_view_all');
+    return await dbCountCustomers({ branchId, searchTerm, excludePending });
+  });
+}
+
+export async function getCustomersSummaryAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, undefined, 'customers_view_all');
+    return await dbGetCustomersSummary(branchId);
+  });
+}
+
+export async function createCustomerAction(customer: IndividualCustomerInsert) {
+  return await wrap(async () => {
+    const session = await checkPermission('customers_create');
+    // If user has restricted creation permission, it must be for their branch and pending approval
+    if (session.permissions?.includes('customers_create_restricted')) {
+      customer.branch_id = customer.branch_id || (customer as any).branchId || session.branchId;
+      customer.status = 'Pending Approval';
+    } else {
+      // For non-restricted users, ensure branchId from form is mapped to branch_id
+      customer.branch_id = customer.branch_id || (customer as any).branchId;
+    }
+    const result = await dbCreateIndividualCustomer(customer);
+    await logSecurityEventAction({
+      event: 'Create Customer',
+      customerKeyNumber: result.data?.customerKeyNumber,
+      details: { customer }
+    });
+    return result;
+  });
+}
+export async function updateCustomerAction(customerKeyNumber: string, customer: IndividualCustomerUpdate) {
+  return await wrap(async () => {
+    await checkPermission('customers_update');
+    const result = await dbUpdateCustomer(customerKeyNumber, customer);
+    await logSecurityEventAction({
+      event: 'Update Customer',
+      customerKeyNumber,
+      details: { updates: customer }
+    });
+    return result;
+  });
+}
+export async function deleteCustomerAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('customers_delete');
+    await dbDeleteCustomer(customerKeyNumber, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Customer',
+      severity: 'warning',
+      customerKeyNumber
+    });
+  });
+}
+
+export async function approveCustomerAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('customers_approve');
+    const result = await dbUpdateCustomer(customerKeyNumber, {
+      status: 'Active',
+      approved_by: session.id,
+      approved_at: new Date().toISOString()
+    });
+    await logSecurityEventAction({ event: 'Approve Customer', customerKeyNumber });
+    return result;
+  });
+}
+
+export async function rejectCustomerAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('customers_approve');
+    const result = await dbUpdateCustomer(customerKeyNumber, {
+      status: 'Rejected',
+      approved_by: session.id,
+      approved_at: new Date().toISOString()
+    });
+    await logSecurityEventAction({ event: 'Reject Customer', severity: 'warning', customerKeyNumber });
+    return result;
+  });
+}
+
+export async function getCustomerByIdAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetCustomerById(customerKeyNumber);
+  });
+}
+export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'bulk_meters_view_all');
+    return await dbGetAllBulkMeters({ branchId, ...options });
+  });
+}
+
+export async function getBulkMetersCountAction(searchTerm?: string, excludePending?: boolean) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, undefined, 'bulk_meters_view_all');
+    return await dbCountBulkMeters({ branchId, searchTerm, excludePending });
+  });
+}
+
+export async function getBulkMetersSummaryAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const branchId = getEffectiveBranchId(session, undefined, 'bulk_meters_view_all');
+    return await dbGetBulkMetersSummary(branchId);
+  });
+}
+export async function getBulkMeterByIdAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetBulkMeterById(customerKeyNumber);
+  });
+}
+export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
+  return await wrap(async () => {
+    const session = await checkPermission('bulk_meters_create');
+    // If user has restricted creation permission, it must be for their branch and pending approval
+    if (session.permissions?.includes('bulk_meters_create_restricted')) {
+      bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId || session.branchId;
+      bulkMeter.status = 'Pending Approval';
+    } else {
+      // For non-restricted users, ensure branchId from form is mapped to branch_id
+      bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId;
+    }
+    const result = await dbCreateBulkMeter(bulkMeter);
+    await logSecurityEventAction({
+      event: 'Create Bulk Meter',
+      customerKeyNumber: bulkMeter.customerKeyNumber,
+      details: { bulkMeter }
+    });
+    return result;
+  });
+}
+export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter: BulkMeterUpdate) {
+  return await wrap(async () => {
+    await checkPermission('bulk_meters_update');
+    const result = await dbUpdateBulkMeter(customerKeyNumber, bulkMeter);
+    await logSecurityEventAction({
+      event: 'Update Bulk Meter',
+      customerKeyNumber,
+      details: { updates: bulkMeter }
+    });
+    return result;
+  });
+}
+
+export async function deleteBulkMeterAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bulk_meters_delete');
+    await dbDeleteBulkMeter(customerKeyNumber, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Bulk Meter',
+      severity: 'warning',
+      customerKeyNumber
+    });
+  });
+}
+
+export async function approveBulkMeterAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bulk_meters_approve');
+    const result = await dbUpdateBulkMeter(customerKeyNumber, {
+      status: 'Active',
+      approved_by: session.id,
+      approved_at: new Date().toISOString()
+    });
+    await logSecurityEventAction({
+      event: 'Approve Bulk Meter',
+      customerKeyNumber
+    });
+    return result;
+  });
+}
+
+export async function rejectBulkMeterAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bulk_meters_approve');
+    const result = await dbUpdateBulkMeter(customerKeyNumber, {
+      status: 'Rejected',
+      approved_by: session.id,
+      approved_at: new Date().toISOString()
+    });
+    await logSecurityEventAction({
+      event: 'Reject Bulk Meter',
+      severity: 'warning',
+      customerKeyNumber
+    });
+    return result;
+  });
+}
+
+export async function getAllStaffMembersAction() {
+  return await wrap(async () => {
+    const session = await checkPermission('staff_view');
+    
+    // Determine the branch isolation:
+    // If the user has 'staff_view_all', they can see everyone.
+    // Otherwise, they are locked to their own branch.
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    
+    return await dbGetAllStaffMembers(filterBranchId);
+  });
+}
+export async function createStaffMemberAction(staffMember: StaffMemberInsert) {
+  return await wrap(async () => {
+    const session = await checkPermission('staff_create');
+
+    // Mapping fix: set 'branch' (text) from form's 'branchName' or 'branchId' (fallback)
+    if (!(staffMember as any).branch) {
+        (staffMember as any).branch = (staffMember as any).branchName || (staffMember as any).branchId;
+    }
+
+    // Only override if no branch is specified in the form
+    if (!(staffMember as any).branch && session.branchId) {
+        (staffMember as any).branch = session.branchId;
+    }
+    
+    const result = await dbCreateStaffMember(staffMember);
+    await logSecurityEventAction({
+      event: 'Create Staff Member',
+      details: { staffMember }
+    });
+    return result;
+  });
+}
+export async function updateStaffMemberAction(email: string, staffMember: StaffMemberUpdate) {
+  return await wrap(async () => {
+    const session = await checkPermission('staff_update');
+    
+    const branchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    const result = await dbUpdateStaffMember(email, staffMember, branchId);
+    
+    await logSecurityEventAction({
+      event: 'Update Staff Member',
+      details: { email, updates: staffMember }
+    });
+    return result;
+  });
+}
+export async function deleteStaffMemberAction(email: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('staff_delete');
+    
+    const branchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    await dbDeleteStaffMember(email, session.id, branchId);
+    
+    await logSecurityEventAction({
+      event: 'Delete Staff Member',
+      severity: 'warning',
+      details: { email }
+    });
+  });
+}
+export async function getStaffMemberForAuthAction(email: string, password?: string) { return await wrap(() => dbGetStaffMemberForAuth(email, password)); }
+
+export async function getAllBillsAction(options?: { branchId?: string; excludeUnfinalized?: boolean }) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = await dbGetStaffPermissions(session.id);
+    
+    // Check for any billing-related permission
+    const hasBillPerm = perms.includes('bill:manage_all') || 
+                       perms.includes('bill:view_branch') || 
+                       perms.some((p: string) => p.startsWith('bill:'));
+                       
+    if (!hasBillPerm) {
+      throw new Error('Forbidden: Missing billing permissions');
+    }
+
+    // Apply branch filtering if they don't have global access
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'bill:manage_all');
+
+    return await dbGetAllBills({ ...options, branchId });
+  });
+}
+export async function createBillAction(bill: BillInsert) {
+  return await wrap(async () => {
+    const session = await checkPermission('bill:create');
+
+    // Ensure accurate mappings if partial data provided
+    if (bill.TOTALBILLAMOUNT !== undefined) {
+      if (bill.THISMONTHBILLAMT === undefined || bill.THISMONTHBILLAMT === null) {
+        bill.THISMONTHBILLAMT = bill.TOTALBILLAMOUNT;
+      }
+      if (bill.OUTSTANDINGAMT === undefined || bill.OUTSTANDINGAMT === null) {
+        bill.OUTSTANDINGAMT = bill.balance_carried_forward || 0;
+      }
+      // Set TOTALBILLAMOUNT to Total Payable (Current + Outstanding + Penalty)
+      bill.TOTALBILLAMOUNT = (bill.THISMONTHBILLAMT || 0) + (bill.OUTSTANDINGAMT || 0) + (bill.PENALTYAMT || 0);
+    }
+
+    // Status Check: Ensure account is Active before billing
+    if (bill.CUSTOMERKEY) {
+      const bm = await dbGetBulkMeterById(bill.CUSTOMERKEY);
+      if (bm && bm.status !== 'Active') {
+        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      }
+      if (bm?.branch_id && !bill.CUSTOMERBRANCH) {
+        const branch = await dbGetBranchById(bm.branch_id);
+        bill.CUSTOMERBRANCH = branch?.name;
+      }
+      if (bm?.branch_id) {
+        bill.branch_id = bm.branch_id;
+      }
+    } else if (bill.individual_customer_id) {
+      const cust = await dbGetCustomerById(bill.individual_customer_id);
+      if (cust && cust.status !== 'Active') {
+        throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+      }
+      if (cust?.branch_id && !bill.CUSTOMERBRANCH) {
+        const branch = await dbGetBranchById(cust.branch_id);
+        bill.CUSTOMERBRANCH = branch?.name;
+      }
+      if (cust?.branch_id) {
+        bill.branch_id = cust.branch_id;
+      }
+    }
+
+    // Branch Isolation Verification for Bill Creation
+    const perms = session.permissions || [];
+    if (!perms.includes('bill:manage_all')) {
+      if (session.branchId && session.branchId !== 'all' && bill.branch_id !== session.branchId) {
+        throw new Error('Forbidden: Cannot create bill for a customer in a different branch.');
+      }
+    }
+
+    return await withTransaction(async (client) => {
+      const result = await dbCreateBill(bill, client);
+
+      // Generate and update BILLKEY
+      if (result && result.id) {
+        const billKey = generateBillKey(result.id);
+        await dbUpdateBill(result.id, { BILLKEY: billKey }, client);
+        result.BILLKEY = billKey; // Update returned object
+      }
+
+      // Log initial workflow state
+      await dbCreateBillWorkflowLog({
+        bill_id: result.id,
+        from_status: 'N/A',
+        to_status: result.status || 'Draft',
+        changed_by: session.id,
+        reason: 'Manual bill creation'
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Create Bill',
+        customerKeyNumber: bill.CUSTOMERKEY || undefined,
+        details: { billId: result.id }
+      });
+      return result;
+    });
+  });
+}
+
+export async function closeBillingCycleAction(payload: {
+  bill: BillInsert;
+  meterUpdate: {
+    customerKeyNumber: string;
+    previousReading: number;
+    currentReading: number;
+    outStandingbill: number;
+    paymentStatus: string;
+  };
+}) {
+  return await wrap(async () => {
+    const session = await checkPermission('billing:close_cycle');
+
+    // Verify meter branch if user doesn't have global access
+    const perms = session.permissions || [];
+    if (!perms.includes('bill:manage_all')) {
+      const meter = await dbGetBulkMeterById(payload.meterUpdate.customerKeyNumber);
+      if (!meter || meter.branch_id !== session.branchId) {
+        throw new Error('Forbidden: This meter does not belong to your branch');
+      }
+    }
+
+    // Wrap in transaction for atomicity
+    return await withTransaction(async (client) => {
+      // 1. Prepare and Create the Bill
+      const billToInsert = { ...payload.bill };
+      if (billToInsert.THISMONTHBILLAMT === undefined || billToInsert.THISMONTHBILLAMT === null) {
+        billToInsert.THISMONTHBILLAMT = billToInsert.TOTALBILLAMOUNT;
+      }
+      if (billToInsert.OUTSTANDINGAMT === undefined || billToInsert.OUTSTANDINGAMT === null) {
+        billToInsert.OUTSTANDINGAMT = billToInsert.balance_carried_forward || 0;
+      }
+      billToInsert.TOTALBILLAMOUNT = (billToInsert.THISMONTHBILLAMT || 0) + (billToInsert.OUTSTANDINGAMT || 0) + (billToInsert.PENALTYAMT || 0);
+
+      // Status Check: Ensure account is Active before billing
+      if (billToInsert.CUSTOMERKEY) {
+        const bm = await dbGetBulkMeterById(billToInsert.CUSTOMERKEY);
+        if (bm && bm.status !== 'Active') {
+          throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+        }
+        if (bm?.branch_id && !billToInsert.CUSTOMERBRANCH) {
+          const branch = await dbGetBranchById(bm.branch_id);
+          billToInsert.CUSTOMERBRANCH = branch?.name;
+        }
+      } else if (billToInsert.individual_customer_id) {
+        const cust = await dbGetCustomerById(billToInsert.individual_customer_id);
+        if (cust && cust.status !== 'Active') {
+          throw new Error(`Cannot create bill: Account is not Active. Please approve the account first.`);
+        }
+        if (cust?.branch_id && !billToInsert.CUSTOMERBRANCH) {
+          const branch = await dbGetBranchById(cust.branch_id);
+          billToInsert.CUSTOMERBRANCH = branch?.name;
+        }
+      }
+
+      const billResult = await dbCreateBill(billToInsert, client);
+
+      // Generate and update BILLKEY
+      if (billResult && billResult.id) {
+        const billKey = generateBillKey(billResult.id);
+        await dbUpdateBill(billResult.id, { BILLKEY: billKey }, client);
+        billResult.BILLKEY = billKey;
+      }
+
+      // 2. Update the Bulk Meter
+      const meterResult = await dbUpdateBulkMeter(payload.meterUpdate.customerKeyNumber, {
+        previousReading: payload.meterUpdate.previousReading,
+        currentReading: payload.meterUpdate.currentReading,
+        outStandingbill: payload.meterUpdate.outStandingbill as any,
+        paymentStatus: payload.meterUpdate.paymentStatus as any,
+      }, client);
+
+      // 3. Log initial workflow state
+      await dbCreateBillWorkflowLog({
+        bill_id: billResult.id,
+        from_status: 'N/A',
+        to_status: billResult.status || 'Draft',
+        changed_by: session.id, // Use UUID
+        reason: 'Initial creation via billing cycle closure'
+      }, client);
+
+      // 4. Log Security Event (outside client transaction if it's a separate utility, but we want it logged)
+      await logSecurityEventAction({
+        event: 'Close Billing Cycle',
+        customerKeyNumber: payload.meterUpdate.customerKeyNumber,
+        details: {
+          billId: billResult.id,
+          meterUpdate: payload.meterUpdate
+        }
+      });
+
+      return { bill: billResult, meter: meterResult };
+    });
+  });
+}
+
+export async function runBillingCycleAction(payload: {
+  bulkMeterId: string;
+  carryBalance: boolean;
+  monthYear: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  dueDateOffsetDays?: number;
+  allowOverlap?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermission('billing:close_cycle');
+
+    // 1. Fetch latest data
+    const bulkMeter = await dbGetBulkMeterById(payload.bulkMeterId);
+    if (!bulkMeter) throw new Error("Bulk meter not found");
+
+    const associatedCustomers = await dbGetCustomersByBulkMeterId(payload.bulkMeterId);
+
+    // 2. Calculate Usage
+    const bmUsage = (bulkMeter.current_reading ?? 0) - (bulkMeter.previous_reading ?? 0);
+    const totalIndivUsage = associatedCustomers.reduce((sum, cust) => sum + ((cust.current_reading ?? 0) - (cust.previous_reading ?? 0)), 0);
+
+    // 3. Determine Charge Group and Fetch Tariff Settings
+    const chargeGroup = (bulkMeter.charge_group || 'Non-domestic') as CustomerType;
+    const sewerageConn = (bulkMeter.sewerage_connection || 'No') as SewerageConnection;
+
+    // Fetch current tariff directly from DB for aging/penalty calculation
+    const { dbGetLatestApplicableTariff } = await import('./db-queries');
+    const lookupDate = payload.monthYear;
+    const activeTariffRow = await dbGetLatestApplicableTariff(chargeGroup, lookupDate);
+
+    // 4. Calculate Bill using the centralized engine
+    // Guard against negative difference usage (individual readings exceed bulk meter reading).
+    // This indicates a data integrity problem and must not silently produce a zero bill.
+    const rawDifferenceUsage = bmUsage - totalIndivUsage;
+    if (rawDifferenceUsage < 0) {
+      throw new Error(
+        `Negative difference usage (${rawDifferenceUsage} m³) for bulk meter ${payload.bulkMeterId} in ${payload.monthYear}. ` +
+        `Total individual sub-meter usage (${totalIndivUsage} m³) exceeds bulk meter consumption (${bmUsage} m³). ` +
+        `Please verify all meter readings before running the billing cycle.`
+      );
+    }
+    const billingResult = await calculateBill(
+      rawDifferenceUsage,
+      chargeGroup,
+      sewerageConn,
+      bulkMeter.meter_size ?? 0.5,
+      payload.monthYear
+    );
+
+    const differenceUsageForCycle = billingResult.effectiveUsage;
+    // differenceBillAmount is used as THISMONTHBILLAMT in the bill insert below
+    const differenceBillAmount = billingResult.totalBill;
+
+    const balanceFromPreviousPeriods = Number(bulkMeter.outStandingbill || 0);
+
+    // 5. Aging & Penalty Calculation (FIFO based on historical bills, considering partial payments)
+    const { calculateDebtAging } = await import('./billing-utils');
+    const historicalBills = await dbGetBillsByBulkMeterId(payload.bulkMeterId);
+
+    // Convert DB row to expected TariffInfo structure for calculateDebtAging if a row was found
+    let activeTariff;
+    if (activeTariffRow) {
+      activeTariff = {
+        ...activeTariffRow,
+        tiers: typeof activeTariffRow.tiers === 'string' ? JSON.parse(activeTariffRow.tiers) : activeTariffRow.tiers,
+        sewerage_tiers: typeof activeTariffRow.sewerage_tiers === 'string' ? JSON.parse(activeTariffRow.sewerage_tiers) : activeTariffRow.sewerage_tiers,
+        meter_rent_prices: typeof activeTariffRow.meter_rent_prices === 'string' ? JSON.parse(activeTariffRow.meter_rent_prices) : activeTariffRow.meter_rent_prices,
+        additional_fees: typeof activeTariffRow.additional_fees === 'string' ? JSON.parse(activeTariffRow.additional_fees) : activeTariffRow.additional_fees,
+        penalty_tiered_rates: typeof activeTariffRow.penalty_tiered_rates === 'string' && activeTariffRow.penalty_tiered_rates ? JSON.parse(activeTariffRow.penalty_tiered_rates) : activeTariffRow.penalty_tiered_rates,
+        penalty_month_threshold: activeTariffRow.penalty_month_threshold !== null && activeTariffRow.penalty_month_threshold !== undefined ? Number(activeTariffRow.penalty_month_threshold) : undefined,
+        bank_lending_rate: activeTariffRow.bank_lending_rate !== null && activeTariffRow.bank_lending_rate !== undefined ? Number(activeTariffRow.bank_lending_rate) : undefined,
+        use_rule_of_three: activeTariffRow.use_rule_of_three !== undefined && activeTariffRow.use_rule_of_three !== null ? Boolean(activeTariffRow.use_rule_of_three) : true,
+      };
+    }
+
+    const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, activeTariff, payload.monthYear);
+
+    const { buildBillingPeriod } = await import('./billing-config');
+    const period = buildBillingPeriod({
+      monthYear: payload.monthYear,
+      periodStartDate: payload.periodStartDate,
+      periodEndDate: payload.periodEndDate,
+      dueDateOffsetDays: payload.dueDateOffsetDays,
+    });
+    const periodStartDate = period.startDate;
+    const periodEndDate = period.endDate;
+    const dueDate = period.dueDate;
+
+    // 6. Strict Safety Check: Overlap Protection
+    const hasOverlap = historicalBills.some(bill => {
+      if (!bill.bill_period_start_date || !bill.bill_period_end_date) return false;
+      const bStart = new Date(bill.bill_period_start_date).getTime();
+      const bEnd = new Date(bill.bill_period_end_date).getTime();
+      const pStart = new Date(periodStartDate).getTime();
+      const pEnd = new Date(periodEndDate).getTime();
+      return pStart <= bEnd && pEnd >= bStart;
+    });
+
+    if (hasOverlap && !payload.allowOverlap) {
+      throw new Error(`Billing period overlaps with an existing bill (${periodStartDate} to ${periodEndDate}).`);
+    }
+
+    // Outstanding = sum of aging buckets (Debit 30 + Debit 30-60 + Debit 60)
+    const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
+    // Total Payable = Penalty + Outstanding + Current Bill
+    const totalPayableForCycle = Number((penaltyAmt + outstandingAmt + billingResult.totalBill).toFixed(2));
+
+    // Get branch name for bill
+    let branchName: string | undefined = undefined;
+    if (bulkMeter.branch_id) {
+      const branch = await dbGetBranchById(bulkMeter.branch_id);
+      branchName = branch?.name;
+    }
+
+    // 6. Create Bill
+    const billInsert: BillInsert = {
+      CUSTOMERKEY: bulkMeter.customerKeyNumber,
+      CUSTOMERBRANCH: branchName,
+      branch_id: bulkMeter.branch_id,
+      bill_period_start_date: periodStartDate,
+      bill_period_end_date: periodEndDate,
+      month_year: payload.monthYear,
+      PREVREAD: bulkMeter.previous_reading || 0,
+      CURRREAD: bulkMeter.current_reading || 0,
+      CONS: bmUsage,
+      difference_usage: differenceUsageForCycle,
+      THISMONTHBILLAMT: billingResult.totalBill,
+      OUTSTANDINGAMT: outstandingAmt,
+      PENALTYAMT: penaltyAmt,
+      TOTALBILLAMOUNT: totalPayableForCycle,
+      base_water_charge: billingResult.baseWaterCharge,
+      maintenance_fee: billingResult.maintenanceFee,
+      sanitation_fee: billingResult.sanitationFee,
+      sewerage_charge: billingResult.sewerageCharge,
+      meter_rent: billingResult.meterRent,
+      vat_amount: billingResult.vatAmount,
+      balance_carried_forward: outstandingAmt,
+      debit_30: debit30,
+      debit_30_60: debit30_60,
+      debit_60: debit60,
+      due_date: dueDate.toISOString(),
+      payment_status: payload.carryBalance ? 'Unpaid' : 'Paid',
+      status: 'Draft', // New cycles start as drafts
+      bill_number: `BILL-${Date.now()}`,
+      snapshot_data: {
+        chargeGroup: bulkMeter.charge_group,
+        sewerageConnection: bulkMeter.sewerage_connection,
+        individualCustomerCount: associatedCustomers.length,
+        totalIndividualUsage: totalIndivUsage
+      } as any
+    };
+
+    const billResult = await dbCreateBill(billInsert);
+    if (billResult && billResult.id) {
+      const billKey = generateBillKey(billResult.id);
+      await dbUpdateBill(billResult.id, { BILLKEY: billKey });
+    }
+
+    // 6. Update Bulk Meter — carry forward the new total payable as the outstanding balance
+    const newOutstandingBalance = payload.carryBalance ? totalPayableForCycle : 0;
+    const newPreviousReading = bulkMeter.current_reading ?? bulkMeter.previous_reading ?? 0;
+    const meterUpdate: BulkMeterUpdate = {
+      previousReading: newPreviousReading,
+      outStandingbill: newOutstandingBalance as any,
+      paymentStatus: payload.carryBalance ? 'Unpaid' as any : 'Paid' as any,
+    };
+
+    await dbUpdateBulkMeter(payload.bulkMeterId, meterUpdate);
+    await dbBatchRolloverIndividualCustomersOfBulkMeters([payload.bulkMeterId]);
+
+
+    await logSecurityEventAction({
+      event: 'Run Billing Cycle',
+      customerKeyNumber: payload.bulkMeterId,
+      details: {
+        carryBalance: payload.carryBalance,
+        monthYear: payload.monthYear,
+        billId: billResult.id
+      }
+    });
+
+    return { billId: billResult.id, success: true };
+  });
+}
+export async function updateBillAction(id: string, bill: BillUpdate) {
+  return await wrap(async () => {
+    const session = await checkPermission('bill:update');
+    await verifyBillBranchAccess(id, session);
+
+    // Hardening: Mutation Guards & Audit Trail
+    const currentBill = await dbGetBillByIdQuery(id);
+    if (!currentBill) {
+      throw new Error(`Bill ${id} not found.`);
+    }
+
+    if (currentBill.status === 'Approved' || currentBill.status === 'Posted') {
+      // Whitelist of fields that can still be updated even for Posted bills
+      const allowedFields = ['payment_status', 'amount_paid', 'amountPaid', 'last_payment_date', 'receipt_number', 'note', 'BILLKEY'];
+      const updateFields = Object.keys(bill);
+      const isSafeUpdate = updateFields.every(field => allowedFields.includes(field));
+
+      if (!isSafeUpdate) {
+        throw new Error(`Cannot edit core billing data. Status is currently ${currentBill.status}. Only payment-related updates are permitted.`);
+      }
+    }
+
+    const result = await dbUpdateBill(id, bill);
+
+    // Build diff for audit trail
+    const changes: Record<string, { old: any, new: any }> = {};
+    const currBillRecord = currentBill as Record<string, any>;
+    for (const key of Object.keys(bill)) {
+      const newVal = bill[key as keyof BillUpdate];
+      if (newVal !== currBillRecord[key]) {
+        changes[key] = { old: currBillRecord[key], new: newVal };
+      }
+    }
+
+    // Log the specific field changes to workflow history
+    if (Object.keys(changes).length > 0) {
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentBill.status,
+        to_status: currentBill.status, // Status hasn't changed, just values
+        changed_by: session.id, // Use UUID
+        reason: 'Field Update',
+        details: JSON.stringify(changes) // Store as JSON string 
+      });
+    }
+
+    await logSecurityEventAction({
+      event: 'Update Bill',
+      details: { id, updates: bill }
+    });
+    return result;
+  });
+}
+export async function deleteBillAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bill:delete');
+    await verifyBillBranchAccess(id, session);
+    await dbDeleteBill(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Bill',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+export async function getBillByIdAction(id: string) {
+  return await wrap(async () => {
+    // Basic auth check, branch isolation handles whether they can see it
+    const session = await checkPermission(); 
+    
+    // Check if user has global read access based on new bill/dashboard patterns
+    let viewAllPermission: string | undefined = undefined;
+    if (session.permissions?.includes('bill:manage_all') || session.permissions?.includes('dashboard_view_all')) {
+      viewAllPermission = 'bill:manage_all'; // Use as a proxy token to allow global access in the helper
+    }
+
+    const branchId = getEffectiveBranchId(session, undefined, viewAllPermission);
+    return await dbGetBillByIdQuery(id, branchId);
+  });
+}
+
+
+export async function getBillsByCustomerKeyAction(customerKey: string) {
+  return await wrap(async () => {
+    await checkPermission(); // Basic check
+    return await dbGetBillsByCustomerKey(customerKey);
+  });
+}
+
+export async function submitBillAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+
+    if (!(perms.includes('bill:submit') || perms.includes('bill:create') || perms.includes('bill:manage_all'))) {
+      throw new Error('Forbidden: Missing permission bill:submit or bill:create');
+    }
+
+    await verifyBillBranchAccess(id, session);
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Draft';
+
+      const updatedBill = await dbUpdateBillStatus(id, 'Pending', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Pending',
+        changed_by: session.id
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Submit Bill',
+        details: { id, from: currentStatus }
+      });
+      return updatedBill;
+    });
+  });
+}
+
+export async function approveBillAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bill:approve');
+    await verifyBillBranchAccess(id, session);
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Pending';
+
+      const approvalDate = new Date();
+      const bill = await dbUpdateBillStatus(id, 'Approved', approvalDate, session.id, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Approved',
+        changed_by: session.id
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Approve Bill',
+        details: { id, from: currentStatus }
+      });
+      return bill;
+    });
+  });
+}
+
+export async function rejectBillAction(id: string, reason: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bill:rework');
+    await verifyBillBranchAccess(id, session);
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Pending';
+
+      const bill = await dbUpdateBillStatus(id, 'Rework', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Rework',
+        changed_by: session.id,
+        reason: reason
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Reject Bill',
+        severity: 'warning',
+        details: { id, reason, from: currentStatus }
+      });
+      return bill;
+    });
+  });
+}
+
+export async function postBillAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+
+    if (!(perms.includes('bill:post') || perms.includes('bill:send') || perms.includes('bill:manage_all'))) {
+      throw new Error('Forbidden: Missing permission bill:post or bill:send');
+    }
+
+    await verifyBillBranchAccess(id, session);
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id);
+      const currentStatus = billRes?.status || 'Approved';
+
+      const bill = await dbUpdateBillStatus(id, 'Posted', null, null, client);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Posted',
+        changed_by: session.id
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Post Bill',
+        details: { id }
+      });
+      return bill;
+    });
+  });
+}
+
+export async function correctBillAction(id: string, reason: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('bill:correct');
+    await verifyBillBranchAccess(id, session);
+
+    const { 
+      dbGetBillById, 
+      dbUpdateBillStatus, 
+      dbCreateBillWorkflowLog,
+      dbCreateBill, 
+      dbUpdateBulkMeter, 
+      dbUpdateCustomer 
+    } = await import('./db-queries');
+
+    return await withTransaction(async (client) => {
+      const originalBill = await dbGetBillById(id);
+      if (!originalBill) throw new Error("Original bill not found");
+      if (originalBill.status !== 'Posted') throw new Error("Only posted bills can be corrected");
+
+      // 1. Mark original bill as reversed
+      await dbUpdateBillStatus(id, 'Reversed', null, null, client);
+
+      // 2. Reconcile balance (revert the addition of debt from the original bill)
+      const totalAmt = Number(originalBill.TOTALBILLAMOUNT || 0);
+      const paidAmt = Number(originalBill.amount_paid || 0);
+      const unpaidAmt = Number((totalAmt - paidAmt).toFixed(2));
+
+      if (unpaidAmt > 0) {
+        if (originalBill.CUSTOMERKEY) {
+          await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalBill.CUSTOMERKEY]);
+        } else if (originalBill.individual_customer_id) {
+          await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalBill.individual_customer_id]);
+        }
+      }
+
+      // 3. Skip Credit Note creation (removed per user request)
+
+      // 4. Create Replacement Draft Bill
+      const billData: any = { ...originalBill };
+      delete billData.id;
+      delete billData.created_at;
+      delete billData.updated_at;
+      delete billData.BILLKEY;
+      delete billData.amount_paid;
+      billData.status = 'Draft';
+      billData.bill_number = `CORR-${originalBill.bill_number || Date.now()}`;
+      billData.notes = `Correction of ${originalBill.bill_number}. Reason: ${reason}`;
+
+      const replacementBill = await dbCreateBill(billData, client);
+
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: 'Posted',
+        to_status: 'Reversed',
+        changed_by: session.id,
+        reason: `Correction: ${reason}`
+      }, client);
+
+      await logSecurityEventAction({
+        event: 'Correct Bill',
+        severity: 'warning',
+        details: { id, replacementBillId: replacementBill.id }
+      });
+
+      return {
+        success: true,
+        replacementBillId: replacementBill.id
+      };
+    });
+  });
+}
+
+
+
+export async function getBillWorkflowLogsAction(billId: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetBillWorkflowLogsQuery(billId);
+  });
+}
+
+export async function getAllIndividualCustomerReadingsAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    // Branch isolation
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'meter_readings_view_all');
+    return await dbGetAllIndividualCustomerReadings(filterBranchId);
+  });
+}
+export async function createIndividualCustomerReadingAction(reading: IndividualCustomerReadingInsert) {
+  return await wrap(async () => {
+    await checkPermission('meter_readings_create');
+    const result = await dbCreateIndividualCustomerReading(reading);
+    await logSecurityEventAction({
+      event: 'Create Indiv. Reading',
+      customerKeyNumber: reading.individual_customer_id,
+      details: { reading }
+    });
+    return result;
+  });
+}
+export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
+  return await wrap(async () => {
+    await checkPermission('meter_readings_create'); // Same permission for now
+    const result = await dbUpdateIndividualCustomerReading(id, reading);
+    await logSecurityEventAction({
+      event: 'Update Indiv. Reading',
+      details: { id, updates: reading }
+    });
+    return result;
+  });
+}
+export async function deleteIndividualCustomerReadingAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('meter_readings_delete');
+    await dbDeleteIndividualCustomerReading(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Indiv. Reading',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+
+export async function getAllBulkMeterReadingsAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    // Branch isolation
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'meter_readings_view_all');
+    return await dbGetAllBulkMeterReadings(filterBranchId);
+  });
+}
+export async function createBulkMeterReadingAction(reading: BulkMeterReadingInsert) {
+  return await wrap(async () => {
+    await checkPermission('meter_readings_create');
+    const result = await dbCreateBulkMeterReading(reading);
+    await logSecurityEventAction({
+      event: 'Create Bulk Reading',
+      customerKeyNumber: reading.CUSTOMERKEY,
+      details: { reading }
+    });
+    return result;
+  });
+}
+export async function updateBulkMeterReadingAction(id: string, reading: BulkMeterReadingUpdate) {
+  return await wrap(async () => {
+    await checkPermission('meter_readings_create');
+    const result = await dbUpdateBulkMeterReading(id, reading);
+    await logSecurityEventAction({
+      event: 'Update Bulk Reading',
+      details: { id, updates: reading }
+    });
+    return result;
+  });
+}
+export async function deleteBulkMeterReadingAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('meter_readings_bulk_delete');
+    await dbDeleteBulkMeterReading(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Bulk Reading',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+
+export async function getAllPaymentsAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const role = session.role?.toLowerCase()?.trim();
+    const perms: string[] = session.permissions || [];
+
+    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
+    const hasPerm = isManagement || perms.includes('payments_view') || perms.includes('payments_view_branch');
+
+    if (!hasPerm) {
+      throw new Error('Forbidden: No payment permissions');
+    }
+
+    // Branch isolation
+    const filterBranchId = isManagement ? undefined : session.branchId;
+    return await dbGetAllPayments(filterBranchId);
+  });
+}
+export async function createPaymentAction(payment: PaymentInsert) {
+    return await wrap(async () => {
+      await checkPermission('payments_create');
+      // 1. Create Payment
+      const result = await dbCreatePayment(payment);
+
+    // 2. Update Bill Status and Meter Balance
+    if (payment.bill_id) {
+      const totalPaid = await dbGetTotalPaymentsForBill(payment.bill_id);
+      const bill = await dbGetBillByIdQuery(payment.bill_id);
+
+      if (bill) {
+        const billAmount = Number(bill.TOTALBILLAMOUNT || 0);
+        const newPaymentStatus = totalPaid >= (billAmount - 0.01) ? 'Paid' : 'Unpaid';
+
+        await dbUpdateBill(payment.bill_id, {
+          amount_paid: totalPaid,
+          payment_status: newPaymentStatus
+        });
+
+        // 3. Update Bulk Meter Balance if applicable
+        if (bill.CUSTOMERKEY) {
+          const bulkMeter = await dbGetBulkMeterById(bill.CUSTOMERKEY);
+          if (bulkMeter) {
+            // Subtract the new payment amount from the meter's outstanding balance
+            const currentMeterBalance = Number(bulkMeter.outStandingbill || 0);
+            const newMeterBalance = currentMeterBalance - Number(payment.amount_paid);
+
+            await dbUpdateBulkMeter(bill.CUSTOMERKEY, {
+              outStandingbill: newMeterBalance as any,
+              paymentStatus: newMeterBalance <= 0.01 ? 'Paid' as any : 'Unpaid' as any
+            });
+          }
+        }
+      }
+    }
+
+    await logSecurityEventAction({
+      event: 'Create Payment',
+      customerKeyNumber: payment.individual_customer_id || undefined,
+      details: { payment }
+    });
+    return result;
+  });
+}
+export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
+  return await wrap(async () => {
+    await checkPermission('payments_create');
+    const result = await dbUpdatePayment(id, payment);
+    await logSecurityEventAction({
+      event: 'Update Payment',
+      details: { id, updates: payment }
+    });
+    return result;
+  });
+}
+export async function deletePaymentAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('payments_delete');
+    // 1. Fetch payment to find associated bill/meter
+    const payments = await dbGetAllPayments();
+    const payment = payments.find((p: any) => p.id === id);
+
+    if (payment && payment.bill_id) {
+      const bill = await dbGetBillByIdQuery(payment.bill_id);
+      if (bill && bill.CUSTOMERKEY) {
+        const bulkMeter = await dbGetBulkMeterById(bill.CUSTOMERKEY);
+        if (bulkMeter) {
+          // Restore the meter's outstanding balance
+          const currentMeterBalance = Number(bulkMeter.outStandingbill || 0);
+          const restoredMeterBalance = currentMeterBalance + Number(payment.amount_paid);
+
+          await dbUpdateBulkMeter(bill.CUSTOMERKEY, {
+            outStandingbill: restoredMeterBalance as any,
+            paymentStatus: restoredMeterBalance <= 0.01 ? 'Paid' as any : 'Unpaid' as any
+          });
+        }
+      }
+    }
+
+    // 2. Delete the payment
+    await dbDeletePayment(id, session.id);
+
+    // 3. Update Bill Status if applicable
+    if (payment && payment.bill_id) {
+      const totalPaid = await dbGetTotalPaymentsForBill(payment.bill_id);
+      const bill = await dbGetBillByIdQuery(payment.bill_id);
+      if (bill) {
+        const billAmount = Number(bill.TOTALBILLAMOUNT || 0);
+        const newPaymentStatus = totalPaid >= (billAmount - 0.01) ? 'Paid' : 'Unpaid';
+        await dbUpdateBill(payment.bill_id, {
+          amount_paid: totalPaid,
+          payment_status: newPaymentStatus
+        });
+      }
+    }
+
+    await logSecurityEventAction({
+      event: 'Delete Payment',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+
+export async function getAllReportLogsAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    // Branch isolation
+    const filterBranchId = getEffectiveBranchId(session, undefined, 'reports_view_all');
+    return await dbGetAllReportLogs(filterBranchId);
+  });
+}
+export async function createReportLogAction(log: ReportLogInsert) {
+  return await wrap(async () => {
+    const result = await dbCreateReportLog(log);
+    await logSecurityEventAction({
+      event: 'Create Report',
+      details: { log }
+    });
+    return result;
+  });
+}
+export async function updateReportLogAction(id: string, log: ReportLogUpdate) {
+  return await wrap(async () => {
+    await checkPermission('reports_view');
+    const result = await dbUpdateReportLog(id, log);
+    await logSecurityEventAction({
+      event: 'Update Report',
+      details: { id, updates: log }
+    });
+    return result;
+  });
+}
+export async function deleteReportLogAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('reports_delete');
+    await dbDeleteReportLog(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Report',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+
+export async function getAllNotificationsAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms: string[] = session.permissions || [];
+    const hasPerm = perms.includes('notifications_view') || perms.includes('dashboard_view_all') || perms.includes('dashboard_view_branch');
+
+    if (!hasPerm) {
+      throw new Error('Forbidden: No notification permissions');
+    }
+
+    // Branch isolation: If not admin/management, filter by branchId
+    const isManagement = perms.includes('dashboard_view_all');
+    const filterBranchId = isManagement ? undefined : session.branchId;
+    return await dbGetAllNotifications(filterBranchId);
+  });
+}
+export async function deleteNotificationAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('notifications_delete');
+    await dbDeleteNotification(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Notification',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+export async function updateNotificationAction(id: string, notification: NotificationUpdate) {
+  return await wrap(async () => {
+    await checkPermission('notifications_view'); // Typically send/manage if it's update?
+    const result = await dbUpdateNotification(id, notification);
+    await logSecurityEventAction({
+      event: 'Update Notification',
+      details: { id, updates: notification }
+    });
+    return result;
+  });
+}
+export async function createNotificationAction(notification: NotificationInsert) {
+  return await wrap(async () => {
+    await checkPermission('notifications_create');
+    const result = await dbCreateNotification(notification);
+    await logSecurityEventAction({
+      event: 'Create Notification',
+      details: { notification }
+    });
+    return result;
+  });
+}
+
+export async function getAllRolesAction() {
+  return await wrap(async () => {
+    await checkPermission('permissions_view');
+    return await dbGetAllRoles();
+  });
+}
+export async function createRoleAction(role: RoleInsert) {
+  return await wrap(async () => {
+    await checkPermission('permissions_update');
+    const result = await dbCreateRole(role);
+    await logSecurityEventAction({
+      event: 'Create Role',
+      severity: 'warning',
+      details: { role }
+    });
+    return result;
+  });
+}
+export async function getAllPermissionsAction() {
+  return await wrap(async () => {
+    await checkPermission('permissions_view');
+    return await dbGetAllPermissions();
+  });
+}
+export const createPermissionAction = async (permission: PermissionInsert) => await wrap(async () => {
+  await checkPermission('permissions_update');
+  const result = await dbCreatePermission(permission);
+  await logSecurityEventAction({
+    event: 'Create Permission',
+    severity: 'warning',
+    details: { permission }
+  });
+  return result;
+});
+export const updatePermissionAction = async (id: number, permission: PermissionUpdate) => await wrap(async () => {
+  await checkPermission('permissions_update');
+  const result = await dbUpdatePermission(id, permission);
+  await logSecurityEventAction({
+    event: 'Update Permission',
+    severity: 'warning',
+    details: { id, updates: permission }
+  });
+  return result;
+});
+export const deletePermissionAction = async (id: number) => await wrap(async () => {
+  await checkPermission('permissions_update');
+  await dbDeletePermission(id);
+  await logSecurityEventAction({
+    event: 'Delete Permission',
+    severity: 'critical',
+    details: { id }
+  });
+});
+export async function getAllRolePermissionsAction() {
+  return await wrap(async () => {
+    await checkPermission('permissions_view');
+    return await dbGetAllRolePermissions();
+  });
+}
+
+export async function rpcUpdateRolePermissionsAction(roleId: number, permissionIds: number[]) {
+  return await wrap(async () => {
+    // 1. Check permission
+    await checkPermission('permissions_update');
+
+    // 2. Perform DB update
+    const result = await dbRpcUpdateRolePermissions(roleId, permissionIds);
+
+    // 3. Log security event
+    await logSecurityEventAction({
+      event: 'Update Role Permissions',
+      severity: 'warning',
+      details: { roleId, permissionIds }
+    });
+
+    // 4. Revalidate paths to clear caches
+    revalidatePath('/admin/roles-and-permissions');
+    revalidatePath('/staff/roles-and-permissions');
+
+    return result;
+  });
+}
+
+
+export async function getAllTariffsAction() {
+  return await wrap(async () => {
+    await checkPermission('tariffs_view');
+    return await dbGetAllTariffs();
+  });
+}
+export async function createTariffAction(tariff: TariffInsert) {
+  return await wrap(async () => {
+    await checkPermission('tariffs_create');
+    const result = await dbCreateTariff(tariff);
+    await logSecurityEventAction({
+      event: 'Create Tariff',
+      severity: 'critical',
+      details: { tariff }
+    });
+    return result;
+  });
+}
+export async function updateTariffAction(customerType: string, effectiveDate: string, tariff: TariffUpdate) {
+  return await wrap(async () => {
+    await checkPermission('tariffs_update');
+
+    // Check if the tariff is the latest version. Historical versions are read-only.
+    const allCustomerTariffs = await dbGetAllTariffs();
+    const relevantTariffs = allCustomerTariffs
+      .filter(t => t.customer_type === customerType && t.effective_date)
+      .map(t => {
+        const d = t.effective_date!;
+        return d instanceof Date
+          ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+          : String(d);
+      })
+      .sort((a, b) => b.localeCompare(a)); // Descending order
+
+    if (relevantTariffs.length > 0 && effectiveDate < relevantTariffs[0]) {
+      throw new Error('Forbidden: Cannot modify a historical tariff version. Only the latest active tariff can be edited.');
+    }
+
+    // Capture current tariff for audit comparison
+    const oldTariff = await dbGetTariffByTypeAndDate(customerType, effectiveDate);
+
+    const result = await dbUpdateTariff(customerType, effectiveDate, tariff);
+
+    await logSecurityEventAction({
+      event: 'Update Tariff',
+      severity: 'critical',
+      details: {
+        customerType,
+        effectiveDate,
+        old_values: oldTariff,
+        new_values: tariff
+      }
+    });
+    return result;
+  });
+}
+
+export async function getAllKnowledgeBaseArticlesAction() {
+  return await wrap(async () => {
+    await checkPermission('knowledge_base_view');
+    return await dbGetAllKnowledgeBaseArticles();
+  });
+}
+export async function createKnowledgeBaseArticleAction(article: KnowledgeBaseArticleInsert) {
+  return await wrap(async () => {
+    await checkPermission('knowledge_base_manage');
+    const result = await dbCreateKnowledgeBaseArticle(article);
+    await logSecurityEventAction({
+      event: 'Create KB Article',
+      details: { article }
+    });
+    return result;
+  });
+}
+export async function updateKnowledgeBaseArticleAction(id: number, article: KnowledgeBaseArticleUpdate) {
+  return await wrap(async () => {
+    await checkPermission('knowledge_base_manage');
+    const result = await dbUpdateKnowledgeBaseArticle(id, article);
+    await logSecurityEventAction({
+      event: 'Update KB Article',
+      details: { id, updates: article }
+    });
+    return result;
+  });
+}
+export async function deleteKnowledgeBaseArticleAction(id: number) {
+  return await wrap(async () => {
+    const session = await checkPermission('knowledge_base_manage');
+    await dbDeleteKnowledgeBaseArticle(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete KB Article',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+
+export async function calculateBillAction(
+  consumption: number,
+  customerType: CustomerType,
+  sewerageConnection: SewerageConnection,
+  meterSize: string | number,
+  billingMonth: string,
+  sewerageCONS?: number,
+  baseWaterChargeCONS?: number
+) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const size = typeof meterSize === 'string' ? parseFloat(meterSize) : meterSize;
+    return await calculateBill(consumption, customerType, sewerageConnection, size || 0, billingMonth, sewerageCONS, baseWaterChargeCONS);
+  });
+}
+
+import { dbLogSecurityEvent } from './db-queries';
+
+export interface LogOptions {
+  event: string;
+  severity?: 'info' | 'warning' | 'critical';
+  customerKeyNumber?: string;
+  details?: any;
+}
+
+export async function logSecurityEventAction(options: LogOptions | string) {
+  return await wrap(async () => {
+    const session = await getSession();
+
+    let event: string;
+    let severity: 'info' | 'warning' | 'critical' = 'info';
+    let details: any = {};
+    let customerKeyNumber: string | undefined;
+
+    if (typeof options === 'string') {
+      event = options;
+    } else {
+      event = options.event;
+      severity = (options.severity?.toLowerCase() as any) || 'info';
+      details = options.details || {};
+      customerKeyNumber = options.customerKeyNumber;
+    }
+
+    await dbLogSecurityEvent(
+      event,
+      session?.email || 'System',
+      session?.branchName || 'N/A',
+      undefined,
+      severity,
+      details,
+      customerKeyNumber
+    );
+    return true;
+  });
+}
+
+// =====================================================
+// Customer Portal Actions
+// =====================================================
+
+export interface CustomerAuthResult {
+  customer_key_number: string | null;
+  name: string | null;
+  email: string | null;
+  phone_number: string | null;
+  is_portal_enabled: boolean;
+  success: boolean;
+  message: string;
+}
+
+export async function getCustomerAccountAction(
+  customerKeyNumber: string
+): Promise<{ data: any | null; error: any }> {
+  return await wrap(async () => {
+    const dbCustomer = await dbGetCustomerById(customerKeyNumber);
+    if (!dbCustomer) return null;
+
+    // Map database fields to UI-expected fields for customer portal
+    return {
+      ...dbCustomer,
+      meterNumber: dbCustomer.METER_KEY || dbCustomer.meterNumber,
+      customerKeyNumber: dbCustomer.customerKeyNumber,
+      name: dbCustomer.name,
+      contractNumber: dbCustomer.contractNumber,
+      meterSize: dbCustomer.meterSize,
+      currentReading: dbCustomer.currentReading,
+      previousReading: dbCustomer.previousReading,
+      month: dbCustomer.month,
+      specificArea: dbCustomer.specificArea,
+      subCity: dbCustomer.subCity,
+      woreda: dbCustomer.woreda,
+      status: dbCustomer.status,
+      customerType: dbCustomer.customerType,
+      sewerageConnection: dbCustomer.sewerage_connection,
+      charge_group: dbCustomer.charge_group || dbCustomer.customerType,
+      email: dbCustomer.email,
+      phone_number: dbCustomer.phone_number,
+    };
+  });
+}
+
+export async function getBulkMeterAccountAction(
+  customerKeyNumber: string
+): Promise<{ data: any | null; error: any }> {
+  return await wrap(async () => {
+    const dbBulkMeter = await dbGetBulkMeterById(customerKeyNumber);
+    if (!dbBulkMeter) return null;
+
+    // Map database fields to UI-expected fields for customer portal
+    return {
+      ...dbBulkMeter,
+      meterNumber: dbBulkMeter.METER_KEY || dbBulkMeter.meterNumber,
+      customerKeyNumber: dbBulkMeter.customerKeyNumber,
+      name: dbBulkMeter.name,
+      contractNumber: dbBulkMeter.contractNumber,
+      meterSize: dbBulkMeter.meterSize,
+      currentReading: dbBulkMeter.currentReading,
+      previousReading: dbBulkMeter.previousReading,
+      month: dbBulkMeter.month,
+      specificArea: dbBulkMeter.specificArea,
+      subCity: dbBulkMeter.subCity,
+      woreda: dbBulkMeter.woreda,
+      status: dbBulkMeter.status,
+      sewerageConnection: dbBulkMeter.sewerage_connection,
+      charge_group: dbBulkMeter.charge_group,
+    };
+  });
+}
+
+export async function getCustomerReadingsAction(
+  customerKeyNumber: string
+): Promise<{ data: IndividualCustomerReading[] | null; error: any }> {
+  return await wrap(async () => {
+    return await dbGetIndividualCustomerReadingsByCustomer(customerKeyNumber);
+  });
+}
+
+// Route Server Actions
+export async function getAllRoutesAction(options?: { branchId?: string }) {
+  return await wrap(async () => {
+    const session = await checkPermission('routes_view');
+    
+    // Determine branch isolation:
+    // If the user has 'routes_view_all', they can see everything.
+    // Otherwise, they are locked to their own branchId.
+    const branchId = getEffectiveBranchId(session, options?.branchId, 'routes_view_all');
+
+    return await dbGetAllRoutes(branchId);
+  });
+}
+
+export async function createRouteAction(route: RouteInsert) {
+  return await wrap(async () => {
+    const session = await checkPermission('routes_create');
+
+    // Map branchId to branch_id if needed
+    if (!route.branch_id && (route as any).branchId) {
+      route.branch_id = (route as any).branchId;
+    }
+    
+    // Enforce branch creation rules if lacking global oversight
+    if (!session.permissions?.includes('routes_view_all') && session.branchId && session.branchId !== 'all') {
+      route.branch_id = session.branchId;
+    }
+
+    const result = await dbCreateRoute(route);
+    await logSecurityEventAction({ event: 'Create Route', details: { route } });
+    return result;
+  });
+}
+
+export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpdate) {
+  return await wrap(async () => {
+    const session = await checkPermission('routes_update');
+    
+    const result = await dbUpdateRoute(routeKey, routeUpdates);
+    await logSecurityEventAction({ event: 'Update Route', details: { routeKey, routeUpdates } });
+    return result;
+  });
+}
+
+export async function deleteRouteAction(routeKey: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('routes_delete');
+
+    await dbDeleteRoute(routeKey, session.id);
+    await logSecurityEventAction({ event: 'Delete Route', severity: 'warning', details: { routeKey } });
+  });
+}
+
+export async function getRouteByKeyAction(routeKey: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetRouteByKey(routeKey);
+  });
+}
+
+export async function getBulkMeterReadingsAction(
+  customerKeyNumber: string
+): Promise<{ data: BulkMeterReading[] | null; error: any }> {
+  return await wrap(async () => {
+    return await dbGetBulkMeterReadingsByMeter(customerKeyNumber);
+  });
+}
+
+export async function getCustomerBillsAction(
+  customerKeyNumber: string,
+  excludeUnfinalized: boolean = true
+): Promise<{ data: any[] | null; error: any }> {
+  return await wrap(async () => {
+    const session = await getSession();
+
+    // If it's a staff member session
+    if (session && session.id) {
+      const perms = session.permissions || [];
+      const hasManageAll = perms.includes('bill:manage_all');
+      const branchId = !hasManageAll ? session.branchId : undefined;
+      return await dbGetBillsByCustomerId(customerKeyNumber, branchId, excludeUnfinalized);
+    }
+
+    // Otherwise, allow access for customers (the client-side handles session validation for them)
+    // We trust the provided customerKeyNumber for the customer portal's own requests
+    return await dbGetBillsByCustomerId(customerKeyNumber, undefined, excludeUnfinalized);
+  });
+}
+
+export async function getBulkMeterBillsAction(
+  customerKeyNumber: string,
+  excludeUnfinalized: boolean = true
+): Promise<{ data: any[] | null; error: any }> {
+  return await wrap(async () => {
+    const session = await getSession();
+
+    // If it's a staff member session
+    if (session && session.id) {
+      const perms = session.permissions || [];
+      const hasManageAll = perms.includes('bill:manage_all') || perms.includes('bulk_meters_view_all');
+      const branchId = !hasManageAll ? session.branchId : undefined;
+      return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId, excludeUnfinalized);
+    }
+
+    // Otherwise, allow access for customers (the client-side handles session validation for them)
+    return await dbGetBillsByBulkMeterId(customerKeyNumber, undefined, excludeUnfinalized);
+  });
+}
+
+// =====================================================
+// Customer Session Management Actions
+// =====================================================
+
+export async function createCustomerSessionAction(session: {
+  customer_key_number: string;
+  customer_type: string;
+  ip_address?: string;
+  device_name?: string;
+  location?: string;
+}) {
+  return await wrap(async () => {
+    const result = await dbCreateCustomerSession(session);
+    await logSecurityEventAction({
+      event: 'Customer Login',
+      customerKeyNumber: session.customer_key_number,
+      details: { device_name: session.device_name, location: session.location }
+    });
+    return result;
+  });
+}
+
+export async function revokeCustomerSessionAction(sessionId: string) {
+  return await wrap(async () => {
+    const result = await dbRevokeCustomerSession(sessionId);
+    await logSecurityEventAction({
+      event: 'Customer Session Revoked',
+      severity: 'warning',
+      details: { sessionId }
+    });
+    return result;
+  });
+}
+
+export async function getActiveCustomerSessionsAction() {
+  return await wrap(() => dbGetActiveCustomerSessions());
+}
+
+export async function validateCustomerSessionAction(sessionId: string) {
+  return await wrap(() => dbIsCustomerSessionValid(sessionId));
+}
+
+export async function logCustomerPageViewAction(sessionId: string, pageName: string) {
+  return await wrap(() => dbLogCustomerPageView(sessionId, pageName));
+}
+
+// =====================================================
+// Fault Code Management Actions
+// =====================================================
+
+export async function getAllFaultCodesAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes('settings_view') ||
+      perms.includes('meter_readings_create') ||
+      perms.includes('meter_readings_view_branch') ||
+      perms.includes('meter_readings_view_all') ||
+      perms.includes('dashboard_view_all') ||
+      perms.includes('dashboard_view_branch');
+
+    if (!hasPerm) {
+      throw new Error('Forbidden: No permissions to view fault codes');
+    }
+    return await dbGetAllFaultCodes();
+  });
+}
+export async function getFaultCodeByIdAction(id: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetFaultCodeById(id);
+  });
+}
+
+export async function createFaultCodeAction(faultCode: FaultCodeInsert) {
+  return await wrap(async () => {
+    await checkPermission('settings_manage');
+    const result = await dbCreateFaultCode(faultCode);
+    await logSecurityEventAction({
+      event: 'Create Fault Code',
+      details: { faultCode }
+    });
+    return result;
+  });
+}
+
+export async function updateFaultCodeAction(id: string, faultCode: FaultCodeUpdate) {
+  return await wrap(async () => {
+    await checkPermission('settings_manage');
+    const result = await dbUpdateFaultCode(id, faultCode);
+    await logSecurityEventAction({
+      event: 'Update Fault Code',
+      details: { id, updates: faultCode }
+    });
+    return result;
+  });
+}
+
+export async function deleteFaultCodeAction(id: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('settings_manage');
+    await dbDeleteFaultCode(id, session.id);
+    await logSecurityEventAction({
+      event: 'Delete Fault Code',
+      severity: 'warning',
+      details: { id }
+    });
+  });
+}
+
+// =====================================================
+// Recycle Bin Actions
+// =====================================================
+
+export async function getRecycleBinItemsAction() {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    
+    const perms: string[] = session.permissions || [];
+    const hasPerm = perms.includes('dashboard_view_all') || perms.includes('settings_view') || perms.includes('settings_manage');
+
+    if (!hasPerm) {
+      throw new Error('Forbidden: No settings permissions');
+    }
+
+    // Branch isolation using our standard helper token `dashboard_view_all`
+    const viewAllToken = perms.includes('dashboard_view_all') ? 'dashboard_view_all' : undefined;
+    const filterBranchId = getEffectiveBranchId(session, undefined, viewAllToken);
+    
+    return await dbGetRecycleBinItems(filterBranchId);
+  });
+}
+
+export async function restoreFromRecycleBinAction(recycleBinId: string) {
+  return await wrap(async () => {
+    await checkPermission('settings_manage');
+    const result = await dbRestoreFromRecycleBin(recycleBinId);
+    await logSecurityEventAction({
+      event: 'Restore from Recycle Bin',
+      details: { recycleBinId }
+    });
+    revalidatePath('/admin/recycle-bin');
+    return result;
+  });
+}
+
+export async function permanentlyDeleteFromRecycleBinAction(recycleBinId: string) {
+  return await wrap(async () => {
+    await checkPermission('settings_manage');
+    const result = await dbPermanentlyDeleteFromRecycleBin(recycleBinId);
+    await logSecurityEventAction({
+      event: 'Permanently Delete from Recycle Bin',
+      severity: 'critical',
+      details: { recycleBinId }
+    });
+    revalidatePath('/admin/recycle-bin');
+    return result;
+  });
+}
+
+// =====================================================
+
+export async function getDashboardMetricsAction() {
+  return await wrap(async () => {
+    const session = await checkPermission();
+
+    const perms = session.permissions || [];
+    const canViewAll = perms.includes('dashboard_view_all');
+    const canViewBranch = perms.includes('dashboard_view_branch');
+
+    if (!canViewAll && !canViewBranch) {
+      throw new Error('Forbidden: Missing dashboard permissions');
+    }
+
+    // Pass branchId if they can only see their branch
+    const branchId = getEffectiveBranchId(session, undefined, 'dashboard_view_all');
+
+    return await dbGetDashboardMetrics(branchId);
+  });
+}
+
+export async function getLatestPermissionsAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    return await dbGetStaffPermissions(session.id);
+  });
+}
+
+export async function getDistinctBillingMonthsAction() {
+  try {
+    const rows: any = await dbGetDistinctBillingMonths();
+    const months = rows.map((r: any) => r.month_year || r.month).filter(Boolean);
+    // Ensure uniqueness and sort DESC
+    const uniqueMonths = Array.from(new Set(months)).sort().reverse();
+    return { data: uniqueMonths };
+  } catch (error) {
+    console.error("Failed to fetch distinct months", error);
+    return { error: "Failed to fetch distinct months" };
+  }
+}
+
+export async function getBillsByMonthAction(monthYear: string) {
+  return await wrap(async () => {
+    const session = await checkPermission('reports_view');
+    const hasManageAll = session.permissions?.includes('bill:manage_all');
+    const branchId = !hasManageAll ? session.branchId : undefined;
+
+    return await dbGetBillsWithBulkMeterInfoByMonth(monthYear, branchId);
+  });
+}
+
+export async function getMostRecentBillsForBulkMetersAction(customerKeys: string[]) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const hasManageAll = perms.includes('bill:manage_all');
+    const branchId = !hasManageAll ? session.branchId : undefined;
+
+    return await dbGetMostRecentBillsForBulkMeters(customerKeys, branchId);
+  });
+}
+
+export async function syncAllBillsAgingDebtAction() {
+  return await wrap(async () => {
+    const session = await checkPermission('billing:close_cycle');
+    const perms = session.permissions || [];
+    const hasManageAll = perms.includes('bill:manage_all');
+    const branchId = !hasManageAll ? session.branchId : undefined;
+
+    const bills = await dbGetAllBills({ branchId });
+    const { calculateDebtAging } = await import('./billing-utils');
+
+    let count = 0;
+    for (const bill of bills) {
+      if (!bill.CUSTOMERKEY) continue;
+
+      // Get all bills for this meter to reconstruct the history
+      const historicalBills = await dbGetBillsByBulkMeterId(bill.CUSTOMERKEY, branchId);
+
+      // Filter for bills that were created BEFORE this specific bill
+      const olderBills = historicalBills.filter((b: any) => {
+        const bDate = new Date(b.created_at || b.createdAt || 0);
+        const billDate = new Date(bill.created_at || bill.createdAt || 0);
+        return bDate.getTime() < billDate.getTime();
+      }).sort((a: any, b: any) => {
+        const aDate = new Date(a.created_at || a.createdAt || 0);
+        const bDate = new Date(b.created_at || b.createdAt || 0);
+        return bDate.getTime() - aDate.getTime(); // Most recent first
+      });
+
+      // DYNAMIC RECONSTRUCTION: Sum up unpaid portions of all older bills
+      const reconstructedOutstanding = olderBills.reduce((sum: number, b: any) => {
+        const monthlyAmt = (b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined)
+          ? Number(b.THISMONTHBILLAMT)
+          : Number(b.TOTALBILLAMOUNT);
+        const unpaid = Math.max(0, monthlyAmt - Number(b.amount_paid || 0));
+        return sum + unpaid;
+      }, 0);
+
+      const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(reconstructedOutstanding, olderBills);
+
+      // Prepare updates
+      const updates: any = {
+        debit_30: debit30,
+        debit_30_60: debit30_60,
+        debit_60: debit60,
+        PENALTYAMT: penaltyAmt,
+        OUTSTANDINGAMT: reconstructedOutstanding
+      };
+
+      // Ensure THISMONTHBILLAMT is correctly derived if missing
+      const currentMonthBill = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
+        ? Number(bill.THISMONTHBILLAMT)
+        : Number(bill.TOTALBILLAMOUNT);
+
+      if (bill.THISMONTHBILLAMT === null || bill.THISMONTHBILLAMT === undefined) {
+        updates.THISMONTHBILLAMT = currentMonthBill;
+      }
+
+      // Update TOTALBILLAMOUNT to reflect the sum (Total Payable)
+      updates.TOTALBILLAMOUNT = currentMonthBill + reconstructedOutstanding + penaltyAmt;
+
+      await dbUpdateBill(bill.id, updates);
+      count++;
+    }
+
+    revalidatePath('/admin/bulk-meters');
+    revalidatePath('/admin/reports');
+    return { success: true, updatedCount: count };
+  });
+}
+
+
+// =====================================================
+// Scalability Phase 2: Batch Processing
+// =====================================================
+
+export async function startBillingJobAction(payload: {
+  type: 'bulk_meters' | 'individual_customers';
+  monthYear: string;
+  carryBalance: boolean;
+  branchId?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  dueDateOffsetDays?: number;
+  allowOverlap?: boolean;
+}) {
+  return await wrap(async () => {
+    await checkPermission('billing:close_cycle');
+
+    // 1. Check for active jobs to avoid duplicates
+    const activeJobs = await dbGetActiveBillingJobs(payload.monthYear, payload.type);
+    if (activeJobs.length > 0) {
+      const job = activeJobs[0];
+      const updatedAt = new Date(job.updated_at || job.created_at).getTime();
+      const now = Date.now();
+      const isStale = (now - updatedAt) > 30 * 60 * 1000; // 30 mins stale threshold
+
+      if (isStale) {
+        // Auto-fail stale job to allow a new one to start
+        await dbUpdateBillingJob(job.id, { 
+          status: 'failed', 
+          error_log: 'Job automatically marked as failed due to inactivity (stale job).',
+          updated_at: new Date()
+        });
+        console.log(`Auto-reset stale billing job ${job.id} for ${payload.monthYear}`);
+      } else {
+        throw new Error(`A billing job for ${payload.monthYear} is already ${job.status}.`);
+      }
+    }
+
+    // 2. Count total items to process
+    let totalItems = 0;
+    if (payload.type === 'bulk_meters') {
+      totalItems = await dbCountBulkMeters({ branchId: payload.branchId });
+    } else {
+      totalItems = await dbCountCustomers({ branchId: payload.branchId });
+    }
+
+    if (totalItems === 0) {
+      throw new Error("No active meters/customers found for processing.");
+    }
+
+    // 3. Create the job record
+    const job = await dbCreateBillingJob({
+      type: payload.type,
+      month_year: payload.monthYear,
+      total_items: totalItems,
+      carry_balance: payload.carryBalance,
+      branch_id: payload.branchId,
+      period_start_date: payload.periodStartDate,
+      period_end_date: payload.periodEndDate,
+      due_date_offset_days: payload.dueDateOffsetDays,
+      allow_overlap: payload.allowOverlap
+    });
+
+    await logSecurityEventAction({
+      event: 'Start Billing Job',
+      details: { jobId: job.id, type: payload.type, month: payload.monthYear }
+    });
+
+    return job;
+  });
+}
+
+export async function processBillingJobChunkAction(jobId: string, chunkSize: number = 200) {
+  return await wrap(async () => {
+    await checkPermission('billing:close_cycle');
+
+    const job = await dbGetBillingJob(jobId);
+    if (!job) throw new Error("Job not found");
+    if (job.status === 'completed' || job.status === 'failed') return job;
+
+    // Update status to processing
+    await dbUpdateBillingJob(jobId, {
+      status: 'processing',
+      updated_at: new Date()
+    });
+
+    // 1. Fetch unprocessed items
+    let items: any[] = [];
+    if (job.type === 'bulk_meters') {
+      items = await dbGetUnprocessedMetersForJob(job, chunkSize);
+    } else {
+      items = await dbGetUnprocessedIndividualCustomersForJob(job, chunkSize);
+    }
+
+    if (items.length === 0) {
+      return await dbUpdateBillingJob(jobId, { status: 'completed', updated_at: new Date() });
+    }
+
+    // 2. Prepare Batch Constants (Tariffs, Dates, etc.)
+    const { calculateDebtAging } = await import('./billing-utils');
+    const {
+      dbGetLatestApplicableTariff,
+      dbGetCustomersByBulkMeterIds,
+      dbGetBillsByBulkMeterIds,
+      dbGetBillsByIndividualCustomerIds,
+      dbBatchRolloverBulkMeters,
+      dbBatchRolloverIndividualCustomersOfBulkMeters,
+      dbBatchRolloverIndividualCustomers,
+    } = await import('./db-queries');
+
+
+    const lookupDate = job.month_year;
+    const { buildBillingPeriod } = await import('./billing-config');
+    const period = buildBillingPeriod({
+      monthYear: job.month_year,
+      periodStartDate: (job as any).period_start_date,
+      periodEndDate: (job as any).period_end_date,
+      dueDateOffsetDays: (job as any).due_date_offset_days,
+    });
+    const periodStartDate = period.startDate;
+    const periodEndDate = period.endDate;
+    const dueDate = period.dueDate;
+    const pStart = new Date(periodStartDate).getTime();
+    const pEnd = new Date(periodEndDate).getTime();
+
+    // ─────────────────────────────────────────────────────────────
+    // PERFORMANCE: Pre-fetch all data needed for this chunk in bulk
+    // This replaces ~(chunkSize * 2) individual queries with 2 total.
+    // ─────────────────────────────────────────────────────────────
+    const customerKeys = items.map((i: any) => i.customerKeyNumber);
+
+    // Pre-fetch 1: all sub-customers for every bulk meter in this chunk (1 query)
+    const subCustomersMap = job.type === 'bulk_meters'
+      ? await dbGetCustomersByBulkMeterIds(customerKeys)
+      : new Map<string, any[]>();
+
+    // Pre-fetch 2: all historical bills for every meter in this chunk (1 query)
+    const historicalBillsMap = job.type === 'bulk_meters'
+      ? await dbGetBillsByBulkMeterIds(customerKeys)
+      : await dbGetBillsByIndividualCustomerIds(customerKeys);
+
+    // Pre-fetch 3: cache tariffs by charge group (avoids repeated DB hits per unique type)
+    const tariffCache = new Map<string, any>();
+    const uniqueChargeGroups = [...new Set(items.map((i: any) => i.charge_group || i.customerType || 'Non-domestic'))];
+    await Promise.all(uniqueChargeGroups.map(async (cg) => {
+      const tariff = await dbGetLatestApplicableTariff(cg, lookupDate);
+      tariffCache.set(cg, tariff);
+    }));
+
+    const billsToInsert: any[] = [];
+    let lastId = job.last_processed_id;
+    const failedItems: string[] = [];
+
+    // 3. Process each item using pre-fetched in-memory data (no DB calls inside loop)
+    for (const item of items) {
+      try {
+        const customerKey = item.customerKeyNumber;
+        const chargeGroup = (item.charge_group || item.customerType || 'Non-domestic') as CustomerType;
+        const sewerageConn = (item.sewerage_connection || 'No') as SewerageConnection;
+
+        // Calculate Usage
+        let usage = (item.currentReading || item.current_reading || 0) - (item.previousReading || item.previous_reading || 0);
+        let diffUsage = usage;
+
+        if (job.type === 'bulk_meters') {
+          // Use pre-fetched sub-customers instead of a per-meter query
+          const associatedCustomers = subCustomersMap.get(customerKey) || [];
+          const totalIndivUsage = associatedCustomers.reduce((sum: number, cust: any) =>
+            sum + ((cust.current_reading ?? 0) - (cust.previous_reading ?? 0)), 0);
+          diffUsage = usage - totalIndivUsage;
+        }
+
+        const billBreakdown = await calculateBill(
+          diffUsage,
+          chargeGroup,
+          sewerageConn,
+          item.meterSize || item.meter_size || 0.5,
+          job.month_year
+        );
+
+        diffUsage = billBreakdown.effectiveUsage;
+
+        // Use pre-fetched historical bills instead of a per-meter query
+        const historicalBills = historicalBillsMap.get(customerKey) || [];
+
+        // Overlap Protection
+        const hasOverlap = historicalBills.some((bill: any) => {
+          if (!bill.bill_period_start_date || !bill.bill_period_end_date) return false;
+          const bStart = new Date(bill.bill_period_start_date).getTime();
+          const bEnd = new Date(bill.bill_period_end_date).getTime();
+          return pStart <= bEnd && pEnd >= bStart;
+        });
+
+        if (hasOverlap && !(job as any).allow_overlap) {
+          console.log(`Skipping meter ${customerKey}: billing period overlaps an existing bill.`);
+          lastId = customerKey; // still advance cursor
+          continue;
+        }
+
+        const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
+        // Pass job.month_year so age is calculated relative to the billing month, not server time
+        const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, undefined, job.month_year);
+
+        const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
+        const totalPayable = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
+
+        const billId = crypto.randomUUID();
+        const bill: any = {
+          id: billId,
+          BILLKEY: generateBillKey(billId),
+          CUSTOMERKEY: job.type === 'bulk_meters' ? customerKey : null,
+          individual_customer_id: job.type === 'individual_customers' ? customerKey : null,
+          CUSTOMERNAME: item.name,
+          CUSTOMERBRANCH: item.branch_id,
+          month_year: job.month_year,
+          bill_period_start_date: periodStartDate,
+          bill_period_end_date: periodEndDate,
+          due_date: dueDate,
+          PREVREAD: item.previousReading || item.previous_reading || 0,
+          CURRREAD: item.currentReading || item.current_reading || 0,
+          CONS: usage,
+          difference_usage: diffUsage,
+          THISMONTHBILLAMT: billBreakdown.totalBill,
+          OUTSTANDINGAMT: outstandingAmt,
+          PENALTYAMT: penaltyAmt,
+          TOTALBILLAMOUNT: totalPayable,
+          base_water_charge: billBreakdown.baseWaterCharge,
+          maintenance_fee: billBreakdown.maintenanceFee,
+          sanitation_fee: billBreakdown.sanitationFee,
+          sewerage_charge: billBreakdown.sewerageCharge,
+          meter_rent: billBreakdown.meterRent,
+          vat_amount: billBreakdown.vatAmount,
+          balance_carried_forward: outstandingAmt,
+          payment_status: 'Unpaid',
+          status: 'Draft',
+          created_at: new Date()
+        };
+
+        billsToInsert.push(bill);
+        lastId = customerKey;
+      } catch (err: any) {
+        // Log the failure but continue processing remaining meters
+        const reason = err?.message || String(err);
+        console.error(`Error processing item ${item.customerKeyNumber}: ${reason}`);
+        failedItems.push(`${item.customerKeyNumber}: ${reason}`);
+        lastId = item.customerKeyNumber; // advance cursor so we don't retry this item
+      }
+    }
+
+    // 4. Batch Insert Bills
+    if (billsToInsert.length > 0) {
+      await dbBatchInsertBills(billsToInsert);
+
+      // Rollover meter readings for successfully billed items
+      if (job.type === 'bulk_meters') {
+        const successes = billsToInsert.map(b => b.CUSTOMERKEY).filter(Boolean);
+        await dbBatchRolloverBulkMeters(successes);
+        await dbBatchRolloverIndividualCustomersOfBulkMeters(successes);
+      } else {
+        const successes = billsToInsert.map(b => b.individual_customer_id).filter(Boolean);
+        await dbBatchRolloverIndividualCustomers(successes);
+      }
+    }
+
+
+    // 5. Update Job Progress — count only successfully billed items, log any failures
+    const successCount = billsToInsert.length;
+    const jobUpdate: any = {
+      processed_items: job.processed_items + items.length,
+      last_processed_id: lastId,
+      updated_at: new Date()
+    };
+    if (failedItems.length > 0) {
+      // Append to existing error_log so failures accumulate across chunks
+      const existingLog = job.error_log ? job.error_log + '\n' : '';
+      jobUpdate.error_log = existingLog + failedItems.join('\n');
+    }
+    const updatedJob = await dbUpdateBillingJob(jobId, jobUpdate);
+
+    // If we processed fewer items than chunk size, the job is complete
+    if (items.length < chunkSize) {
+      return await dbUpdateBillingJob(jobId, { status: 'completed', updated_at: new Date() });
+    }
+
+    return updatedJob;
+  });
+}
+
+export async function getBillingJobStatusAction(jobId: string) {
+  return await wrap(async () => {
+    await checkPermission('billing:close_cycle');
+    return await dbGetBillingJob(jobId);
+  });
+}
+
+/**
+ * Manually resets any stuck (pending or processing) billing jobs for a month.
+ */
+export async function resetStuckBillingJobsAction(monthYear: string, type: 'bulk_meters' | 'individual_customers') {
+  return await wrap(async () => {
+    await checkPermission('billing:close_cycle');
+    
+    const activeJobs = await dbGetActiveBillingJobs(monthYear, type);
+    if (activeJobs.length === 0) {
+      return { success: true, message: "No active jobs found to reset." };
+    }
+
+    for (const job of activeJobs) {
+      await dbUpdateBillingJob(job.id, {
+        status: 'failed',
+        error_log: 'Job manually reset by administrator.',
+        updated_at: new Date()
+      });
+    }
+
+    await logSecurityEventAction({
+      event: 'Reset Billing Jobs',
+      details: { monthYear, type, resetCount: activeJobs.length }
+    });
+
+    return { success: true, resetCount: activeJobs.length };
+  });
+}
+
+/**
+ * Scalable Reporting Actions (Phase 4)
+ */
+
+export async function getUnsettledBillsAction(params: {
+  page: number;
+  limit: number;
+  searchTerm?: string;
+  branchId?: string;
+  excludeUnfinalized?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+
+    // If user doesn't have global access, they are restricted to their own branch
+    const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+
+    const offset = params.page * params.limit;
+    const [bills, total] = await Promise.all([
+      dbGetUnsettledBillsPaginated({ ...params, offset, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true }),
+      dbGetUnsettledBillsCount({ ...params, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true })
+    ]);
+    return { success: true, bills, total };
+  });
+}
+
+export async function getPaidBillsAction(params: {
+  page: number;
+  limit: number;
+  searchTerm?: string;
+  branchId?: string;
+  excludeUnfinalized?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+
+    // If user doesn't have global access, they are restricted to their own branch
+    const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+
+    const offset = params.page * params.limit;
+    const [bills, total] = await Promise.all([
+      dbGetPaidBillsPaginated({ ...params, offset, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true }),
+      dbGetPaidBillsCount({ ...params, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true })
+    ]);
+    return { success: true, bills, total };
+  });
+}
+
+export async function getAllSentBillsAction(params: {
+  page: number;
+  limit: number;
+  searchTerm?: string;
+  branchId?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+
+    const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+
+    const offset = params.page * params.limit;
+    const [bills, total] = await Promise.all([
+      dbGetAllSentBillsPaginated({ ...params, offset, branchId: effectiveBranchId }),
+      dbGetAllSentBillsCount({ ...params, branchId: effectiveBranchId })
+    ]);
+    return { success: true, bills, total };
+  });
+}
+
+export async function archiveOldRecordsAction(monthsThreshold: number = 36) {
+  try {
+    const result = await dbArchiveOldRecords(monthsThreshold);
+    return result;
+  } catch (error: any) {
+    console.error("Error archiving old records:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getSystemStatsAction() {
+  try {
+    const stats = await dbGetSystemStats();
+    return { success: true, stats };
+  } catch (error: any) {
+    console.error("Error fetching system stats:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function runDataAuditAction() {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    if (session.role?.toLowerCase() !== 'admin') {
+      throw new Error('Forbidden: Only administrators can run data integrity audits.');
+    }
+
+    const branchId = getEffectiveBranchId(session, undefined, 'dashboard_view_all');
+    const result = await dbRunDataAudit(branchId);
+    
+    await logSecurityEventAction({
+      event: 'Run Data Integrity Audit',
+      details: { branchId, findCount: result.length }
+    });
+
+    return result;
+  });
+}
+
+// ==========================================
+// SYSTEM SETTINGS ACTIONS
+// ==========================================
+
+export async function getSystemSettingsAction() {
+  return await wrap(async () => {
+    // We allow anyone logged in to view basic settings needed for UI
+    const { dbGetSystemSettings } = await import('./db-queries');
+    const settings = await dbGetSystemSettings();
+    return settings;
+  });
+}
+
+export async function updateBillingSettingsAction(payload: {
+  cycleMode: 'once_per_month' | 'custom' | 'unlimited';
+  startDay: string;
+  dueDateOffset: string;
+}) {
+  return await wrap(async () => {
+    // Assuming settings_update or similar perms, for now use generic check if needed, or allow admin
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    // Check if user is admin or has specific permission
+    const isGlobalAdmin = session.role === 'Admin' && (!session.branchId || session.branchId === 'all');
+    if (!isGlobalAdmin && !(session.permissions || []).includes('settings_update')) {
+      // Allow if they are Admin role for now, or just generic admin check
+      if (session.role?.toLowerCase() !== 'admin') {
+        throw new Error('Unauthorized to update settings');
+      }
+    }
+
+    const { dbUpdateSystemSetting } = await import('./db-queries');
+    await dbUpdateSystemSetting('billing_cycle_mode', payload.cycleMode);
+    await dbUpdateSystemSetting('billing_cycle_start_day', payload.startDay);
+    await dbUpdateSystemSetting('billing_due_date_offset', payload.dueDateOffset);
+
+    await logSecurityEventAction({
+      event: 'Updated Billing Settings',
+      details: payload
+    });
+
+    return { success: true };
+  });
+}

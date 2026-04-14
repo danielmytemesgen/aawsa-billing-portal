@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "TypeCheck Before Push",
+  "description": "Runs TypeScript type checking before every git push. If there are type errors, the push is blocked and errors are shown.",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "npx tsc --noEmit"
+  }
+}

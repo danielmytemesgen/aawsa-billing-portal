@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1774615124825,
+      "tag": "0000_special_risque",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775052599741,
+      "tag": "0001_cold_rictor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775198098092,
+      "tag": "0002_credit_notes_table",
+      "breakpoints": true
+    }
+  ]
+}
