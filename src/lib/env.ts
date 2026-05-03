@@ -9,11 +9,11 @@ const devOnly = <T extends z.ZodTypeAny>(schema: T, devDefault: z.infer<T>) =>
   (isProd && !isBuild) ? schema : schema.default(devDefault as any);
 
 const envSchema = z.object({
-  POSTGRES_HOST: z.string().default('127.0.0.1'),
-  POSTGRES_USER: z.string().default('postgres'),
-  POSTGRES_PASSWORD: z.string().default(''),
-  POSTGRES_DB: z.string().default('aawsa_billing'),
-  POSTGRES_PORT: z.string().transform(v => parseInt(v, 10)).default('5432'),
+  POSTGRES_HOST: z.string().default(process.env.PGHOST || '127.0.0.1'),
+  POSTGRES_USER: z.string().default(process.env.PGUSER || 'postgres'),
+  POSTGRES_PASSWORD: z.string().default(process.env.PGPASSWORD || ''),
+  POSTGRES_DB: z.string().default(process.env.PGDATABASE || 'aawsa_billing'),
+  POSTGRES_PORT: z.string().transform(v => parseInt(v, 10)).default(process.env.PGPORT || '5432'),
   INTERNAL_API_KEY: devOnly(z.string().min(16), 'aawsa-internal-secret-2026'),
   SESSION_SECRET: devOnly(
     z.string().min(32, 'SESSION_SECRET must be at least 32 chars in production'),
