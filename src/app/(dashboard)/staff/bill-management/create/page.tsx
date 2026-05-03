@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label';
 import { ArrowLeft, Search, Loader2 } from 'lucide-react';
 import { getBulkMeterByIdAction, calculateBillAction, createBillAction, closeBillingCycleAction } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
+import { DatePicker } from '@/components/ui/date-picker';
+import { format, parse } from 'date-fns';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate } from '@/lib/billing-config';
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
@@ -290,7 +292,14 @@ export default function CreateBillPage() {
 
                         <div className="space-y-2">
                             <Label>Billing Month</Label>
-                            <Input type="month" {...register('month_year')} />
+                            <DatePicker
+                                date={monthYear ? parse(monthYear, 'yyyy-MM', new Date()) : undefined}
+                                onSelect={(date) => {
+                                    if (date) setValue('month_year', format(date, 'yyyy-MM'));
+                                }}
+                                placeholder="Select month"
+                                className="w-full"
+                            />
                             {errors.month_year && <p className="text-xs text-red-500">{errors.month_year.message}</p>}
                         </div>
 

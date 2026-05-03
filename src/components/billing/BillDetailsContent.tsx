@@ -78,8 +78,8 @@ interface BillDetailsPageProps {
 }
 
 // Sub-component for the printable bill layout
-const PrintableBill = ({ bill, relatedData, reconstructedAging }: { 
-    bill: Bill, 
+const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
+    bill: Bill,
     relatedData: any,
     reconstructedAging: { d30: number, d30_60: number, d60: number } | null
 }) => {
@@ -93,9 +93,9 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
     const d30_60 = Number(bill.debit30_60 || bill.debit_30_60 || 0);
     const d60 = Number(bill.debit60 || bill.debit_60 || 0);
     const penalty = Number(bill.PENALTYAMT || 0);
-    const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0) 
-      ? Number(bill.OUTSTANDINGAMT) 
-      : (d30 + d30_60 + d60);
+    const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
+        ? Number(bill.OUTSTANDINGAMT)
+        : (d30 + d30_60 + d60);
     const current = getMonthlyBillAmt(bill);
     const total = outstanding + current + penalty;
 
@@ -104,9 +104,9 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
             <div className="non-printable flex flex-row items-center justify-between max-w-4xl w-full mx-auto bg-white/80 backdrop-blur-sm sticky top-0 z-50 rounded-b-xl border shadow-sm p-4 mb-6">
                 <h3 className="font-bold text-lg">Pay Slip Preview</h3>
                 <div className="flex gap-2">
-                    <Button 
-                        variant="default" 
-                        size="sm" 
+                    <Button
+                        variant="default"
+                        size="sm"
                         className="bg-blue-600 hover:bg-blue-700 shadow-lg"
                         onClick={() => {
                             const event = new CustomEvent('export-pdf-click');
@@ -115,9 +115,9 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
                     >
                         <FileDown className="mr-2 h-4 w-4" /> Export PDF
                     </Button>
-                    <Button 
-                        variant="outline" 
-                        size="sm" 
+                    <Button
+                        variant="outline"
+                        size="sm"
                         className="bg-white shadow-lg"
                         onClick={() => window.print()}
                     >
@@ -287,7 +287,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         if (!id || isExporting) return;
         setIsExporting(true);
         toast({ title: "Generating PDF...", description: "Please wait while we prepare your file." });
-        
+
         try {
             const res = await generateSingleBillPdfAction(id);
             if (res.success && res.pdfBase64) {
@@ -299,7 +299,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 const byteArray = new Uint8Array(byteNumbers);
                 const blob = new Blob([byteArray], { type: 'application/pdf' });
                 const url = URL.createObjectURL(blob);
-                
+
                 const link = document.createElement('a');
                 link.href = url;
                 link.download = `Bill_${bill?.CUSTOMERKEY || bill?.individual_customer_id || 'unnamed'}_${bill?.month_year || 'bill'}.pdf`;
@@ -307,7 +307,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
-                
+
                 toast({ title: "Success", description: "PDF exported successfully." });
             } else {
                 toast({ title: "Export Failed", description: res.error || "Failed to generate PDF.", variant: "destructive" });
@@ -379,7 +379,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
                             // 3. Apply payments (FIFO)
                             let paymentRemaining = Number(h.amount_paid ?? h.amountPaid ?? h.AMOUNTPAID ?? 0);
-                            
+
                             // 3a. Pay 60+
                             const pay60 = Math.min(d60_bucket, paymentRemaining);
                             d60_bucket -= pay60;
@@ -561,7 +561,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 </div>
                 <div className="flex gap-2">
                     <Button variant="outline" onClick={handleExportPdf} disabled={isExporting || loading}>
-                        {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />} 
+                        {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
                         Export PDF
                     </Button>
                     <Button variant="outline" onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
@@ -650,9 +650,9 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                             const d30 = Number(bill.debit30 || bill.debit_30 || 0);
                                             const d30_60 = Number(bill.debit30_60 || bill.debit_30_60 || 0);
                                             const d60 = Number(bill.debit60 || bill.debit_60 || 0);
-                                            const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0) 
-                                              ? Number(bill.OUTSTANDINGAMT) 
-                                              : (d30 + d30_60 + d60);
+                                            const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
+                                                ? Number(bill.OUTSTANDINGAMT)
+                                                : (d30 + d30_60 + d60);
                                             const penalty = Number(bill.PENALTYAMT || 0);
                                             const current = getMonthlyBillAmt(bill);
                                             const total = outstanding + current + penalty;

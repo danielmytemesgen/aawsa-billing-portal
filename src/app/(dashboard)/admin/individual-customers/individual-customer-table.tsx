@@ -47,9 +47,9 @@ interface IndividualCustomerTableProps {
 
 export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bulkMetersList = [], branches, currency = "ETB", canEdit, canDelete }: IndividualCustomerTableProps) {
 
-  const getBulkMeterName = (key?: string) => {
+  const getBulkMeterKeyDisplay = (key?: string) => {
     if (!key) return "-";
-    return bulkMetersList.find(bm => bm.customerKeyNumber === key)?.name || "Unknown BM";
+    return key;
   };
 
   const getCustomerBranchName = (branchId?: string, fallbackLocation?: string) => {
@@ -83,7 +83,7 @@ export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bul
               <TableHead>Cust. Type</TableHead>
               <TableHead>Usage (m³)</TableHead>
               <TableHead>Bill ({currency})</TableHead>
-              <TableHead>Bulk Meter</TableHead>
+              <TableHead>Bulk Meter Key</TableHead>
               <TableHead>Pay Status</TableHead>
               <TableHead>Status</TableHead>
               {showActionsColumn && <TableHead className="text-right">Actions</TableHead>}
@@ -112,7 +112,7 @@ export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bul
                     </div>
                   </TableCell>
                   <TableCell>{customer.calculatedBill.toFixed(2)}</TableCell>
-                  <TableCell>{getBulkMeterName(customer.assignedBulkMeterId)}</TableCell>
+                  <TableCell>{getBulkMeterKeyDisplay(customer.assignedBulkMeterId)}</TableCell>
                   <TableCell>
                     <Badge
                       variant={
@@ -216,8 +216,8 @@ export function IndividualCustomerTable({ data, onEdit, onDelete, onApprove, bul
                   <div><span className="text-muted-foreground uppercase font-semibold">Type:</span> {customer.customerType}</div>
                   <div><span className="text-muted-foreground uppercase font-semibold">Bill:</span> {currency} {customer.calculatedBill.toFixed(2)}</div>
                   <div className="col-span-2 border-t pt-1 mt-1 flex justify-between">
-                    <span className="text-muted-foreground uppercase font-semibold">Bulk Meter:</span>
-                    <span className="font-medium">{getBulkMeterName(customer.assignedBulkMeterId)}</span>
+                    <span className="text-muted-foreground uppercase font-semibold">Bulk Meter Key:</span>
+                    <span className="font-medium">{getBulkMeterKeyDisplay(customer.assignedBulkMeterId)}</span>
                   </div>
                 </div>
                 <div className="flex gap-2 pt-2 border-t">

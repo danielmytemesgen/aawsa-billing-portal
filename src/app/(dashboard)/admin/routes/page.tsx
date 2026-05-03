@@ -45,7 +45,7 @@ export default function RoutesPage() {
     }, []);
 
     const userBranchId = user?.branchId;
-    const isHeadOffice = !userBranchId || user?.role?.toLowerCase().includes("head office") || hasPermission('routes_view_all');
+    const isHeadOffice = !userBranchId || hasPermission('routes_view_all');
 
     const canView = hasPermission('routes_view') || hasPermission('routes_view_all');
     const canCreate = hasPermission('routes_create');

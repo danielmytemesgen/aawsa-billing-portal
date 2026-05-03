@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { MeterRentDialog } from "./meter-rent-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { FeeEditDialog } from "./fee-edit-dialog";
 import { AdditionalFeeDialog } from "./additional-fee-dialog";
@@ -213,7 +214,7 @@ export default function TariffManagementPage() {
   const activeSewerageTiers = activeTariffInfo ? getDisplayTiersFromData(activeTariffInfo, 'sewerage') : [];
 
   const isLatestTariff = availableDates.length > 0 && currentEffectiveDate === availableDates[0];
-  const canUpdateTariffs = hasPermission('tariffs_update') && isLatestTariff;
+  const canUpdateTariffs = hasPermission(PERMISSIONS.TARIFFS_MANAGE) && isLatestTariff;
 
   React.useEffect(() => {
     setIsDataLoading(true);
@@ -333,7 +334,7 @@ export default function TariffManagementPage() {
   const handleUpdateAdditionalFee = async (fee: AdditionalFee) => {
     if (!activeTariffInfo) return;
 
-    let updatedFees = [...(activeTariffInfo.additional_fees || [])];
+    const updatedFees = [...(activeTariffInfo.additional_fees || [])];
     if (editingAdditionalFee !== null) {
       updatedFees[editingAdditionalFee.index] = fee;
     } else {
@@ -514,7 +515,7 @@ export default function TariffManagementPage() {
   };
 
 
-  if (!hasPermission('tariffs_view')) {
+  if (!hasPermission(PERMISSIONS.TARIFFS_VIEW)) {
     return (
       <Alert variant="destructive">
         <Lock className="h-4 w-4" />
@@ -537,14 +538,14 @@ export default function TariffManagementPage() {
             <p className="text-slate-500 font-medium">Configure water rates, fees, and charges for billing cycles.</p>
           </div>
         </div>
-        {(hasPermission('tariffs_update') || hasPermission('tariffs_create')) && (
+        {hasPermission(PERMISSIONS.TARIFFS_MANAGE) && (
           <div className="flex gap-3 flex-wrap">
-            {hasPermission('tariffs_create') && (
+            {hasPermission(PERMISSIONS.TARIFFS_MANAGE) && (
               <Button onClick={() => setIsNewVersionDialogOpen(true)} variant="outline" disabled={!activeTariffInfo || !isLatestTariff} className="h-11 border-slate-200 font-bold hover:bg-slate-50">
                 <PlusCircle className="mr-2 h-4 w-4" /> New Version
               </Button>
             )}
-            {hasPermission('tariffs_update') && (
+            {hasPermission(PERMISSIONS.TARIFFS_MANAGE) && (
               <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo || !isLatestTariff} className="h-11 bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100 font-bold px-6">
                 <DollarSign className="mr-2 h-4 w-4" /> Manage Meter Rent
               </Button>

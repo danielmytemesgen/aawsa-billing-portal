@@ -31,7 +31,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import { NotificationBell } from './notification-bell';
-import { ROLES, PERMISSIONS, isManagementRole } from '@/lib/constants/auth';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 interface UserProfile {
   id: string;
@@ -57,14 +57,10 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
   if (user) {
     const role = user.role.toLowerCase().trim();
     const permissions = user.permissions || [];
-    const isAdminArea =
-      permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
-      isManagementRole(role);
+    const isAdminArea = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     if (isAdminArea) {
-      if (role === ROLES.HEAD_OFFICE_MANAGEMENT || permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) dashboardHref = '/admin/head-office-dashboard';
-      else if (role === ROLES.STAFF_MANAGEMENT) dashboardHref = '/admin/staff-management-dashboard';
-      else dashboardHref = '/admin/dashboard';
+      dashboardHref = '/admin/dashboard';
     } else {
       dashboardHref = '/staff/dashboard';
     }

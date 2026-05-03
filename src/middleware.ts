@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decrypt } from '@/lib/auth';
-import { ROLES, PERMISSIONS, isManagementRole } from '@/lib/constants/auth';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 const protectedRoutes = ['/admin', '/staff'];
 const adminRoutes = ['/admin'];
@@ -33,9 +33,9 @@ export async function middleware(request: NextRequest) {
   const isAdminRoute = adminRoutes.some(route => path.startsWith(route));
   const isStaffRoute = staffRoutes.some(route => path.startsWith(route));
 
-  const hasAdminAccess =
-    permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
-    isManagementRole(role);
+  // Admin access is now strictly permission-based. 
+  // Most admin pages require DASHBOARD_VIEW_ALL plus specific sub-page permissions.
+  const hasAdminAccess = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
   if (isAdminRoute && !hasAdminAccess) {
     return NextResponse.redirect(new URL('/staff/dashboard', request.url));
@@ -51,22 +51,22 @@ export async function middleware(request: NextRequest) {
     : new URL('/staff/dashboard', request.url);
 
   // ── 2. Admin-only sub-routes ─────────────────────────────────────────────────
-  if (path.startsWith('/admin/roles-and-permissions') && !permissions.includes('permissions_view')) {
+  if (path.startsWith('/admin/roles-and-permissions') && !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
-  if (path.startsWith('/admin/security-logs') && !permissions.includes('settings_manage')) {
+  if (path.startsWith('/admin/security-logs') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
     return NextResponse.redirect(dashboardFallback);
   }
-  if (path.startsWith('/admin/recycle-bin') && !permissions.includes('settings_manage')) {
+  if (path.startsWith('/admin/recycle-bin') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
     return NextResponse.redirect(dashboardFallback);
   }
-  if (path.startsWith('/admin/maintenance') && !permissions.includes('settings_manage')) {
+  if (path.startsWith('/admin/maintenance') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
     return NextResponse.redirect(dashboardFallback);
   }
   if (path.startsWith('/admin/settings') && !permissions.includes(PERMISSIONS.SETTINGS_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
-  if (path.startsWith('/admin/tariffs') && !permissions.includes('tariffs_view')) {
+  if (path.startsWith('/admin/tariffs') && !permissions.includes(PERMISSIONS.TARIFFS_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
   if (path.startsWith('/admin/reports') && !hasAny(permissions, PERMISSIONS.REPORTS_GENERATE_ALL, PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
@@ -77,13 +77,13 @@ export async function middleware(request: NextRequest) {
 
   // Branches
   if ((path.startsWith('/admin/branches') || path.startsWith('/staff/branches')) &&
-    !permissions.includes('branches_view')) {
+    !permissions.includes(PERMISSIONS.BRANCHES_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Staff management
   if ((path.startsWith('/admin/staff') || path.startsWith('/staff/staff')) &&
-    !isManagementRole(role) && !permissions.includes(PERMISSIONS.STAFF_VIEW)) {
+    !permissions.includes(PERMISSIONS.STAFF_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
@@ -101,48 +101,48 @@ export async function middleware(request: NextRequest) {
 
   // Approvals
   if ((path.startsWith('/admin/approvals') || path.startsWith('/staff/approvals')) &&
-    !permissions.includes('customers_approve')) {
+    !permissions.includes(PERMISSIONS.CUSTOMERS_APPROVE)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Bill management
   if ((path.startsWith('/admin/bill-management') || path.startsWith('/staff/bill-management')) &&
-    !hasAny(permissions, 'bill:view_drafts', 'bill:approve', 'bill:create', 'bill:manage_all')) {
+    !hasAny(permissions, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.BILL_VIEW_BRANCH, PERMISSIONS.BILL_CREATE)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Meter readings
   if ((path.startsWith('/admin/meter-readings') || path.startsWith('/staff/meter-readings')) &&
-    !hasAny(permissions, 'meter_readings_view_all', 'meter_readings_view_branch', 'meter_readings_create')) {
+    !hasAny(permissions, PERMISSIONS.METER_READINGS_VIEW_ALL, PERMISSIONS.METER_READINGS_VIEW_BRANCH, PERMISSIONS.METER_READINGS_CREATE)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Data entry
   if ((path.startsWith('/admin/data-entry') || path.startsWith('/staff/data-entry')) &&
-    !permissions.includes('data_entry_access')) {
+    !permissions.includes(PERMISSIONS.DATA_ENTRY_ACCESS)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Notifications
   if ((path.startsWith('/admin/notifications') || path.startsWith('/staff/notifications')) &&
-    !permissions.includes('notifications_view')) {
+    !permissions.includes(PERMISSIONS.NOTIFICATIONS_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Knowledge base
   if ((path.startsWith('/admin/knowledge-base') || path.startsWith('/staff/knowledge-base')) &&
-    !permissions.includes('knowledge_base_manage')) {
+    !permissions.includes(PERMISSIONS.KNOWLEDGE_BASE_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Routes management
   if ((path.startsWith('/admin/routes') || path.startsWith('/staff/my-routes')) &&
-    !hasAny(permissions, 'routes_view_all', 'routes_view_assigned', PERMISSIONS.METER_READINGS_ANALYTICS_VIEW, 'settings_manage', 'meter_readings_view_all', 'staff_view')) {
+    !hasAny(permissions, PERMISSIONS.ROUTES_VIEW_ALL, PERMISSIONS.ROUTES_VIEW_ASSIGNED, PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
   // Fault codes
-  if (path.startsWith('/admin/fault-codes') && !hasAny(permissions, 'settings_manage', 'bill:manage_all', PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+  if (path.startsWith('/admin/fault-codes') && !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     return NextResponse.redirect(dashboardFallback);
   }
 

@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Calendar, PlusCircle, Info } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
+import { format, parse } from "date-fns";
 
 const formSchema = z.object({
     effectiveDate: z.string().refine((dateString) => {
@@ -97,17 +99,19 @@ export function NewVersionDialog({ open, onOpenChange, onSubmit }: NewVersionDia
                                         <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-3 py-1 rounded-full uppercase tracking-widest italic">Compliance Required</span>
                                     </div>
                                     <FormControl>
-                                        <div className="relative group">
-                                            <div className="absolute left-4 top-1/2 -translate-y-1/2 h-8 w-8 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 group-focus-within:bg-indigo-600 group-focus-within:text-white transition-all">
-                                                <Calendar className="h-4 w-4" />
-                                            </div>
-                                            <Input 
-                                                type="date" 
-                                                max={new Date().toISOString().split('T')[0]} 
-                                                className="h-16 pl-16 bg-slate-50 border-slate-200 rounded-2xl font-black text-slate-900 focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-300 transition-all cursor-pointer text-lg"
-                                                {...field} 
-                                            />
-                                        </div>
+                                        <DatePicker
+                                            date={field.value ? parse(field.value, 'yyyy-MM-dd', new Date()) : undefined}
+                                            onSelect={(date) => {
+                                                if (date) field.onChange(format(date, 'yyyy-MM-dd'));
+                                            }}
+                                            placeholder="Select effective date"
+                                            className="h-16 bg-slate-50 border-slate-200 rounded-2xl font-black text-slate-900 focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-300 transition-all cursor-pointer text-lg pl-6"
+                                            disabled={(date) => {
+                                                const today = new Date();
+                                                today.setHours(0, 0, 0, 0);
+                                                return date > today;
+                                            }}
+                                        />
                                     </FormControl>
                                     <FormMessage className="text-xs uppercase font-black px-1" />
                                 </FormItem>

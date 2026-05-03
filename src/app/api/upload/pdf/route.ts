@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { getSession } from '@/lib/auth';
+import { checkPermission } from '@/lib/actions';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    // Only authenticated staff can upload files
-    const session = await getSession();
+    // Only staff with bill knowledge-base upload permission can upload PDFs
+    const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL);
     if (!session || !session.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

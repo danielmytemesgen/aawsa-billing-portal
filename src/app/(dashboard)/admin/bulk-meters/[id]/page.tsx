@@ -228,10 +228,10 @@ export default function BulkMeterDetailsPage() {
         const monthlyPortion = (b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined)
           ? Number(b.THISMONTHBILLAMT)
           : (Number(b.TOTALBILLAMOUNT) - Number(b.OUTSTANDINGAMT ?? 0) - Number(b.PENALTYAMT ?? 0));
-        
+
         const penaltyPortion = Number(b.PENALTYAMT || 0);
         const totalThisMonth = monthlyPortion + penaltyPortion;
-        
+
         const paidTowardsThisMonth = Math.max(0, Number(b.amountPaid || 0) - Number(b.OUTSTANDINGAMT ?? 0));
         return Math.max(0, totalThisMonth - paidTowardsThisMonth);
       };
@@ -364,16 +364,16 @@ export default function BulkMeterDetailsPage() {
           const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
           return creationB - creationA;
         }));
-          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
-            const dateA = new Date(a.billPeriodEndDate || 0).getTime();
-            const dateB = new Date(b.billPeriodEndDate || 0).getTime();
-            if (dateB !== dateA) {
-              return dateB - dateA;
-            }
-            const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return creationB - creationA;
-          }));
+        setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+          const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+          const dateB = new Date(b.billPeriodEndDate || 0).getTime();
+          if (dateB !== dateA) {
+            return dateB - dateA;
+          }
+          const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return creationB - creationA;
+        }));
       } else {
         setBulkMeter(null);
         toast({ title: "Bulk Meter Not Found", description: "This bulk meter may not exist or has been deleted.", variant: "destructive" });
@@ -400,32 +400,32 @@ export default function BulkMeterDetailsPage() {
       if (foundBM) {
         setBulkMeter(foundBM);
         setAssociatedCustomers(currentGlobalCustomers.filter(c => c.assignedBulkMeterId === bulkMeterKey));
-          setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
-            const dateA = new Date(a.readingDate).getTime();
-            const dateB = new Date(b.readingDate).getTime();
-            if (dateB !== dateA) return dateB - dateA;
-            const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return cB - cA;
-          }));
+        setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+          const dateA = new Date(a.readingDate).getTime();
+          const dateB = new Date(b.readingDate).getTime();
+          if (dateB !== dateA) return dateB - dateA;
+          const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return cB - cA;
+        }));
 
-          import('@/lib/data-store').then(({ getTariff, initializeTariffs }) => {
-            initializeTariffs().then(() => {
-                const t = getTariff(foundBM.chargeGroup as any, format(new Date(), 'yyyy-MM'));
-                setActiveTariff(t);
-            });
+        import('@/lib/data-store').then(({ getTariff, initializeTariffs }) => {
+          initializeTariffs().then(() => {
+            const t = getTariff(foundBM.chargeGroup as any, format(new Date(), 'yyyy-MM'));
+            setActiveTariff(t);
           });
+        });
 
-          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
-            const dateA = new Date(a.billPeriodEndDate || 0).getTime();
-            const dateB = new Date(b.billPeriodEndDate || 0).getTime();
-            if (dateB !== dateA) {
-              return dateB - dateA;
-            }
-            const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return creationB - creationA;
-          }));
+        setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+          const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+          const dateB = new Date(b.billPeriodEndDate || 0).getTime();
+          if (dateB !== dateA) {
+            return dateB - dateA;
+          }
+          const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return creationB - creationA;
+        }));
       } else if (bulkMeter) {
         toast({ title: "Bulk Meter Update", description: "The bulk meter being viewed may have been deleted or is no longer accessible.", variant: "destructive" });
         setBulkMeter(null);
@@ -495,14 +495,14 @@ export default function BulkMeterDetailsPage() {
       const threshold = activeTariff.penalty_month_threshold ?? 3;
       const bankRate = Number(activeTariff.bank_lending_rate ?? 0.15);
       const tieredRates = Array.isArray(activeTariff.penalty_tiered_rates) ? activeTariff.penalty_tiered_rates : [];
-      
+
       // 1. Current Arrears Base (everything unpaid from row before)
       const arrearsSum = carriedForwardUnpaid;
 
       // 2. Penalty
       let penalty = 0;
       let maxAge = 0;
-      
+
       // Determine maxAge based on which buckets have debt
       if (d60_bucket > 0.01) maxAge = 3;
       else if (d30_60_bucket > 0.01) maxAge = 2;
@@ -518,25 +518,28 @@ export default function BulkMeterDetailsPage() {
       if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
       if (maxAge >= threshold) {
-          const applicableTier = [...tieredRates].sort((a, b) => b.month - a.month).find(t => maxAge >= t.month);
-          const totalRate = bankRate + Number(applicableTier?.rate || 0);
-          penalty = arrearsSum * totalRate;
+        const applicableTier = [...tieredRates].sort((a, b) => b.month - a.month).find(t => maxAge >= t.month);
+        const totalRate = bankRate + Number(applicableTier?.rate || 0);
+        penalty = arrearsSum * totalRate;
       }
-      
+
       // 3. Current Month Monthly Part (0 if voided)
       const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
-      
-      // 4. Totals
-      const outstandingWithPenalty = arrearsSum + penalty;
-      const totalPayable = outstandingWithPenalty + Math.max(0, currentMonthlyCharge);
+
+      // 4. Totals & Dynamic Reconstruction
+      const totalD60AndLegacy = d60_bucket + legacyDebt;
+
+      // Reconstruct exactly from buckets as per business rule (summing debit_30 + d30_60 + d60 + penalty)
+      const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+      const totalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
 
       // Save results
       results.set(bill.id, {
         d30: d30_bucket,
         d30_60: d30_60_bucket,
-        d60: d60_bucket + legacyDebt,
+        d60: totalD60AndLegacy,
         penalty,
-        outstanding: outstandingWithPenalty,
+        outstanding: derivedOutstanding,
         currentMonthly: currentMonthlyCharge,
         totalPayable
       });
@@ -544,16 +547,20 @@ export default function BulkMeterDetailsPage() {
       // 5. Update Carried Forward for nextrow
       // If voided, we assume no payment was possible/recorded against THIS specific record
       const amtPaid = isVoided ? 0 : Number(bill.amountPaid || 0);
-      carriedForwardUnpaid = Math.max(0, totalPayable - amtPaid);
+
+      // The business rule: previous Penalty must be carried forward and included in the arrears,
+      // which will naturally cascade down into Debit_60 as legacy debt since it doesn't fit the newer buckets.
+      const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+      carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
 
       // 6. Update Aging Buckets for next cycle
       let remainingPayment = amtPaid;
-      
-      const totalD60AndLegacy = d60_bucket + legacyDebt;
+
       const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
       const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
       remainingPayment -= paidAgainstOldest;
 
+      // Unpaid penalty will remain in 'carriedForwardUnpaid' and be caught by 'legacyDebt' next cycle, moving into Debit_60
       const paidAgainstPenalty = Math.min(remainingPayment, penalty);
       remainingPayment -= paidAgainstPenalty;
 
@@ -571,7 +578,7 @@ export default function BulkMeterDetailsPage() {
       d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
       d30_60_bucket = remaining_d30;
       d30_bucket = remaining_current;
-      
+
       // Increment counter for next month if we still have debt
       if (carriedForwardUnpaid > 0.01) {
         billIndexCounter++;

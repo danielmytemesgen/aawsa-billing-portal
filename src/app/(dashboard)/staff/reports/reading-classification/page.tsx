@@ -104,7 +104,7 @@ export default function ReadingClassificationPage() {
                 initializeBranches(true),
                 initializeCustomers(true),
                 initializeBulkMeters(true),
-                initializeStaffMembers(true)
+                hasPermission('staff_view') ? initializeStaffMembers(true) : Promise.resolve()
             ]);
 
             const indReadings = getIndividualCustomerReadings();

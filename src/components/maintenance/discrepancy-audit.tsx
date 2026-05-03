@@ -143,7 +143,7 @@ export function DiscrepancyAudit() {
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground bg-slate-50 rounded-lg border-2 border-dashed">
             <AlertCircle className="h-12 w-12 mb-4 opacity-20" />
             <p>No audit has been run recently.</p>
-            <p className="text-sm">Click "Run Full Scan" to analyze system consistency.</p>
+            <p className="text-sm">Click &quot;Run Full Scan&quot; to analyze system consistency.</p>
           </div>
         ) : results.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-green-600 bg-green-50 rounded-lg border-2 border-green-100">

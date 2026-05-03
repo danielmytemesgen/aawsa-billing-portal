@@ -3,7 +3,7 @@
 
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard } from 'lucide-react';
+import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity } from 'lucide-react';
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +21,7 @@ import {
   Line,
   CartesianGrid
 } from 'recharts';
+import { motion } from "framer-motion";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getAllBranchesAction } from "@/lib/actions";
 import {
@@ -175,16 +176,23 @@ export default function StaffDashboardPage() {
     if (authStatus !== 'authorized') return;
     setIsLoading(true);
     try {
-      await Promise.all([
+      // Map of initializations to required permissions
+      const initTasks = [
         initializeBranches(true),
         initializeBulkMeters(true),
         initializeCustomers(true),
         initializeIndividualCustomerReadings(true),
         initializeBulkMeterReadings(true),
         initializeBills(true),
-        fetchRoutes(true),
-        initializeStaffMembers(true)
-      ]);
+        fetchRoutes(true)
+      ];
+
+      // Only fetch staff members if user has permission
+      if (hasPermission('staff_view')) {
+        initTasks.push(initializeStaffMembers(true));
+      }
+
+      await Promise.all(initTasks);
 
       setAllBranches(getBranches());
       setAllBulkMeters(getBulkMeters());
@@ -210,7 +218,19 @@ export default function StaffDashboardPage() {
   // Derived state with useMemo
   const processedStats = React.useMemo(() => {
     if (authStatus !== 'authorized' || !staffBranchId) {
-      return { totalBulkMeters: 0, totalCustomers: 0, totalBills: 0, paidBills: 0, unpaidBills: 0, billsData: [], branchPerformanceData: [], waterUsageTrendData: [], topDelinquentAccounts: [], paidPercentage: "0%", pendingApprovals: 0 };
+      return { 
+        totalBulkMeters: 0, 
+        totalCustomers: 0, 
+        totalBills: 0, 
+        paidBills: 0, 
+        unpaidBills: 0, 
+        billsPaymentStatusData: [], 
+        branchPerformanceData: [], 
+        waterUsageTrendData: [], 
+        topDelinquentAccounts: [], 
+        paidPercentage: "0%", 
+        pendingApprovals: 0 
+      };
     }
 
     const currentMonthYear = format(new Date(), 'yyyy-MM');
@@ -258,7 +278,7 @@ export default function StaffDashboardPage() {
     const paidCount = currentMonthBills.filter(bill => bill.paymentStatus === 'Paid').length;
     const unpaidCount = currentMonthBills.filter(bill => bill.paymentStatus === 'Unpaid').length;
     const totalBillsCount = paidCount + unpaidCount;
-    const billsData = [
+    const billsPaymentStatusData = [
       { name: 'Paid', value: paidCount, fill: '#10b981' },
       { name: 'Unpaid', value: unpaidCount, fill: '#ef4444' },
     ];
@@ -344,7 +364,7 @@ export default function StaffDashboardPage() {
       totalBills: totalBillsCount,
       paidBills: paidCount,
       unpaidBills: unpaidCount,
-      billsData,
+      billsPaymentStatusData,
       branchPerformanceData,
       waterUsageTrendData,
       topDelinquentAccounts,
@@ -391,16 +411,16 @@ export default function StaffDashboardPage() {
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 drop-shadow-sm">
+            <h1 className="text-4xl font-black tracking-tight text-slate-900 drop-shadow-sm">
               Reader Dashboard
             </h1>
-            <div className="text-muted-foreground font-medium flex items-center gap-2 mt-1">
-              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+            <div className="flex items-center gap-2 mt-2">
+              <Badge variant="secondary" className="bg-blue-600 text-white font-bold px-3 py-1 border-none shadow-md">
                 {staffBranchName} Branch
               </Badge>
-              <span className="text-xs">•</span>
-              <span className="text-xs flex items-center gap-1">
-                <Calendar className="h-3 w-3" />
+              <span className="text-slate-300 font-bold">•</span>
+              <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 bg-slate-100 px-2 py-1 rounded-lg">
+                <Calendar className="h-3.5 w-3.5 text-blue-500" />
                 {format(new Date(), 'MMMM d, yyyy')}
               </span>
             </div>
@@ -430,167 +450,206 @@ export default function StaffDashboardPage() {
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">
+          <h1 className="text-4xl font-black tracking-tight text-slate-900">
             Staff Dashboard
           </h1>
-          <div className="text-muted-foreground font-medium flex items-center gap-2 mt-1">
-            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+          <div className="flex items-center gap-2 mt-2">
+            <Badge variant="secondary" className="bg-blue-600 text-white font-bold px-3 py-1 border-none shadow-md">
               {staffBranchName} Branch
             </Badge>
+            <span className="text-slate-300 font-bold">•</span>
+            <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5 bg-slate-100 px-2 py-1 rounded-lg">
+              <Calendar className="h-3.5 w-3.5 text-blue-500" />
+              Real-time Overview
+            </span>
           </div>
         </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm hover:shadow-2xl transition-all hover:-translate-y-1">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Bills Status ({currentMonthYear})</CardTitle>
-            <div className="p-1.5 bg-blue-100 rounded-lg">
-              <FileText className="h-4 w-4 text-blue-600" />
+        {/* Bills Status Card (Mirrored from Admin) */}
+        <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <FileText className="h-48 w-48 text-blue-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bills Status</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+              <FileText className="h-4 w-4" />
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-black">{processedStats.totalBills.toLocaleString()} Bills</div>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs font-bold text-emerald-600">{processedStats.paidBills} Paid</span>
-              <span className="text-xs text-gray-300">/</span>
-              <span className="text-xs font-bold text-amber-600">{processedStats.unpaidBills} Unpaid</span>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">{processedStats.totalBills.toLocaleString()}</div>
+              <div className="text-lg font-bold text-slate-500 mb-1">Bills</div>
             </div>
-            <div className="h-[120px] mt-4">
-              {isClient && (
+            <p className="text-sm text-slate-600 font-semibold mt-2">
+              <span className="text-emerald-600">{processedStats.paidBills} Paid</span> <span className="mx-2 text-slate-300">|</span> <span className="text-rose-500">{processedStats.unpaidBills} Unpaid</span>
+            </p>
+            <div className="h-[100px] mt-6 relative flex items-center justify-center">
+              {isClient && processedStats.billsPaymentStatusData.some(d => d.value > 0) ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer>
                     <PieChart>
                       <Pie
-                        data={processedStats.billsData}
+                        data={processedStats.billsPaymentStatusData}
                         dataKey="value"
                         nameKey="name"
                         cx="50%"
                         cy="50%"
-                        innerRadius={35}
-                        outerRadius={50}
+                        innerRadius={30}
+                        outerRadius={45}
                         paddingAngle={4}
+                        stroke="none"
                       >
-                        {processedStats.billsData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        {processedStats.billsPaymentStatusData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} className="drop-shadow-sm hover:opacity-80 transition-opacity" />
                         ))}
                       </Pie>
                       <Tooltip content={<ChartTooltipContent hideLabel />} />
                     </PieChart>
                   </ResponsiveContainer>
                 </ChartContainer>
+              ) : (
+                <div className="text-sm font-semibold text-blue-600/80 italic w-full text-center mt-6">No bill data for this month</div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm hover:shadow-2xl transition-all hover:-translate-y-1">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Active Customers</CardTitle>
-            <div className="p-1.5 bg-emerald-100 rounded-lg">
-              <Users className="h-4 w-4 text-emerald-600" />
+        {/* Active Customers (Mirrored from Admin) */}
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Users className="h-48 w-48 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Active Customers</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Users className="h-4 w-4" />
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-black">{processedStats.totalCustomers.toLocaleString()}</div>
-            <p className="text-xs font-medium text-muted-foreground mt-1">Total active subscribers</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center">
-              <div className="relative">
-                <Users className="h-20 w-20 text-emerald-500 opacity-10 animate-pulse" />
-                <Users className="h-16 w-16 text-emerald-600 absolute top-2 left-2" />
-              </div>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{processedStats.totalCustomers.toLocaleString()}</div>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mt-2">
+               Total active subscribers
+            </p>
+            <div className="h-[100px] mt-6 flex items-center justify-center">
+              <Users className="h-20 w-20 text-emerald-500/10" />
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm hover:shadow-2xl transition-all hover:-translate-y-1">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Bulk Meters</CardTitle>
-            <div className="p-1.5 bg-indigo-100 rounded-lg">
-              <Gauge className="h-4 w-4 text-indigo-600" />
+        {/* Bulk Meters (Mirrored from Admin) */}
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Gauge className="h-48 w-48 text-purple-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bulk Meters</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+              <Gauge className="h-4 w-4" />
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-black">{processedStats.totalBulkMeters.toLocaleString()}</div>
-            <p className="text-xs font-medium text-muted-foreground mt-1">High-capacity connections</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center">
-              <div className="relative">
-                <Gauge className="h-20 w-20 text-indigo-500 opacity-10 animate-pulse" />
-                <Gauge className="h-16 w-16 text-indigo-600 absolute top-2 left-2" />
-              </div>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-end gap-2 mb-1 mt-2">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-purple-900 transition-colors">{processedStats.totalBulkMeters.toLocaleString()}</div>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mt-2">
+               High-capacity connections
+            </p>
+            <div className="h-[100px] mt-6 flex items-center justify-center">
+              <Gauge className="h-20 w-20 text-purple-500/10" />
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm hover:shadow-2xl transition-all hover:-translate-y-1">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Collection Rate</CardTitle>
-            <div className="p-1.5 bg-blue-100 rounded-lg">
-              <TrendingUp className="h-4 w-4 text-blue-600" />
+        {/* Collection Efficiency (Mirrored from Admin) */}
+        <Card className="group shadow-sm hover:shadow-xl border border-cyan-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <TrendingUp className="h-48 w-48 text-cyan-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Collection Rate</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-cyan-100 flex items-center justify-center text-cyan-600">
+              <TrendingUp className="h-4 w-4" />
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-foreground">{processedStats.paidPercentage}</div>
-            <p className="text-xs font-medium text-muted-foreground mt-1">Target Achievement</p>
-            <div className="h-[120px] mt-4 flex items-center justify-center">
-              <div className="w-full h-2.5 bg-blue-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-600 transition-all duration-1000"
-                  style={{ width: processedStats.paidPercentage }}
-                />
-              </div>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="mt-2 text-4xl lg:text-5xl font-black tracking-tight text-slate-800 mb-1 group-hover:text-cyan-900 transition-colors">
+              {processedStats.paidPercentage}
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mb-8">Operational Progress</p>
+            <div className="w-full bg-cyan-900/5 rounded-full h-3 overflow-hidden shadow-inner relative mb-3">
+              <motion.div
+                className="bg-cyan-500 h-full relative overflow-hidden transition-all duration-1000 ease-out"
+                initial={{ width: 0 }}
+                animate={{ width: processedStats.paidPercentage }}
+              >
+                <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.2)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.2)_50%,rgba(255,255,255,0.2)_75%,transparent_75%,transparent)] bg-[length:1rem_1rem] animate-[shimmer_1s_linear_infinite]" />
+              </motion.div>
             </div>
           </CardContent>
         </Card>
-
-
       </div>
 
-      <Card className="bg-slate-50 border-slate-100 shadow-sm">
+      <Card className="bg-slate-50 border-slate-100 shadow-sm rounded-3xl">
         <CardHeader>
           <CardTitle className="text-slate-900 font-bold">Quick Access</CardTitle>
           <CardDescription className="text-slate-600/70">Navigate quickly to key management areas.</CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Link href="/staff/bulk-meters" passHref>
-            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group">
-              <Gauge className="mr-4 h-8 w-8 text-blue-500 group-hover:scale-110 transition-transform" />
-              <div>
-                <p className="font-bold text-slate-900 text-lg">View Bulk Meters</p>
-                <p className="text-sm text-slate-500">Manage all bulk water meters.</p>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Link href="/staff/bill-management" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group rounded-2xl">
+              <CreditCard className="mr-4 h-8 w-8 text-blue-500 group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <p className="font-bold text-slate-900 text-lg">Billing Hub</p>
+                <p className="text-sm text-slate-500">Manage all customer bills.</p>
               </div>
               <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
             </Button>
           </Link>
-          <Link href="/staff/individual-customers" passHref>
-            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group">
-              <Users className="mr-4 h-8 w-8 text-emerald-500 group-hover:scale-110 transition-transform" />
-              <div>
-                <p className="font-bold text-slate-900 text-lg">View Individual Customers</p>
-                <p className="text-sm text-slate-500">Manage all individual customer accounts.</p>
+          <Link href="/staff/meter-readings" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group rounded-2xl">
+              <Activity className="mr-4 h-8 w-8 text-emerald-500 group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <p className="font-bold text-slate-900 text-lg">Readings Hub</p>
+                <p className="text-sm text-slate-500">Record utility consumption.</p>
               </div>
               <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all" />
+            </Button>
+          </Link>
+          <Link href="/staff/reports" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group rounded-2xl">
+              <TrendingUp className="mr-4 h-8 w-8 text-indigo-500 group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <p className="font-bold text-slate-900 text-lg">Branch Intel</p>
+                <p className="text-sm text-slate-500">View performance metrics.</p>
+              </div>
+              <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all" />
             </Button>
           </Link>
         </CardContent>
       </Card>
 
       <div className="grid gap-8 md:grid-cols-2">
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm">
-          <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-4">
+        <Card className="shadow-2xl border-none bg-white relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-1 h-full bg-blue-600" />
+          <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4 bg-slate-50/50">
             <div>
-              <CardTitle className="text-lg font-bold flex items-center gap-2">
+              <CardTitle className="text-xl font-black flex items-center gap-2 text-slate-900">
                 <LayoutDashboard className="h-5 w-5 text-blue-600" />
                 Branch Performance
               </CardTitle>
-              <CardDescription>Comparative payment analysis for bulk meters</CardDescription>
+              <CardDescription className="text-slate-500 font-bold">Comparative payment analysis for bulk meters</CardDescription>
             </div>
-            <Button variant="outline" size="sm" className="font-bold shadow-sm" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')}>
-              {branchPerformanceView === 'chart' ? <TableIcon className="mr-2 h-4 w-4" /> : <BarChartIcon className="mr-2 h-4 w-4" />}
-              {branchPerformanceView === 'chart' ? 'Table View' : 'Graph View'}
+            <Button variant="outline" size="sm" className="font-black shadow-md border-slate-200 bg-white hover:bg-slate-50" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')}>
+              {branchPerformanceView === 'chart' ? <TableIcon className="mr-2 h-4 w-4 text-blue-600" /> : <BarChartIcon className="mr-2 h-4 w-4 text-blue-600" />}
+              {branchPerformanceView === 'chart' ? 'Switch to Table' : 'Switch to Graph'}
             </Button>
           </CardHeader>
-          <CardContent className="pt-6">
+          <CardContent className="pt-8">
             {branchPerformanceView === 'chart' ? (
               <div className="h-[320px]">
                 {isClient && processedStats.branchPerformanceData.length > 0 ? (
@@ -643,21 +702,21 @@ export default function StaffDashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm">
-          <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-4">
+        <Card className="shadow-md border-slate-100 bg-white rounded-3xl overflow-hidden">
+          <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4 bg-slate-50/50 px-6 py-4">
             <div>
-              <CardTitle className="text-lg font-bold flex items-center gap-2">
+              <CardTitle className="text-xl font-black flex items-center gap-2 text-slate-900">
                 <TrendingUp className="h-5 w-5 text-indigo-600" />
                 Consumption Trend
               </CardTitle>
-              <CardDescription>Historical water usage trajectory</CardDescription>
+              <CardDescription className="text-slate-500 font-bold">Historical water usage trajectory</CardDescription>
             </div>
-            <Button variant="outline" size="sm" className="font-bold shadow-sm" onClick={() => setWaterUsageView(prev => prev === 'chart' ? 'table' : 'chart')}>
-              {waterUsageView === 'chart' ? <TableIcon className="mr-2 h-4 w-4" /> : <BarChartIcon className="mr-2 h-4 w-4" />}
-              {waterUsageView === 'chart' ? 'Table View' : 'Graph View'}
+            <Button variant="outline" size="sm" className="font-black shadow-md border-slate-200 bg-white hover:bg-slate-50" onClick={() => setWaterUsageView(prev => prev === 'chart' ? 'table' : 'chart')}>
+              {waterUsageView === 'chart' ? <TableIcon className="mr-2 h-4 w-4 text-indigo-600" /> : <BarChartIcon className="mr-2 h-4 w-4 text-indigo-600" />}
+              {waterUsageView === 'chart' ? 'Switch to Table' : 'Switch to Graph'}
             </Button>
           </CardHeader>
-          <CardContent className="pt-6">
+          <CardContent className="pt-8 px-6">
             {waterUsageView === 'chart' ? (
               <div className="h-[320px]">
                 {isClient && processedStats.waterUsageTrendData.length > 0 ? (
@@ -708,19 +767,20 @@ export default function StaffDashboardPage() {
         </Card>
 
         {/* Top Delinquent Accounts Card (Mirrored from Admin) */}
-        <Card className="shadow-xl border-none bg-white/50 backdrop-blur-sm overflow-hidden">
-          <CardHeader className="bg-rose-50 border-b border-rose-100">
-            <CardTitle className="text-lg font-bold text-rose-900 flex items-center">
-              <AlertCircle className="mr-2 h-5 w-5 text-rose-600" />
-              Highest outstanding balances needing attention.
+        <Card className="shadow-xl border-none bg-white overflow-hidden ring-1 ring-rose-200 rounded-3xl">
+          <CardHeader className="bg-gradient-to-r from-rose-500 to-rose-600 border-b border-rose-400 p-6">
+            <CardTitle className="text-xl font-black text-white flex items-center shadow-sm">
+              <AlertCircle className="mr-3 h-6 w-6 text-rose-100" />
+              Priority Collections
             </CardTitle>
+            <CardDescription className="text-rose-100 font-bold mt-1 opacity-90">Outstanding balances needing attention</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
-              <TableHeader className="bg-rose-100/30">
-                <TableRow>
-                  <TableHead className="text-rose-900 font-bold pl-4">Account</TableHead>
-                  <TableHead className="text-right text-rose-900 font-bold pr-4">Balance (Birr)</TableHead>
+              <TableHeader className="bg-rose-50">
+                <TableRow className="border-rose-100">
+                  <TableHead className="text-rose-900 font-black uppercase tracking-widest text-[10px] pl-6 py-4">Account Holder</TableHead>
+                  <TableHead className="text-right text-rose-900 font-black uppercase tracking-widest text-[10px] pr-6 py-4">Balance (Birr)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

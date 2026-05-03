@@ -40,6 +40,7 @@ import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
 import { customerTypes } from "@/lib/billing-calculations";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface User {
   email: string;
@@ -991,6 +992,7 @@ const availableStaffReports: ReportType[] = [
 
 export default function StaffReportsPage() {
   const { toast } = useToast();
+  const { hasPermission } = usePermissions();
   const [selectedReportId, setSelectedReportId] = React.useState<string | undefined>(undefined);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [staffBranchName, setStaffBranchName] = React.useState<string | undefined>(undefined);
@@ -1053,7 +1055,9 @@ export default function StaffReportsPage() {
       await initializeIndividualCustomerReadings(true);
       await initializeBulkMeterReadings(true);
       await initializePayments(true);
-      await initializeStaffMembers();
+      if (hasPermission('staff_view')) {
+        await initializeStaffMembers(true);
+      }
       setBulkMeters(getBulkMeters());
       setIsLoading(false);
     };

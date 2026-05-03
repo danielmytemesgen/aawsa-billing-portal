@@ -311,8 +311,8 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
                         {dynamicBulkMeters.map((bm) => (
                           bm.customerKeyNumber && String(bm.customerKeyNumber).trim() !== "" ? (
                             <SelectItem key={String(bm.customerKeyNumber)} value={String(bm.customerKeyNumber)}>
-                              {bm.name}
-                            </SelectItem>
+                            {bm.customerKeyNumber} - {bm.name}
+                          </SelectItem>
                           ) : null
                         ))}
                       </SelectContent>

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ROLES, PERMISSIONS, isManagementRole } from '@/lib/constants/auth';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 export interface CurrentUser {
   id?: string;
@@ -41,18 +41,15 @@ export function useCurrentUser() {
 
   /**
    * Robust check for management/admin-area access.
-   * Priority 1: Specific high-level permission.
-   * Priority 2: Identified management role name.
+   * Based purely on specific high-level permission.
    */
-  const isManagement =
-    permissions.has(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
-    isManagementRole(roleLower);
+  const isManagement = permissions.has(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
   return {
     currentUser,
-    isStaff: roleLower === ROLES.STAFF || roleLower === ROLES.READER || (!isManagement && roleLower !== ''),
-    isReader: roleLower === ROLES.READER,
-    isStaffManagement: roleLower === ROLES.STAFF_MANAGEMENT,
+    isStaff: !isManagement, // Basic distinction if requested, but routes drive access
+    isReader: permissions.has(PERMISSIONS.DATA_ENTRY_ACCESS) && !isManagement,
+    isStaffManagement: permissions.has(PERMISSIONS.STAFF_VIEW_ALL),
     isManagement,
     isAdminAreaUser: isManagement,
     branchId: currentUser?.branchId,

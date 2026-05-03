@@ -38,6 +38,7 @@ import {
     TrendingUp,
     AlertCircle,
     Calendar,
+    RotateCcw,
     ChevronLeft,
     ChevronRight,
     CheckCircle2,
@@ -67,8 +68,11 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
+import { Label } from "@/components/ui/label";
 import { BillingCycleDialog } from '@/app/(dashboard)/staff/bill-management/billing-cycle-dialog';
 import { TablePagination } from '@/components/ui/table-pagination';
+import { DatePicker } from '@/components/ui/date-picker';
+import { parse } from 'date-fns';
 
 
 
@@ -105,6 +109,14 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         description: string;
         action: () => Promise<void>;
     } | null>(null);
+
+    const latestMonth = React.useMemo(() => {
+        const months = Array.from(new Set(bills.map(b => b.month_year)))
+            .filter(Boolean)
+            .sort()
+            .reverse();
+        return months[0] as string;
+    }, [bills]);
 
     const loadData = async () => {
         setLoading(true);
@@ -183,7 +195,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const reconstructedHistoryMap = React.useMemo(() => {
         const results = new Map();
         const billsByCustomer = new Map<string, any[]>();
-        
+
         for (const b of bills) {
             const key = b.CUSTOMERKEY || b.individual_customer_id;
             if (key) {
@@ -202,58 +214,78 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 return cA - cB;
             });
 
-            let carriedForwardUnpaid = 0;
-            let d30_bucket = 0;
-            let d30_60_bucket = 0;
-            let d60_bucket = 0;
+            let carriedForwardUnpaidPrincipal = 0;
+            let d30_bucket_principal = 0;
+            let d30_60_bucket_principal = 0;
+            let d60_bucket_principal = 0;
+            let lastBillUnpaidPenalty = 0;
 
             for (const bill of historyOldestFirst) {
-                const arrearsSum = carriedForwardUnpaid;
-                // penaltyAmt is fixed from DB as per invoice
-                const penalty = Number(bill.PENALTYAMT || 0);
-                const currentMonthlyCharge = getMonthlyBillAmt(bill);
+                const currentPenalty = Number(bill.PENALTYAMT || 0);
+                const currentMonthlyPrincipal = getMonthlyBillAmt(bill);
                 const isVoided = bill.status === 'Deleted' || bill.status === 'Void';
-                
-                // legacy debt that doesn't fit in buckets
-                const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
-                
+
+                const legacyPrincipal = Math.max(0, carriedForwardUnpaidPrincipal - (d30_bucket_principal + d30_60_bucket_principal + d60_bucket_principal));
+                const totalD60Principal = d60_bucket_principal + legacyPrincipal;
+
+                // Reconstruct buckets as per user rule: Debit_60 = Principals 3+ mo + Recent Penalty
+                const displayD60 = totalD60Principal + lastBillUnpaidPenalty;
+                const derivedOutstanding = d30_bucket_principal + d30_60_bucket_principal + displayD60;
+                const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyPrincipal + currentPenalty;
+
                 results.set(bill.id, {
-                    d30: d30_bucket,
-                    d30_60: d30_60_bucket,
-                    d60: d60_bucket + legacyDebt,
-                    penalty: penalty,
-                    outstanding: arrearsSum + penalty,
-                    currentMonthly: currentMonthlyCharge
+                    d30: d30_bucket_principal,
+                    d30_60: d30_60_bucket_principal,
+                    d60: displayD60,
+                    penalty: currentPenalty,
+                    outstanding: derivedOutstanding + currentPenalty, // Total arrears including current penalty
+                    currentMonthly: currentMonthlyPrincipal,
+                    totalPayable: derivedTotalPayable
                 });
 
-                const totalPayable = arrearsSum + penalty + Math.max(0, currentMonthlyCharge);
                 const amtPaid = isVoided ? 0 : Number(bill.amountPaid || bill.amount_paid || bill.AMOUNTPAID || 0);
-                carriedForwardUnpaid = Math.max(0, totalPayable - amtPaid);
-
-                let remainingPayment = amtPaid;
                 
-                const totalD60AndLegacy = d60_bucket + legacyDebt;
-                const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
-                const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
-                remainingPayment -= paidAgainstOldest;
+                // Calculate unpaid portions for next cycle
+                const unpaidPrincipalThisMonth = Math.max(0, currentMonthlyPrincipal - Math.max(0, amtPaid - (d30_bucket_principal + d30_60_bucket_principal + totalD60Principal + lastBillUnpaidPenalty)));
+                // Simplified payment logic: assume payment covers Arrears (Oldest First) then Current Principal then Current Penalty
+                let remainingPayment = amtPaid;
 
-                const paidAgainstPenalty = Math.min(remainingPayment, penalty);
-                remainingPayment -= paidAgainstPenalty;
+                // 1. Pay against Oldest Arrears (Principal D60 then Last Penalty)
+                const paidAgainstD60 = Math.min(remainingPayment, totalD60Principal);
+                const remD60 = totalD60Principal - paidAgainstD60;
+                remainingPayment -= paidAgainstD60;
 
-                const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
-                const remaining_d30_60 = Math.max(0, d30_60_bucket - paidAgainstD30_60);
+                const paidAgainstLastPenalty = Math.min(remainingPayment, lastBillUnpaidPenalty);
+                const remLastPenalty = lastBillUnpaidPenalty - paidAgainstLastPenalty;
+                remainingPayment -= paidAgainstLastPenalty;
+
+                // 2. Pay against D30_60
+                const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket_principal);
+                const remD30_60 = d30_60_bucket_principal - paidAgainstD30_60;
                 remainingPayment -= paidAgainstD30_60;
 
-                const paidAgainstD30 = Math.min(remainingPayment, d30_bucket);
-                const remaining_d30 = Math.max(0, d30_bucket - paidAgainstD30);
+                // 3. Pay against D30
+                const paidAgainstD30 = Math.min(remainingPayment, d30_bucket_principal);
+                const remD30 = d30_bucket_principal - paidAgainstD30;
                 remainingPayment -= paidAgainstD30;
 
-                const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
-                const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
+                // 4. Pay against Current Principal
+                const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyPrincipal);
+                const remCurrent = currentMonthlyPrincipal - paidAgainstCurrent;
+                remainingPayment -= paidAgainstCurrent;
 
-                d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
-                d30_60_bucket = remaining_d30;
-                d30_bucket = remaining_current;
+                // 5. Update the "All Historical Unpaid Penalties" for the next month's reconstruction
+                const paidAgainstCurrentPenalty = Math.min(remainingPayment, currentPenalty);
+                const unpaidCurrentPenalty = currentPenalty - paidAgainstCurrentPenalty;
+
+                // Sum all unpaid penalties (older remaining + current unpaid)
+                lastBillUnpaidPenalty = remLastPenalty + unpaidCurrentPenalty;
+
+                // Update buckets for next month (Chronological shift)
+                d60_bucket_principal = remD60 + remD30_60;
+                d30_60_bucket_principal = remD30;
+                d30_bucket_principal = remCurrent;
+                carriedForwardUnpaidPrincipal = d60_bucket_principal + d30_60_bucket_principal + d30_bucket_principal;
             }
         }
         return results;
@@ -329,7 +361,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         if (recon) {
             return recon.outstanding + Math.max(0, recon.currentMonthly);
         }
-        
+
         const d30 = Number(b.debit30 || b.debit_30 || 0);
         const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
         const d60 = Number(b.debit60 || b.debit_60 || 0);
@@ -383,15 +415,14 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         if (recon) {
             acc.zeroToThirty += Number(recon.d30 || 0);
             acc.thirtyToSixty += Number(recon.d30_60 || 0);
-            acc.sixtyPlus += Number((recon.d60 || 0) + (recon.penalty || 0));
+            acc.sixtyPlus += Number(recon.d60 || 0);
         } else {
             const d30 = Number(b.debit30 || b.debit_30 || 0);
             const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
             const d60 = Number(b.debit60 || b.debit_60 || 0);
-            const penalty = Number(b.PENALTYAMT || 0);
             acc.zeroToThirty += d30;
             acc.thirtyToSixty += d30_60;
-            acc.sixtyPlus += d60 + penalty;
+            acc.sixtyPlus += d60;
         }
         return acc;
     }, { zeroToThirty: 0, thirtyToSixty: 0, sixtyPlus: 0 });
@@ -399,9 +430,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const totalAgingDebt = aging.zeroToThirty + aging.thirtyToSixty + aging.sixtyPlus;
 
 
-    // Filtered Outstanding List (Main Table)
+    // Filtered Outstanding List (Main Table) - Restricted to Recent Month or Selected Month
     const filteredOutstanding = filteredForStats
         .filter(b => b.status === 'Posted' && b.payment_status === 'Unpaid')
+        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth)
         .filter(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
             const matchesStatus = statusFilter === 'all' ||
@@ -410,9 +442,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             return matchesStatus;
         });
 
-    // Filtered Paid List (Second Table)
+    // Filtered Paid List (Second Table) - Restricted to Recent Month or Selected Month
     const filteredPaid = filteredForStats
-        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid');
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid')
+        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth);
 
     const paginatedOutstanding = filteredOutstanding.slice(
         currentPage * itemsPerPage,
@@ -469,11 +502,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                             Start New Billing Cycle
                         </Button>
                     )}
-                    {hasPermission('bill:create') && (
-                        <Link href={`${basePath}/create`}>
-                            <Button className="h-10">Create New Bill</Button>
-                        </Link>
-                    )}
+
                 </div>
             </div>
 
@@ -587,17 +616,32 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                 ))}
                             </SelectContent>
                         </Select>
-                        <Select value={monthFilter} onValueChange={(val: string) => setMonthFilter(val)}>
-                            <SelectTrigger className="h-10">
-                                <SelectValue placeholder="Month Period" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Months</SelectItem>
-                                {Array.from(new Set(bills.map(b => b.month_year))).sort().reverse().map(m => (
-                                    <SelectItem key={m as string} value={m as string}>{m as string}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-[10px] font-bold uppercase text-gray-400 ml-1">Filter by Month</Label>
+                            <div className="flex items-center gap-2">
+                                <DatePicker
+                                    date={monthFilter === 'all' ? undefined : parse(monthFilter, 'yyyy-MM', new Date())}
+                                    onSelect={(date) => {
+                                        if (date) {
+                                            setMonthFilter(format(date, 'yyyy-MM'));
+                                        } else {
+                                            setMonthFilter('all');
+                                        }
+                                    }}
+                                    placeholder="Select Month"
+                                />
+                                {monthFilter !== 'all' && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-10 px-2 text-gray-400 hover:text-gray-600"
+                                        onClick={() => setMonthFilter('all')}
+                                    >
+                                        <RotateCcw className="h-4 w-4" />
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
                     </CardContent>
                 </Card>
             </div>
@@ -734,121 +778,121 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
 
     return (
         <>
-        <div className="overflow-x-auto">
-            <Table>
-                <TableHeader>
-                    <TableRow className="bg-gray-50/50">
-                        <TableHead className="w-[100px]">ID / Meter</TableHead>
-                        <TableHead>Month</TableHead>
-                        <TableHead>Date Billed</TableHead>
-                        <TableHead>Due Date</TableHead>
-                        <TableHead className="text-right">Prev. Reading</TableHead>
-                        <TableHead className="text-right">Curr. Reading</TableHead>
-                        <TableHead className="text-right">Usage (m³)</TableHead>
-                        <TableHead className="text-right">Diff. Usage (m³)</TableHead>
-                        <TableHead className="text-right text-[10px]">Debit_30</TableHead>
-                        <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
-                        <TableHead className="text-right text-[10px]">Debit_60</TableHead>
-                        <TableHead className="text-right">Penalty</TableHead>
-                        <TableHead className="text-right">Outstanding</TableHead>
-                        <TableHead className="text-right">Current Bill</TableHead>
-                        <TableHead className="text-right whitespace-nowrap">Total Payable</TableHead>
-                        <TableHead className="text-center">Status</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {bills.map((bill) => {
-                        const now = new Date();
-                        const isOverdue = bill.payment_status === 'Unpaid' && bill.due_date && isBefore(new Date(bill.due_date), now);
-                        const recon = reconstructedHistoryMap?.get(bill.id);
-                        
-                        const d30 = recon ? recon.d30 : Number(bill.debit_30 || bill.debit30 || 0);
-                        const d30_60 = recon ? recon.d30_60 : Number(bill.debit_30_60 || bill.debit30_60 || 0);
-                        const d60 = recon ? recon.d60 : Number(bill.debit_60 || bill.debit60 || 0);
-                        const penaltyAmt = recon ? recon.penalty : Number(bill.PENALTYAMT || 0);
-                        
-                        const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penaltyAmt;
-                        const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
-                        const totalPayable = currentOutstanding + currentBillAmt;
+            <div className="overflow-x-auto">
+                <Table>
+                    <TableHeader>
+                        <TableRow className="bg-gray-50/50">
+                            <TableHead className="w-[100px]">ID / Meter</TableHead>
+                            <TableHead>Month</TableHead>
+                            <TableHead>Date Billed</TableHead>
+                            <TableHead>Due Date</TableHead>
+                            <TableHead className="text-right">Prev. Reading</TableHead>
+                            <TableHead className="text-right">Curr. Reading</TableHead>
+                            <TableHead className="text-right">Usage (m³)</TableHead>
+                            <TableHead className="text-right">Diff. Usage (m³)</TableHead>
+                            <TableHead className="text-right text-[10px]">Debit_30</TableHead>
+                            <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
+                            <TableHead className="text-right text-[10px]">Debit_60</TableHead>
+                            <TableHead className="text-right">Penalty</TableHead>
+                            <TableHead className="text-right">Outstanding</TableHead>
+                            <TableHead className="text-right">Current Bill</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">Total Payable</TableHead>
+                            <TableHead className="text-center">Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {bills.map((bill) => {
+                            const now = new Date();
+                            const isOverdue = bill.payment_status === 'Unpaid' && bill.due_date && isBefore(new Date(bill.due_date), now);
+                            const recon = reconstructedHistoryMap?.get(bill.id);
+
+                            const d30 = recon ? recon.d30 : Number(bill.debit_30 || bill.debit30 || 0);
+                            const d30_60 = recon ? recon.d30_60 : Number(bill.debit_30_60 || bill.debit30_60 || 0);
+                            const d60 = recon ? recon.d60 : Number(bill.debit_60 || bill.debit60 || 0);
+                            const penaltyAmt = recon ? recon.penalty : Number(bill.PENALTYAMT || 0);
+
+                            const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penaltyAmt;
+                            const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
+                            const totalPayable = currentOutstanding + currentBillAmt;
 
 
-                        return (
-                            <TableRow key={bill.id}>
-                                <TableCell className="font-medium text-xs">
-                                    <Link href={`${basePath}/${bill.id}`} className="text-blue-600 hover:underline">
-                                        {bill.CUSTOMERKEY || bill.individual_customer_id}
-                                    </Link>
-                                </TableCell>
-                                <TableCell className="text-xs">{bill.month_year}</TableCell>
-                                <TableCell className="text-xs whitespace-nowrap">
-                                    {formatDate(bill.created_at)}
-                                </TableCell>
-                                <TableCell className="text-xs whitespace-nowrap">
-                                    {formatDate(bill.due_date)}
-                                </TableCell>
-                                <TableCell className="text-right text-xs">{Number(bill.PREVREAD || 0).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs">{Number(bill.CURRREAD || 0).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs">{Number(bill.CONS || 0).toFixed(2)}</TableCell>
-                                <TableCell className={cn("text-right text-xs font-medium", (Number(bill.difference_usage) > Number(bill.CONS)) ? "text-green-600" : "")}>
-                                    {Number(bill.difference_usage || bill.CONS || 0).toFixed(2)}
-                                </TableCell>
-                                <TableCell className="text-right text-[10px] text-gray-500">{Number(d30).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-[10px] text-gray-500">{Number(d30_60).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-[10px] text-gray-500">{Number(d60).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs text-destructive font-medium">{Number(penaltyAmt).toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>
-                                <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">
-                                    {totalPayable.toFixed(2)}
-                                </TableCell>
-                                <TableCell className="text-center">
-                                    <Badge
-                                        variant={bill.payment_status === 'Paid' ? 'default' : isOverdue ? 'destructive' : 'outline'}
-                                        className={cn(
-                                            "text-[10px] px-2 py-0 h-5",
-                                            bill.payment_status === 'Paid' ? "bg-blue-500 hover:bg-blue-600" :
-                                                !isOverdue && "bg-amber-100 text-amber-800 border-amber-200"
-                                        )}
-                                    >
-                                        {bill.payment_status === 'Paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Unpaid'}
-                                    </Badge>
-                                </TableCell>
-                                <TableCell className="text-right">
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                <MoreVertical className="h-4 w-4" />
-                                            </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end" className="w-40">
-                                            <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
-                                                <Eye className="mr-2 h-4 w-4" /> View Details
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
-                                                <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
-                                            </DropdownMenuItem>
-                                            {canDelete && (
-                                                <DropdownMenuItem
-                                                    className="text-red-600 focus:text-red-600"
-                                                    onClick={() => onDelete(bill.id)}
-                                                >
-                                                    <Trash2 className="mr-2 h-4 w-4" /> Delete Record
-                                                </DropdownMenuItem>
+                            return (
+                                <TableRow key={bill.id}>
+                                    <TableCell className="font-medium text-xs">
+                                        <Link href={`${basePath}/${bill.id}`} className="text-blue-600 hover:underline">
+                                            {bill.CUSTOMERKEY || bill.individual_customer_id}
+                                        </Link>
+                                    </TableCell>
+                                    <TableCell className="text-xs">{bill.month_year}</TableCell>
+                                    <TableCell className="text-xs whitespace-nowrap">
+                                        {formatDate(bill.created_at)}
+                                    </TableCell>
+                                    <TableCell className="text-xs whitespace-nowrap">
+                                        {formatDate(bill.due_date)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-xs">{Number(bill.PREVREAD || 0).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs">{Number(bill.CURRREAD || 0).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs">{Number(bill.CONS || 0).toFixed(2)}</TableCell>
+                                    <TableCell className={cn("text-right text-xs font-medium", (Number(bill.difference_usage) > Number(bill.CONS)) ? "text-green-600" : "")}>
+                                        {Number(bill.difference_usage || bill.CONS || 0).toFixed(2)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-[10px] text-gray-500">{Number(d30).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-[10px] text-gray-500">{Number(d30_60).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-[10px] text-gray-500">{Number(d60).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs text-destructive font-medium">{Number(penaltyAmt).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">
+                                        {totalPayable.toFixed(2)}
+                                    </TableCell>
+                                    <TableCell className="text-center">
+                                        <Badge
+                                            variant={bill.payment_status === 'Paid' ? 'default' : isOverdue ? 'destructive' : 'outline'}
+                                            className={cn(
+                                                "text-[10px] px-2 py-0 h-5",
+                                                bill.payment_status === 'Paid' ? "bg-blue-500 hover:bg-blue-600" :
+                                                    !isOverdue && "bg-amber-100 text-amber-800 border-amber-200"
                                             )}
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                </TableCell>
-                            </TableRow>
-                        );
-                    })}
-                </TableBody>
-            </Table>
-        </div>
-        <div className="mx-4 mb-3 mt-1 p-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 text-[10px] text-muted-foreground italic">
-            <span className="font-semibold not-italic text-foreground/70">📝 Note: </span>
-            Debit_30 = bill 1 month old  |  Debit_30_60 = bill 2 months old  |  Debit_60 = bill 3+ months old  |  Penalty applies to bills 3+ months old only  |  Outstanding = all unpaid debt + current penalty
-        </div>
+                                        >
+                                            {bill.payment_status === 'Paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Unpaid'}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                    <MoreVertical className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end" className="w-40">
+                                                <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
+                                                    <Eye className="mr-2 h-4 w-4" /> View Details
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
+                                                    <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
+                                                </DropdownMenuItem>
+                                                {canDelete && (
+                                                    <DropdownMenuItem
+                                                        className="text-red-600 focus:text-red-600"
+                                                        onClick={() => onDelete(bill.id)}
+                                                    >
+                                                        <Trash2 className="mr-2 h-4 w-4" /> Delete Record
+                                                    </DropdownMenuItem>
+                                                )}
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        })}
+                    </TableBody>
+                </Table>
+            </div>
+            <div className="mx-4 mb-3 mt-1 p-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 text-[10px] text-muted-foreground italic">
+                <span className="font-semibold not-italic text-foreground/70">📝 Note: </span>
+                Debit_30 = bill 1 month old  |  Debit_30_60 = bill 2 months old  |  Debit_60 = bill 3+ months old  |  Penalty applies to bills 3+ months old only  |  Outstanding = all unpaid debt + current penalty
+            </div>
         </>
     );
 }

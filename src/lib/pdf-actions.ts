@@ -5,8 +5,14 @@ import { processBatchPdfGeneration } from "./pdf-generator.server";
 import path from "path";
 import fs from "fs";
 
+import { checkPermission } from "./actions";
+import { getSession } from "./auth";
+import { PERMISSIONS } from "./constants/auth";
+
 export async function startBatchPdfGenerationAction(monthYear: string, branchId?: string | null) {
   try {
+    const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL);
+    
     const bills = await dbGetBillsForPdfBatch(monthYear, branchId);
     if (bills.length === 0) return { success: false, error: "No bills found for the selected period/branch." };
 
@@ -20,10 +26,6 @@ export async function startBatchPdfGenerationAction(monthYear: string, branchId?
 
     if (!jobId) return { success: false, error: "Failed to create PDF generation job." };
 
-    // In a real production environment, this should be a truly background process 
-    // or handled via a queue like BullMQ. For this local server setup, we 
-    // run it "async" without awaiting the full process to return to the UI quickly.
-    
     const runGeneration = async () => {
       try {
         await dbUpdatePdfJob(jobId, { status: 'processing' });
@@ -42,9 +44,7 @@ export async function startBatchPdfGenerationAction(monthYear: string, branchId?
       }
     };
 
-    // Kick off background process
     runGeneration();
-
     return { success: true, jobId, message: "Batch PDF generation started in background." };
 
   } catch (error: any) {
@@ -55,6 +55,7 @@ export async function startBatchPdfGenerationAction(monthYear: string, branchId?
 
 export async function getActivePdfJobsAction() {
   try {
+    await checkPermission(PERMISSIONS.BILL_VIEW_ALL);
     const jobs = await dbGetActivePdfJobs();
     return { success: true, jobs };
   } catch (error: any) {
@@ -64,6 +65,7 @@ export async function getActivePdfJobsAction() {
 
 export async function deletePdfJobAction(jobId: string) {
   try {
+    await checkPermission(PERMISSIONS.BILL_DELETE);
     const success = await dbDeletePdfJob(jobId);
     return { success: true, message: "Job deleted successfully." };
   } catch (error: any) {
@@ -73,6 +75,18 @@ export async function deletePdfJobAction(jobId: string) {
 
 export async function generateSingleBillPdfAction(billId: string) {
   try {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const { checkPermission, logSecurityEventAction } = await import("./actions");
+    const { dbGetStaffPermissions } = await import("./db-queries");
+    const { PERMISSIONS } = await import("./constants/auth");
+    const perms = await dbGetStaffPermissions(session.id);
+
+    if (!perms.includes(PERMISSIONS.BILL_VIEW_ALL) && !perms.includes(PERMISSIONS.BILL_VIEW_BRANCH)) {
+      throw new Error('Forbidden: Missing bill view permission.');
+    }
+
     const bill = await dbGetBillForPdf(billId);
     if (!bill) return { success: false, error: "Bill not found." };
 
@@ -83,6 +97,12 @@ export async function generateSingleBillPdfAction(billId: string) {
     drawBillOnPdf(doc, bill);
     
     const pdfBase64 = doc.output('datauristring').split(',')[1];
+
+    await logSecurityEventAction({
+      event: 'Generate Single Bill PDF',
+      details: { billId }
+    });
+
     return { success: true, pdfBase64 };
 
   } catch (error: any) {

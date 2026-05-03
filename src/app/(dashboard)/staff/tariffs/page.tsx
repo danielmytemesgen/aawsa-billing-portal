@@ -3,13 +3,14 @@
 import * as React from "react";
 import TariffManagementPage from '@/app/(dashboard)/admin/tariffs/page';
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 
 export default function StaffTariffsPage() {
     const { hasPermission } = usePermissions();
 
-    if (!hasPermission('tariffs_view')) {
+    if (!hasPermission(PERMISSIONS.TARIFFS_VIEW)) {
         return (
             <div className="p-6">
                 <Alert variant="destructive">

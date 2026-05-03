@@ -40,10 +40,14 @@ export default function StaffStaffManagementPage() {
         }
 
         setIsLoading(true);
-        initializeStaffMembers(true).then(() => {
-            setStaffMembers(getStaffMembers());
+        if (hasPermission('staff_view')) {
+            initializeStaffMembers(true).then(() => {
+                setStaffMembers(getStaffMembers());
+                setIsLoading(false);
+            });
+        } else {
             setIsLoading(false);
-        });
+        }
 
         const unsubscribe = subscribeToStaffMembers((updatedStaff) => {
             setStaffMembers(updatedStaff);

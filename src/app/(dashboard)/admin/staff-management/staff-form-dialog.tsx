@@ -28,6 +28,7 @@ import type { StaffMember, StaffStatus } from "./staff-types";
 import { getBranches, initializeBranches, subscribeToBranches, getRoles, initializeRoles, subscribeToRoles } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import type { DomainRole } from "@/lib/data-store";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const staffStatuses = ['Active', 'Inactive', 'On Leave'] as const;
 
@@ -65,8 +66,9 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
     }
   }, []);
 
+  const { hasPermission } = usePermissions();
   const userBranchName = currentUser?.branchName;
-  const isHeadOffice = !userBranchName || currentUser?.role?.toLowerCase().includes("head office");
+  const isHeadOffice = !userBranchName || hasPermission('staff_view_all');
 
   React.useEffect(() => {
     if (open) {

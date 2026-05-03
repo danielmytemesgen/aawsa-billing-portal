@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
+import { set, differenceInDays, addMonths, startOfMonth, addDays, isValid, parseISO } from "date-fns";
+import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, Calendar as CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -216,35 +218,74 @@ export default function AdminSettingsPage() {
 
           {/* Once-per-month options */}
           {cycleMode === 'once_per_month' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20">
-              <div className="space-y-2">
-                <Label htmlFor="billing-cycle-day">Cycle Start Day</Label>
-                <Select value={billingCycleDay} onValueChange={setBillingCycleDay} disabled={!canUpdateSettings}>
-                  <SelectTrigger id="billing-cycle-day" className="w-full">
-                    <SelectValue placeholder="Select day" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {billingCycleDays.map(day => (
-                      <SelectItem key={day} value={day}>Day {day}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">Day of month the billing period starts.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 border rounded-xl bg-muted/20 shadow-inner">
+              <div className="space-y-3">
+                <Label htmlFor="billing-cycle-day" className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <CalendarIcon className="h-4 w-4 text-blue-500" /> Cycle Start Day
+                </Label>
+                <div className="flex flex-col gap-2">
+                  <DatePicker 
+                    date={(() => {
+                      const day = parseInt(billingCycleDay, 10);
+                      if (isNaN(day) || day < 1 || day > 31) return undefined;
+                      const d = set(new Date(), { date: day });
+                      return isValid(d) ? d : undefined;
+                    })()}
+                    setDate={(date) => {
+                      if (date) {
+                        setBillingCycleDay(date.getDate().toString());
+                      }
+                    }}
+                    disabledTrigger={!canUpdateSettings}
+                  />
+                  <p className="text-[10px] text-muted-foreground font-medium pl-1">
+                    Current setting: <span className="text-blue-600 font-bold uppercase tracking-wider">Day {billingCycleDay}</span> of each month.
+                  </p>
+                </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="due-date-offset">Due Date (days after cycle end)</Label>
-                <Input
-                  id="due-date-offset"
-                  type="number"
-                  min={1}
-                  max={60}
-                  value={dueDateOffset}
-                  onChange={(e) => setDueDateOffset(e.target.value)}
-                  disabled={!canUpdateSettings}
-                  className="w-full"
-                />
-                <p className="text-xs text-muted-foreground">Bills will be due this many days after cycle ends.</p>
+              <div className="space-y-3">
+                <Label htmlFor="due-date-offset" className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <CalendarIcon className="h-4 w-4 text-amber-500" /> Due Date (Payment Deadline)
+                </Label>
+                <div className="flex flex-col gap-2">
+                  <DatePicker 
+                    date={(() => {
+                      const startDay = parseInt(billingCycleDay, 10);
+                      const offset = parseInt(dueDateOffset, 10);
+                      if (isNaN(startDay) || isNaN(offset)) return undefined;
+                      
+                      // Calculate reference end date (same day next month)
+                      const referenceStart = set(new Date(), { date: startDay });
+                      const referenceEnd = addMonths(referenceStart, 1);
+                      const actualDueDate = addDays(referenceEnd, offset);
+                      
+                      return isValid(actualDueDate) ? actualDueDate : undefined;
+                    })()}
+                    setDate={(date) => {
+                      if (date) {
+                        const startDay = parseInt(billingCycleDay, 10);
+                        const referenceStart = set(new Date(), { date: startDay });
+                        const referenceEnd = addMonths(referenceStart, 1);
+                        
+                        // Calculate offset. If user picks a date before referenceEnd, 
+                        // we assume they mean the same day next month (to keep positive offset)
+                        let offset = differenceInDays(date, referenceEnd);
+                        if (offset < 0) {
+                          // Try one month later if they picked a "same month" date that results in negative offset
+                          const altReferenceEnd = referenceStart;
+                          offset = differenceInDays(date, altReferenceEnd);
+                        }
+                        
+                        setDueDateOffset(Math.max(1, offset).toString());
+                      }
+                    }}
+                    disabledTrigger={!canUpdateSettings}
+                  />
+                  <p className="text-[10px] text-muted-foreground font-medium pl-1">
+                    Deadline set to <span className="text-amber-600 font-bold uppercase tracking-wider">{dueDateOffset} days</span> after cycle end.
+                  </p>
+                </div>
               </div>
             </div>
           )}

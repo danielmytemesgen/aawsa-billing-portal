@@ -524,17 +524,20 @@ export default function StaffBulkMeterDetailsPage() {
       // 3. Current Month Monthly Part (0 if voided)
       const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
       
-      // 4. Totals for THIS row
-      const outstandingWithPenalty = arrearsSum + penalty;
-      const totalPayable = outstandingWithPenalty + Math.max(0, currentMonthlyCharge);
+      // 4. Totals & Dynamic Reconstruction for THIS row
+      const totalD60AndLegacy = d60_bucket + legacyDebt;
+      
+      // Reconstruct exactly from buckets as per business rule
+      const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+      const totalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
 
       // Save results for this row (by Bill ID)
       results.set(bill.id, {
         d30: d30_bucket,
         d30_60: d30_60_bucket,
-        d60: d60_bucket + legacyDebt,
+        d60: totalD60AndLegacy,
         penalty,
-        outstanding: outstandingWithPenalty,
+        outstanding: derivedOutstanding,
         currentMonthly: currentMonthlyCharge,
         totalPayable
       });
@@ -542,19 +545,22 @@ export default function StaffBulkMeterDetailsPage() {
       // 5. Calculate Carried Forward UNPAID for the NEXT Month
       // If voided, we assume no payment was possible/recorded against THIS specific record
       const amtPaid = isVoided ? 0 : Number(bill.amountPaid || 0);
-      carriedForwardUnpaid = Math.max(0, totalPayable - amtPaid);
+      
+      // The business rule: previous Penalty must be carried forward and included in the arrears,
+      // which will naturally cascade down into Debit_60 as legacy debt since it doesn't fit the newer buckets.
+      const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+      carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
 
       // 6. Update Aging Buckets for the NEXT cycle
       // We assume payments cover oldest debt first
       let remainingPayment = amtPaid;
       
       // Deduct from d60 and legacy
-      const totalD60AndLegacy = d60_bucket + legacyDebt;
       const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
       const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
       remainingPayment -= paidAgainstOldest;
 
-      // Deduct from penalty
+      // Note: penalty is carried forward to buckets as legacy debt next cycle.
       const paidAgainstPenalty = Math.min(remainingPayment, penalty);
       remainingPayment -= paidAgainstPenalty;
 

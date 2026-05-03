@@ -25,8 +25,8 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import type { StaffMember } from "../staff-management/staff-types";
 
-const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "zCoordinate", "branchId", "routeKey", "ordinal"];
-const individualCustomerCsvHeaders = ["name", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId", "xCoordinate", "yCoordinate", "zCoordinate"];
+const bulkMeterCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "zCoordinate", "branchId", "routeKey", "ordinal"];
+const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId", "xCoordinate", "yCoordinate", "zCoordinate"];
 
 // Schema for CSV upload that allows auto-generated fields to be optional
 const bulkMeterCsvSchema = baseBulkMeterDataSchema.extend({
@@ -73,7 +73,7 @@ export default function AdminDataEntryPage() {
     if (!currentUser) return { success: false, message: "User not authenticated" };
     
     // Generate keys if missing
-    let finalData = { ...data };
+    const finalData = { ...data };
     if (!data.customerKeyNumber || !data.instKey) {
       const existingMeters = getBulkMeters();
       const generated = generateBulkMeterKeys(existingMeters);
@@ -91,7 +91,7 @@ export default function AdminDataEntryPage() {
     if (!currentUser) return { success: false, message: "User not authenticated" };
     
     // Generate keys if missing
-    let finalData = { ...data };
+    const finalData = { ...data };
     if (!data.customerKeyNumber || !data.instKey) {
       const existingCustomers = getCustomers();
       const generated = generateCustomerKeys(existingCustomers);

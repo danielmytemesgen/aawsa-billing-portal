@@ -33,7 +33,8 @@ import {
     getSystemSettingsAction,
     resetStuckBillingJobsAction
 } from "@/lib/actions";
-import { format } from "date-fns";
+import { format, parse } from "date-fns";
+import { DatePicker } from "@/components/ui/date-picker";
 import { BILLING_DUE_DATE_OFFSET_DAYS } from "@/lib/billing-config";
 
 interface BillingCycleDialogProps {
@@ -384,10 +385,13 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                         <div className={isBulk ? "grid grid-cols-2 gap-4" : "space-y-2"}>
                             <div className="space-y-2">
                                 <Label>Billing Month</Label>
-                                <Input
-                                    type="month"
-                                    value={monthYear}
-                                    onChange={(e) => setMonthYear(e.target.value)}
+                                <DatePicker
+                                    date={monthYear ? parse(monthYear, "yyyy-MM", new Date()) : undefined}
+                                    onSelect={(date) => {
+                                        if (date) setMonthYear(format(date, "yyyy-MM"));
+                                    }}
+                                    placeholder="Select Month"
+                                    className="w-full"
                                 />
                             </div>
                             {isBulk && (
@@ -417,24 +421,29 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-1">
                                     <Label htmlFor="custom-start" className="text-xs">Period Start Date</Label>
-                                    <Input
-                                        id="custom-start"
-                                        type="date"
-                                        value={customStartDate}
-                                        onChange={(e) => {
-                                            setCustomStartDate(e.target.value);
-                                            if (e.target.value) setMonthYear(e.target.value.substring(0, 7));
+                                    <DatePicker
+                                        date={customStartDate ? new Date(customStartDate) : undefined}
+                                        onSelect={(date) => {
+                                            if (date) {
+                                                const startStr = format(date, "yyyy-MM-dd");
+                                                setCustomStartDate(startStr);
+                                                setMonthYear(startStr.substring(0, 7));
+                                            }
                                         }}
+                                        placeholder="Start Date"
+                                        className="w-full"
                                     />
                                 </div>
                                 <div className="space-y-1">
                                     <Label htmlFor="custom-end" className="text-xs">Period End Date</Label>
-                                    <Input
-                                        id="custom-end"
-                                        type="date"
-                                        value={customEndDate}
-                                        onChange={(e) => setCustomEndDate(e.target.value)}
-                                        min={customStartDate}
+                                    <DatePicker
+                                        date={customEndDate ? new Date(customEndDate) : undefined}
+                                        onSelect={(date) => {
+                                            if (date) setCustomEndDate(format(date, "yyyy-MM-dd"));
+                                        }}
+                                        placeholder="End Date"
+                                        className="w-full"
+                                        disabledTrigger={!customStartDate}
                                     />
                                 </div>
                             </div>

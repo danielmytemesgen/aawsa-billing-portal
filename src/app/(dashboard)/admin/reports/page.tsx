@@ -48,7 +48,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { calculateBillAction, syncAllBillsAgingDebtAction, getAllBranchesAction } from "@/lib/actions";
 import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
 import { RefreshCw, Zap } from "lucide-react";
-import { format as formatDate } from "date-fns";
+import { format as formatDate, parse } from "date-fns";
 import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
 
@@ -1382,7 +1382,14 @@ export default function AdminReportsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="pdf-month" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Month / Year</Label>
-              <input id="pdf-month" type="month" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 transition" value={selectedPdfMonth} onChange={(e) => setSelectedPdfMonth(e.target.value)} />
+              <DatePicker
+                date={selectedPdfMonth ? parse(selectedPdfMonth, 'yyyy-MM', new Date()) : undefined}
+                onSelect={(date) => {
+                  if (date) setSelectedPdfMonth(formatDate(date, 'yyyy-MM'));
+                }}
+                placeholder="Select Month"
+                className="w-full rounded-xl border-slate-200 bg-slate-50"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="pdf-branch" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Branch</Label>

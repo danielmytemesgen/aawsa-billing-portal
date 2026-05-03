@@ -29,7 +29,7 @@ import { LogIn, Eye, EyeOff } from "lucide-react";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
 
-import { ROLES, PERMISSIONS, isManagementRole } from "@/lib/constants/auth";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -74,9 +74,7 @@ export function AuthForm() {
 
       const role = result.user.role.toLowerCase().trim();
       const permissions = result.user.permissions || [];
-      const isManagement =
-        permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
-        isManagementRole(role);
+      const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
       if (isManagement) {
         // Automatically sync billing aging debt in the background for management users
@@ -84,13 +82,7 @@ export function AuthForm() {
           console.error("Background sync failed on login:", err);
         });
 
-        if (role === ROLES.HEAD_OFFICE_MANAGEMENT || permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
-          router.push("/admin/head-office-dashboard");
-        } else if (role === ROLES.STAFF_MANAGEMENT) {
-          router.push("/admin/staff-management-dashboard");
-        } else {
-          router.push("/admin/dashboard");
-        }
+        router.push("/admin/dashboard");
       } else {
         router.push("/staff/dashboard");
       }

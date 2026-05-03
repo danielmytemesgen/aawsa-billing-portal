@@ -71,7 +71,7 @@ export default function StaffManagementPage() {
   }, []);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office") || hasPermission('staff_view_all');
+  const isHeadOffice = !userBranchId || hasPermission('staff_view_all');
 
   const handleAddStaff = () => {
     if (!hasPermission('staff_create')) return;

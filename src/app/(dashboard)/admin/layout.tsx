@@ -7,6 +7,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { PERMISSIONS } from "@/lib/constants/auth";
+
 // Dynamically import the client-side wrapper to prevent SSR issues with localStorage
 const AdminLayoutClient = dynamic(() => import('@/app/(dashboard)/admin/admin-layout-client'), {
   loading: () => (
@@ -27,8 +29,6 @@ interface UserProfile {
   name?: string;
 }
 
-const ADMIN_ROLES = ['admin', 'head office management', 'staff management'];
-
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
     const [user, setUser] = React.useState<UserProfile | null>(null);
     const [isLoading, setIsLoading] = React.useState(true);
@@ -40,9 +40,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         if (storedUser) {
             try {
                 const parsedUser: UserProfile = JSON.parse(storedUser);
+                const userPermissions = parsedUser.permissions || [];
 
-                // Allow access if user has an admin role
-                if (ADMIN_ROLES.includes(parsedUser.role.toLowerCase())) {
+                // Allow access if user has the high-level dashboard permission
+                if (userPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
                     setUser(parsedUser);
                 } else {
                     router.replace("/"); // Not authorized for this layout

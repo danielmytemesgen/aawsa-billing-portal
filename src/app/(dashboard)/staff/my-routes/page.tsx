@@ -18,20 +18,8 @@ export default function MyRoutesPage() {
     const allBulkMeters = useBulkMeters();
     const [isLoading, setIsLoading] = React.useState(true);
 
-    if (!hasPermission('routes_view_assigned')) {
-        return (
-            <div className="p-6">
-                <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Access Denied</AlertTitle>
-                    <UIAlertDescription>
-                        You do not have permission to view your assigned routes.
-                    </UIAlertDescription>
-                </Alert>
-            </div>
-        );
-    }
-
+    // NOTE: All hooks must be declared before any conditional return
+    // to comply with the Rules of Hooks.
     React.useEffect(() => {
         const load = async () => {
             setIsLoading(true);
@@ -53,6 +41,20 @@ export default function MyRoutesPage() {
     const getMeterCount = (routeKey: string) => {
         return allBulkMeters.filter(bm => bm.routeKey === routeKey).length;
     };
+
+    if (!hasPermission('routes_view_assigned')) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to view your assigned routes.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
 
     if (isLoading) {
         return (

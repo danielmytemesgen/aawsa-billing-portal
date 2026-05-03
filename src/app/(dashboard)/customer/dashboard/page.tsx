@@ -3,13 +3,16 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DollarSign, FileText, CheckCircle, AlertCircle, Calendar, User, BarChart3 } from "lucide-react";
+import { DollarSign, FileText, CheckCircle, AlertCircle, Calendar } from "lucide-react";
 import { getCustomerBillsAction, getCustomerAccountAction } from "@/lib/actions";
 import { format } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { useCustomerActivityLogger } from "@/lib/customer-activity-logger";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { motion, AnimatePresence } from "framer-motion";
+
 
 interface Bill {
     id: string;
@@ -66,12 +69,13 @@ export default function CustomerDashboardPage() {
             const customer = JSON.parse(customerData);
             const customerKeyNumber = customer.customerKeyNumber;
             const customerType = customer.customerType || "individual";
+            const sessionId = customer.sessionId;
 
             // Load bills based on customer type
             if (customerType === "bulk") {
                 const { getBulkMeterBillsAction, getBulkMeterAccountAction } = await import("@/lib/actions");
 
-                const { data: billsData } = await getBulkMeterBillsAction(customerKeyNumber);
+                const { data: billsData } = await getBulkMeterBillsAction(customerKeyNumber, true, sessionId);
                 if (billsData) {
                     const processedBills = (billsData as any[]).map((b: any) => ({
                         ...b,
@@ -99,13 +103,13 @@ export default function CustomerDashboardPage() {
                 }
 
                 // Load bulk meter account info
-                const { data: accountData } = await getBulkMeterAccountAction(customerKeyNumber);
+                const { data: accountData } = await getBulkMeterAccountAction(customerKeyNumber, sessionId);
                 if (accountData) {
                     setAccount(accountData as any);
                 }
             } else {
                 // Individual customer
-                const { data: billsData } = await getCustomerBillsAction(customerKeyNumber);
+                const { data: billsData } = await getCustomerBillsAction(customerKeyNumber, true, sessionId);
                 if (billsData) {
                     const processedBills = (billsData as any[]).map((b: any) => ({
                         ...b,
@@ -133,7 +137,7 @@ export default function CustomerDashboardPage() {
                 }
 
                 // Load individual customer account info
-                const { data: accountData } = await getCustomerAccountAction(customerKeyNumber);
+                const { data: accountData } = await getCustomerAccountAction(customerKeyNumber, sessionId);
                 if (accountData) {
                     setAccount(accountData as any);
                 }
@@ -147,325 +151,340 @@ export default function CustomerDashboardPage() {
 
     if (isLoading) {
         return (
-            <div className="space-y-6">
-                <Skeleton className="h-32 w-full" />
+            <div className="space-y-8 animate-pulse">
+                <div className="h-10 w-1/4 bg-slate-200 rounded-lg"></div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <Skeleton className="h-32" />
-                    <Skeleton className="h-32" />
-                    <Skeleton className="h-32" />
+                    <div className="h-40 bg-slate-100 rounded-3xl"></div>
+                    <div className="h-40 bg-slate-100 rounded-3xl"></div>
+                    <div className="h-40 bg-slate-100 rounded-3xl"></div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-                <p className="text-gray-600 mt-1">Overview of your water account</p>
+        <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="space-y-8"
+        >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <div className="status-pulse">
+                            <span className="status-pulse-dot bg-green-500"></span>
+                            <span className="status-pulse-inner bg-green-500"></span>
+                        </div>
+                        <span className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-widest">Live Updates</span>
+                    </div>
+                    <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                        Welcome back, {account?.name ? account.name.split(' ')[0] : 'Customer'}!
+                    </h1>
+                    <p className="text-slate-500 dark:text-slate-400 font-medium">Here&apos;s what&apos;s happening with your water account today.</p>
+                </div>
             </div>
+
 
             {/* Current Bill Alert */}
             {currentBill && (
-                <Card className="border-l-4 border-l-amber-500 bg-amber-50/50 shadow-sm overflow-hidden backdrop-blur-sm">
-                    <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <AlertCircle className="h-5 w-5 text-amber-600" />
-                                <CardTitle className="text-lg text-amber-900 font-bold uppercase tracking-wide">Current Bill Due</CardTitle>
-                            </div>
-                            <Badge variant="destructive" className="bg-amber-600 hover:bg-amber-700">Unpaid</Badge>
-                        </div>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                            <div className="p-3 bg-white/40 rounded-lg">
-                                <p className="text-xs text-amber-800/70 font-bold uppercase mb-1">Billing Period</p>
-                                <p className="text-lg font-bold text-amber-900">{currentBill.month_year}</p>
-                            </div>
-                            <div className="p-3 bg-white/40 rounded-lg">
-                                <p className="text-xs text-amber-800/70 font-bold uppercase mb-1">Amount Due</p>
-                                <p className="text-2xl font-black text-amber-700">ETB {(
-                                    Number(currentBill.PENALTYAMT || 0) +
-                                    Number(currentBill.OUTSTANDINGAMT ?? (Number(currentBill.debit_30 || 0) + Number(currentBill.debit_30_60 || 0) + Number(currentBill.debit_60 || 0))) +
-                                    getMonthlyBillAmt(currentBill)
-                                ).toFixed(2)}</p>
-                            </div>
-                            <div className="p-3 bg-white/40 rounded-lg">
-                                <p className="text-xs text-amber-800/70 font-bold uppercase mb-1">Due Date</p>
-                                <p className="text-lg font-bold text-amber-900">
-                                    {currentBill.due_date ? format(new Date(currentBill.due_date), "MMM dd, yyyy") : "N/A"}
-                                </p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
-
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                <Card className="bg-blue-50 border-blue-100 shadow-sm">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-blue-900">Total Bills</CardTitle>
-                        <FileText className="h-4 w-4 text-blue-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-blue-700">{stats.totalBills}</div>
-                        <p className="text-xs text-blue-600/70 mt-1">All time billing records</p>
-                    </CardContent>
-                </Card>
-
-                <Card className="bg-emerald-50 border-emerald-100 shadow-sm">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-emerald-900">Paid Bills</CardTitle>
-                        <CheckCircle className="h-4 w-4 text-emerald-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-emerald-700">{stats.paidBills}</div>
-                        <p className="text-xs text-emerald-600/70 mt-1">Successfully paid</p>
-                    </CardContent>
-                </Card>
-
-                <Card className="bg-amber-50 border-amber-100 shadow-sm sm:col-span-2 lg:col-span-1">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-amber-900">Outstanding Balance</CardTitle>
-                        <DollarSign className="h-4 w-4 text-amber-600" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-amber-700">ETB {stats.outstandingAmount.toFixed(2)}</div>
-                        <p className="text-xs text-amber-600/70 mt-1">Amount pending payment</p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Account Info */}
-            {account && (
-                <Card className="bg-indigo-50/50 border-indigo-100 shadow-sm border-t-4 border-t-indigo-500">
-                    <CardHeader>
-                        <div className="flex items-center gap-2">
-                            <User className="h-5 w-5 text-indigo-600" />
-                            <CardTitle className="text-indigo-900">Account Information</CardTitle>
-                        </div>
-                        <CardDescription className="text-indigo-600/70">Your water meter details</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
-                            <div className="p-3 bg-white/50 rounded-lg">
-                                <p className="text-xs text-indigo-700/60 font-bold uppercase mb-1">Account Name</p>
-                                <p className="font-bold text-indigo-900">{account.name}</p>
-                            </div>
-                            <div className="p-3 bg-white/50 rounded-lg">
-                                <p className="text-xs text-indigo-700/60 font-bold uppercase mb-1">Customer Key</p>
-                                <p className="font-bold text-indigo-900">{account.customerKeyNumber}</p>
-                            </div>
-                            <div className="p-3 bg-white/50 rounded-lg">
-                                <p className="text-xs text-indigo-700/60 font-bold uppercase mb-1">Meter Number</p>
-                                <p className="font-bold text-indigo-900">{account.meterNumber || "N/A"}</p>
-                            </div>
-                            <div className="p-3 bg-white/50 rounded-lg">
-                                <p className="text-xs text-indigo-700/60 font-bold uppercase mb-1">Status</p>
-                                <Badge variant={account.status === "Active" ? "default" : "secondary"} className={account.status === "Active" ? "bg-indigo-600" : ""}>
-                                    {account.status}
-                                </Badge>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
-
-            {/* Smart Insights: Usage Comparison & Bill Breakdown */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Usage Comparison Card */}
-                <Card className="bg-slate-50 border-slate-100 shadow-sm">
-                    <CardHeader>
-                        <CardTitle className="text-slate-900">Usage Insights</CardTitle>
-                        <CardDescription className="text-slate-600/70">Comparison with previous period</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {bills.length < 2 ? (
-                            <div className="h-[250px] flex flex-col items-center justify-center text-gray-500 space-y-2">
-                                <AlertCircle className="h-8 w-8 opacity-20" />
-                                <p>Not enough data for comparison</p>
-                            </div>
-                        ) : (() => {
-                            const latest = bills[0];
-                            const previous = bills[1];
-                            const latestUsage = Number(latest.CONS ?? latest.usage_m3 ?? 0);
-                            const prevUsage = Number(previous.CONS ?? previous.usage_m3 ?? 0);
-                            const diff = latestUsage - prevUsage;
-                            const percentChange = prevUsage !== 0 ? (diff / prevUsage) * 100 : 0;
-                            const isIncrease = diff > 0;
-
-                            return (
-                                <div className="space-y-6">
-                                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                                        <div>
-                                            <p className="text-sm text-gray-500 uppercase font-bold tracking-wider">Trend</p>
-                                            <div className="flex items-baseline gap-2">
-                                                <span className={`text-3xl font-bold ${isIncrease ? 'text-orange-600' : 'text-green-600'}`}>
-                                                    {isIncrease ? '+' : ''}{percentChange.toFixed(1)}%
-                                                </span>
-                                                <span className="text-sm text-gray-400 font-medium">vs last month</span>
-                                            </div>
-                                        </div>
-                                        <div className={`p-3 rounded-full ${isIncrease ? 'bg-orange-100' : 'bg-green-100'}`}>
-                                            {isIncrease ? (
-                                                <AlertCircle className="h-6 w-6 text-orange-600" />
-                                            ) : (
-                                                <CheckCircle className="h-6 w-6 text-green-600" />
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <p className="text-sm font-medium">Quick Summary:</p>
-                                        <p className="text-sm text-gray-600 leading-relaxed">
-                                            {isIncrease
-                                                ? `Your consumption increased by ${diff.toFixed(2)} m³ compared to ${previous.month_year}. Consider checking for leaks if this was unexpected.`
-                                                : `Great! Your consumption decreased by ${Math.abs(diff).toFixed(2)} m³ compared to ${previous.month_year}. You saved approximately ETB ${(Math.abs(diff) * 10).toFixed(2)} in base charges.`}
-                                        </p>
-                                    </div>
+                <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }}>
+                    <Card className="border-amber-200 bg-amber-50 dark:bg-amber-900/10 shadow-lg shadow-amber-100 dark:shadow-none rounded-3xl overflow-hidden">
+                        <CardHeader className="pb-2">
+                            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+                                <div className="p-2 bg-amber-100 dark:bg-amber-800/30 rounded-xl">
+                                    <AlertCircle className="h-5 w-5" />
                                 </div>
-                            );
-                        })()}
-                    </CardContent>
-                </Card>
-
-                {/* Bill Breakdown Card */}
-                <Card className="bg-slate-50 border-slate-100 shadow-sm">
-                    <CardHeader>
-                        <CardTitle className="text-slate-900">Bill Breakdown</CardTitle>
-                        <CardDescription className="text-slate-600/70">Latest invoice distribution</CardDescription>
-                    </CardHeader>
-                    <CardContent className="h-[300px]">
-                        {!bills[0] ? (
-                            <div className="h-full flex items-center justify-center text-gray-500">
-                                No bill data
+                                <CardTitle className="text-lg font-bold">Pending Payment</CardTitle>
                             </div>
-                        ) : (() => {
-                            const bill = bills[0] as any;
-                            const data = [
-                                { name: 'Water', value: Number(bill.base_water_charge || 0), color: '#3b82f6' },
-                                { name: 'Sewerage', value: Number(bill.sewerage_charge || 0), color: '#8b5cf6' },
-                                { name: 'Sanitation', value: Number(bill.sanitation_fee || 0), color: '#10b981' },
-                                { name: 'Maintenance', value: Number(bill.maintenance_fee || 0), color: '#f59e0b' },
-                                { name: 'Meter Rent', value: Number(bill.meter_rent || 0), color: '#64748b' },
-                                { name: 'VAT', value: Number(bill.vat_amount || bill.vatAmount || 0), color: '#ef4444' },
-                                { name: 'Additional', value: Number(bill.additional_fees_charge || bill.additionalFeesCharge || 0), color: '#ec4899' },
-                            ].filter(item => item.value > 0);
+                        </CardHeader>
+                        <CardContent>
+                            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-amber-900 dark:text-amber-100 font-bold text-lg">
+                                        Your bill for {currentBill.month_year} is ready and due on {currentBill.due_date ? format(new Date(currentBill.due_date), "MMM dd, yyyy") : "N/A"}.
+                                    </p>
+                                    <p className="text-amber-700 dark:text-amber-300 text-sm mt-1 font-medium">
+                                        Consumption Recorded: <span className="font-bold">{currentBill.CONS || 0} m³</span>
+                                    </p>
+                                </div>
+                                <div className="text-left md:text-right">
+                                    <p className="text-xs text-amber-700 dark:text-amber-400 uppercase font-black tracking-widest mb-1">Total Amount Due</p>
+                                    <p className="text-4xl font-black text-amber-900 dark:text-amber-100 tracking-tighter">
+                                        ETB {(
+                                            Number(currentBill.PENALTYAMT || 0) +
+                                            Number(currentBill.OUTSTANDINGAMT ?? (Number(currentBill.debit_30 || 0) + Number(currentBill.debit_30_60 || 0) + Number(currentBill.debit_60 || 0))) +
+                                            getMonthlyBillAmt(currentBill)
+                                        ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </p>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </motion.div>
+            )}
 
-                            if (data.length === 0) return <div className="h-full flex items-center justify-center text-gray-500">No charge breakdown available</div>;
 
-                            return (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={data}
-                                            cx="50%"
-                                            cy="50%"
-                                            innerRadius={60}
-                                            outerRadius={80}
-                                            paddingAngle={5}
-                                            dataKey="value"
-                                        >
-                                            {data.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={entry.color} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip
-                                            formatter={(value: number) => [`ETB ${value.toFixed(2)}`, 'Amount']}
-                                        />
-                                        <Legend verticalAlign="bottom" height={36} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            );
-                        })()}
-                    </CardContent>
-                </Card>
+            {/* Quick Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
+                    <Card className="refined-card border-l-4 border-l-blue-500">
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Bills</CardTitle>
+                            <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                                <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-black text-slate-900 dark:text-white">{stats.totalBills}</div>
+                            <p className="text-xs text-slate-500 mt-1">Total records found</p>
+                        </CardContent>
+                    </Card>
+                </motion.div>
+                <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
+                    <Card className="refined-card border-l-4 border-l-emerald-500">
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider">Settled Bills</CardTitle>
+                            <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
+                                <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-black text-slate-900 dark:text-white">{stats.paidBills}</div>
+                            <p className="text-xs text-slate-500 mt-1">Successfully paid</p>
+                        </CardContent>
+                    </Card>
+                </motion.div>
+                <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
+                    <Card className="refined-card border-l-4 border-l-rose-500 shadow-rose-100 dark:shadow-none">
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider">Outstanding</CardTitle>
+                            <div className="p-2 bg-rose-50 dark:bg-rose-900/20 rounded-lg">
+                                <DollarSign className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-black text-rose-600">ETB {stats.outstandingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                            <p className="text-xs text-slate-500 mt-1">Pending payment</p>
+                        </CardContent>
+                    </Card>
+                </motion.div>
             </div>
 
-            {/* Consumption History Chart */}
-            <Card className="shadow-md border-gray-100 overflow-hidden">
-                <CardHeader className="bg-gray-50/50 border-b">
-                    <CardTitle className="flex items-center gap-2">
-                        <BarChart3 className="h-5 w-5 text-blue-600" />
-                        Consumption History
-                    </CardTitle>
-                    <CardDescription>Water usage over time (m³)</CardDescription>
-                </CardHeader>
-                <CardContent className="h-[300px] pt-6">
-                    {bills.length === 0 ? (
-                        <div className="h-full flex items-center justify-center text-gray-500">
-                            No data available
-                        </div>
-                    ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                                data={[...bills].reverse().slice(-6)} // Show last 6 bills in chronological order
-                                margin={{
-                                    top: 10,
-                                    right: 30,
-                                    left: 0,
-                                    bottom: 0,
-                                }}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="month_year" />
-                                <YAxis />
-                                <Tooltip
-                                    formatter={(value: number) => [`${value} m³`, 'Usage']}
-                                    labelStyle={{ color: '#333' }}
-                                />
-                                <Bar dataKey="CONS" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Usage (m³)" />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    )}
-                </CardContent>
-            </Card>
 
-            {/* Recent Bills */}
-            <Card className="shadow-md border-gray-100 overflow-hidden">
-                <CardHeader className="bg-gray-50/50 border-b">
-                    <CardTitle className="flex items-center gap-2">
-                        <FileText className="h-5 w-5 text-blue-600" />
-                        Recent Bills
-                    </CardTitle>
-                    <CardDescription>Your latest billing history</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {bills.length === 0 ? (
-                        <p className="text-center text-gray-500 py-8">No billing history available</p>
-                    ) : (
-                        <div className="space-y-3">
-                            {bills.slice(0, 5).map((bill) => (
-                                <div key={bill.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 border rounded-lg hover:bg-gray-50 gap-2 sm:gap-0">
-                                    <div className="flex items-center gap-3">
-                                        <Calendar className="h-5 w-5 text-gray-400" />
-                                        <div>
-                                            <p className="font-medium">{bill.month_year || "N/A"}</p>
-                                            <p className="text-sm text-gray-600">
-                                                {bill.created_at ? format(new Date(bill.created_at), "MMM dd, yyyy") : "N/A"}
+            {/* Main Content Sections */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Insights Column */}
+                <div className="lg:col-span-8 space-y-8">
+                    {/* Usage Insight Card */}
+                    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}>
+                        <Card className="refined-card bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-800 border-none shadow-xl">
+                            <CardHeader>
+                                <CardTitle className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                                    <div className="h-6 w-1 bg-blue-600 rounded-full" />
+                                    Monthly Insight
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {bills.length >= 2 ? (() => {
+                                    const latestUsage = Number(bills[0].CONS || bills[0].usage_m3 || 0);
+                                    const prevUsage = Number(bills[1].CONS || bills[1].usage_m3 || 0);
+                                    const diff = latestUsage - prevUsage;
+                                    const isIncrease = diff > 0;
+                                    return (
+                                        <div className="space-y-6">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-baseline gap-2">
+                                                    <span className="text-6xl font-black tracking-tighter text-slate-900 dark:text-white">
+                                                        {isIncrease ? '+' : ''}{Math.abs(diff).toFixed(1)}
+                                                    </span>
+                                                    <span className="text-2xl font-bold text-slate-400">m³</span>
+                                                </div>
+                                                <div className={`p-4 rounded-2xl ${isIncrease ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600' : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600'}`}>
+                                                    {isIncrease ? <AlertCircle className="h-8 w-8" /> : <CheckCircle className="h-8 w-8" />}
+                                                </div>
+                                            </div>
+                                            <p className={`text-base font-semibold leading-relaxed ${isIncrease ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                {isIncrease
+                                                    ? `Your consumption went up by ${diff.toFixed(1)} m³ this month. Check for leaks to save on your next bill.`
+                                                    : `Excellent! You saved ${Math.abs(diff).toFixed(1)} m³ compared to last month. Keep up the efficiency.`}
                                             </p>
                                         </div>
-                                    </div>
-                                    <div className="text-left sm:text-right w-full sm:w-auto">
-                                        <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 sm:gap-0">
-                                            <p className="font-semibold">ETB {(
-                                                Number(bill.PENALTYAMT || 0) +
-                                                Number(bill.OUTSTANDINGAMT ?? (Number(bill.debit_30 || 0) + Number(bill.debit_30_60 || 0) + Number(bill.debit_60 || 0))) +
-                                                getMonthlyBillAmt(bill)
-                                            ).toFixed(2)}</p>
-                                            <Badge variant={bill.payment_status === "Paid" ? "default" : "destructive"} className="mt-0 sm:mt-1">
-                                                {bill.payment_status}
-                                            </Badge>
-                                        </div>
-                                    </div>
+                                    );
+                                })() : (
+                                    <p className="text-slate-400 font-bold py-8 text-center">Collecting more data for insights...</p>
+                                )}
+                                <Button variant="secondary" className="w-full mt-6 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 font-bold text-blue-600 dark:text-blue-400" onClick={() => (window.location.href = '/customer/readings')}>
+                                    Explore Full History
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </motion.div>
+
+
+
+                    {/* Recent Bills List */}
+                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+                        <Card className="refined-card">
+                            <CardHeader className="flex flex-row items-center justify-between">
+                                <div>
+                                    <CardTitle className="text-lg font-bold">Recent Bills</CardTitle>
+                                    <CardDescription>Your latest billing records</CardDescription>
                                 </div>
-                            ))}
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
-        </div>
+                                <Button variant="ghost" size="sm" className="text-blue-600 font-bold hover:bg-blue-50 dark:hover:bg-blue-900/20" onClick={() => (window.location.href = '/customer/bills')}>
+                                    View All Records
+                                </Button>
+                            </CardHeader>
+                            <CardContent>
+                                {bills.length === 0 ? (
+                                    <p className="text-center py-8 text-slate-400 font-medium">No recent bills found</p>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {bills.slice(0, 5).map((bill, index) => (
+                                            <motion.div 
+                                                key={bill.id}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: 0.4 + (index * 0.1) }}
+                                                className="flex items-center justify-between p-4 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl hover:bg-white dark:hover:bg-slate-800 transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
+                                                        <Calendar className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-bold text-slate-900 dark:text-white">{bill.month_year}</p>
+                                                        <p className="text-xs text-slate-500">Issued: {bill.created_at ? format(new Date(bill.created_at), "MMM d, yyyy") : 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-black text-slate-900 dark:text-white">ETB {(Number(bill.PENALTYAMT || 0) + Number(bill.OUTSTANDINGAMT ?? (Number(bill.debit_30 || 0) + Number(bill.debit_30_60 || 0) + Number(bill.debit_60 || 0))) + getMonthlyBillAmt(bill)).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                                    <Badge 
+                                                        className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${bill.payment_status === "Paid" ? "bg-emerald-500 hover:bg-emerald-600" : "bg-rose-500 hover:bg-rose-600"} text-white border-none`}
+                                                    >
+                                                        {bill.payment_status}
+                                                    </Badge>
+
+                                                </div>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </motion.div>
+
+                </div>
+
+                <div className="lg:col-span-4 space-y-8">
+                    {/* Bill Breakdown Pie */}
+                    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 }}>
+                        <Card className="refined-card">
+                            <CardHeader>
+                                <CardTitle className="text-lg font-bold">Charge Distribution</CardTitle>
+                                <CardDescription>Latest billing cycle breakdown</CardDescription>
+                            </CardHeader>
+                            <CardContent className="h-[300px] p-4">
+                                {!bills[0] ? (
+                                    <div className="h-full flex items-center justify-center text-slate-400 font-bold">No data available</div>
+                                ) : (() => {
+                                    const bill = bills[0] as any;
+                                    const data = [
+                                        { name: 'Water', value: Number(bill.base_water_charge || 0), color: '#3b82f6' },
+                                        { name: 'Sewerage', value: Number(bill.sewerage_charge || 0), color: '#10b981' },
+                                        { name: 'Sanitation', value: Number(bill.sanitation_fee || 0), color: '#f59e0b' },
+                                        { name: 'Maintenance', value: Number(bill.maintenance_fee || 0), color: '#8b5cf6' },
+                                        { name: 'Meter Rent', value: Number(bill.meter_rent || 0), color: '#64748b' },
+                                        { name: 'Penalty', value: Number(bill.PENALTYAMT || 0), color: '#ef4444' },
+                                    ].filter(item => item.value > 0);
+
+                                    return (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie 
+                                                    data={data} 
+                                                    cx="50%" 
+                                                    cy="50%" 
+                                                    innerRadius={65} 
+                                                    outerRadius={90} 
+                                                    paddingAngle={8} 
+                                                    dataKey="value" 
+                                                    stroke="none"
+                                                >
+                                                    {data.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                                                </Pie>
+                                                <Tooltip
+                                                    contentStyle={{ 
+                                                        borderRadius: '1rem', 
+                                                        border: 'none', 
+                                                        boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)',
+                                                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                                                        padding: '12px'
+                                                    }}
+                                                    itemStyle={{ fontWeight: 800, fontSize: '0.875rem' }}
+                                                />
+                                                <Legend 
+                                                    verticalAlign="bottom" 
+                                                    align="center" 
+                                                    iconType="circle" 
+                                                    wrapperStyle={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', paddingTop: '20px' }} 
+                                                />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    );
+                                })()}
+                            </CardContent>
+                        </Card>
+                    </motion.div>
+
+                    {/* Consumption History Chart */}
+                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+                        <Card className="refined-card">
+                            <CardHeader>
+                                <CardTitle className="text-lg font-bold">Usage Trends</CardTitle>
+                                <CardDescription>Consumption over 6 months</CardDescription>
+                            </CardHeader>
+                            <CardContent className="h-[250px] pt-4">
+                                {bills.length === 0 ? (
+                                    <div className="h-full flex items-center justify-center text-slate-400 font-bold">No data available</div>
+                                ) : (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={[...bills].reverse().slice(-6).map(b => ({ month: b.month_year, usage: Number(b.CONS || b.usage_m3 || 0) }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                            <defs>
+                                                <linearGradient id="dashboardBarGradient" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                            <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 700 }} dy={10} />
+                                            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 700 }} />
+                                            <Tooltip
+                                                cursor={{ fill: 'transparent' }}
+                                                content={({ active, payload }) => {
+                                                    if (active && payload && payload.length) {
+                                                        return (
+                                                            <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-slate-800 scale-105 transition-transform">
+                                                                <p className="text-[10px] uppercase font-black tracking-widest text-slate-400 mb-1">{payload[0].payload.month}</p>
+                                                                <p className="text-xl font-black">{payload[0].value} <span className="text-xs text-blue-400 uppercase">m³</span></p>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
+                                                }}
+                                            />
+                                            <Bar dataKey="usage" fill="url(#dashboardBarGradient)" radius={[10, 10, 0, 0]} barSize={24} stroke="#3b82f6" strokeWidth={1} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </motion.div>
+                </div>
+
+            </div>
+        </motion.div>
     );
+
 }
+

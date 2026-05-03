@@ -623,7 +623,7 @@ export const dbGetAllBills = async (options?: { branchId?: string; excludeUnfina
     const params: any[] = [];
     let paramIndex = 1;
 
-    let whereClauses = ['b.deleted_at IS NULL'];
+    const whereClauses = ['b.deleted_at IS NULL'];
 
     if (options?.branchId) {
         sql += ' LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"';
@@ -732,7 +732,7 @@ export const dbGetBillsByCustomerId = async (customerKeyNumber: string, branchId
     const params: any[] = [customerKeyNumber];
     let paramIndex = 2;
 
-    let whereClauses = ['(b.individual_customer_id = $1 OR b."CUSTOMERKEY" = $1)', 'b.deleted_at IS NULL'];
+    const whereClauses = ['(b.individual_customer_id = $1 OR b."CUSTOMERKEY" = $1)', 'b.deleted_at IS NULL'];
 
     if (branchId) {
         sql += ' LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"';
@@ -757,7 +757,7 @@ export const dbGetBillsByBulkMeterId = async (customerKeyNumber: string, branchI
     const params: any[] = [customerKeyNumber];
     let paramIndex = 2;
 
-    let whereClauses = ['b."CUSTOMERKEY" = $1', 'b.deleted_at IS NULL'];
+    const whereClauses = ['b."CUSTOMERKEY" = $1', 'b.deleted_at IS NULL'];
 
     if (branchId) {
         sql += ' JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"';
@@ -1353,6 +1353,16 @@ export const dbIsCustomerSessionValid = async (sessionId: string) => {
         return true;
     }
     return false;
+};
+
+/**
+ * Returns the full customer_sessions row (including customer_key_number and customer_type)
+ * if the session exists and is not revoked. Used to verify ownership of customer portal resources.
+ */
+export const dbGetCustomerSession = async (sessionId: string) => {
+    const sql = 'SELECT * FROM customer_sessions WHERE id = $1 AND is_revoked = false LIMIT 1';
+    const rows: any = await query(sql, [sessionId]);
+    return rows && rows[0] ? rows[0] : null;
 };
 
 export const dbLogCustomerPageView = async (sessionId: string, pageName: string) => {
@@ -2364,7 +2374,7 @@ export const dbRunDataAudit = async (branchId?: string) => {
     if (branchId && branchId !== 'all') { orphanCustSql += ' AND ic.branch_id = $1'; orphanCustParams.push(branchId); }
 
     // 6. Mandatory Settings / Role Integrity
-    let systemAuditSql = `
+    const systemAuditSql = `
         SELECT id::text, name as label, 'System' as category,
                'Staff member has an invalid or missing role assignment.' as description,
                0 as master_value, 0 as comparison_value, 1 as discrepancy

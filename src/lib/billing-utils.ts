@@ -148,39 +148,56 @@ export function calculateDebtAging(
 
         // Iterate through historical bills (most recent first, index 0 = newest)
         let billsWithDebtCount = 0;
+        let totalUnpaidPenaltyFromHistory = 0;
+
         for (let i = 0; i < historicalBills.length; i++) {
             if (remainingOutstanding <= 0.01) break;
 
             const bill = historicalBills[i];
-            // Use the shared helper so we always use the same reconstruction formula
             const monthlyBillAmt = getMonthlyBillAmt(bill);
-            
             const amountPaid = Number(bill.amount_paid ?? bill.amountPaid ?? bill.AMOUNTPAID ?? 0);
-            const monthlyAddition = monthlyBillAmt + Number(bill.PENALTYAMT || 0);
-            const unpaidFromThisBill = Math.max(0, monthlyAddition - amountPaid);
-            const amountForBucket = Math.min(remainingOutstanding, unpaidFromThisBill);
-
-            if (amountForBucket <= 0.01) continue;
-
-            billsWithDebtCount++;
-            const billAgeMonths = getAgeMonths(bill);
             
-            // To support multiple bills per month while still triggering tiered penalties,
-            // we use the max of (date-based age) or (bill sequence count) for triggers.
-            maxAgeMonths = Math.max(maxAgeMonths, billAgeMonths, billsWithDebtCount);
-            
-            cumulativePenaltyBase += amountForBucket;
-            remainingOutstanding -= amountForBucket;
+            // 1. Calculate unpaid Principal for this bill
+            const unpaidPrincipal = Math.max(0, monthlyBillAmt - amountPaid);
+            const principalForBucket = Math.min(remainingOutstanding, unpaidPrincipal);
 
-            // Bucket assignment based on real age
-            if (billAgeMonths <= 1) {
-                debit30 += amountForBucket;
-            } else if (billAgeMonths === 2) {
-                debit30_60 += amountForBucket;
-            } else {
-                debit60 += amountForBucket;
+            if (principalForBucket > 0.01) {
+                billsWithDebtCount++;
+                const billAgeMonths = getAgeMonths(bill);
+                maxAgeMonths = Math.max(maxAgeMonths, billAgeMonths, billsWithDebtCount);
+                
+                // Add to penalty base (Principal ONLY)
+                cumulativePenaltyBase += principalForBucket;
+
+                // Principal bucket assignment
+                if (billAgeMonths <= 1) {
+                    debit30 += principalForBucket;
+                } else if (billAgeMonths === 2) {
+                    debit30_60 += principalForBucket;
+                } else {
+                    debit60 += principalForBucket;
+                }
+                remainingOutstanding -= principalForBucket;
+            }
+
+            // 2. Handle Penalty: Find ALL historical unpaid penalties
+            // They are added to debit60 but NOT to cumulativePenaltyBase to prevent compounding.
+            if (remainingOutstanding > 0.01) {
+                const penaltyAmt = Number(bill.PENALTYAMT || 0);
+                const paidAgainstPenalty = Math.max(0, amountPaid - monthlyBillAmt);
+                const unpaid = Math.max(0, penaltyAmt - paidAgainstPenalty);
+                
+                if (unpaid > 0.01) {
+                    const toAdd = Math.min(remainingOutstanding, unpaid);
+                    totalUnpaidPenaltyFromHistory += toAdd;
+                    remainingOutstanding -= toAdd;
+                    // Note: We do NOT add toAdd to cumulativePenaltyBase here
+                }
             }
         }
+
+        // Add the sum of all historical unpaid penalties to the debit60 bucket
+        debit60 += totalUnpaidPenaltyFromHistory;
 
         // Calculate penalty based on maximum age if threshold is met
         if (maxAgeMonths >= threshold) {
@@ -191,6 +208,7 @@ export function calculateDebtAging(
             const additionalRate = Number(applicableTier?.rate || 0);
             const totalRate = bankRate + additionalRate;
 
+            // Penalty is calculated ONLY on the cumulative principal base
             penaltyAmt = cumulativePenaltyBase * totalRate;
         }
     }

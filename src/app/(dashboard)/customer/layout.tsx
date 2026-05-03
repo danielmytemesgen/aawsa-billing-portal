@@ -164,10 +164,9 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
                                 height={40}
                                 className="object-contain hidden md:block" // Hide on small screens if desired, or keep small
                             />
-                            <div>
-                                <h1 className="text-lg md:text-xl font-bold text-white leading-tight">AAWSA <span className="hidden sm:inline">Customer Portal</span></h1>
-                                <p className="text-sm text-blue-100 hidden sm:block">Welcome, {customerName}</p>
-                            </div>
+                             <div>
+                                 <h1 className="text-lg md:text-xl font-bold text-white leading-tight">AAWSA <span className="hidden sm:inline">Customer Portal</span></h1>
+                             </div>
                         </div>
 
                         <div className="flex items-center gap-4">

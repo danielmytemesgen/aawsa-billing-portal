@@ -230,13 +230,21 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
     return (
         <div className="space-y-8 animate-in fade-in duration-700">
-            <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                    <Calendar className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Active Cycle:</span>
-                    <Badge variant="secondary" className="bg-blue-100 text-blue-700 px-3 py-1 text-sm font-bold border-none">
-                        {stats.cycleMonth}
-                    </Badge>
+            <div className="flex items-center justify-between mb-4 bg-slate-100/80 p-4 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-600 rounded-lg shadow-blue-500/20 shadow-lg">
+                        <Calendar className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Operational Cycle</span>
+                        <Badge variant="secondary" className="bg-white text-blue-700 px-3 py-0.5 text-sm font-black border border-blue-100 shadow-sm mt-0.5">
+                            {stats.cycleMonth}
+                        </Badge>
+                    </div>
+                </div>
+                <div className="hidden sm:flex items-center gap-2 text-slate-400">
+                    <Activity className="h-4 w-4 animate-pulse text-emerald-500" />
+                    <span className="text-[10px] font-black uppercase tracking-tighter">Live Telemetry Active</span>
                 </div>
             </div>
 
@@ -334,15 +342,16 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Customer Data Status - Modern Pie Chart */}
-                <Card className="border-none shadow-lg bg-white/50 backdrop-blur-sm">
-                    <CardHeader className="pb-2">
+                <Card className="border-none shadow-2xl bg-white relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-600" />
+                    <CardHeader className="pb-2 bg-slate-50/50">
                         <div className="flex items-center justify-between">
-                            <CardTitle className="text-lg font-bold flex items-center gap-2">
-                                <PieChartIcon className="h-5 w-5 text-blue-500" />
+                            <CardTitle className="text-lg font-black flex items-center gap-2 text-slate-900">
+                                <PieChartIcon className="h-5 w-5 text-blue-600" />
                                 Data Distribution
                             </CardTitle>
                         </div>
-                        <CardDescription>Overall status of customer entries</CardDescription>
+                        <CardDescription className="text-slate-500 font-bold">Overall status of customer entries</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <div className="h-[280px]">
@@ -388,15 +397,16 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                 </Card>
 
                 {/* Reading Type Ratio - Enhanced Bar Chart */}
-                <Card className="lg:col-span-2 border-none shadow-lg bg-white/50 backdrop-blur-sm">
-                    <CardHeader className="pb-2">
+                <Card className="lg:col-span-2 border-none shadow-2xl bg-white relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-600" />
+                    <CardHeader className="pb-2 bg-slate-50/50">
                         <div className="flex items-center justify-between">
-                            <CardTitle className="text-lg font-bold flex items-center gap-2">
-                                <BarChart3 className="h-5 w-5 text-indigo-500" />
+                            <CardTitle className="text-lg font-black flex items-center gap-2 text-slate-900">
+                                <BarChart3 className="h-5 w-5 text-indigo-600" />
                                 Reading Analytics
                             </CardTitle>
                         </div>
-                        <CardDescription>Analysis of meter reading results for {monthName} {currentYear}</CardDescription>
+                        <CardDescription className="text-slate-500 font-bold">Analysis of meter reading results for {monthName} {currentYear}</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <div className="h-[350px] pt-8">
@@ -446,13 +456,14 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
                 {/* Fault Code Breakdown - New Card */}
                 {stats.faultCodeBreakdown.length > 0 && (
-                    <Card className="border-none shadow-lg bg-white/50 backdrop-blur-sm">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-lg font-bold flex items-center gap-2">
-                                <AlertTriangle className="h-5 w-5 text-red-500" />
+                    <Card className="border-none shadow-2xl bg-white relative overflow-hidden ring-1 ring-rose-100">
+                        <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-600" />
+                        <CardHeader className="pb-2 bg-rose-50/50">
+                            <CardTitle className="text-lg font-black flex items-center gap-2 text-slate-900">
+                                <AlertTriangle className="h-5 w-5 text-rose-600" />
                                 Fault Code Breakdown
                             </CardTitle>
-                            <CardDescription>Detailed analysis of fault readings for {monthName} {currentYear}</CardDescription>
+                            <CardDescription className="text-rose-600 font-bold">Detailed analysis of fault readings for {monthName} {currentYear}</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-3">
@@ -536,48 +547,48 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                 </Card>
 
                 {/* Branch Details - Styled Table */}
-                <Card className="lg:col-span-2 border-none shadow-lg overflow-hidden">
-                    <CardHeader className="bg-gray-50/50 border-b">
+                <Card className="lg:col-span-2 border-none shadow-2xl overflow-hidden bg-white">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 p-6">
                         <div className="flex items-center justify-between">
-                            <CardTitle className="text-lg font-bold">Branch Performance Matrix</CardTitle>
+                            <CardTitle className="text-xl font-black text-slate-900">Branch Performance Matrix</CardTitle>
                             <div className="flex gap-2">
-                                <Badge variant="secondary" className="font-bold bg-blue-100 text-blue-700 border-none">
-                                    {branches.length - 1} Branches
+                                <Badge variant="secondary" className="font-black bg-blue-600 text-white border-none shadow-sm px-3 py-1">
+                                    {branches.length - 1} Units Active
                                 </Badge>
                             </div>
                         </div>
                     </CardHeader>
                     <CardContent className="p-0">
                         <Table>
-                            <TableHeader className="bg-gray-100/50">
-                                <TableRow>
-                                    <TableHead className="text-xs font-bold text-gray-600">BRANCH</TableHead>
-                                    <TableHead className="text-xs font-bold text-gray-600 text-center">CUSTOMERS</TableHead>
-                                    <TableHead className="text-xs font-bold text-emerald-600 text-center">COLLECTED</TableHead>
-                                    <TableHead className="text-xs font-bold text-amber-600 text-center">PENDING</TableHead>
-                                    <TableHead className="text-xs font-bold text-gray-600 text-center">READERS</TableHead>
-                                    <TableHead className="text-xs font-bold text-gray-600 text-center">ROUTES</TableHead>
+                            <TableHeader className="bg-slate-100/50">
+                                <TableRow className="border-slate-200 hover:bg-transparent">
+                                    <TableHead className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] py-4 pl-6">BRANCH</TableHead>
+                                    <TableHead className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">CUSTOMERS</TableHead>
+                                    <TableHead className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em] text-center">COLLECTED</TableHead>
+                                    <TableHead className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] text-center">PENDING</TableHead>
+                                    <TableHead className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">READERS</TableHead>
+                                    <TableHead className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">ROUTES</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {stats.branchDetails.map((branch: any) => (
-                                    <TableRow key={branch.id} className="hover:bg-blue-50/30 transition-colors border-b">
-                                        <TableCell className="py-4">
-                                            <span className="font-bold text-gray-900">{branch.name}</span>
+                                    <TableRow key={branch.id} className="hover:bg-blue-50/50 transition-colors border-slate-100">
+                                        <TableCell className="py-5 pl-6">
+                                            <span className="font-black text-slate-900 text-[15px]">{branch.name}</span>
                                         </TableCell>
-                                        <TableCell className="text-center font-semibold text-gray-700">{branch.total}</TableCell>
+                                        <TableCell className="text-center font-bold text-slate-700">{branch.total}</TableCell>
                                         <TableCell className="text-center">
-                                            <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                                            <span className="px-3 py-1 rounded-lg bg-emerald-100 text-emerald-900 text-xs font-black ring-1 ring-emerald-200">
                                                 {branch.collected}
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-center">
-                                            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
+                                            <span className="px-3 py-1 rounded-lg bg-amber-100 text-amber-900 text-xs font-black ring-1 ring-amber-200">
                                                 {branch.pending}
                                             </span>
                                         </TableCell>
-                                        <TableCell className="text-center font-medium text-gray-500">{branch.readers}</TableCell>
-                                        <TableCell className="text-center font-medium text-gray-500">{branch.routes}</TableCell>
+                                        <TableCell className="text-center font-bold text-slate-600">{branch.readers}</TableCell>
+                                        <TableCell className="text-center font-bold text-slate-600">{branch.routes}</TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>

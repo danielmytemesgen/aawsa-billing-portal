@@ -183,7 +183,7 @@ export default function StaffMeterReadingsPage() {
       initializeFaultCodes(true),
       initializeBranches(true),
       fetchRoutes(true),
-      initializeStaffMembers(true),
+      hasPermission('staff_view') ? initializeStaffMembers(true) : Promise.resolve(),
       initializeBills(true),
     ]).then(() => {
       if (!isMounted) return;

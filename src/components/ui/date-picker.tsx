@@ -16,17 +16,32 @@ import {
 
 interface DatePickerProps {
   date: Date | undefined;
-  setDate: (date: Date | undefined) => void;
-  disabled?: (date: Date) => boolean; // For disabling specific dates in the calendar
-  disabledTrigger?: boolean; // For disabling the trigger button itself
+  setDate?: (date: Date | undefined) => void;
+  onSelect?: (date: Date | undefined) => void;
+  disabled?: (date: Date) => boolean;
+  disabledTrigger?: boolean;
+  placeholder?: string;
+  className?: string;
 }
 
-export function DatePicker({ date, setDate, disabled, disabledTrigger }: DatePickerProps) {
+export function DatePicker({ 
+  date, 
+  setDate, 
+  onSelect,
+  disabled, 
+  disabledTrigger,
+  placeholder = "Pick a date",
+  className
+}: DatePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
 
   const handleDateSelect = (selectedDay: Date | undefined) => {
-    setDate(selectedDay);
-    setIsOpen(false); // Close popover on date selection
+    if (onSelect) {
+      onSelect(selectedDay);
+    } else if (setDate) {
+      setDate(selectedDay);
+    }
+    setIsOpen(false);
   }
 
   return (
@@ -36,22 +51,23 @@ export function DatePicker({ date, setDate, disabled, disabledTrigger }: DatePic
           variant={"outline"}
           className={cn(
             "w-full justify-start text-left font-normal",
-            !date && "text-muted-foreground"
+            !date && "text-muted-foreground",
+            className
           )}
-          disabled={disabledTrigger} // Use the disabledTrigger prop here
+          disabled={disabledTrigger}
         >
           <CalendarIcon className="mr-2 h-4 w-4" />
-          {date && isValid(date) ? format(date, "yyyy-MM") : <span>Select a month</span>}
+          {date && isValid(date) ? format(date, "PPP") : <span>{placeholder}</span>}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0">
+      <PopoverContent className="w-auto p-0" align="start">
         <Calendar
           mode="single"
           selected={date}
           onSelect={handleDateSelect}
           disabled={disabled}
           initialFocus
-          captionLayout="dropdown-buttons" // Allows easier year/month navigation
+          captionLayout="dropdown-buttons"
           fromYear={new Date().getFullYear() - 10}
           toYear={new Date().getFullYear() + 10}
         />

@@ -118,7 +118,7 @@ export default function IndividualCustomersPage() {
   }, []);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
+  const isHeadOffice = !userBranchId || hasPermission('customers_view_all');
 
   const handleAddCustomer = () => {
     setSelectedCustomer(isHeadOffice ? null : { branchId: userBranchId } as any);

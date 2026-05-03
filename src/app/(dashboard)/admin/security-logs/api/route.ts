@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dbGetAllSecurityLogs } from '@/lib/db-queries';
 import { getSession } from '@/lib/auth';
-import { isManagementRole, PERMISSIONS } from '@/lib/constants/auth';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 export async function GET(request: Request) {
     try {
@@ -10,10 +10,9 @@ export async function GET(request: Request) {
             return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
         }
 
-        const role = session.role?.toLowerCase()?.trim();
         const perms: string[] = session.permissions || [];
-        const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-        const hasPerm = isManagement || perms.includes('settings_view');
+        const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+        const hasPerm = isManagement || perms.includes(PERMISSIONS.SETTINGS_VIEW);
 
         if (!hasPerm) {
             return NextResponse.json({ message: 'Forbidden' }, { status: 403 });

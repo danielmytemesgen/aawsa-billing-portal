@@ -112,7 +112,7 @@ export default function BulkMetersPage() {
   }, [fetchSummaryStats]);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId || currentUser?.role?.toLowerCase().includes("head office");
+  const isHeadOffice = !userBranchId || hasPermission('bulk_meters_view_all');
 
   const handleAddBulkMeter = () => {
     setSelectedBulkMeter(isHeadOffice ? null : { branchId: userBranchId } as any);

@@ -1,5 +1,5 @@
 'use server'
-import { isManagementRole, PERMISSIONS } from '@/lib/constants/auth';
+import { PERMISSIONS } from '@/lib/constants/auth';
 import fs from 'fs';
 import {
   dbCreateBranch,
@@ -89,6 +89,7 @@ import {
   dbRevokeCustomerSession,
   dbGetActiveCustomerSessions,
   dbIsCustomerSessionValid,
+  dbGetCustomerSession,
   dbLogCustomerPageView,
   dbCreateFaultCode,
   dbUpdateFaultCode,
@@ -164,8 +165,9 @@ function getEffectiveBranchId(session: any, optionsBranchId?: string, permission
     return session.branchId;
   }
   
-  // 3. Otherwise (Head Office / Global Admin), they can use the requested branchId from options.
-  return optionsBranchId;
+  // 3. Otherwise (Head Office WITHOUT view_all permission), they should NOT see all data.
+  // Return a non-matching ID or undefined to ensure isolation if restricted.
+  return session.branchId || 'restricted_access';
 }
 
 
@@ -291,7 +293,7 @@ const wrap = async <T>(fn: () => Promise<T>) => {
   }
 };
 
-const checkPermission = async (permission?: string) => {
+export const checkPermission = async (permission?: string) => {
   const session = await getSession();
   if (!session || !session.id) {
     throw new Error('User not authenticated');
@@ -313,6 +315,46 @@ const checkPermission = async (permission?: string) => {
   return { ...session, permissions: perms };
 };
 
+/**
+ * Asserts access to a specific customer/bulk-meter resource for RBAC enforcement.
+ *
+ * Access is granted if EITHER:
+ *   (a) A valid staff session exists with the appropriate view permission, OR
+ *   (b) A valid customer session is provided whose customer_key_number matches the requested resource.
+ *
+ * @param customerKeyNumber  Target customer key the caller wants to access
+ * @param customerSessionId  Optional customer portal session id from localStorage
+ * @param type               'individual' or 'bulk' to choose the appropriate staff view permission
+ * @returns the caller context: { kind: 'staff' | 'customer', session, perms }
+ * @throws Error if neither staff nor customer access can be proven.
+ */
+export const assertCustomerAccess = async (
+  customerKeyNumber: string,
+  customerSessionId?: string,
+  type: 'individual' | 'bulk' = 'individual'
+) => {
+  // 1) Staff path — check permissions if a staff session exists
+  const staffSession = await getSession();
+  if (staffSession && staffSession.id) {
+    const perms = await dbGetStaffPermissions(staffSession.id);
+    const viewAll = type === 'bulk' ? PERMISSIONS.BULK_METERS_VIEW_ALL : PERMISSIONS.CUSTOMERS_VIEW_ALL;
+    const viewBranch = type === 'bulk' ? PERMISSIONS.BULK_METERS_VIEW_BRANCH : PERMISSIONS.CUSTOMERS_VIEW_BRANCH;
+    if (perms.includes(viewAll) || perms.includes(viewBranch) || perms.includes('bill:manage_all')) {
+      return { kind: 'staff' as const, session: { ...staffSession, permissions: perms }, perms };
+    }
+  }
+
+  // 2) Customer path — require valid session matching the requested customerKeyNumber
+  if (customerSessionId) {
+    const cSession = await dbGetCustomerSession(customerSessionId);
+    if (cSession && cSession.customer_key_number === customerKeyNumber) {
+      return { kind: 'customer' as const, session: cSession, perms: [] as string[] };
+    }
+  }
+
+  throw new Error('Forbidden: You do not have access to this resource');
+};
+
 const verifyBillBranchAccess = async (billId: string, session: any) => {
   const perms = session.permissions || [];
   // Bypass branch filtering if user has 'bill:manage_all'
@@ -330,22 +372,20 @@ const verifyBillBranchAccess = async (billId: string, session: any) => {
 
 export async function getBranchByIdAction(id: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    await checkPermission(PERMISSIONS.BRANCHES_VIEW);
     return await dbGetBranchById(id);
   });
 }
 
 export async function getAllBranchesAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    await checkPermission(PERMISSIONS.BRANCHES_VIEW);
     return await dbGetAllBranches();
   });
 }
 export async function createBranchAction(branch: BranchInsert) {
   return await wrap(async () => {
-    await checkPermission('branches_create');
+    await checkPermission(PERMISSIONS.BRANCHES_CREATE);
     const result = await dbCreateBranch(branch);
     await logSecurityEventAction({ event: 'Create Branch', details: { branch } });
     return result;
@@ -353,7 +393,7 @@ export async function createBranchAction(branch: BranchInsert) {
 }
 export async function updateBranchAction(id: string, branch: BranchUpdate) {
   return await wrap(async () => {
-    await checkPermission('branches_update');
+    await checkPermission(PERMISSIONS.BRANCHES_UPDATE);
     const result = await dbUpdateBranch(id, branch);
     await logSecurityEventAction({ event: 'Update Branch', details: { id, updates: branch } });
     return result;
@@ -361,7 +401,7 @@ export async function updateBranchAction(id: string, branch: BranchUpdate) {
 }
 export async function deleteBranchAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('branches_delete');
+    const session = await checkPermission(PERMISSIONS.BRANCHES_DELETE);
     await dbDeleteBranch(id, session.id);
     await logSecurityEventAction({ event: 'Delete Branch', severity: 'warning', details: { id } });
   });
@@ -372,7 +412,12 @@ export async function getAllCustomersAction(options?: { branchId?: string; limit
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const branchId = getEffectiveBranchId(session, options?.branchId, 'customers_view_all');
+    const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    // If no view_all permission and no specific branch permission, but they are trying to view a branch
+    if (!branchId && !session.permissions.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
+       throw new Error('Forbidden: Missing customer access permissions');
+    }
+
     return await dbGetAllCustomers({ branchId, ...options });
   });
 }
@@ -399,9 +444,9 @@ export async function getCustomersSummaryAction() {
 
 export async function createCustomerAction(customer: IndividualCustomerInsert) {
   return await wrap(async () => {
-    const session = await checkPermission('customers_create');
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
     // If user has restricted creation permission, it must be for their branch and pending approval
-    if (session.permissions?.includes('customers_create_restricted')) {
+    if (session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED)) {
       customer.branch_id = customer.branch_id || (customer as any).branchId || session.branchId;
       customer.status = 'Pending Approval';
     } else {
@@ -419,7 +464,7 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
 }
 export async function updateCustomerAction(customerKeyNumber: string, customer: IndividualCustomerUpdate) {
   return await wrap(async () => {
-    await checkPermission('customers_update');
+    await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
     const result = await dbUpdateCustomer(customerKeyNumber, customer);
     await logSecurityEventAction({
       event: 'Update Customer',
@@ -431,7 +476,7 @@ export async function updateCustomerAction(customerKeyNumber: string, customer: 
 }
 export async function deleteCustomerAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    const session = await checkPermission('customers_delete');
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_DELETE);
     await dbDeleteCustomer(customerKeyNumber, session.id);
     await logSecurityEventAction({
       event: 'Delete Customer',
@@ -443,7 +488,7 @@ export async function deleteCustomerAction(customerKeyNumber: string) {
 
 export async function approveCustomerAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    const session = await checkPermission('customers_approve');
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_APPROVE);
     const result = await dbUpdateCustomer(customerKeyNumber, {
       status: 'Active',
       approved_by: session.id,
@@ -456,7 +501,7 @@ export async function approveCustomerAction(customerKeyNumber: string) {
 
 export async function rejectCustomerAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    const session = await checkPermission('customers_approve');
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_APPROVE);
     const result = await dbUpdateCustomer(customerKeyNumber, {
       status: 'Rejected',
       approved_by: session.id,
@@ -469,8 +514,12 @@ export async function rejectCustomerAction(customerKeyNumber: string) {
 
 export async function getCustomerByIdAction(customerKeyNumber: string) {
   return await wrap(async () => {
+    await checkPermission();
     const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = await dbGetStaffPermissions(session!.id);
+    if (!perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) && !perms.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
+      throw new Error('Forbidden: Missing customer view permission');
+    }
     return await dbGetCustomerById(customerKeyNumber);
   });
 }
@@ -505,16 +554,20 @@ export async function getBulkMetersSummaryAction() {
 }
 export async function getBulkMeterByIdAction(customerKeyNumber: string) {
   return await wrap(async () => {
+    await checkPermission();
     const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = await dbGetStaffPermissions(session!.id);
+    if (!perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) && !perms.includes(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
+      throw new Error('Forbidden: Missing bulk meter view permission');
+    }
     return await dbGetBulkMeterById(customerKeyNumber);
   });
 }
 export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
   return await wrap(async () => {
-    const session = await checkPermission('bulk_meters_create');
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
     // If user has restricted creation permission, it must be for their branch and pending approval
-    if (session.permissions?.includes('bulk_meters_create_restricted')) {
+    if (session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED)) {
       bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId || session.branchId;
       bulkMeter.status = 'Pending Approval';
     } else {
@@ -532,7 +585,7 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
 }
 export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter: BulkMeterUpdate) {
   return await wrap(async () => {
-    await checkPermission('bulk_meters_update');
+    await checkPermission(PERMISSIONS.BULK_METERS_UPDATE);
     const result = await dbUpdateBulkMeter(customerKeyNumber, bulkMeter);
     await logSecurityEventAction({
       event: 'Update Bulk Meter',
@@ -545,7 +598,7 @@ export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter
 
 export async function deleteBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bulk_meters_delete');
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_DELETE);
     await dbDeleteBulkMeter(customerKeyNumber, session.id);
     await logSecurityEventAction({
       event: 'Delete Bulk Meter',
@@ -557,7 +610,7 @@ export async function deleteBulkMeterAction(customerKeyNumber: string) {
 
 export async function approveBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bulk_meters_approve');
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_APPROVE);
     const result = await dbUpdateBulkMeter(customerKeyNumber, {
       status: 'Active',
       approved_by: session.id,
@@ -573,7 +626,7 @@ export async function approveBulkMeterAction(customerKeyNumber: string) {
 
 export async function rejectBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bulk_meters_approve');
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_APPROVE);
     const result = await dbUpdateBulkMeter(customerKeyNumber, {
       status: 'Rejected',
       approved_by: session.id,
@@ -590,19 +643,19 @@ export async function rejectBulkMeterAction(customerKeyNumber: string) {
 
 export async function getAllStaffMembersAction() {
   return await wrap(async () => {
-    const session = await checkPermission('staff_view');
+    const session = await checkPermission(PERMISSIONS.STAFF_VIEW);
     
     // Determine the branch isolation:
     // If the user has 'staff_view_all', they can see everyone.
     // Otherwise, they are locked to their own branch.
-    const filterBranchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.STAFF_VIEW_ALL);
     
     return await dbGetAllStaffMembers(filterBranchId);
   });
 }
 export async function createStaffMemberAction(staffMember: StaffMemberInsert) {
   return await wrap(async () => {
-    const session = await checkPermission('staff_create');
+    const session = await checkPermission(PERMISSIONS.STAFF_CREATE);
 
     // Mapping fix: set 'branch' (text) from form's 'branchName' or 'branchId' (fallback)
     if (!(staffMember as any).branch) {
@@ -624,9 +677,9 @@ export async function createStaffMemberAction(staffMember: StaffMemberInsert) {
 }
 export async function updateStaffMemberAction(email: string, staffMember: StaffMemberUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission('staff_update');
+    const session = await checkPermission(PERMISSIONS.STAFF_UPDATE);
     
-    const branchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    const branchId = getEffectiveBranchId(session, undefined, PERMISSIONS.STAFF_VIEW_ALL);
     const result = await dbUpdateStaffMember(email, staffMember, branchId);
     
     await logSecurityEventAction({
@@ -638,9 +691,9 @@ export async function updateStaffMemberAction(email: string, staffMember: StaffM
 }
 export async function deleteStaffMemberAction(email: string) {
   return await wrap(async () => {
-    const session = await checkPermission('staff_delete');
+    const session = await checkPermission(PERMISSIONS.STAFF_DELETE);
     
-    const branchId = getEffectiveBranchId(session, undefined, 'staff_view_all');
+    const branchId = getEffectiveBranchId(session, undefined, PERMISSIONS.STAFF_VIEW_ALL);
     await dbDeleteStaffMember(email, session.id, branchId);
     
     await logSecurityEventAction({
@@ -660,8 +713,8 @@ export async function getAllBillsAction(options?: { branchId?: string; excludeUn
     const perms = await dbGetStaffPermissions(session.id);
     
     // Check for any billing-related permission
-    const hasBillPerm = perms.includes('bill:manage_all') || 
-                       perms.includes('bill:view_branch') || 
+    const hasBillPerm = perms.includes(PERMISSIONS.BILL_VIEW_ALL) || 
+                       perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) || 
                        perms.some((p: string) => p.startsWith('bill:'));
                        
     if (!hasBillPerm) {
@@ -669,14 +722,14 @@ export async function getAllBillsAction(options?: { branchId?: string; excludeUn
     }
 
     // Apply branch filtering if they don't have global access
-    const branchId = getEffectiveBranchId(session, options?.branchId, 'bill:manage_all');
+    const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BILL_VIEW_ALL);
 
     return await dbGetAllBills({ ...options, branchId });
   });
 }
 export async function createBillAction(bill: BillInsert) {
   return await wrap(async () => {
-    const session = await checkPermission('bill:create');
+    const session = await checkPermission(PERMISSIONS.BILL_CREATE);
 
     // Ensure accurate mappings if partial data provided
     if (bill.TOTALBILLAMOUNT !== undefined) {
@@ -717,9 +770,9 @@ export async function createBillAction(bill: BillInsert) {
       }
     }
 
-    // Branch Isolation Verification for Bill Creation
+// Branch Isolation Verification for Bill Creation
     const perms = session.permissions || [];
-    if (!perms.includes('bill:manage_all')) {
+    if (!perms.includes(PERMISSIONS.BILL_VIEW_ALL)) {
       if (session.branchId && session.branchId !== 'all' && bill.branch_id !== session.branchId) {
         throw new Error('Forbidden: Cannot create bill for a customer in a different branch.');
       }
@@ -765,11 +818,11 @@ export async function closeBillingCycleAction(payload: {
   };
 }) {
   return await wrap(async () => {
-    const session = await checkPermission('billing:close_cycle');
+    const session = await checkPermission(PERMISSIONS.BILL_CLOSE_CYCLE);
 
     // Verify meter branch if user doesn't have global access
     const perms = session.permissions || [];
-    if (!perms.includes('bill:manage_all')) {
+    if (!perms.includes(PERMISSIONS.BILL_VIEW_ALL)) {
       const meter = await dbGetBulkMeterById(payload.meterUpdate.customerKeyNumber);
       if (!meter || meter.branch_id !== session.branchId) {
         throw new Error('Forbidden: This meter does not belong to your branch');
@@ -860,7 +913,7 @@ export async function runBillingCycleAction(payload: {
   allowOverlap?: boolean;
 }) {
   return await wrap(async () => {
-    const session = await checkPermission('billing:close_cycle');
+    const session = await checkPermission(PERMISSIONS.BILL_CLOSE_CYCLE);
 
     // 1. Fetch latest data
     const bulkMeter = await dbGetBulkMeterById(payload.bulkMeterId);
@@ -1037,7 +1090,7 @@ export async function runBillingCycleAction(payload: {
 }
 export async function updateBillAction(id: string, bill: BillUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission('bill:update');
+    const session = await checkPermission(PERMISSIONS.BILL_UPDATE);
     await verifyBillBranchAccess(id, session);
 
     // Hardening: Mutation Guards & Audit Trail
@@ -1090,7 +1143,7 @@ export async function updateBillAction(id: string, bill: BillUpdate) {
 }
 export async function deleteBillAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bill:delete');
+    const session = await checkPermission(PERMISSIONS.BILL_DELETE);
     await verifyBillBranchAccess(id, session);
     await dbDeleteBill(id, session.id);
     await logSecurityEventAction({
@@ -1107,8 +1160,8 @@ export async function getBillByIdAction(id: string) {
     
     // Check if user has global read access based on new bill/dashboard patterns
     let viewAllPermission: string | undefined = undefined;
-    if (session.permissions?.includes('bill:manage_all') || session.permissions?.includes('dashboard_view_all')) {
-      viewAllPermission = 'bill:manage_all'; // Use as a proxy token to allow global access in the helper
+    if (session.permissions?.includes(PERMISSIONS.BILL_VIEW_ALL) || session.permissions?.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+      viewAllPermission = PERMISSIONS.BILL_VIEW_ALL; // Use as a proxy token to allow global access in the helper
     }
 
     const branchId = getEffectiveBranchId(session, undefined, viewAllPermission);
@@ -1129,8 +1182,8 @@ export async function submitBillAction(id: string) {
     const session = await checkPermission();
     const perms = session.permissions || [];
 
-    if (!(perms.includes('bill:submit') || perms.includes('bill:create') || perms.includes('bill:manage_all'))) {
-      throw new Error('Forbidden: Missing permission bill:submit or bill:create');
+    if (!(perms.includes(PERMISSIONS.BILL_CREATE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
+      throw new Error('Forbidden: Missing permission bill_create or bill_view_all');
     }
 
     await verifyBillBranchAccess(id, session);
@@ -1158,7 +1211,7 @@ export async function submitBillAction(id: string) {
 
 export async function approveBillAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bill:approve');
+    const session = await checkPermission(PERMISSIONS.BILL_APPROVE);
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
@@ -1185,7 +1238,7 @@ export async function approveBillAction(id: string) {
 
 export async function rejectBillAction(id: string, reason: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bill:rework');
+    const session = await checkPermission(PERMISSIONS.BILL_APPROVE); // Map rework to approve or manage_all
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
@@ -1216,8 +1269,8 @@ export async function postBillAction(id: string) {
     const session = await checkPermission();
     const perms = session.permissions || [];
 
-    if (!(perms.includes('bill:post') || perms.includes('bill:send') || perms.includes('bill:manage_all'))) {
-      throw new Error('Forbidden: Missing permission bill:post or bill:send');
+    if (!(perms.includes(PERMISSIONS.BILL_POST) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
+      throw new Error('Forbidden: Missing permission bill_post or bill_view_all');
     }
 
     await verifyBillBranchAccess(id, session);
@@ -1245,7 +1298,7 @@ export async function postBillAction(id: string) {
 
 export async function correctBillAction(id: string, reason: string) {
   return await wrap(async () => {
-    const session = await checkPermission('bill:correct');
+    const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL); // Core management needed
     await verifyBillBranchAccess(id, session);
 
     const { 
@@ -1319,25 +1372,33 @@ export async function correctBillAction(id: string, reason: string) {
 
 export async function getBillWorkflowLogsAction(billId: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
+      perms.some((p: string) => p.startsWith('bill:'));
+    if (!hasPerm) throw new Error('Forbidden: Missing billing permissions');
     return await dbGetBillWorkflowLogsQuery(billId);
   });
 }
 
 export async function getAllIndividualCustomerReadingsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE);
+    if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
 
     // Branch isolation
-    const filterBranchId = getEffectiveBranchId(session, undefined, 'meter_readings_view_all');
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.METER_READINGS_VIEW_ALL);
     return await dbGetAllIndividualCustomerReadings(filterBranchId);
   });
 }
 export async function createIndividualCustomerReadingAction(reading: IndividualCustomerReadingInsert) {
   return await wrap(async () => {
-    await checkPermission('meter_readings_create');
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
     const result = await dbCreateIndividualCustomerReading(reading);
     await logSecurityEventAction({
       event: 'Create Indiv. Reading',
@@ -1349,7 +1410,7 @@ export async function createIndividualCustomerReadingAction(reading: IndividualC
 }
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
-    await checkPermission('meter_readings_create'); // Same permission for now
+    await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
     const result = await dbUpdateIndividualCustomerReading(id, reading);
     await logSecurityEventAction({
       event: 'Update Indiv. Reading',
@@ -1360,7 +1421,7 @@ export async function updateIndividualCustomerReadingAction(id: string, reading:
 }
 export async function deleteIndividualCustomerReadingAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('meter_readings_delete');
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_DELETE);
     await dbDeleteIndividualCustomerReading(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Indiv. Reading',
@@ -1372,17 +1433,21 @@ export async function deleteIndividualCustomerReadingAction(id: string) {
 
 export async function getAllBulkMeterReadingsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE);
+    if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
 
     // Branch isolation
-    const filterBranchId = getEffectiveBranchId(session, undefined, 'meter_readings_view_all');
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.METER_READINGS_VIEW_ALL);
     return await dbGetAllBulkMeterReadings(filterBranchId);
   });
 }
 export async function createBulkMeterReadingAction(reading: BulkMeterReadingInsert) {
   return await wrap(async () => {
-    await checkPermission('meter_readings_create');
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
     const result = await dbCreateBulkMeterReading(reading);
     await logSecurityEventAction({
       event: 'Create Bulk Reading',
@@ -1394,7 +1459,7 @@ export async function createBulkMeterReadingAction(reading: BulkMeterReadingInse
 }
 export async function updateBulkMeterReadingAction(id: string, reading: BulkMeterReadingUpdate) {
   return await wrap(async () => {
-    await checkPermission('meter_readings_create');
+    await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
     const result = await dbUpdateBulkMeterReading(id, reading);
     await logSecurityEventAction({
       event: 'Update Bulk Reading',
@@ -1405,7 +1470,7 @@ export async function updateBulkMeterReadingAction(id: string, reading: BulkMete
 }
 export async function deleteBulkMeterReadingAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('meter_readings_bulk_delete');
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_DELETE);
     await dbDeleteBulkMeterReading(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Bulk Reading',
@@ -1420,24 +1485,22 @@ export async function getAllPaymentsAction() {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const role = session.role?.toLowerCase()?.trim();
     const perms: string[] = session.permissions || [];
 
-    const isManagement = perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || isManagementRole(role);
-    const hasPerm = isManagement || perms.includes('payments_view') || perms.includes('payments_view_branch');
+    const hasPerm = perms.includes(PERMISSIONS.PAYMENTS_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     if (!hasPerm) {
       throw new Error('Forbidden: No payment permissions');
     }
 
-    // Branch isolation
-    const filterBranchId = isManagement ? undefined : session.branchId;
+    // Branch isolation: Only if they have view_all (via BILL_VIEW_ALL or specific) do they see everything.
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.BILL_VIEW_ALL);
     return await dbGetAllPayments(filterBranchId);
   });
 }
 export async function createPaymentAction(payment: PaymentInsert) {
     return await wrap(async () => {
-      await checkPermission('payments_create');
+      await checkPermission(PERMISSIONS.PAYMENTS_CREATE);
       // 1. Create Payment
       const result = await dbCreatePayment(payment);
 
@@ -1482,7 +1545,7 @@ export async function createPaymentAction(payment: PaymentInsert) {
 }
 export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
   return await wrap(async () => {
-    await checkPermission('payments_create');
+    await checkPermission(PERMISSIONS.PAYMENTS_CREATE); // Assume same for now
     const result = await dbUpdatePayment(id, payment);
     await logSecurityEventAction({
       event: 'Update Payment',
@@ -1493,7 +1556,7 @@ export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
 }
 export async function deletePaymentAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('payments_delete');
+    const session = await checkPermission(PERMISSIONS.PAYMENTS_DELETE);
     // 1. Fetch payment to find associated bill/meter
     const payments = await dbGetAllPayments();
     const payment = payments.find((p: any) => p.id === id);
@@ -1542,16 +1605,20 @@ export async function deletePaymentAction(id: string) {
 
 export async function getAllReportLogsAction() {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    if (!perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) && !perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
+      throw new Error('Forbidden: Missing reports permission');
+    }
 
     // Branch isolation
-    const filterBranchId = getEffectiveBranchId(session, undefined, 'reports_view_all');
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.REPORTS_GENERATE_ALL);
     return await dbGetAllReportLogs(filterBranchId);
   });
 }
 export async function createReportLogAction(log: ReportLogInsert) {
   return await wrap(async () => {
+    await checkPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH); // Min permission to log
     const result = await dbCreateReportLog(log);
     await logSecurityEventAction({
       event: 'Create Report',
@@ -1562,7 +1629,7 @@ export async function createReportLogAction(log: ReportLogInsert) {
 }
 export async function updateReportLogAction(id: string, log: ReportLogUpdate) {
   return await wrap(async () => {
-    await checkPermission('reports_view');
+    await checkPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH);
     const result = await dbUpdateReportLog(id, log);
     await logSecurityEventAction({
       event: 'Update Report',
@@ -1573,7 +1640,7 @@ export async function updateReportLogAction(id: string, log: ReportLogUpdate) {
 }
 export async function deleteReportLogAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('reports_delete');
+    const session = await checkPermission(PERMISSIONS.REPORTS_GENERATE_ALL); // Admin-level
     await dbDeleteReportLog(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Report',
@@ -1589,21 +1656,20 @@ export async function getAllNotificationsAction() {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms: string[] = session.permissions || [];
-    const hasPerm = perms.includes('notifications_view') || perms.includes('dashboard_view_all') || perms.includes('dashboard_view_branch');
+    const hasPerm = perms.includes(PERMISSIONS.NOTIFICATIONS_VIEW) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
 
     if (!hasPerm) {
       throw new Error('Forbidden: No notification permissions');
     }
 
     // Branch isolation: If not admin/management, filter by branchId
-    const isManagement = perms.includes('dashboard_view_all');
-    const filterBranchId = isManagement ? undefined : session.branchId;
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.DASHBOARD_VIEW_ALL);
     return await dbGetAllNotifications(filterBranchId);
   });
 }
 export async function deleteNotificationAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('notifications_delete');
+    const session = await checkPermission(PERMISSIONS.NOTIFICATIONS_MANAGE);
     await dbDeleteNotification(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Notification',
@@ -1614,7 +1680,7 @@ export async function deleteNotificationAction(id: string) {
 }
 export async function updateNotificationAction(id: string, notification: NotificationUpdate) {
   return await wrap(async () => {
-    await checkPermission('notifications_view'); // Typically send/manage if it's update?
+    await checkPermission(PERMISSIONS.NOTIFICATIONS_VIEW); 
     const result = await dbUpdateNotification(id, notification);
     await logSecurityEventAction({
       event: 'Update Notification',
@@ -1625,7 +1691,7 @@ export async function updateNotificationAction(id: string, notification: Notific
 }
 export async function createNotificationAction(notification: NotificationInsert) {
   return await wrap(async () => {
-    await checkPermission('notifications_create');
+    await checkPermission(PERMISSIONS.NOTIFICATIONS_MANAGE);
     const result = await dbCreateNotification(notification);
     await logSecurityEventAction({
       event: 'Create Notification',
@@ -1637,13 +1703,13 @@ export async function createNotificationAction(notification: NotificationInsert)
 
 export async function getAllRolesAction() {
   return await wrap(async () => {
-    await checkPermission('permissions_view');
+    await checkPermission(PERMISSIONS.ROLES_VIEW);
     return await dbGetAllRoles();
   });
 }
 export async function createRoleAction(role: RoleInsert) {
   return await wrap(async () => {
-    await checkPermission('permissions_update');
+    await checkPermission(PERMISSIONS.ROLES_MANAGE);
     const result = await dbCreateRole(role);
     await logSecurityEventAction({
       event: 'Create Role',
@@ -1655,12 +1721,12 @@ export async function createRoleAction(role: RoleInsert) {
 }
 export async function getAllPermissionsAction() {
   return await wrap(async () => {
-    await checkPermission('permissions_view');
+    await checkPermission(PERMISSIONS.ROLES_VIEW);
     return await dbGetAllPermissions();
   });
 }
 export const createPermissionAction = async (permission: PermissionInsert) => await wrap(async () => {
-  await checkPermission('permissions_update');
+  await checkPermission(PERMISSIONS.ROLES_MANAGE);
   const result = await dbCreatePermission(permission);
   await logSecurityEventAction({
     event: 'Create Permission',
@@ -1670,7 +1736,7 @@ export const createPermissionAction = async (permission: PermissionInsert) => aw
   return result;
 });
 export const updatePermissionAction = async (id: number, permission: PermissionUpdate) => await wrap(async () => {
-  await checkPermission('permissions_update');
+  await checkPermission(PERMISSIONS.ROLES_MANAGE);
   const result = await dbUpdatePermission(id, permission);
   await logSecurityEventAction({
     event: 'Update Permission',
@@ -1680,7 +1746,7 @@ export const updatePermissionAction = async (id: number, permission: PermissionU
   return result;
 });
 export const deletePermissionAction = async (id: number) => await wrap(async () => {
-  await checkPermission('permissions_update');
+  await checkPermission(PERMISSIONS.ROLES_MANAGE);
   await dbDeletePermission(id);
   await logSecurityEventAction({
     event: 'Delete Permission',
@@ -1690,7 +1756,7 @@ export const deletePermissionAction = async (id: number) => await wrap(async () 
 });
 export async function getAllRolePermissionsAction() {
   return await wrap(async () => {
-    await checkPermission('permissions_view');
+    await checkPermission(PERMISSIONS.ROLES_VIEW);
     return await dbGetAllRolePermissions();
   });
 }
@@ -1698,7 +1764,7 @@ export async function getAllRolePermissionsAction() {
 export async function rpcUpdateRolePermissionsAction(roleId: number, permissionIds: number[]) {
   return await wrap(async () => {
     // 1. Check permission
-    await checkPermission('permissions_update');
+    await checkPermission(PERMISSIONS.ROLES_MANAGE);
 
     // 2. Perform DB update
     const result = await dbRpcUpdateRolePermissions(roleId, permissionIds);
@@ -1721,13 +1787,13 @@ export async function rpcUpdateRolePermissionsAction(roleId: number, permissionI
 
 export async function getAllTariffsAction() {
   return await wrap(async () => {
-    await checkPermission('tariffs_view');
+    await checkPermission(PERMISSIONS.TARIFFS_VIEW);
     return await dbGetAllTariffs();
   });
 }
 export async function createTariffAction(tariff: TariffInsert) {
   return await wrap(async () => {
-    await checkPermission('tariffs_create');
+    await checkPermission(PERMISSIONS.TARIFFS_MANAGE);
     const result = await dbCreateTariff(tariff);
     await logSecurityEventAction({
       event: 'Create Tariff',
@@ -1739,7 +1805,7 @@ export async function createTariffAction(tariff: TariffInsert) {
 }
 export async function updateTariffAction(customerType: string, effectiveDate: string, tariff: TariffUpdate) {
   return await wrap(async () => {
-    await checkPermission('tariffs_update');
+    await checkPermission(PERMISSIONS.TARIFFS_MANAGE);
 
     // Check if the tariff is the latest version. Historical versions are read-only.
     const allCustomerTariffs = await dbGetAllTariffs();
@@ -1778,13 +1844,13 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
 
 export async function getAllKnowledgeBaseArticlesAction() {
   return await wrap(async () => {
-    await checkPermission('knowledge_base_view');
+    await checkPermission(PERMISSIONS.KNOWLEDGE_BASE_VIEW);
     return await dbGetAllKnowledgeBaseArticles();
   });
 }
 export async function createKnowledgeBaseArticleAction(article: KnowledgeBaseArticleInsert) {
   return await wrap(async () => {
-    await checkPermission('knowledge_base_manage');
+    await checkPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE);
     const result = await dbCreateKnowledgeBaseArticle(article);
     await logSecurityEventAction({
       event: 'Create KB Article',
@@ -1795,7 +1861,7 @@ export async function createKnowledgeBaseArticleAction(article: KnowledgeBaseArt
 }
 export async function updateKnowledgeBaseArticleAction(id: number, article: KnowledgeBaseArticleUpdate) {
   return await wrap(async () => {
-    await checkPermission('knowledge_base_manage');
+    await checkPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE);
     const result = await dbUpdateKnowledgeBaseArticle(id, article);
     await logSecurityEventAction({
       event: 'Update KB Article',
@@ -1806,7 +1872,7 @@ export async function updateKnowledgeBaseArticleAction(id: number, article: Know
 }
 export async function deleteKnowledgeBaseArticleAction(id: number) {
   return await wrap(async () => {
-    const session = await checkPermission('knowledge_base_manage');
+    const session = await checkPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE);
     await dbDeleteKnowledgeBaseArticle(id, session.id);
     await logSecurityEventAction({
       event: 'Delete KB Article',
@@ -1826,8 +1892,14 @@ export async function calculateBillAction(
   baseWaterChargeCONS?: number
 ) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.BILL_CREATE) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.TARIFFS_VIEW) ||
+      perms.includes(PERMISSIONS.TARIFFS_MANAGE);
+    if (!hasPerm) throw new Error('Forbidden: Missing billing/tariff permission to calculate bills');
     const size = typeof meterSize === 'string' ? parseFloat(meterSize) : meterSize;
     return await calculateBill(consumption, customerType, sewerageConnection, size || 0, billingMonth, sewerageCONS, baseWaterChargeCONS);
   });
@@ -1888,13 +1960,42 @@ export interface CustomerAuthResult {
 }
 
 export async function getCustomerAccountAction(
-  customerKeyNumber: string
+  customerKeyNumber: string,
+  customerSessionId?: string
 ): Promise<{ data: any | null; error: any }> {
   return await wrap(async () => {
+    // Determine caller: staff with perm, valid customer session, or login-lookup.
+    const staffSession = await getSession();
+    let isStaffOrOwner = false;
+
+    if (staffSession && staffSession.id) {
+      const perms = await dbGetStaffPermissions(staffSession.id);
+      if (perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) || perms.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
+        isStaffOrOwner = true;
+      }
+    } else if (customerSessionId) {
+      const cSession = await dbGetCustomerSession(customerSessionId);
+      if (cSession && cSession.customer_key_number === customerKeyNumber) {
+        isStaffOrOwner = true;
+      }
+    }
+
     const dbCustomer = await dbGetCustomerById(customerKeyNumber);
     if (!dbCustomer) return null;
 
-    // Map database fields to UI-expected fields for customer portal
+    // Login-lookup path: expose ONLY minimal fields needed to verify account and complete login.
+    if (!isStaffOrOwner) {
+      return {
+        customerKeyNumber: dbCustomer.customerKeyNumber,
+        name: dbCustomer.name,
+        status: dbCustomer.status,
+        customerType: dbCustomer.customerType,
+        email: dbCustomer.email,
+        phone_number: dbCustomer.phone_number,
+      };
+    }
+
+    // Full data only for authorised callers
     return {
       ...dbCustomer,
       meterNumber: dbCustomer.METER_KEY || dbCustomer.meterNumber,
@@ -1919,13 +2020,36 @@ export async function getCustomerAccountAction(
 }
 
 export async function getBulkMeterAccountAction(
-  customerKeyNumber: string
+  customerKeyNumber: string,
+  customerSessionId?: string
 ): Promise<{ data: any | null; error: any }> {
   return await wrap(async () => {
+    const staffSession = await getSession();
+    let isStaffOrOwner = false;
+
+    if (staffSession && staffSession.id) {
+      const perms = await dbGetStaffPermissions(staffSession.id);
+      if (perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) || perms.includes(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
+        isStaffOrOwner = true;
+      }
+    } else if (customerSessionId) {
+      const cSession = await dbGetCustomerSession(customerSessionId);
+      if (cSession && cSession.customer_key_number === customerKeyNumber) {
+        isStaffOrOwner = true;
+      }
+    }
+
     const dbBulkMeter = await dbGetBulkMeterById(customerKeyNumber);
     if (!dbBulkMeter) return null;
 
-    // Map database fields to UI-expected fields for customer portal
+    if (!isStaffOrOwner) {
+      return {
+        customerKeyNumber: dbBulkMeter.customerKeyNumber,
+        name: dbBulkMeter.name,
+        status: dbBulkMeter.status,
+      };
+    }
+
     return {
       ...dbBulkMeter,
       meterNumber: dbBulkMeter.METER_KEY || dbBulkMeter.meterNumber,
@@ -1947,9 +2071,11 @@ export async function getBulkMeterAccountAction(
 }
 
 export async function getCustomerReadingsAction(
-  customerKeyNumber: string
+  customerKeyNumber: string,
+  customerSessionId?: string
 ): Promise<{ data: IndividualCustomerReading[] | null; error: any }> {
   return await wrap(async () => {
+    await assertCustomerAccess(customerKeyNumber, customerSessionId, 'individual');
     return await dbGetIndividualCustomerReadingsByCustomer(customerKeyNumber);
   });
 }
@@ -2009,58 +2135,55 @@ export async function deleteRouteAction(routeKey: string) {
 
 export async function getRouteByKeyAction(routeKey: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    if (!perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && !perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) && !perms.includes('routes_view')) {
+      throw new Error('Forbidden: Missing routes view permission');
+    }
     return await dbGetRouteByKey(routeKey);
   });
 }
 
 export async function getBulkMeterReadingsAction(
-  customerKeyNumber: string
+  customerKeyNumber: string,
+  customerSessionId?: string
 ): Promise<{ data: BulkMeterReading[] | null; error: any }> {
   return await wrap(async () => {
+    await assertCustomerAccess(customerKeyNumber, customerSessionId, 'bulk');
     return await dbGetBulkMeterReadingsByMeter(customerKeyNumber);
   });
 }
 
 export async function getCustomerBillsAction(
   customerKeyNumber: string,
-  excludeUnfinalized: boolean = true
+  excludeUnfinalized: boolean = true,
+  customerSessionId?: string
 ): Promise<{ data: any[] | null; error: any }> {
   return await wrap(async () => {
-    const session = await getSession();
-
-    // If it's a staff member session
-    if (session && session.id) {
-      const perms = session.permissions || [];
-      const hasManageAll = perms.includes('bill:manage_all');
-      const branchId = !hasManageAll ? session.branchId : undefined;
-      return await dbGetBillsByCustomerId(customerKeyNumber, branchId, excludeUnfinalized);
+    const ctx = await assertCustomerAccess(customerKeyNumber, customerSessionId, 'individual');
+    // For staff without bill:manage_all, restrict to their branch
+    let branchId: string | undefined;
+    if (ctx.kind === 'staff') {
+      const hasManageAll = ctx.perms.includes('bill:manage_all');
+      branchId = hasManageAll ? undefined : (ctx.session as any).branchId;
     }
-
-    // Otherwise, allow access for customers (the client-side handles session validation for them)
-    // We trust the provided customerKeyNumber for the customer portal's own requests
-    return await dbGetBillsByCustomerId(customerKeyNumber, undefined, excludeUnfinalized);
+    return await dbGetBillsByCustomerId(customerKeyNumber, branchId, excludeUnfinalized);
   });
 }
 
 export async function getBulkMeterBillsAction(
   customerKeyNumber: string,
-  excludeUnfinalized: boolean = true
+  excludeUnfinalized: boolean = true,
+  customerSessionId?: string
 ): Promise<{ data: any[] | null; error: any }> {
   return await wrap(async () => {
-    const session = await getSession();
-
-    // If it's a staff member session
-    if (session && session.id) {
-      const perms = session.permissions || [];
-      const hasManageAll = perms.includes('bill:manage_all') || perms.includes('bulk_meters_view_all');
-      const branchId = !hasManageAll ? session.branchId : undefined;
-      return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId, excludeUnfinalized);
+    const ctx = await assertCustomerAccess(customerKeyNumber, customerSessionId, 'bulk');
+    let branchId: string | undefined;
+    if (ctx.kind === 'staff') {
+      const hasManageAll = ctx.perms.includes('bill:manage_all') || ctx.perms.includes('bulk_meters_view_all');
+      branchId = hasManageAll ? undefined : (ctx.session as any).branchId;
     }
-
-    // Otherwise, allow access for customers (the client-side handles session validation for them)
-    return await dbGetBillsByBulkMeterId(customerKeyNumber, undefined, excludeUnfinalized);
+    return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId, excludeUnfinalized);
   });
 }
 
@@ -2076,6 +2199,20 @@ export async function createCustomerSessionAction(session: {
   location?: string;
 }) {
   return await wrap(async () => {
+    // Verify the customer actually exists and is Active before issuing a session.
+    let customer: any = null;
+    if (session.customer_type === 'bulk') {
+      customer = await dbGetBulkMeterById(session.customer_key_number);
+    } else {
+      customer = await dbGetCustomerById(session.customer_key_number);
+    }
+    if (!customer) {
+      throw new Error('Customer not found');
+    }
+    if (customer.status !== 'Active') {
+      throw new Error('Customer account is not active');
+    }
+
     const result = await dbCreateCustomerSession(session);
     await logSecurityEventAction({
       event: 'Customer Login',
@@ -2088,6 +2225,22 @@ export async function createCustomerSessionAction(session: {
 
 export async function revokeCustomerSessionAction(sessionId: string) {
   return await wrap(async () => {
+    // Either an admin/staff with settings perm, or the owning customer may revoke.
+    const staffSession = await getSession();
+    let authorized = false;
+    if (staffSession && staffSession.id) {
+      const perms = await dbGetStaffPermissions(staffSession.id);
+      if (perms.includes(PERMISSIONS.SETTINGS_MANAGE) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+        authorized = true;
+      }
+    }
+    if (!authorized) {
+      // Customer self-revoke: verify the session being revoked exists.
+      const target = await dbGetCustomerSession(sessionId);
+      if (target) authorized = true;
+    }
+    if (!authorized) throw new Error('Forbidden: Missing permission to revoke session');
+
     const result = await dbRevokeCustomerSession(sessionId);
     await logSecurityEventAction({
       event: 'Customer Session Revoked',
@@ -2099,15 +2252,28 @@ export async function revokeCustomerSessionAction(sessionId: string) {
 }
 
 export async function getActiveCustomerSessionsAction() {
-  return await wrap(() => dbGetActiveCustomerSessions());
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    if (!perms.includes(PERMISSIONS.SETTINGS_MANAGE) && !perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+      throw new Error('Forbidden: Missing permission to view customer sessions');
+    }
+    return await dbGetActiveCustomerSessions();
+  });
 }
 
 export async function validateCustomerSessionAction(sessionId: string) {
+  // Reads its own session id as credential — validation is inherent to the call.
   return await wrap(() => dbIsCustomerSessionValid(sessionId));
 }
 
 export async function logCustomerPageViewAction(sessionId: string, pageName: string) {
-  return await wrap(() => dbLogCustomerPageView(sessionId, pageName));
+  return await wrap(async () => {
+    // The sessionId IS the credential here — verify it is valid before logging.
+    const valid = await dbIsCustomerSessionValid(sessionId);
+    if (!valid) throw new Error('Invalid or revoked customer session');
+    return await dbLogCustomerPageView(sessionId, pageName);
+  });
 }
 
 // =====================================================
@@ -2258,14 +2424,15 @@ export async function getLatestPermissionsAction() {
 
 export async function getDistinctBillingMonthsAction() {
   try {
+    await checkPermission();
     const rows: any = await dbGetDistinctBillingMonths();
     const months = rows.map((r: any) => r.month_year || r.month).filter(Boolean);
     // Ensure uniqueness and sort DESC
     const uniqueMonths = Array.from(new Set(months)).sort().reverse();
     return { data: uniqueMonths };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to fetch distinct months", error);
-    return { error: "Failed to fetch distinct months" };
+    return { error: error?.message || "Failed to fetch distinct months" };
   }
 }
 
@@ -2523,7 +2690,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         const sewerageConn = (item.sewerage_connection || 'No') as SewerageConnection;
 
         // Calculate Usage
-        let usage = (item.currentReading || item.current_reading || 0) - (item.previousReading || item.previous_reading || 0);
+        const usage = (item.currentReading || item.current_reading || 0) - (item.previousReading || item.previous_reading || 0);
         let diffUsage = usage;
 
         if (job.type === 'bulk_meters') {
@@ -2768,7 +2935,15 @@ export async function getAllSentBillsAction(params: {
 
 export async function archiveOldRecordsAction(monthsThreshold: number = 36) {
   try {
+    const session = await checkPermission();
+    if (session.role?.toLowerCase() !== 'admin') {
+      throw new Error('Forbidden: Only administrators can archive old records.');
+    }
     const result = await dbArchiveOldRecords(monthsThreshold);
+    await logSecurityEventAction({
+      event: 'Archive Old Records',
+      details: { monthsThreshold, result }
+    });
     return result;
   } catch (error: any) {
     console.error("Error archiving old records:", error);
@@ -2778,6 +2953,12 @@ export async function archiveOldRecordsAction(monthsThreshold: number = 36) {
 
 export async function getSystemStatsAction() {
   try {
+    const session = await checkPermission();
+    const perms = await dbGetStaffPermissions(session.id!);
+    const isAdmin = session.role?.toLowerCase() === 'admin';
+    if (!isAdmin && !perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) && !perms.includes(PERMISSIONS.SETTINGS_MANAGE)) {
+      throw new Error('Forbidden: Missing permission to view system stats.');
+    }
     const stats = await dbGetSystemStats();
     return { success: true, stats };
   } catch (error: any) {
@@ -2811,7 +2992,8 @@ export async function runDataAuditAction() {
 
 export async function getSystemSettingsAction() {
   return await wrap(async () => {
-    // We allow anyone logged in to view basic settings needed for UI
+    // Any authenticated staff member can read non-sensitive UI settings
+    await checkPermission();
     const { dbGetSystemSettings } = await import('./db-queries');
     const settings = await dbGetSystemSettings();
     return settings;

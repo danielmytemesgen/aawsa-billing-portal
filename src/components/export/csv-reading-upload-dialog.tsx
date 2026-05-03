@@ -144,7 +144,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
       const isHeaderRow = firstLineValues.every(v => requiredHeadersLower.includes(v.toLowerCase())) && firstLineValues.length >= readingCsvHeaders.length - 10;
       
       let dataRows = lines;
-      let headerMapping: Record<string, number> = {};
+      const headerMapping: Record<string, number> = {};
 
       if (isHeaderRow) {
         // Map required headers to the index they appear at in the CSV
