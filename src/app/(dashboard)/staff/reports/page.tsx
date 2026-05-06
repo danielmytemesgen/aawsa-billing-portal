@@ -382,12 +382,16 @@ const availableStaffReports: ReportType[] = [
         const outstanding = reconstructedOutstanding || bill.balanceCarriedForward || 0;
         const penalty = Number((bill as any).PENALTYAMT || 0);
 
+        // Resolve branch name: check bill record first, then the looked up customerBranch
+        const branchNameFromBill = branches.find(b => b.id === bill.CUSTOMERBRANCH)?.name || bill.CUSTOMERBRANCH;
+        const finalBranchName = branchNameFromBill || customerBranch;
+
         return {
           "BILLKEY": billKeyFormatted,
           "CUSTOMERKEY": customerKey,
           "CUSTOMERNAME": customerName,
           "CUSTOMERTIN": bill.CUSTOMERTIN || customerTin,
-          "CUSTOMERBRANCH": bill.CUSTOMERBRANCH || customerBranch,
+          "CUSTOMERBRANCH": finalBranchName,
           "REASON": reasonFormatted,
           "CURRREAD": bill.CURRREAD,
           "PREVREAD": bill.PREVREAD,

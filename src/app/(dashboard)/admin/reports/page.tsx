@@ -260,6 +260,8 @@ const availableReports: ReportType[] = [
       const billsByMeter: Record<string, DomainBill[]> = {};
       const allBills = getBills();
 
+      const branches = getBranches();
+
       return billsList.map(b => {
         let billKey = b.BILLKEY;
         if (!billKey) {
@@ -302,13 +304,16 @@ const availableReports: ReportType[] = [
         const currentBill = getMonthlyBillAmt(b);
         const outstanding = reconstructedOutstanding || b.balanceCarriedForward || 0;
 
+        // Resolve branch name
+        const branchName = branches.find((br: Branch) => br.id === b.CUSTOMERBRANCH)?.name || b.CUSTOMERBRANCH || "N/A";
+
         return {
           "Bill ID": b.id,
           "Bill Key": billKey,
           "Customer Key": customerKey,
           "Customer Name": b.CUSTOMERNAME,
           "Customer TIN": b.CUSTOMERTIN,
-          "Branch": b.CUSTOMERBRANCH,
+          "Branch": branchName,
           "Period Start": b.billPeriodStartDate,
           "Period End": b.billPeriodEndDate,
           "Month/Year": b.monthYear,
@@ -1068,12 +1073,16 @@ const availableReports: ReportType[] = [
         const currentBill = bill.TOTALBILLAMOUNT;
         const outstanding = reconstructedOutstanding || bill.balanceCarriedForward || 0;
 
+        // Resolve branch name: check bill record first, then the looked up customerBranch
+        const branchNameFromBill = branches.find(b => b.id === bill.CUSTOMERBRANCH)?.name || bill.CUSTOMERBRANCH;
+        const finalBranchName = branchNameFromBill || customerBranch;
+
         return {
           "BILLKEY": billKeyFormatted,
           "CUSTOMERKEY": customerKey,
           "CUSTOMERNAME": customerName,
           "CUSTOMERTIN": bill.CUSTOMERTIN || customerTin,
-          "CUSTOMERBRANCH": bill.CUSTOMERBRANCH || customerBranch,
+          "CUSTOMERBRANCH": finalBranchName,
           "REASON": reasonFormatted,
           "CURRREAD": bill.CURRREAD,
           "PREVREAD": bill.PREVREAD,
