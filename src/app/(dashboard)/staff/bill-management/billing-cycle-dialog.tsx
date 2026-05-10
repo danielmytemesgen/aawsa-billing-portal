@@ -29,7 +29,7 @@ import {
     runBillingCycleAction, 
     startBillingJobAction, 
     processBillingJobChunkAction, 
-    getAllBranchesAction,
+    getBranchesLookupAction,
     getSystemSettingsAction,
     resetStuckBillingJobsAction
 } from "@/lib/actions";
@@ -108,7 +108,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         setIsLoadingMeters(true);
         const [res, branchRes] = await Promise.all([
             getAllBulkMetersAction({ excludePending: false }), // load all so count is accurate
-            getAllBranchesAction()
+            getBranchesLookupAction()
         ]);
         if (res.data) setBulkMeters(res.data);
         if (!branchRes.error && branchRes.data) setBranches(branchRes.data);

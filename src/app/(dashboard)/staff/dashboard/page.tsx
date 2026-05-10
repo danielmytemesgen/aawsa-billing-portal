@@ -3,7 +3,8 @@
 
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity } from 'lucide-react';
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity, Lock as LockIcon } from 'lucide-react';
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +24,7 @@ import {
 } from 'recharts';
 import { motion } from "framer-motion";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
-import { getAllBranchesAction } from "@/lib/actions";
+import { getBranchesLookupAction, getReadingPeriodStatusAction } from "@/lib/actions";
 import {
   initializeBranches,
   initializeBulkMeters,
@@ -79,6 +80,7 @@ export default function StaffDashboardPage() {
   const [allIndividualReadings, setAllIndividualReadings] = React.useState<any[]>([]);
   const [allBulkReadings, setAllBulkReadings] = React.useState<any[]>([]);
   const [allBills, setAllBills] = React.useState<any[]>([]);
+  const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed'>('Open');
   const [isLoading, setIsLoading] = React.useState(true);
 
   // State for toggling views
@@ -108,7 +110,7 @@ export default function StaffDashboardPage() {
             // Try to resolve branchId from known branches
             (async () => {
               try {
-                const res = await getAllBranchesAction();
+                const res = await getBranchesLookupAction();
                 const branches = res.data || [];
                 const target = parsedUser.branchName || '';
                 let branch = branches.find((b: any) => b.name === target);
@@ -138,7 +140,7 @@ export default function StaffDashboardPage() {
             // branchId present but branchName missing - try to fill branchName for display
             (async () => {
               try {
-                const res = await getAllBranchesAction();
+                const res = await getBranchesLookupAction();
                 const branches = res.data || [];
                 const branch = branches.find((b: any) => String(b.id) === String(parsedUser.branchId));
                 if (branch) {
@@ -177,24 +179,47 @@ export default function StaffDashboardPage() {
     setIsLoading(true);
     try {
       // Map of initializations to required permissions
-      const initTasks = [
-        initializeBranches(true),
+      const initTasks: Promise<any>[] = [
         initializeBulkMeters(true),
         initializeCustomers(true),
-        initializeIndividualCustomerReadings(true),
-        initializeBulkMeterReadings(true),
-        initializeBills(true),
-        fetchRoutes(true)
       ];
+
+      // Guard bills data
+      if (hasPermission('bill_view_all') || 
+          hasPermission('bill_view_branch') || 
+          hasPermission('billing_view')) {
+        initTasks.push(initializeBills(true));
+      }
+
+      // Guard reading-related data
+      if (hasPermission('meter_readings_view_all') || 
+          hasPermission('meter_readings_view_branch') || 
+          hasPermission('meter_readings_create')) {
+        initTasks.push(initializeIndividualCustomerReadings(true));
+        initTasks.push(initializeBulkMeterReadings(true));
+      }
+
+      // Guard route data
+      if (hasPermission('routes_view_all') || 
+          hasPermission('routes_view_assigned') || 
+          hasPermission('meter_readings_analytics_view')) {
+        initTasks.push(fetchRoutes(true));
+      }
 
       // Only fetch staff members if user has permission
       if (hasPermission('staff_view')) {
         initTasks.push(initializeStaffMembers(true));
       }
 
-      await Promise.all(initTasks);
+      // Fetch branches via the permission-lite lookup (works for all authenticated users)
+      const [, branchResult] = await Promise.all([
+        Promise.all(initTasks),
+        getBranchesLookupAction(),
+      ]);
 
-      setAllBranches(getBranches());
+      if (branchResult.data) {
+        setAllBranches(branchResult.data as any[]);
+      }
       setAllBulkMeters(getBulkMeters());
       setAllCustomers(getCustomers());
       setAllIndividualReadings(getIndividualCustomerReadings());
@@ -205,6 +230,9 @@ export default function StaffDashboardPage() {
     } catch (err) {
       console.error("Failed to fetch live dashboard data:", err);
     } finally {
+      // Fetch reading period status
+      const status = await getReadingPeriodStatusAction();
+      setReadingPeriodStatus(status as 'Open' | 'Closed');
       setIsLoading(false);
     }
   };
@@ -409,6 +437,15 @@ export default function StaffDashboardPage() {
   if (currentUserRole === 'reader') {
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+        {readingPeriodStatus === 'Closed' && (
+          <Alert variant="destructive" className="border-2 border-red-500 bg-red-50 shadow-lg">
+            <LockIcon className="h-5 w-5 text-red-600" />
+            <AlertTitle className="text-red-900 font-black text-lg">READING PERIOD CLOSED</AlertTitle>
+            <UIAlertDescription className="text-red-800 font-bold">
+              The meter reading period is currently closed globally. You cannot access routes or submit readings at this time.
+            </UIAlertDescription>
+          </Alert>
+        )}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-4xl font-black tracking-tight text-slate-900 drop-shadow-sm">

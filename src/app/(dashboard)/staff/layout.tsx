@@ -21,7 +21,6 @@ interface UserProfile {
 }
 
 const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
-    console.log("Building sidebar for user:", user);
     if (!user) return [];
 
     const permissions = new Set(user.permissions || []);

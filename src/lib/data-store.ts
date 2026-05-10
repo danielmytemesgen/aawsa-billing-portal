@@ -9,9 +9,11 @@ import { getEndDayOfMonth, normalizeTariff } from '@/lib/billing-utils';
 import { KnowledgeBaseArticle, KnowledgeBaseArticleInsert, KnowledgeBaseArticleUpdate } from '@/app/(dashboard)/admin/knowledge-base/knowledge-base-types';
 import { format } from "date-fns";
 import { useState, useEffect } from "react";
+import { Coordinates } from "@/lib/geo-utils";
 
 import {
   getAllBranchesAction,
+  getBranchesLookupAction,
   createBranchAction,
   updateBranchAction,
   deleteBranchAction,
@@ -66,13 +68,15 @@ import {
   getAllRolePermissionsAction,
   rpcUpdateRolePermissionsAction,
   getAllTariffsAction,
+  getPublicTariffsAction,
   createTariffAction,
   updateTariffAction,
   createKnowledgeBaseArticleAction,
   updateKnowledgeBaseArticleAction,
   deleteKnowledgeBaseArticleAction,
-  getAllKnowledgeBaseArticlesAction,
+  getPublicKnowledgeBaseArticlesAction,
   getAllFaultCodesAction,
+  getPublicFaultCodesAction,
   createFaultCodeAction,
   updateFaultCodeAction,
   deleteFaultCodeAction,
@@ -82,6 +86,7 @@ import {
   updateRouteAction,
   deleteRouteAction,
   getRouteByKeyAction,
+  upsertSpatialRecordAction,
 } from './actions';
 
 
@@ -1310,7 +1315,7 @@ const mapDbKnowledgeBaseArticleToDomain = (dbArticle: KnowledgeBaseArticleRow): 
 });
 
 async function fetchAllTariffs() {
-  const { data, error } = await getAllTariffsAction();
+  const { data, error } = await getPublicTariffsAction();
   if (data) {
     tariffs = data.map((t: any) => ({
       ...t,
@@ -1334,7 +1339,22 @@ async function fetchAllBranches() {
     branches = data.map(mapDbBranchToDomain);
     notifyBranchListeners();
   } else {
-    console.error("DataStore: Failed to fetch branches. Database error:", JSON.stringify(error, null, 2));
+    // getAllBranchesAction requires branches_view permission (admin-only).
+    // Fall back to the permission-lite lookup so staff users still get id+name.
+    const fallback = await getBranchesLookupAction();
+    if (fallback.data && fallback.data.length > 0) {
+      branches = fallback.data.map((b: { id: string; name: string }) => ({
+        id: b.id,
+        name: b.name,
+        location: undefined,
+        contactPerson: undefined,
+        contactPhone: undefined,
+        status: 'Active',
+      } as unknown as DomainBranch));
+      notifyBranchListeners();
+    } else {
+      console.warn("DataStore: Could not fetch branches (permission restricted and lookup failed).");
+    }
   }
   branchesFetched = true;
   return branches;
@@ -1404,6 +1424,25 @@ async function fetchAllBills() {
   billsFetched = true;
   return bills;
 }
+
+export const upsertSpatialRecord = async (entityId: string, entityType: 'individual_customer' | 'bulk_meter', coords: Coordinates): Promise<StoreOperationResult<void>> => {
+  const { data, error } = await upsertSpatialRecordAction(entityId, entityType, {
+    xCoordinate: coords.longitude,
+    yCoordinate: coords.latitude,
+  });
+
+  if (data && !error) {
+    if (entityType === 'individual_customer') {
+      customers = customers.map(c => c.customerKeyNumber === entityId ? { ...c, xCoordinate: coords.longitude, yCoordinate: coords.latitude } : c);
+      notifyCustomerListeners();
+    } else {
+      bulkMeters = bulkMeters.map(bm => bm.customerKeyNumber === entityId ? { ...bm, xCoordinate: coords.longitude, yCoordinate: coords.latitude } : bm);
+      notifyBulkMeterListeners();
+    }
+    return { success: true };
+  }
+  return { success: false, message: (error as any)?.message || "Failed to upsert spatial record.", error };
+};
 
 async function fetchAllIndividualCustomerReadings() {
   const { data, error } = await getAllIndividualCustomerReadingsAction();
@@ -1509,9 +1548,11 @@ export async function refetchUserPermissions() {
 }
 
 async function fetchAllKnowledgeBaseArticles() {
-  const { data, error } = await getAllKnowledgeBaseArticlesAction();
+  // Use the public action so the chatbot (mounted for ALL users) doesn't
+  // require knowledge_base_view. Falls back to empty on any error.
+  const { data, error } = await getPublicKnowledgeBaseArticlesAction();
   if (error) {
-    console.error("DataStore: Failed to fetch knowledge base articles. Error:", error);
+    console.error("DataStore: Failed to fetch knowledge base articles.", error);
     knowledgeBaseArticles = [];
   } else {
     knowledgeBaseArticles = data.map(mapDbKnowledgeBaseArticleToDomain);
@@ -2155,7 +2196,7 @@ export const removeBill = async (billId: string): Promise<StoreOperationResult<v
   return { success: false, message: (error as any)?.message || "Failed to delete bill.", error };
 };
 
-export const addIndividualCustomerReading = async (readingData: Omit<DomainIndividualCustomerReading, 'id' | 'createdAt' | 'updatedAt'>): Promise<StoreOperationResult<DomainIndividualCustomerReading>> => {
+export const addIndividualCustomerReading = async (readingData: Omit<DomainIndividualCustomerReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates }): Promise<StoreOperationResult<DomainIndividualCustomerReading>> => {
   const customer = customers.find(c => c.customerKeyNumber === readingData.individualCustomerId);
   if (!customer) {
     return { success: false, message: "Customer not found." };
@@ -2164,8 +2205,41 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${customer.currentReading}).` };
   }
 
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    const queue = JSON.parse(localStorage.getItem('offlineReadingsQueue') || '[]');
+    queue.push({ type: 'individual', payload: readingData });
+    localStorage.setItem('offlineReadingsQueue', JSON.stringify(queue));
+    
+    // Optimistic update
+    const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
+    customer.previousReading = prevReadingToUse;
+    customer.currentReading = readingData.readingValue;
+    
+    // Create an optimistic domain reading
+    const newReading: DomainIndividualCustomerReading = {
+      ...readingData,
+      id: 'offline-' + Date.now(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    } as any;
+    
+    individualCustomerReadings = [newReading, ...individualCustomerReadings];
+    notifyIndividualCustomerReadingListeners();
+    notifyCustomerListeners();
+
+    // Trigger global event for Sync Hub
+    window.dispatchEvent(new Event('offline-queue-updated'));
+    
+    return { success: true, data: newReading, message: "Saved offline. Will sync when connected." };
+  }
+
   const payload = mapDomainIndividualReadingToDb(readingData) as IndividualCustomerReadingInsert;
-  const { data: newDbReading, error: readingInsertError } = await createIndividualCustomerReadingAction(payload);
+  const spatialData = readingData.capturedCoordinates ? {
+    xCoordinate: readingData.capturedCoordinates.longitude,
+    yCoordinate: readingData.capturedCoordinates.latitude,
+  } : undefined;
+  
+  const { data: newDbReading, error: readingInsertError } = await createIndividualCustomerReadingAction(payload, spatialData);
 
   if (readingInsertError || !newDbReading) {
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
@@ -2179,14 +2253,21 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
   // Use previousReading from input if provided, otherwise fallback to customer's current reading (legacy shift logic)
   const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
 
-  // Shift existing currentReading to previousReading (or use explicit one), and set the new currentReading
-  const updateResult = await updateCustomer(customer.customerKeyNumber, {
+  const updatePayload: any = {
     previousReading: prevReadingToUse,
     currentReading: newDbReading.METER_READING, // Updated from reading_value
     month: newDbReading.READING_DATE // Updated from month_year
       ? (newDbReading.READING_DATE instanceof Date ? format(newDbReading.READING_DATE, 'yyyy-MM') : String(newDbReading.READING_DATE).substring(0, 7))
       : undefined
-  });
+  };
+
+  if (readingData.capturedCoordinates) {
+    updatePayload.xCoordinate = readingData.capturedCoordinates.longitude;
+    updatePayload.yCoordinate = readingData.capturedCoordinates.latitude;
+  }
+
+  // Shift existing currentReading to previousReading (or use explicit one), and set the new currentReading
+  const updateResult = await updateCustomer(customer.customerKeyNumber, updatePayload);
 
   if (!updateResult.success) {
     await deleteIndividualCustomerReadingAction(newDbReading.id);
@@ -2202,7 +2283,7 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
   return { success: true, data: newReading };
 };
 
-export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReading, 'id' | 'createdAt' | 'updatedAt'>): Promise<StoreOperationResult<DomainBulkMeterReading>> => {
+export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates }): Promise<StoreOperationResult<DomainBulkMeterReading>> => {
   const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === readingData.CUSTOMERKEY);
   if (!bulkMeter) {
     return { success: false, message: "Bulk meter not found." };
@@ -2211,10 +2292,41 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${bulkMeter.currentReading}).` };
   }
 
-  const payload = mapDomainBulkReadingToDb(readingData) as BulkMeterReadingInsert;
-  // No ID generation - let DB Identity handle it
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    const queue = JSON.parse(localStorage.getItem('offlineReadingsQueue') || '[]');
+    queue.push({ type: 'bulk', payload: readingData });
+    localStorage.setItem('offlineReadingsQueue', JSON.stringify(queue));
+    
+    // Optimistic update
+    const prevReadingToUse = bulkMeter.currentReading ?? 0;
+    bulkMeter.previousReading = prevReadingToUse;
+    bulkMeter.currentReading = readingData.readingValue;
+    
+    // Create an optimistic domain reading
+    const newReading: DomainBulkMeterReading = {
+      ...readingData,
+      id: 'offline-' + Date.now(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    } as any;
+    
+    bulkMeterReadings = [newReading, ...bulkMeterReadings];
+    notifyBulkMeterReadingListeners();
+    notifyBulkMeterListeners();
 
-  const { data: newDbReading, error: readingInsertError } = await createBulkMeterReadingAction(payload);
+    // Trigger global event for Sync Hub
+    window.dispatchEvent(new Event('offline-queue-updated'));
+    
+    return { success: true, data: newReading, message: "Saved offline. Will sync when connected." };
+  }
+
+  const payload = mapDomainBulkReadingToDb(readingData) as BulkMeterReadingInsert;
+  const spatialData = readingData.capturedCoordinates ? {
+    xCoordinate: readingData.capturedCoordinates.longitude,
+    yCoordinate: readingData.capturedCoordinates.latitude,
+  } : undefined;
+
+  const { data: newDbReading, error: readingInsertError } = await createBulkMeterReadingAction(payload, spatialData);
 
   if (readingInsertError || !newDbReading) {
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
@@ -2226,14 +2338,21 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     return { success: false, message: userMessage, error: readingInsertError };
   }
 
-  // Update customer record
-  const updateResult = await updateBulkMeter(bulkMeter.customerKeyNumber, {
+  const updatePayload: any = {
     previousReading: bulkMeter.currentReading ?? 0,
     currentReading: Number(newDbReading.METER_READING), // New Schema
     month: newDbReading.READING_DATE
       ? (newDbReading.READING_DATE instanceof Date ? format(newDbReading.READING_DATE, 'yyyy-MM') : String(newDbReading.READING_DATE).substring(0, 7))
       : (bulkMeter.month || "")
-  });
+  };
+
+  if (readingData.capturedCoordinates) {
+    updatePayload.xCoordinate = readingData.capturedCoordinates.longitude;
+    updatePayload.yCoordinate = readingData.capturedCoordinates.latitude;
+  }
+
+  // Update customer record
+  const updateResult = await updateBulkMeter(bulkMeter.customerKeyNumber, updatePayload);
 
   if (!updateResult.success) {
     await deleteBulkMeterReadingAction(newDbReading.id);
@@ -2762,7 +2881,7 @@ export const getFaultCodes = (): DomainFaultCode[] => {
 
 export const initializeFaultCodes = async (force: boolean = false): Promise<void> => {
   if (!force && faultCodesFetched) return;
-  const { data, error } = await getAllFaultCodesAction();
+  const { data, error } = await getPublicFaultCodesAction();
   if (data && !error) {
     faultCodes = data;
     faultCodesFetched = true;

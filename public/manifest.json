@@ -1,0 +1,16 @@
+{
+  "name": "AAWSA Billing Portal",
+  "short_name": "AAWSA",
+  "description": "Field operations application for AAWSA Meter Readers",
+  "start_url": "/staff/my-routes",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

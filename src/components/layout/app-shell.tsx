@@ -8,6 +8,7 @@ import {
   LogOut,
   Menu,
   UserCircle,
+  Sun,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,6 +33,8 @@ import { cn } from '@/lib/utils';
 import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import { NotificationBell } from './notification-bell';
 import { PERMISSIONS } from '@/lib/constants/auth';
+import { SupportChatbot } from './support-chatbot';
+import { SyncHub } from './sync-hub';
 
 interface UserProfile {
   id: string;
@@ -66,6 +69,10 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
     }
   }
 
+  const toggleOutdoorMode = () => {
+    document.documentElement.classList.toggle('theme-outdoor');
+  };
+
   return (
     <header className={cn(
       "sticky top-0 z-30 flex h-14 sm:h-16 items-center gap-2 sm:gap-4 border-b px-3 sm:px-4 transition-all no-print",
@@ -92,6 +99,16 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
           </span>
         </Link>
         <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
+          {user && <SyncHub />}
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={toggleOutdoorMode}
+            className="overflow-hidden rounded-full h-9 w-9 text-white hover:bg-white/20 flex-shrink-0"
+            title="Toggle Outdoor Legibility Mode"
+          >
+            <Sun className="h-5 w-5 sm:h-6 sm:w-6" />
+          </Button>
           {user && <NotificationBell user={user} className="text-white hover:bg-white/10" />}
           {user && (
             <DropdownMenu>
@@ -183,6 +200,7 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
           Design and Developed by Daniel Temesgen
           &copy; {currentYear} {appName}. All rights reserved.
         </footer>
+        <SupportChatbot />
       </SidebarInset>
     </SidebarProvider>
   );

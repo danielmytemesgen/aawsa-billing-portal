@@ -122,6 +122,9 @@ import {
   dbArchiveOldRecords,
   dbGetSystemStats,
   dbRunDataAudit,
+  dbUpsertSpatialRecord,
+  dbGetSystemSetting,
+  dbUpdateSystemSetting,
 } from './db-queries';
 import { withTransaction } from './db';
 
@@ -132,6 +135,22 @@ import { revalidatePath } from 'next/cache';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from './billing-config';
 
 import type { Database } from '@/types/db';
+
+export async function getReadingPeriodStatusAction() {
+  const status = await dbGetSystemSetting('reading_period_status');
+  return status ?? 'Open'; // Default to Open if not set
+}
+
+export async function updateReadingPeriodStatusAction(status: 'Open' | 'Closed') {
+  const session = await getSession();
+  if (!session || session.role !== 'Admin') {
+    throw new Error("Unauthorized");
+  }
+  const result = await dbUpdateSystemSetting('reading_period_status', status);
+  revalidatePath('/admin');
+  revalidatePath('/staff');
+  return result;
+}
 
 // Helper types to extract Row, Insert, and Update types from the database definition
 type PublicTables = Database['public']['Tables'];
@@ -383,6 +402,19 @@ export async function getAllBranchesAction() {
     return await dbGetAllBranches();
   });
 }
+
+/**
+ * Returns a minimal { id, name } list of all branches for any authenticated user.
+ * No branches_view permission required — used for UI label resolution (e.g. notification bell).
+ */
+export async function getBranchesLookupAction(): Promise<{ data: { id: string; name: string }[] | null; error: any }> {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const rows = await dbGetAllBranches();
+    return rows.map((b: any) => ({ id: b.id, name: b.name }));
+  });
+}
 export async function createBranchAction(branch: BranchInsert) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.BRANCHES_CREATE);
@@ -413,12 +445,14 @@ export async function getAllCustomersAction(options?: { branchId?: string; limit
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.CUSTOMERS_VIEW_ALL);
-    // If no view_all permission and no specific branch permission, but they are trying to view a branch
-    if (!branchId && !session.permissions.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
-       throw new Error('Forbidden: Missing customer access permissions');
-    }
+    
+    // Reader isolation:
+    const perms = session.permissions || [];
+    const readerId = !perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
 
-    return await dbGetAllCustomers({ branchId, ...options });
+    return await dbGetAllCustomers({ branchId, readerId, ...options });
   });
 }
 
@@ -453,10 +487,24 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
       // For non-restricted users, ensure branchId from form is mapped to branch_id
       customer.branch_id = customer.branch_id || (customer as any).branchId;
     }
-    const result = await dbCreateIndividualCustomer(customer);
+
+    const spatialData = {
+      xCoordinate: (customer as any).xCoordinate || (customer as any).x_coordinate,
+      yCoordinate: (customer as any).yCoordinate || (customer as any).y_coordinate,
+      zCoordinate: (customer as any).zCoordinate || (customer as any).z_coordinate,
+    };
+
+    const result = await withTransaction(async (client) => {
+      const res = await dbCreateIndividualCustomer(customer, client);
+      if (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined || spatialData.zCoordinate !== undefined) {
+        await dbUpsertSpatialRecord(res.customerKeyNumber, 'individual_customer', spatialData, client);
+      }
+      return res;
+    });
+
     await logSecurityEventAction({
       event: 'Create Customer',
-      customerKeyNumber: result.data?.customerKeyNumber,
+      customerKeyNumber: result?.customerKeyNumber,
       details: { customer }
     });
     return result;
@@ -465,7 +513,21 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
 export async function updateCustomerAction(customerKeyNumber: string, customer: IndividualCustomerUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
-    const result = await dbUpdateCustomer(customerKeyNumber, customer);
+    
+    const spatialData = {
+      xCoordinate: (customer as any).xCoordinate || (customer as any).x_coordinate,
+      yCoordinate: (customer as any).yCoordinate || (customer as any).y_coordinate,
+      zCoordinate: (customer as any).zCoordinate || (customer as any).z_coordinate,
+    };
+
+    const result = await withTransaction(async (client) => {
+      const res = await dbUpdateCustomer(customerKeyNumber, customer, client);
+      if (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined || spatialData.zCoordinate !== undefined) {
+        await dbUpsertSpatialRecord(customerKeyNumber, 'individual_customer', spatialData, client);
+      }
+      return res;
+    });
+
     await logSecurityEventAction({
       event: 'Update Customer',
       customerKeyNumber,
@@ -528,8 +590,15 @@ export async function getAllBulkMetersAction(options?: { branchId?: string; limi
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const branchId = getEffectiveBranchId(session, options?.branchId, 'bulk_meters_view_all');
-    return await dbGetAllBulkMeters({ branchId, ...options });
+    const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BULK_METERS_VIEW_ALL);
+    
+    // Reader isolation:
+    const perms = session.permissions || [];
+    const readerId = !perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetAllBulkMeters({ branchId, readerId, ...options });
   });
 }
 
@@ -574,7 +643,21 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
       // For non-restricted users, ensure branchId from form is mapped to branch_id
       bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId;
     }
-    const result = await dbCreateBulkMeter(bulkMeter);
+
+    const spatialData = {
+      xCoordinate: (bulkMeter as any).xCoordinate || (bulkMeter as any).x_coordinate,
+      yCoordinate: (bulkMeter as any).yCoordinate || (bulkMeter as any).y_coordinate,
+      zCoordinate: (bulkMeter as any).zCoordinate || (bulkMeter as any).z_coordinate,
+    };
+
+    const result = await withTransaction(async (client) => {
+      const res = await dbCreateBulkMeter(bulkMeter, client);
+      if (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined || spatialData.zCoordinate !== undefined) {
+        await dbUpsertSpatialRecord(res.customerKeyNumber, 'bulk_meter', spatialData, client);
+      }
+      return res;
+    });
+
     await logSecurityEventAction({
       event: 'Create Bulk Meter',
       customerKeyNumber: bulkMeter.customerKeyNumber,
@@ -586,7 +669,21 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
 export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter: BulkMeterUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.BULK_METERS_UPDATE);
-    const result = await dbUpdateBulkMeter(customerKeyNumber, bulkMeter);
+
+    const spatialData = {
+      xCoordinate: (bulkMeter as any).xCoordinate || (bulkMeter as any).x_coordinate,
+      yCoordinate: (bulkMeter as any).yCoordinate || (bulkMeter as any).y_coordinate,
+      zCoordinate: (bulkMeter as any).zCoordinate || (bulkMeter as any).z_coordinate,
+    };
+
+    const result = await withTransaction(async (client) => {
+      const res = await dbUpdateBulkMeter(customerKeyNumber, bulkMeter, client);
+      if (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined || spatialData.zCoordinate !== undefined) {
+        await dbUpsertSpatialRecord(customerKeyNumber, 'bulk_meter', spatialData, client);
+      }
+      return res;
+    });
+
     await logSecurityEventAction({
       event: 'Update Bulk Meter',
       customerKeyNumber,
@@ -724,7 +821,12 @@ export async function getAllBillsAction(options?: { branchId?: string; excludeUn
     // Apply branch filtering if they don't have global access
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BILL_VIEW_ALL);
 
-    return await dbGetAllBills({ ...options, branchId });
+    // Reader isolation:
+    const readerId = !perms.includes(PERMISSIONS.BILL_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetAllBills({ ...options, branchId, readerId });
   });
 }
 export async function createBillAction(bill: BillInsert) {
@@ -1382,6 +1484,31 @@ export async function getBillWorkflowLogsAction(billId: string) {
   });
 }
 
+export async function upsertSpatialRecordAction(entityId: string, entityType: 'individual_customer' | 'bulk_meter', data: { xCoordinate: number; yCoordinate: number; zCoordinate?: number | null }) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE); 
+    
+    return await withTransaction(async (client) => {
+      const res = await dbUpsertSpatialRecord(entityId, entityType, data, client);
+      
+      // Update legacy columns
+      const legacyData = {
+        x_coordinate: data.xCoordinate,
+        y_coordinate: data.yCoordinate,
+        ...(data.zCoordinate !== undefined && { z_coordinate: data.zCoordinate })
+      };
+      
+      if (entityType === 'individual_customer') {
+        await dbUpdateCustomer(entityId, legacyData, client);
+      } else {
+        await dbUpdateBulkMeter(entityId, legacyData, client);
+      }
+      
+      return res;
+    });
+  });
+}
+
 export async function getAllIndividualCustomerReadingsAction() {
   return await wrap(async () => {
     const session = await checkPermission();
@@ -1393,19 +1520,38 @@ export async function getAllIndividualCustomerReadingsAction() {
 
     // Branch isolation
     const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.METER_READINGS_VIEW_ALL);
-    return await dbGetAllIndividualCustomerReadings(filterBranchId);
+
+    // Reader isolation:
+    const readerId = !perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetAllIndividualCustomerReadings(filterBranchId, readerId);
   });
 }
-export async function createIndividualCustomerReadingAction(reading: IndividualCustomerReadingInsert) {
+export async function createIndividualCustomerReadingAction(reading: IndividualCustomerReadingInsert, spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number }) {
+  const status = await getReadingPeriodStatusAction();
+  if (status === 'Closed') {
+    return { success: false, message: "Reading period is currently closed globally." };
+  }
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
-    const result = await dbCreateIndividualCustomerReading(reading);
-    await logSecurityEventAction({
-      event: 'Create Indiv. Reading',
-      customerKeyNumber: reading.individual_customer_id,
-      details: { reading }
+    
+    return await withTransaction(async (client) => {
+      const result = await dbCreateIndividualCustomerReading(reading, client);
+      
+      if (spatialData && (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined)) {
+        await dbUpsertSpatialRecord(reading.individual_customer_id, 'individual_customer', spatialData, client);
+      }
+
+      await logSecurityEventAction({
+        event: 'Create Indiv. Reading',
+        customerKeyNumber: reading.individual_customer_id,
+        details: { reading, spatialData }
+      });
+      
+      return result;
     });
-    return result;
   });
 }
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
@@ -1442,19 +1588,38 @@ export async function getAllBulkMeterReadingsAction() {
 
     // Branch isolation
     const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.METER_READINGS_VIEW_ALL);
-    return await dbGetAllBulkMeterReadings(filterBranchId);
+
+    // Reader isolation:
+    const readerId = !perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetAllBulkMeterReadings(filterBranchId, readerId);
   });
 }
-export async function createBulkMeterReadingAction(reading: BulkMeterReadingInsert) {
+export async function createBulkMeterReadingAction(reading: BulkMeterReadingInsert, spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number }) {
+  const status = await getReadingPeriodStatusAction();
+  if (status === 'Closed') {
+    return { success: false, message: "Reading period is currently closed globally." };
+  }
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
-    const result = await dbCreateBulkMeterReading(reading);
-    await logSecurityEventAction({
-      event: 'Create Bulk Reading',
-      customerKeyNumber: reading.CUSTOMERKEY,
-      details: { reading }
+    
+    return await withTransaction(async (client) => {
+      const result = await dbCreateBulkMeterReading(reading, client);
+      
+      if (spatialData && (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined)) {
+        await dbUpsertSpatialRecord(reading.CUSTOMERKEY, 'bulk_meter', spatialData, client);
+      }
+
+      await logSecurityEventAction({
+        event: 'Create Bulk Reading',
+        customerKeyNumber: reading.CUSTOMERKEY,
+        details: { reading, spatialData }
+      });
+      
+      return result;
     });
-    return result;
   });
 }
 export async function updateBulkMeterReadingAction(id: string, reading: BulkMeterReadingUpdate) {
@@ -1791,6 +1956,18 @@ export async function getAllTariffsAction() {
     return await dbGetAllTariffs();
   });
 }
+
+/**
+ * Returns all tariffs for reference data (publicly available to all authenticated users)
+ * This is used for background calculations on the dashboard.
+ */
+export async function getPublicTariffsAction() {
+  return await wrap(async () => {
+    // Only require authentication, not TARIFFS_VIEW admin permission
+    await getSession();
+    return await dbGetAllTariffs();
+  });
+}
 export async function createTariffAction(tariff: TariffInsert) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.TARIFFS_MANAGE);
@@ -1845,6 +2022,19 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
 export async function getAllKnowledgeBaseArticlesAction() {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.KNOWLEDGE_BASE_VIEW);
+    return await dbGetAllKnowledgeBaseArticles();
+  });
+}
+
+/**
+ * Returns all published knowledge base articles for any authenticated user.
+ * No knowledge_base_view permission required — used by the support chatbot
+ * which is mounted globally for all staff and admin users.
+ */
+export async function getPublicKnowledgeBaseArticlesAction() {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
     return await dbGetAllKnowledgeBaseArticles();
   });
 }
@@ -2082,21 +2272,42 @@ export async function getCustomerReadingsAction(
 
 // Route Server Actions
 export async function getAllRoutesAction(options?: { branchId?: string }) {
+  const session = await getSession();
+  
+  // If user is a Reader, check if reading period is open
+  if (session?.role === 'Reader' || session?.role === 'Staff') {
+    const status = await getReadingPeriodStatusAction();
+    if (status === 'Closed') {
+      return []; // Return no routes if closed for field staff
+    }
+  }
   return await wrap(async () => {
-    const session = await checkPermission('routes_view');
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+
+    if (!perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && 
+        !perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) && 
+        !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
+      throw new Error('Forbidden: Missing route view permissions');
+    }
     
     // Determine branch isolation:
-    // If the user has 'routes_view_all', they can see everything.
-    // Otherwise, they are locked to their own branchId.
-    const branchId = getEffectiveBranchId(session, options?.branchId, 'routes_view_all');
+    const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.ROUTES_VIEW_ALL);
+    
+    // Reader isolation:
+    // If the user only has 'routes_view_assigned', lock them to their own readerId.
+    const readerId = !perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) 
+      ? session.id 
+      : undefined;
 
-    return await dbGetAllRoutes(branchId);
+    return await dbGetAllRoutes(branchId, readerId);
   });
 }
 
 export async function createRouteAction(route: RouteInsert) {
   return await wrap(async () => {
-    const session = await checkPermission('routes_create');
+    const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
 
     // Map branchId to branch_id if needed
     if (!route.branch_id && (route as any).branchId) {
@@ -2116,7 +2327,7 @@ export async function createRouteAction(route: RouteInsert) {
 
 export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission('routes_update');
+    const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
     
     const result = await dbUpdateRoute(routeKey, routeUpdates);
     await logSecurityEventAction({ event: 'Update Route', details: { routeKey, routeUpdates } });
@@ -2126,7 +2337,7 @@ export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpd
 
 export async function deleteRouteAction(routeKey: string) {
   return await wrap(async () => {
-    const session = await checkPermission('routes_delete');
+    const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
 
     await dbDeleteRoute(routeKey, session.id);
     await logSecurityEventAction({ event: 'Delete Route', severity: 'warning', details: { routeKey } });
@@ -2137,8 +2348,10 @@ export async function getRouteByKeyAction(routeKey: string) {
   return await wrap(async () => {
     const session = await checkPermission();
     const perms = session.permissions || [];
-    if (!perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && !perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) && !perms.includes('routes_view')) {
-      throw new Error('Forbidden: Missing routes view permission');
+    if (!perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && 
+        !perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) && 
+        !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
+      throw new Error('Forbidden: Missing route view permissions');
     }
     return await dbGetRouteByKey(routeKey);
   });
@@ -2284,18 +2497,25 @@ export async function getAllFaultCodesAction() {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
-
     const perms = session.permissions || [];
-    const hasPerm = perms.includes('settings_view') ||
-      perms.includes('meter_readings_create') ||
-      perms.includes('meter_readings_view_branch') ||
-      perms.includes('meter_readings_view_all') ||
-      perms.includes('dashboard_view_all') ||
-      perms.includes('dashboard_view_branch');
+    const hasPerm = perms.includes(PERMISSIONS.FAULT_CODES_VIEW) || 
+                   perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+                   perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+                   perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL);
 
     if (!hasPerm) {
       throw new Error('Forbidden: No permissions to view fault codes');
     }
+    return await dbGetAllFaultCodes();
+  });
+}
+
+/**
+ * Returns all fault codes (publicly available to all authenticated users)
+ */
+export async function getPublicFaultCodesAction() {
+  return await wrap(async () => {
+    await getSession();
     return await dbGetAllFaultCodes();
   });
 }
@@ -2438,7 +2658,15 @@ export async function getDistinctBillingMonthsAction() {
 
 export async function getBillsByMonthAction(monthYear: string) {
   return await wrap(async () => {
-    const session = await checkPermission('reports_view');
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+
+    if (!perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) && 
+        !perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH) && 
+        !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
+      throw new Error('Forbidden: Missing reports view permissions');
+    }
     const hasManageAll = session.permissions?.includes('bill:manage_all');
     const branchId = !hasManageAll ? session.branchId : undefined;
 

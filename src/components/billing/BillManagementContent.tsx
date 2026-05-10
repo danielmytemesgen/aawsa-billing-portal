@@ -24,7 +24,7 @@ import {
     submitBillAction,
     approveBillAction,
     postBillAction,
-    getAllBranchesAction
+    getBranchesLookupAction
 } from '@/lib/actions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
@@ -137,7 +137,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 }
             }
 
-            const branchRes = await getAllBranchesAction();
+            const branchRes = await getBranchesLookupAction();
             if (branchRes.data) setBranches(branchRes.data);
         } catch (error) {
             console.error(error);

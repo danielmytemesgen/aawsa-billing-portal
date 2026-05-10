@@ -75,25 +75,24 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
         const cycleDisplayText = recentCycleMonth !== "0000-00" ? recentCycleMonth : format(new Date(), 'yyyy-MM');
         
-        const totalCustomers = bulkMeters.length;
+        const activeBulkMeters = bulkMeters.filter(bm => bm.status === 'Active' || !bm.status);
+        const totalCustomers = activeBulkMeters.length;
 
         // GPS Encoded: Meters with coordinates
-        const gpsEncoded = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate).length +
-            customers.filter(c => c.xCoordinate && c.yCoordinate).length;
+        const gpsEncoded = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate).length;
 
         // Collected vs Pending (Recent Cycle)
-        const cycleBMs = bulkMeters.filter(bm => bm.month === recentCycleMonth);
-        const cycleCustomers = customers.filter(c => c.month === recentCycleMonth);
+        const cycleReadings = allReadings.filter(r => r.monthYear === recentCycleMonth);
+        const cycleBulkReadings = cycleReadings.filter(r => activeBulkMeters.some(bm => bm.customerKeyNumber === r.meterId));
+        const uniqueMetersRead = new Set(cycleBulkReadings.map(r => r.meterId));
+        
+        const collectedCount = uniqueMetersRead.size;
 
-        const collectedCount = cycleBMs.filter(bm => bm.paymentStatus === 'Paid').length +
-            cycleCustomers.filter(c => c.paymentStatus === 'Paid').length;
+        const totalActiveMeters = activeBulkMeters.length;
 
-        const pendingCount = cycleBMs.filter(bm => bm.paymentStatus === 'Unpaid').length +
-            cycleCustomers.filter(c => c.paymentStatus === 'Unpaid').length;
+        const pendingCount = Math.max(0, totalActiveMeters - collectedCount);
 
         // Charts: Reading Type Ratio (Filtered for recent cycle)
-        const cycleReadings = allReadings.filter(r => r.monthYear === recentCycleMonth);
-
         const zeroReadings = cycleReadings.filter(r => {
             const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
             return usage === 0 && !r.FAULT_CODE && !r.faultCode;
@@ -177,25 +176,23 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
         // Branch Detail Table Data (Filtered for recent cycle)
         const branchDetails = branches.filter(b => b.name.toLowerCase() !== 'head office').map(branch => {
-            const bCustomers = customers.filter(c => c.branchId === branch.id);
-            const bBulkMeters = bulkMeters.filter(bm => bm.branchId === branch.id);
-            const bCycleBMs = bBulkMeters.filter(bm => bm.month === recentCycleMonth);
-            const bCycleCusts = bCustomers.filter(c => c.branchId === branch.id && c.month === recentCycleMonth);
+            const bBulkMeters = activeBulkMeters.filter(bm => bm.branchId === branch.id);
+            const totalInBranch = bBulkMeters.length;
 
             const branchReaders = staff.filter(s => s.branchId === branch.id && s.role.toLowerCase() === 'reader').length;
             const branchRoutes = routes.filter(r => r.branchId === branch.id).length;
 
-            const collected = bCycleBMs.filter(bm => bm.paymentStatus === 'Paid').length +
-                bCycleCusts.filter(c => c.paymentStatus === 'Paid').length;
-            const pending = bCycleBMs.filter(bm => bm.paymentStatus === 'Unpaid').length +
-                bCycleCusts.filter(c => c.paymentStatus === 'Unpaid').length;
-            const totalInCycle = bCycleBMs.length + bCycleCusts.length;
-            const performance = totalInCycle > 0 ? Math.round((collected / totalInCycle) * 100) : 0;
+            const branchReadings = cycleReadings.filter(r => bBulkMeters.some(b => b.customerKeyNumber === r.meterId));
+            const uniqueBranchMetersRead = new Set(branchReadings.map(r => r.meterId));
+            const collected = uniqueBranchMetersRead.size;
+            
+            const pending = Math.max(0, totalInBranch - collected);
+            const performance = totalInBranch > 0 ? Math.round((collected / totalInBranch) * 100) : 0;
 
             return {
                 id: branch.id,
                 name: branch.name.replace(/ Branch$/i, ""),
-                total: totalInCycle,
+                total: totalInBranch,
                 collected,
                 pending,
                 readers: branchReaders,

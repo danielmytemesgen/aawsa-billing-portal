@@ -35,7 +35,6 @@ import {
   initializeStaffMembers,
   getBranches,
   initializeBranches,
-  initializeBills,
   getBills
 } from "@/lib/data-store";
 import type { FaultCodeRow } from "@/lib/actions";
@@ -79,7 +78,6 @@ export default function StaffMeterReadingsPage() {
   const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
   const [allRoutes, setAllRoutes] = React.useState<Route[]>([]);
   const [allStaff, setAllStaff] = React.useState<any[]>([]);
-  const [allBills, setAllBills] = React.useState<any[]>([]);
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -184,7 +182,6 @@ export default function StaffMeterReadingsPage() {
       initializeBranches(true),
       fetchRoutes(true),
       hasPermission('staff_view') ? initializeStaffMembers(true) : Promise.resolve(),
-      initializeBills(true),
     ]).then(() => {
       if (!isMounted) return;
       setAllCustomers(getCustomers());
@@ -192,7 +189,6 @@ export default function StaffMeterReadingsPage() {
       setAllBranches(getBranches());
       setAllRoutes(getRoutes());
       setAllStaff(getStaffMembers());
-      setAllBills(getBills());
       combineAndSortReadings();
       setIsLoading(false);
     }).catch(error => {
@@ -236,7 +232,7 @@ export default function StaffMeterReadingsPage() {
 
   const handleAddReadingSubmit = async (formData: AddMeterReadingFormValues) => {
     const readerId = currentUser?.id || currentUser?.email || 'N/A';
-    const { entityId, meterType, reading, date, faultCode } = formData;
+    const { entityId, meterType, reading, date, faultCode, capturedCoordinates } = formData;
 
     setIsLoading(true);
     let result;
@@ -249,6 +245,7 @@ export default function StaffMeterReadingsPage() {
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
+          capturedCoordinates: capturedCoordinates,
 
           faultCode: faultCode === 'none' ? undefined : faultCode,
           notes: faultCode && faultCode !== 'none' ? `Fault: ${faultCode}. Reader: ${currentUser?.email || readerId}` : `Reading entered by ${currentUser?.email || readerId}`,
@@ -260,6 +257,7 @@ export default function StaffMeterReadingsPage() {
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
+          capturedCoordinates: capturedCoordinates,
         });
       }
 

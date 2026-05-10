@@ -4,6 +4,60 @@ import { randomUUID } from 'crypto';
 // Postgres-backed implementations for common DB operations.
 // These functions keep `any` shapes to match the existing codebase.
 
+export const dbGetSpatialRecord = async (entityId: string, entityType: 'individual_customer' | 'bulk_meter') => {
+    const sql = 'SELECT * FROM spatial_records WHERE entity_id = $1 AND entity_type = $2';
+    const rows: any = await query(sql, [entityId, entityType]);
+    return rows[0] ?? null;
+};
+
+export const dbUpsertSpatialRecord = async (entityId: string, entityType: 'individual_customer' | 'bulk_meter', data: any, client?: any) => {
+    const { xCoordinate, yCoordinate, zCoordinate } = data;
+    const qFunc = client ? client.query.bind(client) : query;
+    
+    // Check if exists
+    const checkSql = 'SELECT id FROM spatial_records WHERE entity_id = $1 AND entity_type = $2';
+    const checkRes = await qFunc(checkSql, [entityId, entityType]);
+    const rows = client ? checkRes.rows : checkRes;
+    const existing = rows[0];
+
+    if (existing) {
+        const updateSql = `
+            UPDATE spatial_records 
+            SET x_coordinate = $1, y_coordinate = $2, z_coordinate = $3, updated_at = NOW() 
+            WHERE id = $4 
+            RETURNING *
+        `;
+        const res = await qFunc(updateSql, [xCoordinate, yCoordinate, zCoordinate, existing.id]);
+        return (client ? res.rows : res)[0];
+    } else {
+        const insertSql = `
+            INSERT INTO spatial_records (entity_id, entity_type, x_coordinate, y_coordinate, z_coordinate) 
+            VALUES ($1, $2, $3, $4, $5) 
+            RETURNING *
+        `;
+        const res = await qFunc(insertSql, [entityId, entityType, xCoordinate, yCoordinate, zCoordinate]);
+        return (client ? res.rows : res)[0];
+    }
+};
+
+export const dbGetSystemSetting = async (key: string) => {
+    const sql = 'SELECT value FROM system_settings WHERE key = $1';
+    const rows: any = await query(sql, [key]);
+    return rows[0]?.value ?? null;
+};
+
+export const dbUpdateSystemSetting = async (key: string, value: string) => {
+    const sql = `
+        INSERT INTO system_settings (key, value, updated_at) 
+        VALUES ($1, $2, NOW()) 
+        ON CONFLICT (key) 
+        DO UPDATE SET value = $2, updated_at = NOW() 
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [key, value]);
+    return rows[0];
+};
+
 export const getStaffMemberForAuth = async (email: string, password?: string) => {
     let sql = `
         SELECT
@@ -116,14 +170,27 @@ export const dbGetBranchById = async (id: string) => {
     return rows[0] ?? null;
 };
 
-export const dbGetAllCustomers = async (options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
-    let sql = 'SELECT ic.*, b.name as branch_name FROM individual_customers ic LEFT JOIN branches b ON ic.branch_id = b.id WHERE ic.deleted_at IS NULL';
+export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
+    let sql = `
+        SELECT ic.*, b.name as branch_name, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
+        FROM individual_customers ic 
+        LEFT JOIN branches b ON ic.branch_id = b.id 
+        LEFT JOIN spatial_records sr ON ic."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'individual_customer'
+        LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
+        LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key
+        WHERE ic.deleted_at IS NULL
+    `;
     const params: any[] = [];
     let paramIndex = 1;
 
     if (options?.branchId) {
         sql += ` AND ic.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
+    }
+    
+    if (options?.readerId) {
+        sql += ` AND r.reader_id = $${paramIndex++}`;
+        params.push(options.readerId);
     }
 
     if (options?.excludePending) {
@@ -137,7 +204,7 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; limit?: n
         paramIndex++;
     }
 
-    sql += ' ORDER BY created_at DESC';
+    sql += ' ORDER BY ic.created_at DESC';
 
     if (options?.limit) {
         sql += ` LIMIT $${paramIndex++}`;
@@ -258,7 +325,7 @@ export const dbGetBillsByIndividualCustomerIds = async (customerKeys: string[]):
     return map;
 };
 
-export const dbCreateIndividualCustomer = async (customer: any) => {
+export const dbCreateIndividualCustomer = async (customer: any, client?: any) => {
     const cleanCust = { ...customer };
     // Map camelCase to DB column names
     if (cleanCust.meterNumber !== undefined) {
@@ -273,14 +340,27 @@ export const dbCreateIndividualCustomer = async (customer: any) => {
     const keys = Object.keys(cleanCust);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO individual_customers (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => cleanCust[k]));
+    const params = keys.map(k => cleanCust[k]);
+    
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0] || cleanCust;
+    }
+    const rows: any = await query(sql, params);
     return rows[0] || cleanCust;
 };
 
-export const dbUpdateCustomer = async (customerKeyNumber: string, customer: any) => {
+export const dbUpdateCustomer = async (customerKeyNumber: string, customer: any, client?: any) => {
     const keys = Object.keys(customer);
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE individual_customers SET ${setClause} WHERE "customerKeyNumber" = $${keys.length + 1} RETURNING *`, [...keys.map(k => customer[k]), customerKeyNumber]);
+    const sql = `UPDATE individual_customers SET ${setClause} WHERE "customerKeyNumber" = $${keys.length + 1} RETURNING *`;
+    const params = [...keys.map(k => customer[k]), customerKeyNumber];
+    
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0] ?? null;
+    }
+    const rows = await query(sql, params);
     return rows[0] ?? null;
 };
 
@@ -298,7 +378,13 @@ export const dbDeleteCustomer = async (customerKeyNumber: string, deletedBy?: st
 };
 
 export const dbGetCustomerById = async (customerKeyNumber: string) => {
-    const rows: any = await query('SELECT * FROM individual_customers WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL', [customerKeyNumber]);
+    const sql = `
+        SELECT ic.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
+        FROM individual_customers ic
+        LEFT JOIN spatial_records sr ON ic."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'individual_customer'
+        WHERE LOWER(TRIM(ic."customerKeyNumber")) = LOWER(TRIM($1)) AND ic.deleted_at IS NULL
+    `;
+    const rows: any = await query(sql, [customerKeyNumber]);
     return rows[0] ?? null;
 };
 
@@ -306,14 +392,26 @@ export const dbGetCustomersByBookNumber = async (bookNumber: string) => {
     return await query('SELECT * FROM individual_customers WHERE "bookNumber" = $1 AND status = \'Active\' AND deleted_at IS NULL', [bookNumber]);
 };
 
-export const dbGetAllBulkMeters = async (options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
-    let sql = 'SELECT bm.*, b.name as branch_name FROM bulk_meters bm LEFT JOIN branches b ON bm.branch_id = b.id WHERE bm.deleted_at IS NULL';
+export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
+    let sql = `
+        SELECT bm.*, b.name as branch_name, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
+        FROM bulk_meters bm 
+        LEFT JOIN branches b ON bm.branch_id = b.id 
+        LEFT JOIN spatial_records sr ON bm."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'bulk_meter'
+        LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key
+        WHERE bm.deleted_at IS NULL
+    `;
     const params: any[] = [];
     let paramIndex = 1;
 
     if (options?.branchId) {
         sql += ` AND bm.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
+    }
+
+    if (options?.readerId) {
+        sql += ` AND r.reader_id = $${paramIndex++}`;
+        params.push(options.readerId);
     }
 
     if (options?.excludePending) {
@@ -327,7 +425,7 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; limit?: 
         paramIndex++;
     }
 
-    sql += ' ORDER BY "createdAt" DESC';
+    sql += ' ORDER BY bm."createdAt" DESC';
 
     if (options?.limit) {
         sql += ` LIMIT $${paramIndex++}`;
@@ -367,7 +465,7 @@ export const dbCountBulkMeters = async (options?: { branchId?: string; searchTer
     return parseInt(rows[0]?.total || '0', 10);
 };
 
-export const dbCreateBulkMeter = async (bulkMeter: any) => {
+export const dbCreateBulkMeter = async (bulkMeter: any, client?: any) => {
     const cleanBm = { ...bulkMeter };
     // Map camelCase to DB column names 
     if (cleanBm.meterNumber !== undefined) {
@@ -386,14 +484,24 @@ export const dbCreateBulkMeter = async (bulkMeter: any) => {
     const keys = Object.keys(cleanBm);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO bulk_meters (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => cleanBm[k]));
+    const params = keys.map(k => cleanBm[k]);
+    
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0] || cleanBm;
+    }
+    const rows: any = await query(sql, params);
     return rows[0] || cleanBm;
 };
 
 export const dbGetBulkMeterById = async (customerKeyNumber: string) => {
-    console.log(`[DB Query] Fetching bulk meter by ID: "${customerKeyNumber}"`);
-    const rows: any = await query('SELECT * FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL', [customerKeyNumber]);
-    console.log(`[DB Query] Result: ${rows.length > 0 ? 'Found' : 'Not Found'}`);
+    const sql = `
+        SELECT bm.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
+        FROM bulk_meters bm
+        LEFT JOIN spatial_records sr ON bm."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'bulk_meter'
+        WHERE LOWER(TRIM(bm."customerKeyNumber")) = LOWER(TRIM($1)) AND bm.deleted_at IS NULL
+    `;
+    const rows: any = await query(sql, [customerKeyNumber]);
     return rows[0] ?? null;
 }
 
@@ -618,18 +726,28 @@ export const dbGetMostRecentBillsForBulkMeters = async (customerKeys: string[], 
     return await query(queryStr, params);
 };
 
-export const dbGetAllBills = async (options?: { branchId?: string; excludeUnfinalized?: boolean }) => {
+export const dbGetAllBills = async (options?: { branchId?: string; readerId?: string; excludeUnfinalized?: boolean }) => {
     let sql = 'SELECT b.* FROM bills b';
     const params: any[] = [];
     let paramIndex = 1;
 
     const whereClauses = ['b.deleted_at IS NULL'];
 
-    if (options?.branchId) {
+    if (options?.branchId || options?.readerId) {
         sql += ' LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"';
         sql += ' LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"';
+    }
+
+    if (options?.branchId) {
         whereClauses.push(`(bm.branch_id = $${paramIndex} OR ic.branch_id = $${paramIndex})`);
         params.push(options.branchId);
+        paramIndex++;
+    }
+
+    if (options?.readerId) {
+        sql += ' LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key';
+        whereClauses.push(`r.reader_id = $${paramIndex}`);
+        params.push(options.readerId);
         paramIndex++;
     }
 
@@ -813,22 +931,40 @@ export const dbGetBillWorkflowLogs = async (billId: string) => {
     return await query('SELECT * FROM bill_workflow_logs WHERE bill_id = $1 ORDER BY created_at DESC', [billId]);
 };
 
-export const dbGetAllIndividualCustomerReadings = async (branchId?: string) => {
+export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string) => {
+    let sql = `
+        SELECT r.* FROM individual_customer_readings r
+        JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
+        LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
+        WHERE r.deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    
     if (branchId) {
-        return await query(`
-            SELECT r.* FROM individual_customer_readings r
-            JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
-            WHERE r.deleted_at IS NULL AND ic.branch_id = $1
-        `, [branchId]);
+        params.push(branchId);
+        sql += ` AND ic.branch_id = $${params.length}`;
     }
-    return await query('SELECT * FROM individual_customer_readings WHERE deleted_at IS NULL');
+    
+    if (readerId) {
+        params.push(readerId);
+        sql += ` AND ro.reader_id = $${params.length}`;
+    }
+
+    return await query(sql, params);
 };
 
-export const dbCreateIndividualCustomerReading = async (reading: any) => {
+export const dbCreateIndividualCustomerReading = async (reading: any, client?: any) => {
     const keys = Object.keys(reading);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => reading[k]));
+    const params = keys.map(k => reading[k]);
+    
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0] || reading;
+    }
+    const rows: any = await query(sql, params);
     return rows[0] || reading;
 };
 
@@ -859,23 +995,40 @@ export const dbGetIndividualCustomerReadingsByCustomer = async (customerKey: str
     );
 };
 
-export const dbGetAllBulkMeterReadings = async (branchId?: string) => {
+export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string) => {
+    let sql = `
+        SELECT r.* FROM bulk_meter_readings r
+        JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+        LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
+        WHERE r.deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    
     if (branchId) {
-        return await query(`
-            SELECT r.* FROM bulk_meter_readings r
-            JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
-            WHERE r.deleted_at IS NULL AND bm.branch_id = $1
-        `, [branchId]);
+        params.push(branchId);
+        sql += ` AND bm.branch_id = $${params.length}`;
     }
-    return await query('SELECT * FROM bulk_meter_readings WHERE deleted_at IS NULL');
+    
+    if (readerId) {
+        params.push(readerId);
+        sql += ` AND ro.reader_id = $${params.length}`;
+    }
+
+    return await query(sql, params);
 };
 
-export const dbCreateBulkMeterReading = async (reading: any) => {
+export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
     try {
         const keys = Object.keys(reading);
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO bulk_meter_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-        const rows: any = await query(sql, keys.map(k => reading[k]));
+        const params = keys.map(k => reading[k]);
+        
+        if (client) {
+            const res = await client.query(sql, params);
+            return res.rows[0] || reading;
+        }
+        const rows: any = await query(sql, params);
         return rows[0] || reading;
     } catch (error) {
         console.error('dbCreateBulkMeterReading error:', error);
@@ -1423,11 +1576,21 @@ export const dbDeleteFaultCode = async (id: string, deletedBy?: string) => {
 // Route Management Queries
 // =====================================================
 
-export const dbGetAllRoutes = async (branchId?: string) => {
+export const dbGetAllRoutes = async (branchId?: string, readerId?: string) => {
+    let sql = 'SELECT * FROM routes WHERE deleted_at IS NULL';
+    const params: any[] = [];
+
     if (branchId) {
-        return await query('SELECT * FROM routes WHERE deleted_at IS NULL AND branch_id = $1', [branchId]);
+        params.push(branchId);
+        sql += ` AND branch_id = $${params.length}`;
     }
-    return await query('SELECT * FROM routes WHERE deleted_at IS NULL');
+    
+    if (readerId) {
+        params.push(readerId);
+        sql += ` AND reader_id = $${params.length}`;
+    }
+
+    return await query(sql, params);
 };
 
 export const dbGetRouteByKey = async (routeKey: string) => {
@@ -2295,13 +2458,6 @@ export const dbGetSystemSettings = async () => {
     return settings;
 };
 
-export const dbUpdateSystemSetting = async (key: string, value: string) => {
-    return await query(`
-        INSERT INTO system_settings (key, value, updated_at) 
-        VALUES ($1, $2, CURRENT_TIMESTAMP)
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
-    `, [key, value]);
-};
 
 export const dbRunDataAudit = async (branchId?: string) => {
     // 1. Master-Sub Usage Mismatch

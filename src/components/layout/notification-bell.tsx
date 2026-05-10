@@ -18,6 +18,7 @@ import {
   initializeBranches,
   subscribeToBranches,
 } from "@/lib/data-store";
+import { getBranchesLookupAction } from "@/lib/actions";
 import type { DomainNotification } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 
@@ -49,22 +50,35 @@ export function NotificationBell({ user, className }: NotificationBellProps) {
       setLastReadTimestamp(localStorage.getItem(LAST_READ_TIMESTAMP_KEY));
     }
 
+    const canViewBranches = hasPermission('branches_view');
+
     const fetchData = async () => {
-      await Promise.all([initializeNotifications(), initializeBranches()]);
+      // Always fetch live branch names from the DB (no branches_view required)
+      const [, branchResult] = await Promise.all([
+        initializeNotifications(),
+        getBranchesLookupAction(),
+      ]);
       setNotifications(getNotifications());
-      setAllBranches(getBranches());
+      if (branchResult.data) {
+        setAllBranches(branchResult.data as any[]);
+      }
+      // Also prime the full branch cache for admin users
+      if (canViewBranches) {
+        initializeBranches().then(() => setAllBranches(getBranches()));
+      }
     };
 
     fetchData();
 
     const unsubNotifications = subscribeToNotifications(setNotifications);
-    const unsubBranches = subscribeToBranches(setAllBranches);
+    // Admins get live cache updates; staff rely on the one-time lookup above
+    const unsubBranches = canViewBranches ? subscribeToBranches(setAllBranches) : () => {};
 
     return () => {
       unsubNotifications();
       unsubBranches();
     };
-  }, []);
+  }, [hasPermission]);
   const relevantNotifications = React.useMemo(() => {
     if (!user) {
       return [];

@@ -206,3 +206,15 @@ export const systemSettings = pgTable('system_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 11. Spatial Data Management
+export const spatialRecords = pgTable('spatial_records', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  entityId: text('entity_id').notNull(),
+  entityType: text('entity_type').notNull(), // 'individual_customer' or 'bulk_meter'
+  xCoordinate: numeric('x_coordinate'),
+  yCoordinate: numeric('y_coordinate'),
+  zCoordinate: numeric('z_coordinate'),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+

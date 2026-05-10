@@ -52,6 +52,7 @@ import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DatReadingExportDialog } from "@/components/export/dat-reading-export-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
+import { ReadingPeriodToggle } from "@/components/admin/reading-period-toggle";
 
 interface User {
   id?: string;
@@ -189,7 +190,7 @@ export default function AdminMeterReadingsPage() {
 
   const handleAddReadingSubmit = async (formData: AddMeterReadingFormValues) => {
     const readerId = currentUser?.id;
-    const { entityId, meterType, reading, date, faultCode } = formData;
+    const { entityId, meterType, reading, date, faultCode, capturedCoordinates } = formData;
 
     setIsLoading(true);
     let result;
@@ -202,9 +203,9 @@ export default function AdminMeterReadingsPage() {
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
-
           faultCode: faultCode === 'none' ? undefined : faultCode,
           notes: faultCode && faultCode !== 'none' ? `Fault: ${faultCode}. Reader: ${currentUser?.email || 'Admin'}` : `Reading entered by ${currentUser?.email || 'Admin'}`,
+          capturedCoordinates
         });
       } else {
         result = await addBulkMeterReading({
@@ -213,8 +214,7 @@ export default function AdminMeterReadingsPage() {
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
-
-
+          capturedCoordinates
         });
       }
 
@@ -356,6 +356,10 @@ export default function AdminMeterReadingsPage() {
             </DropdownMenu>
           )}
         </div>
+      </div>
+
+      <div className="w-full">
+        <ReadingPeriodToggle />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

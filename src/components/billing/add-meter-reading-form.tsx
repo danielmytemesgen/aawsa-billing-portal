@@ -7,6 +7,7 @@ import { format } from "date-fns";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import * as React from "react";
+import { useToast } from "@/hooks/use-toast";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock } from "lucide-react";
 import type { FaultCodeRow } from "@/lib/actions";
 import { Badge } from "@/components/ui/badge";
+import { upsertSpatialRecord } from "@/lib/data-store";
 
 // Base schema for form fields
 const formSchemaBase = z.object({
@@ -52,6 +54,10 @@ const formSchemaBase = z.object({
     required_error: "A date is required.",
   }),
   faultCode: z.string().optional(),
+  capturedCoordinates: z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+  }).optional(),
 });
 
 export type AddMeterReadingFormValues = z.infer<typeof formSchemaBase>;
@@ -70,6 +76,9 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
   const [proximityStatus, setProximityStatus] = React.useState<{ isWithinRange: boolean; distance: number } | null>(null);
+  const [isCapturingInitialLocation, setIsCapturingInitialLocation] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const { toast } = useToast();
 
   // Re-acquire location on mount or when requested
   const acquireLocation = React.useCallback(async () => {
@@ -133,6 +142,30 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
   const selectedMeterType = form.watch("meterType");
   const selectedEntityId = form.watch("entityId");
   const selectedFaultCode = form.watch("faultCode");
+  const currentReadingValue = form.watch("reading");
+  const [anomalyWarning, setAnomalyWarning] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!selectedEntityId || currentReadingValue === undefined || currentReadingValue === null) {
+      setAnomalyWarning(null);
+      return;
+    }
+
+    let previousReading = 0;
+    if (selectedMeterType === 'individual_customer_meter') {
+      previousReading = customers.find(c => c.customerKeyNumber === selectedEntityId)?.currentReading ?? 0;
+    } else {
+      previousReading = bulkMeters.find(bm => bm.customerKeyNumber === selectedEntityId)?.currentReading ?? 0;
+    }
+
+    const usage = currentReadingValue - previousReading;
+    // Anomaly threshold: 100 units is a simple heuristic for high usage
+    if (usage > 100 && (!selectedFaultCode || selectedFaultCode === 'none')) {
+      setAnomalyWarning(`Warning: This reading indicates exceptionally high usage. Please double-check the meter dial for typos.`);
+    } else {
+      setAnomalyWarning(null);
+    }
+  }, [currentReadingValue, selectedEntityId, selectedMeterType, customers, bulkMeters, selectedFaultCode]);
 
   // Check proximity whenever location or selected meter changes
   React.useEffect(() => {
@@ -157,10 +190,50 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
     if (targetCoords) {
       const status = checkProximity(userLocation, targetCoords, 5); // 5 meters threshold
       setProximityStatus(status);
+      setIsCapturingInitialLocation(false);
+      form.setValue('capturedCoordinates', undefined);
     } else {
       setProximityStatus(null);
     }
-  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters]);
+  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form]);
+
+  const handleCaptureInitialLocation = async () => {
+    if (userLocation && selectedEntityId) {
+      setIsSaving(true);
+      try {
+        const entityType = selectedMeterType === 'individual_customer_meter' ? 'individual_customer' : 'bulk_meter';
+        const result = await upsertSpatialRecord(selectedEntityId, entityType, userLocation);
+        
+        if (result.success) {
+          setIsCapturingInitialLocation(true);
+          setProximityStatus({ isWithinRange: true, distance: 0 });
+          toast({ 
+            title: "Position Captured", 
+            description: "Current location has been saved as the meter position in the database.",
+          });
+          // Note: The form's proximity check will now use these coordinates on next render 
+          // because the parent props (customers/bulkMeters) will be updated by the store.
+        } else {
+          toast({ 
+            title: "Save Failed", 
+            description: result.message || "Could not save meter position.", 
+            variant: "destructive" 
+          });
+        }
+      } catch (err) {
+        console.error("Error saving initial location:", err);
+        toast({ 
+          title: "Error", 
+          description: "An unexpected error occurred while saving position.", 
+          variant: "destructive" 
+        });
+      } finally {
+        setIsSaving(false);
+      }
+    } else {
+      toast({ title: "Action unavailable", description: "Please ensure location is acquired and a meter is selected.", variant: "destructive" });
+    }
+  };
 
   // Handle fault code selection - automatically set reading to previous reading
   React.useEffect(() => {
@@ -218,6 +291,8 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
     form.setValue('meterType', value as AddMeterReadingFormValues['meterType']);
     form.resetField('entityId');
     form.resetField('reading');
+    form.resetField('capturedCoordinates');
+    setIsCapturingInitialLocation(false);
     form.clearErrors();
   };
 
@@ -276,7 +351,14 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
                 <AlertTitle>Location Verified</AlertTitle>
                 <AlertDescription>
-                  You are within {proximityStatus.distance.toFixed(2)}m of the meter location.
+                  {isCapturingInitialLocation 
+                    ? "Current location captured as meter position." 
+                    : `You are within ${proximityStatus.distance.toFixed(2)}m of the meter location.`}
+                  {userLocation?.accuracy && (
+                    <span className="block text-xs mt-1 opacity-80 font-medium">
+                      GPS Accuracy: ±{userLocation.accuracy.toFixed(1)}m
+                    </span>
+                  )}
                 </AlertDescription>
               </Alert>
             ) : (
@@ -284,7 +366,12 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <XCircle className="h-4 w-4" />
                 <AlertTitle>Too Far From Meter</AlertTitle>
                 <AlertDescription>
-                  You are {proximityStatus.distance.toFixed(2)}m away. You must be within 5m to record a reading.
+                  <p>You are {proximityStatus.distance.toFixed(2)}m away. You must be within 5m to record a reading.</p>
+                  {userLocation?.accuracy && (
+                    <span className="block text-xs mt-1 opacity-80 font-medium">
+                      GPS Accuracy: ±{userLocation.accuracy.toFixed(1)}m
+                    </span>
+                  )}
                 </AlertDescription>
               </Alert>
             )
@@ -292,8 +379,19 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
             <Alert className="bg-yellow-50 border-yellow-200 text-yellow-800">
               <Info className="h-4 w-4 text-yellow-600" />
               <AlertTitle>Missing Meter Coordinates</AlertTitle>
-              <AlertDescription>
-                This meter does not have stored coordinates. Proximity validation cannot be performed.
+              <AlertDescription className="space-y-3">
+                <p>This meter does not have stored coordinates. Proximity validation cannot be performed.</p>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleCaptureInitialLocation}
+                  disabled={!userLocation || isSaving}
+                  className="bg-white"
+                >
+                  <MapPin className="mr-2 h-4 w-4" />
+                  {isSaving ? "Saving Position..." : "Capture Current Location as Meter Position"}
+                </Button>
               </AlertDescription>
             </Alert>
           ) : (
@@ -370,7 +468,15 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
               <div>
                 <span className="text-slate-500 block text-xs">Coordinates (Y, X)</span>
                 <span className="font-medium text-slate-900">
-                  {selectedMeterInfo.yCoordinate?.toFixed(6)}, {selectedMeterInfo.xCoordinate?.toFixed(6)}
+                  {form.watch('capturedCoordinates') ? (
+                    <span className="text-emerald-600 font-semibold">
+                      {form.watch('capturedCoordinates')?.latitude.toFixed(6)}, {form.watch('capturedCoordinates')?.longitude.toFixed(6)} (New)
+                    </span>
+                  ) : (
+                    <>
+                      {selectedMeterInfo.yCoordinate?.toFixed(6) ?? "N/A"}, {selectedMeterInfo.xCoordinate?.toFixed(6) ?? "N/A"}
+                    </>
+                  )}
                 </span>
               </div>
             </div>
@@ -428,9 +534,18 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                   />
                 </FormControl>
                 {selectedFaultCode && selectedFaultCode !== 'none' && (
-                  <p className="text-xs text-blue-600 font-medium italic">
+                  <p className="text-xs text-blue-600 font-medium italic mt-2">
                     Reading auto-set to previous reading due to fault code.
                   </p>
+                )}
+                {anomalyWarning && (
+                  <Alert className="mt-3 bg-amber-50 text-amber-900 border-amber-200">
+                    <Info className="h-4 w-4 text-amber-600" />
+                    <AlertTitle className="text-amber-800">Anomaly Detected</AlertTitle>
+                    <AlertDescription className="text-amber-700">
+                      {anomalyWarning}
+                    </AlertDescription>
+                  </Alert>
                 )}
                 <FormMessage />
               </FormItem>

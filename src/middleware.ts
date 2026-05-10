@@ -105,9 +105,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(dashboardFallback);
   }
 
-  // Bill management
+  // Bill management — allow any billing-related view/create/approve permission
   if ((path.startsWith('/admin/bill-management') || path.startsWith('/staff/bill-management')) &&
-    !hasAny(permissions, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.BILL_VIEW_BRANCH, PERMISSIONS.BILL_CREATE)) {
+    !hasAny(permissions,
+      PERMISSIONS.BILL_VIEW_ALL,       // bill:manage_all
+      PERMISSIONS.BILL_VIEW_BRANCH,    // bill:view_branch
+      PERMISSIONS.BILL_CREATE,         // bill:create
+      PERMISSIONS.BILL_VIEW_DRAFTS,    // bill:view_drafts
+      PERMISSIONS.BILL_VIEW_PENDING,   // bill:view_pending
+      PERMISSIONS.BILL_APPROVE,        // bill:approve
+      PERMISSIONS.BILL_VIEW_PAID,      // bill:view_paid
+      PERMISSIONS.BILL_VIEW_UNPAID,    // bill:view_awaiting_payment
+    )) {
     return NextResponse.redirect(dashboardFallback);
   }
 
@@ -129,9 +138,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(dashboardFallback);
   }
 
-  // Knowledge base
+  // Knowledge base — allow viewers and managers
   if ((path.startsWith('/admin/knowledge-base') || path.startsWith('/staff/knowledge-base')) &&
-    !permissions.includes(PERMISSIONS.KNOWLEDGE_BASE_VIEW)) {
+    !hasAny(permissions, PERMISSIONS.KNOWLEDGE_BASE_VIEW, PERMISSIONS.KNOWLEDGE_BASE_MANAGE)) {
+    return NextResponse.redirect(dashboardFallback);
+  }
+
+  // Staff-only sub-routes (no equivalent admin versions to protect)
+  if (path.startsWith('/staff/roles-and-permissions') && !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
+    return NextResponse.redirect(dashboardFallback);
+  }
+  if (path.startsWith('/staff/tariffs') && !permissions.includes(PERMISSIONS.TARIFFS_VIEW)) {
+    return NextResponse.redirect(dashboardFallback);
+  }
+  if (path.startsWith('/staff/settings') && !permissions.includes(PERMISSIONS.SETTINGS_VIEW)) {
     return NextResponse.redirect(dashboardFallback);
   }
 
@@ -146,9 +166,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(dashboardFallback);
   }
 
-  // Staff reports
+  // Staff reports — allow report generators AND meter-reading analytics viewers (readers)
   if (path.startsWith('/staff/reports') &&
-    !hasAny(permissions, PERMISSIONS.REPORTS_GENERATE_ALL, PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
+    !hasAny(permissions,
+      PERMISSIONS.REPORTS_GENERATE_ALL,
+      PERMISSIONS.REPORTS_GENERATE_BRANCH,
+      PERMISSIONS.ROUTES_VIEW_ASSIGNED,         // Readers can access reading-classification
+      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW // Analytics viewers
+    )) {
     return NextResponse.redirect(dashboardFallback);
   }
 

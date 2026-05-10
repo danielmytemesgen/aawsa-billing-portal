@@ -12,22 +12,31 @@ import {
     addBulkMeterReading,
     addIndividualCustomerReading,
     getFaultCodes,
-    initializeFaultCodes
+    initializeFaultCodes,
+    getBulkMeterReadings,
+    getIndividualCustomerReadings,
+    initializeBulkMeterReadings,
+    initializeIndividualCustomerReadings,
+    fetchRoutes as dbFetchRoutes
 } from "@/lib/data-store";
+import { getReadingPeriodStatusAction } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown } from "lucide-react";
+import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List } from "lucide-react";
 import Link from "next/link";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/components/billing/add-meter-reading-form";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle as UIDialogTitle } from "@/components/ui/dialog";
+import { RouteMap } from "@/components/billing/route-map";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { FaultCodeRow } from "@/lib/actions";
+import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
+import { MapPin } from "lucide-react";
 
 export default function RouteDetailsPage() {
     const params = useParams();
@@ -40,9 +49,12 @@ export default function RouteDetailsPage() {
     const allBulkMeters = useBulkMeters();
     const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
     const [faultCodesForForm, setFaultCodesForForm] = React.useState<FaultCodeRow[]>([]);
+    const [bulkReadings, setBulkReadings] = React.useState<any[]>([]);
+    const [individualReadings, setIndividualReadings] = React.useState<any[]>([]);
 
     const [isLoading, setIsLoading] = React.useState(true);
     const [searchTerm, setSearchTerm] = React.useState("");
+    const [viewMode, setViewMode] = React.useState<'list' | 'map'>('list');
     const [isReadingModalOpen, setIsReadingModalOpen] = React.useState(false);
     const [selectedMeter, setSelectedMeter] = React.useState<{
         type: 'bulk' | 'individual',
@@ -53,6 +65,41 @@ export default function RouteDetailsPage() {
     } | null>(null);
 
     const [expandedMeters, setExpandedMeters] = React.useState<Set<string>>(new Set());
+    const [userLocation, setUserLocation] = React.useState<Coordinates | null>(null);
+    const [pathHistory, setPathHistory] = React.useState<Coordinates[]>([]);
+    const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed'>('Open');
+
+    React.useEffect(() => {
+        if (!navigator.geolocation) return;
+
+        const watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                const newCoords = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy
+                };
+                setUserLocation(newCoords);
+                
+                // Update path history if the user has moved more than 5 meters
+                setPathHistory(prev => {
+                    if (prev.length === 0) return [newCoords];
+                    const lastCoord = prev[prev.length - 1];
+                    const dist = calculateDistance(lastCoord, newCoords);
+                    if (dist > 5) { // 5 meters threshold to avoid GPS noise jitter
+                        return [...prev, newCoords];
+                    }
+                    return prev;
+                });
+            },
+            (error) => {
+                console.error("Geolocation error:", error);
+            },
+            { enableHighAccuracy: true, maximumAge: 10000 }
+        );
+
+        return () => navigator.geolocation.clearWatch(watchId);
+    }, []);
 
     React.useEffect(() => {
         const load = async () => {
@@ -61,10 +108,14 @@ export default function RouteDetailsPage() {
                 fetchRoutes(),
                 initializeBulkMeters(true),
                 initializeCustomers(true),
-                initializeFaultCodes(true)
+                initializeFaultCodes(true),
+                initializeBulkMeterReadings(true),
+                initializeIndividualCustomerReadings(true)
             ]);
             setAllCustomers(getCustomers());
             setFaultCodesForForm(getFaultCodes());
+            setBulkReadings(getBulkMeterReadings());
+            setIndividualReadings(getIndividualCustomerReadings());
             setIsLoading(false);
         };
         load();
@@ -78,15 +129,33 @@ export default function RouteDetailsPage() {
         return allBulkMeters.filter(bm => bm.routeKey === routeKey);
     }, [allBulkMeters, routeKey]);
 
+    const currentMonth = React.useMemo(() => format(new Date(), 'yyyy-MM'), []);
+
+    const isMeterRead = React.useCallback((meterId: string, type: 'bulk' | 'individual') => {
+        if (type === 'bulk') {
+            return bulkReadings.some(r => r.CUSTOMERKEY === meterId && r.monthYear === currentMonth);
+        } else {
+            return individualReadings.some(r => r.individualCustomerId === meterId && r.monthYear === currentMonth);
+        }
+    }, [bulkReadings, individualReadings, currentMonth]);
+
     const filteredBulkMeters = React.useMemo(() => {
-        if (!searchTerm) return bulkMeters;
-        const lowSearch = searchTerm.toLowerCase();
-        return bulkMeters.filter(bm =>
-            bm.name.toLowerCase().includes(lowSearch) ||
-            bm.customerKeyNumber.toLowerCase().includes(lowSearch) ||
-            bm.meterNumber?.toLowerCase().includes(lowSearch)
-        );
-    }, [bulkMeters, searchTerm]);
+        let result = bulkMeters;
+        if (searchTerm) {
+            const lowSearch = searchTerm.toLowerCase();
+            result = result.filter(bm =>
+                bm.name.toLowerCase().includes(lowSearch) ||
+                bm.customerKeyNumber.toLowerCase().includes(lowSearch) ||
+                bm.meterNumber?.toLowerCase().includes(lowSearch)
+            );
+        }
+        
+        return [...result].sort((a, b) => {
+            const aRead = isMeterRead(a.customerKeyNumber, 'bulk') ? 1 : 0;
+            const bRead = isMeterRead(b.customerKeyNumber, 'bulk') ? 1 : 0;
+            return aRead - bRead;
+        });
+    }, [bulkMeters, searchTerm, isMeterRead]);
 
     const toggleExpand = (meterId: string) => {
         const newExpanded = new Set(expandedMeters);
@@ -99,12 +168,20 @@ export default function RouteDetailsPage() {
     };
 
     const handleReadClick = (meter: any, type: 'bulk' | 'individual') => {
+        if (readingPeriodStatus === 'Closed') {
+            toast({
+                title: "Access Denied",
+                description: "Reading period is currently closed.",
+                variant: "destructive"
+            });
+            return;
+        }
         setSelectedMeter({
             type,
             id: meter.customerKeyNumber,
             name: meter.name,
-            meterNumber: meter.meterNumber,
-            lastReading: meter.currentReading || 0
+            meterNumber: meter.meterNumber || meter.meterKey,
+            lastReading: Number(meter.currentReading) || 0
         });
         setIsReadingModalOpen(true);
     };
@@ -146,6 +223,8 @@ export default function RouteDetailsPage() {
                 setSelectedMeter(null);
                 // Refresh data
                 setAllCustomers(getCustomers());
+                setBulkReadings(getBulkMeterReadings());
+                setIndividualReadings(getIndividualCustomerReadings());
             } else {
                 toast({ variant: "destructive", title: "Error", description: result.message });
             }
@@ -157,7 +236,24 @@ export default function RouteDetailsPage() {
     };
 
     const getCustomersForBulkMeter = (bulkMeterId: string) => {
-        return allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId);
+        return allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId).sort((a, b) => {
+            const aRead = isMeterRead(a.customerKeyNumber, 'individual') ? 1 : 0;
+            const bRead = isMeterRead(b.customerKeyNumber, 'individual') ? 1 : 0;
+            return aRead - bRead;
+        });
+    };
+
+    const formatDistance = (meter: { xCoordinate?: number, yCoordinate?: number }) => {
+        if (!userLocation || !meter.xCoordinate || !meter.yCoordinate) return null;
+        const dist = calculateDistance(userLocation, { 
+            latitude: meter.yCoordinate, 
+            longitude: meter.xCoordinate 
+        });
+        
+        if (dist < 1000) {
+            return `${Math.round(dist)}m`;
+        }
+        return `${(dist / 1000).toFixed(1)}km`;
     };
 
     if (isLoading && !route) {
@@ -193,31 +289,63 @@ export default function RouteDetailsPage() {
                 </div>
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <p className="text-muted-foreground">{route.description || "Reading assignment"}</p>
-                    <div className="relative w-full md:w-72">
-                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            placeholder="Find meter..."
-                            className="pl-8"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
+                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+                        <div className="relative w-full sm:w-64">
+                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="Find meter..."
+                                className="pl-8 w-full"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+                        <div className="flex items-center bg-slate-100 p-1 rounded-md self-start sm:self-auto shrink-0">
+                            <Button 
+                                variant={viewMode === 'list' ? 'secondary' : 'ghost'} 
+                                size="sm" 
+                                className="h-8 px-3"
+                                onClick={() => setViewMode('list')}
+                            >
+                                <List className="h-4 w-4 mr-1.5" /> List
+                            </Button>
+                            <Button 
+                                variant={viewMode === 'map' ? 'secondary' : 'ghost'} 
+                                size="sm" 
+                                className="h-8 px-3"
+                                onClick={() => setViewMode('map')}
+                            >
+                                <MapIcon className="h-4 w-4 mr-1.5" /> Map
+                            </Button>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div className="space-y-4">
-                {filteredBulkMeters.length === 0 ? (
-                    <Card className="p-12 text-center border-dashed">
-                        <Gauge className="mx-auto h-12 w-12 text-muted-foreground opacity-20 mb-4" />
-                        <CardDescription>No meters match your search in this route.</CardDescription>
-                    </Card>
+            {viewMode === 'map' ? (
+                <div className="mt-2 animate-in fade-in duration-300">
+                    <RouteMap 
+                        bulkMeters={filteredBulkMeters} 
+                        getCustomersForBulkMeter={getCustomersForBulkMeter}
+                        isMeterRead={isMeterRead}
+                        onReadClick={handleReadClick}
+                        userLocation={userLocation}
+                        pathHistory={pathHistory}
+                    />
+                </div>
+            ) : (
+                <div className="space-y-4 animate-in fade-in duration-300">
+                    {filteredBulkMeters.length === 0 ? (
+                        <div className="p-12 text-center border-dashed border-2 rounded-lg">
+                            <Gauge className="mx-auto h-12 w-12 text-muted-foreground opacity-20 mb-4" />
+                            <p>No meters match your search in this route.</p>
+                        </div>
                 ) : (
                     filteredBulkMeters.map(bm => {
                         const customers = getCustomersForBulkMeter(bm.customerKeyNumber);
                         const isExpanded = expandedMeters.has(bm.customerKeyNumber);
 
                         return (
-                            <Card key={bm.customerKeyNumber} className="overflow-hidden border-blue-100 shadow-sm hover:border-blue-300 transition-colors">
+                            <div key={bm.customerKeyNumber} className="overflow-hidden border rounded-lg bg-white shadow-sm hover:border-blue-300 transition-colors">
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-blue-50/30 gap-4">
                                     <div className="flex items-start gap-4">
                                         <div className="p-2 bg-white rounded-md border border-blue-100 shadow-sm">
@@ -227,20 +355,31 @@ export default function RouteDetailsPage() {
                                             <div className="flex items-center gap-2">
                                                 <h3 className="font-bold text-lg">{bm.name}</h3>
                                                 <Badge variant="outline" className="font-mono text-[10px] uppercase">Bulk</Badge>
+                                                {isMeterRead(bm.customerKeyNumber, 'bulk') && (
+                                                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none shadow-sm flex items-center gap-1 h-5 px-1.5 rounded-sm">
+                                                        <CheckCircle2 className="h-3 w-3" /> Read
+                                                    </Badge>
+                                                )}
                                             </div>
                                             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground mt-1">
                                                 <span className="flex items-center gap-1"><span className="font-semibold text-xs uppercase tracking-wider opacity-60">ID:</span> {bm.customerKeyNumber}</span>
                                                 <span className="flex items-center gap-1"><span className="font-semibold text-xs uppercase tracking-wider opacity-60">Meter:</span> {bm.meterNumber || "N/A"}</span>
+                                                {formatDistance(bm) && (
+                                                    <span className="flex items-center gap-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                                        <MapPin className="h-3 w-3" /> {formatDistance(bm)} away
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <Button
                                             size="sm"
-                                            className="bg-blue-600 hover:bg-blue-700"
+                                            className="text-xs font-bold bg-blue-600 hover:bg-blue-700 shadow-md transition-all rounded-full h-8 px-4"
                                             onClick={() => handleReadClick(bm, 'bulk')}
+                                            disabled={readingPeriodStatus === 'Closed'}
                                         >
-                                            <ClipboardList className="mr-2 h-4 w-4" /> Read Meter
+                                            {readingPeriodStatus === 'Closed' ? 'Locked' : (isMeterRead(bm.customerKeyNumber, 'bulk') ? 'Update' : 'Read Meter')}
                                         </Button>
                                         {customers.length > 0 && (
                                             <Button
@@ -256,7 +395,7 @@ export default function RouteDetailsPage() {
                                 </div>
 
                                 {isExpanded && customers.length > 0 && (
-                                    <CardContent className="p-0 border-t border-blue-100">
+                                    <div className="border-t border-blue-100">
                                         <div className="divide-y divide-blue-50">
                                             {customers.map((c: IndividualCustomer) => (
                                                 <div key={c.customerKeyNumber} className="flex items-center justify-between p-4 pl-12 hover:bg-blue-50/20 transition-colors">
@@ -266,32 +405,45 @@ export default function RouteDetailsPage() {
                                                             <div className="flex items-center gap-2">
                                                                 <h4 className="font-medium">{c.name}</h4>
                                                                 <Badge variant="outline" className="text-[9px] h-4 bg-white">Individual</Badge>
+                                                                {isMeterRead(c.customerKeyNumber, 'individual') && (
+                                                                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none shadow-sm flex items-center gap-1 h-4 px-1 rounded-sm text-[9px]">
+                                                                        <CheckCircle2 className="h-2.5 w-2.5" /> Read
+                                                                    </Badge>
+                                                                )}
                                                             </div>
-                                                            <div className="text-xs text-muted-foreground space-x-2">
+                                                            <div className="text-xs text-muted-foreground flex items-center gap-2">
                                                                 <span>{c.customerKeyNumber}</span>
                                                                 <span>•</span>
                                                                 <span>{c.meterNumber || "No Meter #"}</span>
+                                                                {formatDistance(c) && (
+                                                                    <>
+                                                                        <span>•</span>
+                                                                        <span className="text-blue-500 font-medium flex items-center gap-0.5">
+                                                                            <MapPin className="h-2.5 w-2.5" /> {formatDistance(c)}
+                                                                        </span>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>
                                                     <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="h-8 text-blue-600 border-blue-200 hover:bg-blue-50"
+                                                        className="text-[10px] h-7 px-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-full shadow-sm"
                                                         onClick={() => handleReadClick(c, 'individual')}
+                                                        disabled={readingPeriodStatus === 'Closed'}
                                                     >
-                                                        Read
+                                                        {readingPeriodStatus === 'Closed' ? 'Locked' : (isMeterRead(c.customerKeyNumber, 'individual') ? 'Update' : 'Read')}
                                                     </Button>
                                                 </div>
                                             ))}
                                         </div>
-                                    </CardContent>
+                                    </div>
                                 )}
-                            </Card>
+                            </div>
                         );
                     })
                 )}
             </div>
+            )}
 
             <Dialog open={isReadingModalOpen} onOpenChange={setIsReadingModalOpen}>
                 <DialogContent className="sm:max-w-[480px]">
