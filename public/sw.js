@@ -109,3 +109,16 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+// Listen for Background Sync events and notify open clients to run the page's sync
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'offline-readings-sync') {
+    event.waitUntil(
+      self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({ type: 'BACKGROUND_SYNC_TRIGGER' });
+        });
+      })
+    );
+  }
+});
+

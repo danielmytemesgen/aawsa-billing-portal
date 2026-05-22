@@ -68,6 +68,7 @@ export default function RouteDetailsClient() {
 
     const [expandedMeters, setExpandedMeters] = React.useState<Set<string>>(new Set());
     const [userLocation, setUserLocation] = React.useState<Coordinates | null>(null);
+    const [usingCachedLocation, setUsingCachedLocation] = React.useState(false);
     const [pathHistory, setPathHistory] = React.useState<Coordinates[]>([]);
     const [periodStatus, setPeriodStatus] = React.useState<'Open' | 'Closed'>('Closed');
     const [syncProgress, setSyncProgress] = React.useState<string | null>(null);
@@ -89,6 +90,21 @@ export default function RouteDetailsClient() {
     React.useEffect(() => {
         if (!navigator.geolocation) return;
 
+        // Load last known location from localStorage as a fallback when offline/GPS fails
+        try {
+            const raw = localStorage.getItem('last_user_location');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                // Accept cached location if it's not too old (24 hours)
+                if (parsed?.coords && parsed?.t && (Date.now() - parsed.t) < 24 * 60 * 60 * 1000) {
+                    setUserLocation(parsed.coords);
+                    setUsingCachedLocation(true);
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to parse cached location:', e);
+        }
+
         let highAccuracyFailed = false;
 
         const startWatching = (highAccuracy: boolean) => {
@@ -100,6 +116,13 @@ export default function RouteDetailsClient() {
                         accuracy: position.coords.accuracy
                     };
                     setUserLocation(newCoords);
+                    setUsingCachedLocation(false);
+                    // Persist last known good location to localStorage for offline use
+                    try {
+                        localStorage.setItem('last_user_location', JSON.stringify({ coords: newCoords, t: Date.now() }));
+                    } catch (e) {
+                        console.warn('Unable to persist last location:', e);
+                    }
                     setLocationError(null);
                     
                     setPathHistory(prev => {
@@ -266,8 +289,10 @@ export default function RouteDetailsClient() {
 
         // 2. Filter by proximity if requested
         if (nearbyOnly) {
+            // Determine threshold: relax if using a cached location
+            const threshold = usingCachedLocation ? 200 : PROXIMITY_THRESHOLD;
             if (!userLocation) {
-                return []; // Return empty list while waiting for GPS to ensure "Strict Nearby" mode
+                return []; // Return empty list while waiting for GPS or cached location
             }
             result = result.filter(bm => {
                 if (!bm.xCoordinate || !bm.yCoordinate) return false;
@@ -275,7 +300,7 @@ export default function RouteDetailsClient() {
                     latitude: bm.yCoordinate,
                     longitude: bm.xCoordinate
                 });
-                return dist <= PROXIMITY_THRESHOLD;
+                return dist <= threshold;
             });
         }
         
@@ -487,10 +512,13 @@ export default function RouteDetailsClient() {
                                 size="sm" 
                                 className={`h-8 px-3 ${nearbyOnly ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : ''}`}
                                 onClick={() => setNearbyOnly(!nearbyOnly)}
-                                title={nearbyOnly ? "Showing meters within 50m" : "Show all meters"}
+                                title={nearbyOnly ? (usingCachedLocation ? "Showing meters within ~200m (using last known location)" : "Showing meters within 50m") : "Show all meters"}
                             >
                                 <MapPin className={`h-4 w-4 mr-1.5 ${nearbyOnly ? 'fill-current' : ''}`} /> Nearby
                             </Button>
+                            {nearbyOnly && usingCachedLocation && (
+                                <div className="text-[11px] text-muted-foreground ml-2">(approx.)</div>
+                            )}
                             <div className="w-px h-4 bg-slate-300 mx-1" />
                             <Button 
                                 variant={viewMode === 'list' ? 'secondary' : 'ghost'} 
