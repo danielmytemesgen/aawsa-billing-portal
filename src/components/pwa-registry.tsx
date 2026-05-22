@@ -4,8 +4,7 @@ import React, { useEffect } from 'react';
 export function PwaRegistry() {
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      // Delay registration until after load
-      window.addEventListener('load', function() {
+      const registerSW = () => {
         navigator.serviceWorker.register('/sw.js').then(
           function(registration) {
             console.log('ServiceWorker registration successful with scope: ', registration.scope);
@@ -14,8 +13,18 @@ export function PwaRegistry() {
             console.log('ServiceWorker registration failed: ', err);
           }
         );
-      });
+      };
+
+      if (document.readyState === 'complete') {
+        registerSW();
+      } else {
+        window.addEventListener('load', registerSW);
+        return () => {
+          window.removeEventListener('load', registerSW);
+        };
+      }
     }
   }, []);
   return null;
 }
+
