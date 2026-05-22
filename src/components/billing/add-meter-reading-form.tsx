@@ -38,10 +38,12 @@ import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-cust
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { getCurrentPosition, checkProximity, type Coordinates } from "@/lib/geo-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock } from "lucide-react";
+import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload } from "lucide-react";
 import type { FaultCodeRow } from "@/lib/actions";
 import { Badge } from "@/components/ui/badge";
 import { upsertSpatialRecord } from "@/lib/data-store";
+import { Camera as CameraIcon, X, Search } from "lucide-react";
+import { compressImage } from "@/lib/image-utils";
 
 // Base schema for form fields
 const formSchemaBase = z.object({
@@ -58,6 +60,7 @@ const formSchemaBase = z.object({
     latitude: z.number(),
     longitude: z.number(),
   }).optional(),
+  meterPhoto: z.string().optional(),
 });
 
 export type AddMeterReadingFormValues = z.infer<typeof formSchemaBase>;
@@ -69,16 +72,22 @@ interface AddMeterReadingFormProps {
   faultCodes: FaultCodeRow[];
   isLoading?: boolean;
   defaultValues?: Partial<AddMeterReadingFormValues>;
+  initialLocation?: Coordinates | null;
 }
 
-export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues }: AddMeterReadingFormProps) {
-  const [userLocation, setUserLocation] = React.useState<Coordinates | null>(null);
+export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
+  const [userLocation, setUserLocation] = React.useState<Coordinates | null>(initialLocation || null);
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
-  const [proximityStatus, setProximityStatus] = React.useState<{ isWithinRange: boolean; distance: number } | null>(null);
+  const [proximityStatus, setProximityStatus] = React.useState<{ isWithinRange: boolean; distance: number; bypassed?: boolean } | null>(null);
   const [isCapturingInitialLocation, setIsCapturingInitialLocation] = React.useState(false);
+  const [isCompressing, setIsCompressing] = React.useState(false);
+
   const [isSaving, setIsSaving] = React.useState(false);
+  const [capturedPhoto, setCapturedPhoto] = React.useState<string | null>(null);
   const { toast } = useToast();
+  const cameraInputRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Re-acquire location on mount or when requested
   const acquireLocation = React.useCallback(async () => {
@@ -95,8 +104,12 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
   }, []);
 
   React.useEffect(() => {
-    acquireLocation();
-  }, [acquireLocation]);
+    if (initialLocation) {
+      setUserLocation(initialLocation);
+    } else {
+      acquireLocation();
+    }
+  }, [acquireLocation, initialLocation]);
 
   // The final schema is built dynamically inside the component to include a refinement check.
   const formSchema = React.useMemo(() => {
@@ -136,6 +149,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
       reading: defaultValues?.reading || 0,
       date: defaultValues?.date || new Date(),
       faultCode: defaultValues?.faultCode || "",
+      meterPhoto: undefined,
     }
   });
 
@@ -196,6 +210,29 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
       setProximityStatus(null);
     }
   }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form]);
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsCompressing(true);
+    try {
+      const compressedDataUrl = await compressImage(file);
+      setCapturedPhoto(compressedDataUrl);
+      form.setValue('meterPhoto', compressedDataUrl);
+      toast({ title: "Photo Attached", description: "Meter proof photo has been compressed and attached." });
+    } catch (error) {
+      console.error("Error compressing image:", error);
+      toast({ title: "Error", description: "Could not process photo file.", variant: "destructive" });
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const removePhoto = () => {
+    setCapturedPhoto(null);
+    form.setValue('meterPhoto', undefined);
+  };
 
   const handleCaptureInitialLocation = async () => {
     if (userLocation && selectedEntityId) {
@@ -299,7 +336,8 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
   const isSubmitDisabled = isLoading ||
     !form.formState.isValid ||
     !proximityStatus?.isWithinRange ||
-    isAcquiringLocation;
+    isAcquiringLocation ||
+    isCompressing;
 
   return (
     <Form {...form}>
@@ -333,72 +371,148 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
           </div>
 
           {locationError ? (
-            <Alert variant="destructive">
+            <Alert variant="destructive" className="animate-in fade-in slide-in-from-top-2 duration-300">
               <XCircle className="h-4 w-4" />
               <AlertTitle>Location Error</AlertTitle>
-              <AlertDescription>
-                {locationError}. Please enable location permissions to add a reading.
+              <AlertDescription className="text-xs space-y-3">
+                <p>{locationError}. Please check your GPS settings and try again.</p>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => {
+                    setLocationError(null);
+                    setProximityStatus({ isWithinRange: true, distance: 0, bypassed: true });
+                  }}
+                  className="w-full bg-white text-red-700 border-red-200 hover:bg-red-50 font-bold h-9 text-xs shadow-sm"
+                >
+                  <Unlock className="mr-2 h-4 w-4" />
+                  Bypass Location Lock (Indoor / Offline)
+                </Button>
               </AlertDescription>
             </Alert>
           ) : isAcquiringLocation ? (
-            <Alert>
-              <Info className="h-4 w-4 animate-pulse" />
-              <AlertDescription>Acquiring current location...</AlertDescription>
-            </Alert>
+            <div className="bg-slate-50 border rounded-lg p-6 flex flex-col items-center justify-center space-y-3 animate-pulse">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+              <div className="text-center">
+                <p className="text-sm font-semibold text-slate-700">Acquiring Best Signal...</p>
+                <p className="text-[10px] text-slate-500">Connecting to satellites for precise verification</p>
+              </div>
+            </div>
           ) : proximityStatus ? (
-            proximityStatus.isWithinRange ? (
-              <Alert className="bg-green-50 border-green-200 text-green-800">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <AlertTitle>Location Verified</AlertTitle>
-                <AlertDescription>
-                  {isCapturingInitialLocation 
-                    ? "Current location captured as meter position." 
-                    : `You are within ${proximityStatus.distance.toFixed(2)}m of the meter location.`}
-                  {userLocation?.accuracy && (
-                    <span className="block text-xs mt-1 opacity-80 font-medium">
-                      GPS Accuracy: ±{userLocation.accuracy.toFixed(1)}m
-                    </span>
+            <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
+              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest px-1">
+                <span className={cn(
+                  proximityStatus.isWithinRange ? "text-emerald-600" : proximityStatus.distance < 20 ? "text-amber-600" : "text-slate-500"
+                )}>
+                  {proximityStatus.isWithinRange ? "Ready to Read" : "Move Closer"}
+                </span>
+                <span className="text-slate-400">
+                  {proximityStatus.distance.toFixed(1)}m Away
+                </span>
+              </div>
+              
+              {/* Visual Distance Gauge */}
+              <div className="relative h-3 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                <div 
+                  className={cn(
+                    "h-full transition-all duration-700 ease-out",
+                    proximityStatus.isWithinRange ? "bg-emerald-500" : proximityStatus.distance < 20 ? "bg-amber-400" : "bg-blue-400"
                   )}
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <Alert variant="destructive">
-                <XCircle className="h-4 w-4" />
-                <AlertTitle>Too Far From Meter</AlertTitle>
-                <AlertDescription>
-                  <p>You are {proximityStatus.distance.toFixed(2)}m away. You must be within 5m to record a reading.</p>
-                  {userLocation?.accuracy && (
-                    <span className="block text-xs mt-1 opacity-80 font-medium">
-                      GPS Accuracy: ±{userLocation.accuracy.toFixed(1)}m
-                    </span>
+                  style={{ 
+                    width: `${Math.max(5, Math.min(100, (1 - (proximityStatus.distance / 50)) * 100))}%`,
+                    opacity: proximityStatus.distance > 50 ? 0.3 : 1
+                  }}
+                />
+                <div className="absolute top-0 left-[10%] h-full w-0.5 bg-emerald-600/30" title="5m Threshold" />
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className={cn(
+                  "flex-1 flex items-center gap-3 p-3 rounded-lg border shadow-sm transition-all",
+                  proximityStatus.isWithinRange 
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
+                    : proximityStatus.distance < 20
+                      ? "bg-amber-50 border-amber-200 text-amber-900"
+                      : "bg-white border-slate-200 text-slate-700"
+                )}>
+                  {proximityStatus.isWithinRange ? (
+                    <CheckCircle2 className={cn("h-5 w-5 shrink-0", proximityStatus.bypassed ? "text-amber-600" : "text-emerald-600")} />
+                  ) : (
+                    <MapPin className={cn(
+                      "h-5 w-5 shrink-0",
+                      proximityStatus.distance < 20 ? "text-amber-600 animate-pulse" : "text-blue-500"
+                    )} />
                   )}
-                </AlertDescription>
-              </Alert>
-            )
+                  <div className="flex-1">
+                    <p className="text-xs font-bold">
+                      {proximityStatus.bypassed
+                        ? "Location Bypassed"
+                        : proximityStatus.isWithinRange 
+                        ? "Verification Successful" 
+                        : proximityStatus.distance < 20 
+                          ? "Almost There!" 
+                          : "Location Sync Active"}
+                    </p>
+                    <p className="text-[10px] opacity-80 leading-tight">
+                      {proximityStatus.bypassed
+                        ? "Proximity check was manually bypassed for offline mode."
+                        : proximityStatus.isWithinRange 
+                        ? "You are securely positioned at the meter site." 
+                        : `Please move ${Math.round(proximityStatus.distance - 5)}m closer to the target coordinates.`}
+                    </p>
+                    {!proximityStatus.isWithinRange && !proximityStatus.bypassed && (
+                      <Button 
+                        type="button" 
+                        variant="link" 
+                        className="p-0 h-auto text-[10px] text-amber-600 mt-1.5 font-semibold"
+                        onClick={() => setProximityStatus({ isWithinRange: true, distance: proximityStatus.distance, bypassed: true })}
+                      >
+                        Force Bypass (Indoors / Offline)
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* GPS Health Indicator */}
+                <div className="sm:w-32 flex flex-row sm:flex-col items-center justify-center gap-1 p-2 rounded-lg border bg-slate-50/50 border-slate-200">
+                  <div className="flex gap-0.5 items-end h-3">
+                    <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 50 && "bg-blue-500")} style={{height: '40%'}} />
+                    <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 25 && "bg-blue-500")} style={{height: '70%'}} />
+                    <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 10 && "bg-blue-500")} style={{height: '100%'}} />
+                  </div>
+                  <div className="text-[9px] font-bold text-slate-500 uppercase text-center">
+                    {userLocation?.accuracy ? (
+                      userLocation.accuracy < 10 ? "High Quality" : userLocation.accuracy < 25 ? "Good Signal" : "Weak Signal"
+                    ) : "Syncing..."}
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : selectedEntityId ? (
-            <Alert className="bg-yellow-50 border-yellow-200 text-yellow-800">
-              <Info className="h-4 w-4 text-yellow-600" />
-              <AlertTitle>Missing Meter Coordinates</AlertTitle>
+            <Alert className="bg-blue-50 border-blue-200 text-blue-800 animate-in fade-in slide-in-from-top-2 duration-300">
+              <Info className="h-4 w-4 text-blue-600" />
+              <AlertTitle className="text-xs font-bold uppercase tracking-tight">New Meter Setup Required</AlertTitle>
               <AlertDescription className="space-y-3">
-                <p>This meter does not have stored coordinates. Proximity validation cannot be performed.</p>
+                <p className="text-[11px]">This meter doesn&apos;t have an established GPS position yet. Please stand next to the meter and capture its location.</p>
                 <Button 
                   type="button" 
                   variant="outline" 
                   size="sm" 
                   onClick={handleCaptureInitialLocation}
                   disabled={!userLocation || isSaving}
-                  className="bg-white"
+                  className="w-full bg-white text-blue-700 border-blue-300 hover:bg-blue-50 font-bold h-9 text-xs shadow-sm"
                 >
                   <MapPin className="mr-2 h-4 w-4" />
-                  {isSaving ? "Saving Position..." : "Capture Current Location as Meter Position"}
+                  {isSaving ? "Saving..." : "Set Current Location as Meter Site"}
                 </Button>
               </AlertDescription>
             </Alert>
           ) : (
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertDescription>Select a meter to verify your proximity.</AlertDescription>
-            </Alert>
+            <div className="p-4 border-2 border-dashed rounded-lg bg-slate-50/50 flex flex-col items-center justify-center text-center space-y-2">
+              <MapPin className="h-6 w-6 text-slate-300" />
+              <p className="text-xs text-slate-400 font-medium">Select a meter above to start verification</p>
+            </div>
           )
           }
         </div>
@@ -436,7 +550,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
               <Info className="h-3 w-3" /> Technical Information
             </h4>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
               <div>
                 <span className="text-slate-500 block text-xs">Meter Number</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.meterNumber || "N/A"}</span>
@@ -445,7 +559,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <span className="text-slate-500 block text-xs">Customer Key</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.customerKeyNumber}</span>
               </div>
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <span className="text-slate-500 block text-xs">Customer Name</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.name}</span>
               </div>
@@ -459,15 +573,15 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <span className="text-slate-500 block text-xs">Diameter</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.meterSize}&quot;</span>
               </div>
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <span className="text-slate-500 block text-xs">Address</span>
                 <span className="font-medium text-slate-900">
                   {selectedMeterInfo.subCity}, {selectedMeterInfo.woreda}, {selectedMeterInfo.specificArea}
                 </span>
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <span className="text-slate-500 block text-xs">Coordinates (Y, X)</span>
-                <span className="font-medium text-slate-900">
+                <span className="font-medium text-slate-900 break-all">
                   {form.watch('capturedCoordinates') ? (
                     <span className="text-emerald-600 font-semibold">
                       {form.watch('capturedCoordinates')?.latitude.toFixed(6)}, {form.watch('capturedCoordinates')?.longitude.toFixed(6)} (New)
@@ -497,7 +611,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <FormLabel>Reason of Code (Fault Code)</FormLabel>
                 <Select onValueChange={field.onChange} value={field.value || undefined} disabled={isLoading || !selectedEntityId}>
                   <FormControl>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-11 sm:h-10">
                       <SelectValue placeholder="Select a fault code (if any)" />
                     </SelectTrigger>
                   </FormControl>
@@ -530,7 +644,10 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                     placeholder="Enter reading value"
                     {...field}
                     disabled={isLoading || !selectedEntityId || (!!selectedFaultCode && selectedFaultCode !== 'none')}
-                    className={selectedFaultCode && selectedFaultCode !== 'none' ? "bg-slate-50 font-medium text-slate-500" : ""}
+                    className={cn(
+                      "h-11 sm:h-10",
+                      selectedFaultCode && selectedFaultCode !== 'none' ? "bg-slate-50 font-medium text-slate-500" : ""
+                    )}
                   />
                 </FormControl>
                 {selectedFaultCode && selectedFaultCode !== 'none' && (
@@ -551,6 +668,97 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
               </FormItem>
             )}
           />
+
+            <div className="space-y-3">
+              <FormLabel>Meter Proof Photo</FormLabel>
+              {!capturedPhoto ? (
+                <div className="space-y-3">
+                  {/* Hidden inputs for Camera and File options */}
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={handlePhotoUpload}
+                    disabled={isLoading || !selectedEntityId || isCompressing}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handlePhotoUpload}
+                    disabled={isLoading || !selectedEntityId || isCompressing}
+                  />
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-28 sm:h-24 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/30 transition-all duration-300 flex flex-col gap-2 items-center justify-center rounded-xl shadow-sm"
+                      disabled={isLoading || !selectedEntityId || isCompressing}
+                      onClick={async () => {
+                        let hasCamera = true;
+                        if (typeof window !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                          try {
+                            const devices = await navigator.mediaDevices.enumerateDevices();
+                            hasCamera = devices.some(device => device.kind === 'videoinput');
+                          } catch (err) {
+                            console.warn("Failed to check media devices:", err);
+                          }
+                        }
+
+                        if (!hasCamera) {
+                          toast({
+                            title: "Camera Not Detected",
+                            description: "We could not find a camera on this device. Please use the 'Upload File' option to attach your photo.",
+                            variant: "destructive"
+                          });
+                        } else {
+                          cameraInputRef.current?.click();
+                        }
+                      }}
+                    >
+                      {isCompressing ? (
+                        <Loader2 className="h-8 w-8 text-slate-400 animate-spin" />
+                      ) : (
+                        <CameraIcon className="h-8 w-8 text-blue-600 animate-pulse" />
+                      )}
+                      <span className="text-xs font-bold text-slate-700">Open Camera</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-28 sm:h-24 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/30 transition-all duration-300 flex flex-col gap-2 items-center justify-center rounded-xl shadow-sm"
+                      disabled={isLoading || !selectedEntityId || isCompressing}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      {isCompressing ? (
+                        <Loader2 className="h-8 w-8 text-slate-400 animate-spin" />
+                      ) : (
+                        <Upload className="h-8 w-8 text-indigo-600" />
+                      )}
+                      <span className="text-xs font-bold text-slate-700">Upload File</span>
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative rounded-lg overflow-hidden border">
+                  <img src={capturedPhoto} alt="Meter proof" className="w-full h-56 sm:h-48 object-cover" />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon"
+                    className="absolute top-2 right-2 h-9 w-9 sm:h-8 sm:w-8 rounded-full"
+                    onClick={removePhoto}
+                  >
+                    <X className="h-5 w-5 sm:h-4 sm:w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
         </div>
         <FormField
           control={form.control}
@@ -564,7 +772,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                     <Button
                       variant={"outline"}
                       className={cn(
-                        "w-[240px] pl-3 text-left font-normal",
+                        "w-full sm:w-[240px] h-11 sm:h-10 pl-3 text-left font-normal",
                         !field.value && "text-muted-foreground"
                       )}
                       disabled={isLoading}
@@ -594,7 +802,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitDisabled}>
+        <Button type="submit" disabled={isSubmitDisabled} className="w-full h-11 sm:h-10 font-bold text-base sm:text-sm">
           {isLoading ? "Submitting..." : "Add Reading"}
         </Button>
       </form>

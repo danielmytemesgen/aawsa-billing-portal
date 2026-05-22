@@ -10,6 +10,7 @@ import { KnowledgeBaseArticle, KnowledgeBaseArticleInsert, KnowledgeBaseArticleU
 import { format } from "date-fns";
 import { useState, useEffect } from "react";
 import { Coordinates } from "@/lib/geo-utils";
+import * as offlineDb from '@/lib/offline-db';
 
 import {
   getAllBranchesAction,
@@ -87,6 +88,7 @@ import {
   deleteRouteAction,
   getRouteByKeyAction,
   upsertSpatialRecordAction,
+  getLatestReadingsByRouteAction,
 } from './actions';
 
 
@@ -261,6 +263,8 @@ export interface DomainIndividualCustomerReading {
   notes?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  meter_photo?: string;
+  hasPhoto?: boolean;
 }
 
 export interface DomainBulkMeterReading {
@@ -311,6 +315,8 @@ export interface DomainBulkMeterReading {
   phoneNumber?: string;
   isSuccess?: boolean;
   error?: string;
+  meter_photo?: string;
+  hasPhoto?: boolean;
 
   readerStaffId?: string | null;
   readingDate: string;
@@ -332,6 +338,7 @@ export interface DisplayReading {
   readingDate: string;
   monthYear: string;
   notes?: string | null;
+  faultCode?: string | null;
 }
 
 export interface DomainPayment {
@@ -1027,6 +1034,7 @@ const mapDbIndividualReadingToDomain = (dbReading: IndividualCustomerReading): D
     notes: dbReading.notes,
     createdAt: dbReading.created_at,
     updatedAt: dbReading.updated_at,
+    hasPhoto: (dbReading as any).has_photo || !!(dbReading as any).meter_photo
   };
 };
 
@@ -1170,6 +1178,7 @@ const mapDbBulkReadingToDomain = (dbReading: BulkMeterReading): DomainBulkMeterR
     notes: dbReading.notes,
     createdAt: dbReading.created_at,
     updatedAt: dbReading.updated_at,
+    hasPhoto: (dbReading as any).has_photo || !!(dbReading as any).meter_photo
   };
 };
 
@@ -1195,7 +1204,6 @@ const mapDomainBulkReadingToDb = (mr: Partial<DomainBulkMeterReading>): Partial<
   if (mr.previousReading !== undefined) payload.PREVIOUS_READING = mr.previousReading;
   if (mr.lastReadingDate !== undefined) payload.LAST_READING_DATE = mr.lastReadingDate;
   if (mr.NUMBER_OF_DIALS !== undefined) payload.NUMBER_OF_DIALS = mr.NUMBER_OF_DIALS;
-  if (mr.meterDiameter !== undefined) payload.METER_DIAMETER = mr.meterDiameter;
   if (mr.meterDiameter !== undefined) payload.METER_DIAMETER = mr.meterDiameter;
   if (mr.shadowPcnt !== undefined) payload.SHADOW_PCNT = mr.shadowPcnt;
   if (mr.minUsageQty !== undefined) payload.MIN_USAGE_QTY = mr.minUsageQty;
@@ -1360,22 +1368,35 @@ async function fetchAllBranches() {
   return branches;
 }
 
-async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string }) {
+async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
   if (!tariffsFetched) {
     await initializeTariffs();
   }
   const { data, error } = await getAllCustomersAction(options);
   if (data) {
-    customers = await Promise.all(data.map(mapDbCustomerToDomain));
+    const newCustomers = await Promise.all(data.map(mapDbCustomerToDomain));
+    
+    // Merge strategy: update existing or append new
+    const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
+    for (const nc of newCustomers) {
+      customerMap.set(nc.customerKeyNumber, nc);
+    }
+    customers = Array.from(customerMap.values());
+    
+    // Cache for offline use
+    if (typeof window !== 'undefined') {
+      offlineDb.cacheMeters(newCustomers, 'individual').catch(err => console.error("DataStore: Failed to cache customers:", err));
+    }
+
     notifyCustomerListeners();
   } else {
     console.error("DataStore: Failed to fetch customers. Database error:", JSON.stringify(error, null, 2));
   }
-  customersFetched = !options; // Only mark as fully fetched if no filters applied
+  customersFetched = !options; // Only mark as fully fetched if no filters/options applied
   return customers;
 }
 
-async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string }) {
+async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
   if (!tariffsFetched) {
     await initializeTariffs();
   }
@@ -1394,7 +1415,20 @@ async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; s
     return [];
   }
 
-  bulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
+  const newBulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
+  
+  // Merge strategy
+  const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+  for (const nbm of newBulkMeters) {
+    meterMap.set(nbm.customerKeyNumber, nbm);
+  }
+  bulkMeters = Array.from(meterMap.values());
+
+  // Cache for offline use
+  if (typeof window !== 'undefined') {
+    offlineDb.cacheMeters(newBulkMeters, 'bulk').catch(err => console.error("DataStore: Failed to cache bulk meters:", err));
+  }
+
   notifyBulkMeterListeners();
   bulkMetersFetched = !options;
   return bulkMeters;
@@ -1617,14 +1651,38 @@ export const initializeBranches = async (force: boolean = false) => {
   }
 };
 
-export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string }) => {
+export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) => {
   if (force || !customersFetched || customers.length === 0 || options) {
+    // If offline, attempt to load from cache first
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      const cached = await offlineDb.getCachedMeters('individual');
+      if (cached && cached.length > 0) {
+        const cachedCustomers = cached.map(c => c.data);
+        const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
+        for (const cc of cachedCustomers) customerMap.set(cc.customerKeyNumber, cc);
+        customers = Array.from(customerMap.values());
+        notifyCustomerListeners();
+        return;
+      }
+    }
     await fetchAllCustomers(options);
   }
 };
 
-export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string }) => {
+export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) => {
   if (force || !bulkMetersFetched || bulkMeters.length === 0 || options) {
+    // If offline, attempt to load from cache first
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      const cached = await offlineDb.getCachedMeters('bulk');
+      if (cached && cached.length > 0) {
+        const cachedMeters = cached.map(c => c.data);
+        const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+        for (const cm of cachedMeters) meterMap.set(cm.customerKeyNumber, cm);
+        bulkMeters = Array.from(meterMap.values());
+        notifyBulkMeterListeners();
+        return;
+      }
+    }
     await fetchAllBulkMeters(options);
   }
 };
@@ -1668,10 +1726,33 @@ export const initializeStaffMembers = async (force: boolean = false) => {
 export const initializeBills = async (force: boolean = false) => {
   if (force || !billsFetched || bills.length === 0) await fetchAllBills();
 };
-export const initializeIndividualCustomerReadings = async (force: boolean = false) => {
+export const initializeIndividualCustomerReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
+  if (options?.routeKey) {
+    const { data } = await getLatestReadingsByRouteAction(options.routeKey);
+    if (data?.individual) {
+      const newReadings = data.individual.map(mapDbIndividualReadingToDomain);
+      const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
+      for (const nr of newReadings) readingMap.set(nr.id, nr);
+      individualCustomerReadings = Array.from(readingMap.values());
+      notifyIndividualCustomerReadingListeners();
+    }
+    return;
+  }
   if (force || !individualCustomerReadingsFetched || individualCustomerReadings.length === 0) await fetchAllIndividualCustomerReadings();
 };
-export const initializeBulkMeterReadings = async (force: boolean = false) => {
+
+export const initializeBulkMeterReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
+  if (options?.routeKey) {
+    const { data } = await getLatestReadingsByRouteAction(options.routeKey);
+    if (data?.bulk) {
+      const newReadings = data.bulk.map(mapDbBulkReadingToDomain);
+      const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
+      for (const nr of newReadings) readingMap.set(nr.id, nr);
+      bulkMeterReadings = Array.from(readingMap.values());
+      notifyBulkMeterReadingListeners();
+    }
+    return;
+  }
   if (force || !bulkMeterReadingsFetched || bulkMeterReadings.length === 0) await fetchAllBulkMeterReadings();
 };
 export const initializePayments = async (force: boolean = false) => {
@@ -2206,9 +2287,7 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
   }
 
   if (typeof window !== 'undefined' && !window.navigator.onLine) {
-    const queue = JSON.parse(localStorage.getItem('offlineReadingsQueue') || '[]');
-    queue.push({ type: 'individual', payload: readingData });
-    localStorage.setItem('offlineReadingsQueue', JSON.stringify(queue));
+    const readingId = await offlineDb.queueOfflineReading('individual', readingData);
     
     // Optimistic update
     const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
@@ -2218,7 +2297,7 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     // Create an optimistic domain reading
     const newReading: DomainIndividualCustomerReading = {
       ...readingData,
-      id: 'offline-' + Date.now(),
+      id: 'offline-' + readingId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     } as any;
@@ -2230,7 +2309,7 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     // Trigger global event for Sync Hub
     window.dispatchEvent(new Event('offline-queue-updated'));
     
-    return { success: true, data: newReading, message: "Saved offline. Will sync when connected." };
+    return { success: true, data: newReading, message: "Saved to local database. Will sync when connected." };
   }
 
   const payload = mapDomainIndividualReadingToDb(readingData) as IndividualCustomerReadingInsert;
@@ -2239,7 +2318,11 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     yCoordinate: readingData.capturedCoordinates.latitude,
   } : undefined;
   
-  const { data: newDbReading, error: readingInsertError } = await createIndividualCustomerReadingAction(payload, spatialData);
+  const { data: newDbReading, error: readingInsertError } = await createIndividualCustomerReadingAction(
+    payload,
+    spatialData,
+    readingData.meter_photo ?? undefined
+  );
 
   if (readingInsertError || !newDbReading) {
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
@@ -2248,32 +2331,6 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     }
     console.error("DataStore: Failed to add individual reading. Database error:", JSON.stringify(readingInsertError, null, 2));
     return { success: false, message: userMessage, error: readingInsertError };
-  }
-
-  // Use previousReading from input if provided, otherwise fallback to customer's current reading (legacy shift logic)
-  const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
-
-  const updatePayload: any = {
-    previousReading: prevReadingToUse,
-    currentReading: newDbReading.METER_READING, // Updated from reading_value
-    month: newDbReading.READING_DATE // Updated from month_year
-      ? (newDbReading.READING_DATE instanceof Date ? format(newDbReading.READING_DATE, 'yyyy-MM') : String(newDbReading.READING_DATE).substring(0, 7))
-      : undefined
-  };
-
-  if (readingData.capturedCoordinates) {
-    updatePayload.xCoordinate = readingData.capturedCoordinates.longitude;
-    updatePayload.yCoordinate = readingData.capturedCoordinates.latitude;
-  }
-
-  // Shift existing currentReading to previousReading (or use explicit one), and set the new currentReading
-  const updateResult = await updateCustomer(customer.customerKeyNumber, updatePayload);
-
-  if (!updateResult.success) {
-    await deleteIndividualCustomerReadingAction(newDbReading.id);
-    const errorMessage = `Reading recorded, but failed to update the customer's main record. Error: ${updateResult.message}`;
-    console.error(errorMessage, updateResult.error);
-    return { success: false, message: errorMessage, error: updateResult.error };
   }
 
   const newReading = mapDbIndividualReadingToDomain(newDbReading);
@@ -2293,9 +2350,7 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
   }
 
   if (typeof window !== 'undefined' && !window.navigator.onLine) {
-    const queue = JSON.parse(localStorage.getItem('offlineReadingsQueue') || '[]');
-    queue.push({ type: 'bulk', payload: readingData });
-    localStorage.setItem('offlineReadingsQueue', JSON.stringify(queue));
+    const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
     
     // Optimistic update
     const prevReadingToUse = bulkMeter.currentReading ?? 0;
@@ -2305,7 +2360,7 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     // Create an optimistic domain reading
     const newReading: DomainBulkMeterReading = {
       ...readingData,
-      id: 'offline-' + Date.now(),
+      id: 'offline-' + readingId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     } as any;
@@ -2317,7 +2372,7 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     // Trigger global event for Sync Hub
     window.dispatchEvent(new Event('offline-queue-updated'));
     
-    return { success: true, data: newReading, message: "Saved offline. Will sync when connected." };
+    return { success: true, data: newReading, message: "Saved to local database. Will sync when connected." };
   }
 
   const payload = mapDomainBulkReadingToDb(readingData) as BulkMeterReadingInsert;
@@ -2326,7 +2381,11 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     yCoordinate: readingData.capturedCoordinates.latitude,
   } : undefined;
 
-  const { data: newDbReading, error: readingInsertError } = await createBulkMeterReadingAction(payload, spatialData);
+  const { data: newDbReading, error: readingInsertError } = await createBulkMeterReadingAction(
+    payload,
+    spatialData,
+    readingData.meter_photo ?? undefined
+  );
 
   if (readingInsertError || !newDbReading) {
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
@@ -2336,29 +2395,6 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     const readable = readingInsertError && typeof readingInsertError === 'object' ? JSON.stringify(readingInsertError, Object.getOwnPropertyNames(readingInsertError), 2) : String(readingInsertError);
     console.error("DataStore: Failed to add bulk meter reading. Database error:", readable);
     return { success: false, message: userMessage, error: readingInsertError };
-  }
-
-  const updatePayload: any = {
-    previousReading: bulkMeter.currentReading ?? 0,
-    currentReading: Number(newDbReading.METER_READING), // New Schema
-    month: newDbReading.READING_DATE
-      ? (newDbReading.READING_DATE instanceof Date ? format(newDbReading.READING_DATE, 'yyyy-MM') : String(newDbReading.READING_DATE).substring(0, 7))
-      : (bulkMeter.month || "")
-  };
-
-  if (readingData.capturedCoordinates) {
-    updatePayload.xCoordinate = readingData.capturedCoordinates.longitude;
-    updatePayload.yCoordinate = readingData.capturedCoordinates.latitude;
-  }
-
-  // Update customer record
-  const updateResult = await updateBulkMeter(bulkMeter.customerKeyNumber, updatePayload);
-
-  if (!updateResult.success) {
-    await deleteBulkMeterReadingAction(newDbReading.id);
-    const errorMessage = `Failed to update the bulk meter's main record, so the new reading was discarded. Reason: ${updateResult.message}`;
-    console.error(errorMessage, updateResult.error);
-    return { success: false, message: errorMessage, error: updateResult.error };
   }
 
   const newReading = mapDbBulkReadingToDomain(newDbReading);
@@ -2549,6 +2585,19 @@ export const createRole = async (roleName: string): Promise<StoreOperationResult
   if (newDbRole && !error) {
     roles = [newDbRole, ...roles];
     notifyRoleListeners();
+    
+    // Add a system notification about the new role
+    try {
+      await addNotification({
+        title: "New Role Created",
+        message: `A new user role "${roleName}" has been successfully added to the system framework.`,
+        senderName: "System",
+        targetBranchId: null,
+      });
+    } catch (notifErr) {
+      console.warn("Failed to create system notification for new role:", notifErr);
+    }
+
     return { success: true, data: newDbRole };
   }
   console.error("DataStore: Failed to create role. Error:", JSON.stringify(error, null, 2));
@@ -2556,10 +2605,26 @@ export const createRole = async (roleName: string): Promise<StoreOperationResult
 };
 
 export const deletePermission = async (id: number): Promise<StoreOperationResult<void>> => {
+  const selectedPermission = permissions.find(p => p.id === id);
+  const permissionName = selectedPermission ? selectedPermission.name : `Token #${id}`;
+
   const { error } = await deletePermissionAction(id);
   if (!error) {
     permissions = permissions.filter(p => p.id !== id);
     notifyPermissionListeners();
+
+    // Add a system notification about the deleted permission
+    try {
+      await addNotification({
+        title: "Permission Token Deleted",
+        message: `The global security permission token "${permissionName}" has been permanently removed from the system.`,
+        senderName: "System",
+        targetBranchId: null,
+      });
+    } catch (notifErr) {
+      console.warn("Failed to create system notification for deleted permission:", notifErr);
+    }
+
     return { success: true };
   }
   console.error("DataStore: Failed to delete permission. Error:", JSON.stringify(error, null, 2));
@@ -2614,6 +2679,21 @@ export const updateRolePermissions = async (roleId: number, permissionIds: numbe
   const { error } = await rpcUpdateRolePermissionsAction(roleId, permissionIds);
   if (!error) {
     await fetchAllRolePermissions();
+
+    // Add a system notification about the permission change
+    try {
+      const selectedRole = roles.find(r => r.id === roleId);
+      const roleName = selectedRole ? selectedRole.role_name : `Role #${roleId}`;
+      await addNotification({
+        title: "Role Permissions Updated",
+        message: `System permissions for the role "${roleName}" have been modified. Affected staff members will experience updated access levels.`,
+        senderName: "System",
+        targetBranchId: null,
+      });
+    } catch (notifErr) {
+      console.warn("Failed to create system notification for role permissions:", notifErr);
+    }
+
     return { success: true };
   }
   console.error("DataStore: Failed to update role permissions. RPC error:", JSON.stringify(error, null, 2));
@@ -2849,6 +2929,19 @@ export const createPermission = async (permissionData: { name: string; category:
   if (newDbPermission && !error) {
     permissions = [newDbPermission, ...permissions];
     notifyPermissionListeners();
+
+    // Add a system notification about the new permission
+    try {
+      await addNotification({
+        title: "New Permission Token Created",
+        message: `A new security permission token "${permissionData.name}" has been registered in the "${permissionData.category}" category.`,
+        senderName: "System",
+        targetBranchId: null,
+      });
+    } catch (notifErr) {
+      console.warn("Failed to create system notification for new permission:", notifErr);
+    }
+
     return { success: true, data: newDbPermission };
   }
   console.error("DataStore: Failed to create permission. Error:", JSON.stringify(error, null, 2));
@@ -2860,6 +2953,19 @@ export const updatePermission = async (id: number, permissionData: Partial<{ nam
   if (updatedDbPermission && !error) {
     permissions = permissions.map(p => p.id === id ? updatedDbPermission : p);
     notifyPermissionListeners();
+
+    // Add a system notification about the updated permission
+    try {
+      await addNotification({
+        title: "Permission Token Updated",
+        message: `The security permission token "${permissionData.name || updatedDbPermission.name}" has been modified.`,
+        senderName: "System",
+        targetBranchId: null,
+      });
+    } catch (notifErr) {
+      console.warn("Failed to create system notification for updated permission:", notifErr);
+    }
+
     return { success: true };
   }
   console.error("DataStore: Failed to update permission. Error:", JSON.stringify(error, null, 2));
@@ -2881,13 +2987,47 @@ export const getFaultCodes = (): DomainFaultCode[] => {
 
 export const initializeFaultCodes = async (force: boolean = false): Promise<void> => {
   if (!force && faultCodesFetched) return;
+  
+  // If offline, attempt to load from localStorage first
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    const cached = localStorage.getItem('cached_fault_codes');
+    if (cached) {
+      try {
+        faultCodes = JSON.parse(cached);
+        faultCodesFetched = true;
+        notifyFaultCodeListeners();
+        return;
+      } catch (e) {
+        console.error("DataStore: Failed to parse cached fault codes:", e);
+      }
+    }
+  }
+
   const { data, error } = await getPublicFaultCodesAction();
   if (data && !error) {
     faultCodes = data;
     faultCodesFetched = true;
+    
+    // Cache for offline use
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('cached_fault_codes', JSON.stringify(data));
+    }
+
     notifyFaultCodeListeners();
   } else {
     console.error("Failed to fetch fault codes:", error);
+    
+    // Fallback if fetch fails (even if online)
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem('cached_fault_codes');
+      if (cached) {
+        try {
+          faultCodes = JSON.parse(cached);
+          faultCodesFetched = true;
+          notifyFaultCodeListeners();
+        } catch (e) {}
+      }
+    }
   }
 };
 
@@ -2975,6 +3115,12 @@ const mapDbRouteToDomain = (dbRoute: RouteRow): Route => ({
 });
 
 export const getRoutes = () => routes;
+
+export const subscribeToRoutes = (listener: Listener<Route>): (() => void) => {
+  routeListeners.add(listener);
+  if (routesFetched) listener([...routes]); else fetchRoutes().then(() => listener([...routes]));
+  return () => routeListeners.delete(listener);
+};
 
 export const fetchRoutes = async (force: boolean = false) => {
   if (routesFetched && !force) return routes;

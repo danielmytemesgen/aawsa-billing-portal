@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+export const dynamic = 'force-dynamic';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';

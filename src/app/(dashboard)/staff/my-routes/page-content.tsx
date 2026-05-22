@@ -10,6 +10,7 @@ import { MapPin, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import { MobileReaderIntro } from "./mobile-reader-intro";
 
 export default function MyRoutesPage() {
     const { currentUser } = useCurrentUser();
@@ -67,6 +68,7 @@ export default function MyRoutesPage() {
 
     return (
         <div className="p-6 space-y-6">
+            <MobileReaderIntro userName={currentUser?.name} />
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold">My Assigned Routes</h1>

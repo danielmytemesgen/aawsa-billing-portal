@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, smallint, uuid, numeric, integer, jsonb, date, boolean, primaryKey, check } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, smallint, uuid, numeric, integer, jsonb, date, boolean, primaryKey, check, index } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 // 1. RBAC
@@ -61,7 +61,9 @@ export const routes = pgTable('routes', {
   status: text('status').default('Active'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-});
+}, (t) => ({
+  readerIdx: index('idx_routes_reader').on(t.readerId),
+}));
 
 export const bulkMeters = pgTable('bulk_meters', {
   customerKeyNumber: text('customerKeyNumber').primaryKey(),
@@ -91,7 +93,9 @@ export const bulkMeters = pgTable('bulk_meters', {
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).defaultNow(),
-});
+}, (t) => ({
+  routeKeyIdx: index('idx_bulk_route_key').on(t.routeKey),
+}));
 
 export const individualCustomers = pgTable('individual_customers', {
   customerKeyNumber: text('customerKeyNumber').primaryKey(),
@@ -111,6 +115,14 @@ export const individualCustomers = pgTable('individual_customers', {
   numberOfDials: integer('NUMBER_OF_DIALS'),
   status: text('status').default('Active'),
   paymentStatus: text('paymentStatus').default('Unpaid'),
+  routeKey: text('ROUTE_KEY').references(() => routes.routeKey, { onDelete: 'set null' }),
+  roundKey: text('ROUND_KEY'),
+  calculatedBill: numeric('calculatedBill'),
+  outStandingbill: numeric('outStandingbill'),
+  sewerageConnection: text('sewerageConnection'),
+  specificArea: text('specificArea'),
+  subCity: text('subCity'),
+  woreda: text('woreda'),
   xCoordinate: numeric('x_coordinate'),
   yCoordinate: numeric('y_coordinate'),
   zCoordinate: numeric('z_coordinate'),
@@ -118,7 +130,10 @@ export const individualCustomers = pgTable('individual_customers', {
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-});
+}, (t) => ({
+  assignedBulkIdx: index('idx_individual_assigned_bulk').on(t.assignedBulkMeterId),
+  routeKeyIdx: index('idx_individual_route_key').on(t.routeKey),
+}));
 
 // 3. Billing & Readings
 export const bills = pgTable('bills', {
@@ -166,6 +181,8 @@ export const bills = pgTable('bills', {
   branchId: uuid('branch_id').references(() => branches.id),
 }, (t) => ({
   pk: primaryKey({ columns: [t.id, t.monthYear] }),
+  customerKeyIdx: index('idx_bills_customer').on(t.customerKey, t.monthYear),
+  individualCustomerIdx: index('idx_bills_individual').on(t.individualCustomerId, t.monthYear),
 }));
 
 export const payments = pgTable('payments', {
@@ -217,4 +234,14 @@ export const spatialRecords = pgTable('spatial_records', {
   capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid('user_id').references(() => staffMembers.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 

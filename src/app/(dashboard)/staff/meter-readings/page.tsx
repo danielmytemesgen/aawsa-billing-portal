@@ -126,7 +126,8 @@ export default function StaffMeterReadingsPage() {
         previousReading: r.previousReading || 0,
         readingDate: r.readingDate,
         monthYear: r.monthYear,
-        notes: r.notes
+        notes: r.notes,
+        faultCode: r.faultCode
       };
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
@@ -141,7 +142,8 @@ export default function StaffMeterReadingsPage() {
         previousReading: r.previousReading || 0,
         readingDate: r.readingDate,
         monthYear: r.monthYear,
-        notes: r.notes
+        notes: r.notes,
+        faultCode: r.faultCode
       };
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 

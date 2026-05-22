@@ -19,11 +19,14 @@ import {
     CheckCircle2, 
     ArrowRight,
     TrendingUp,
-    FileText
+    FileText,
+    RefreshCw,
+    Download
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils";
 import { getFaultCodeLabel } from "@/lib/fault-codes";
+import { getPhotosByReadingIdAction } from "@/lib/reading-photo-actions";
 
 export interface ReadingData {
     id: string;
@@ -38,7 +41,9 @@ export interface ReadingData {
     faultCode?: string;
     notes?: string;
     readerName?: string;
+    readerPhone?: string;
     branchName?: string;
+    hasPhoto?: boolean;
 }
 
 interface ReadingDetailsDialogProps {
@@ -48,7 +53,33 @@ interface ReadingDetailsDialogProps {
 }
 
 export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDetailsDialogProps) {
-    if (!reading) return null;
+    const [photoData, setPhotoData] = React.useState<string | null>(null);
+    const [isLoadingPhoto, setIsLoadingPhoto] = React.useState(false);
+
+    React.useEffect(() => {
+        if (open && reading?.hasPhoto && reading?.id) {
+            const fetchPhoto = async () => {
+                setIsLoadingPhoto(true);
+                try {
+                    const { data } = await getPhotosByReadingIdAction(reading.id);
+                    if (data && data.length > 0) {
+                        setPhotoData(data[0].photo_data);
+                    }
+                } catch (err) {
+                    console.error("Failed to fetch photo for dialog:", err);
+                } finally {
+                    setIsLoadingPhoto(false);
+                }
+            };
+            fetchPhoto();
+        } else if (!open) {
+            setPhotoData(null);
+        }
+    }, [open, reading?.hasPhoto, reading?.id]);
+
+    if (!reading) {
+        return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="hidden" /></Dialog>;
+    }
 
     const {
         meterIdentifier,
@@ -62,7 +93,9 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
         faultCode,
         notes,
         readerName = "System/Admin",
-        branchName = "N/A"
+        readerPhone,
+        branchName = "N/A",
+        hasPhoto
     } = reading;
 
     return (
@@ -145,6 +178,7 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
                                 <User className="h-3 w-3" /> Reader
                             </label>
                             <p className="text-sm font-semibold truncate">{readerName}</p>
+                            {readerPhone && <p className="text-[10px] text-blue-600 font-bold">{readerPhone}</p>}
                         </div>
                         <div className="space-y-1">
                             <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
@@ -176,6 +210,33 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
                                 <label className="text-[10px] font-bold text-muted-foreground uppercase">Observer Notes</label>
                                 <div className="p-3 rounded-lg bg-gray-50 border border-gray-100 text-sm italic text-gray-600">
                                     &quot;{notes}&quot;
+                                </div>
+                            </div>
+                        )}
+
+                        {hasPhoto && (
+                            <div className="space-y-3 pt-2">
+                                <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                    <Activity className="h-3 w-3" /> Proof of Reading Photo
+                                </label>
+                                <div className="relative rounded-xl overflow-hidden border-2 border-slate-100 bg-slate-50 min-h-[200px] flex items-center justify-center">
+                                    {isLoadingPhoto ? (
+                                        <div className="flex flex-col items-center gap-2">
+                                            <RefreshCw className="h-6 w-6 animate-spin text-blue-500" />
+                                            <span className="text-xs text-muted-foreground">Loading photo...</span>
+                                        </div>
+                                    ) : photoData ? (
+                                        <img 
+                                            src={photoData.startsWith('data:') ? photoData : `data:image/webp;base64,${photoData}`} 
+                                            alt="Meter Reading Proof" 
+                                            className="w-full h-auto object-contain max-h-[400px]"
+                                        />
+                                    ) : (
+                                        <div className="text-center p-4">
+                                            <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto mb-2 opacity-50" />
+                                            <p className="text-sm text-muted-foreground">Photo could not be loaded</p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}

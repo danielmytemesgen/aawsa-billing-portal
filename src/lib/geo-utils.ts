@@ -1,4 +1,3 @@
-
 /**
  * Utility for handling geolocation and distance calculations.
  */
@@ -13,16 +12,16 @@ export interface Coordinates {
  * Gets the current position of the user with enhanced accuracy tracking.
  * Waits for a high-accuracy reading or times out after 10 seconds with the best available reading.
  */
-export const getCurrentPosition = (): Promise<Coordinates> => {
+export const getCurrentPosition = async (): Promise<Coordinates> => {
     return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-            reject(new Error("Geolocation is not supported by your browser."));
+        if (typeof window === 'undefined' || !navigator.geolocation) {
+            reject(new Error("Geolocation is not supported by your environment."));
             return;
         }
 
         let bestPosition: GeolocationPosition | null = null;
-        const timeout = 10000; // 10 seconds timeout
-        const accuracyThreshold = 10; // 10 meters threshold for early resolution
+        const timeout = 15000; // Reduced to 15 seconds for faster feedback
+        const accuracyThreshold = 15; // 15 meters threshold for early resolution
 
         const watchId = navigator.geolocation.watchPosition(
             (position) => {
@@ -43,17 +42,17 @@ export const getCurrentPosition = (): Promise<Coordinates> => {
                 }
             },
             (error) => {
-                // If it's the first attempt and it fails, reject
-                if (!bestPosition) {
+                // If it's a timeout error and we have a bestPosition, we'll ignore it and let the timer handle it
+                // If it's a permission error or something else, and we have no position, reject
+                if (!bestPosition && error.code !== error.TIMEOUT) {
                     navigator.geolocation.clearWatch(watchId);
                     reject(error);
                 }
-                // If we already have a bestPosition, we'll let the timeout handle it
             },
             {
                 enableHighAccuracy: true,
                 timeout: timeout,
-                maximumAge: 0,
+                maximumAge: 5000, // Allow 5s old positions
             }
         );
 
@@ -67,8 +66,7 @@ export const getCurrentPosition = (): Promise<Coordinates> => {
                     accuracy: (bestPosition as GeolocationPosition).coords.accuracy,
                 });
             } else {
-                // If still no position after timeout, it's an error
-                reject(new Error("Location request timed out without a valid position."));
+                reject(new Error("Location request timed out. Please ensure you are in an open area and GPS is enabled."));
             }
         }, timeout);
     });
@@ -109,3 +107,4 @@ export const checkProximity = (userCoords: Coordinates, targetCoords: Coordinate
         distance,
     };
 };
+

@@ -4,7 +4,7 @@
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
-import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity, Lock as LockIcon } from 'lucide-react';
+import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity, Lock as LockIcon, BarChart3 } from 'lucide-react';
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -856,6 +856,30 @@ export default function StaffDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {hasPermission('meter_readings_analytics_view') && (
+        <div className="pt-8 border-t border-slate-200 mt-12">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="p-2.5 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-200">
+              <BarChart3 className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-slate-900">Reading Analytics</h2>
+              <p className="text-sm text-slate-500 font-bold">Comprehensive analysis of field meter reading operations.</p>
+            </div>
+          </div>
+          
+          <ReaderReport
+            branches={allBranches}
+            bulkMeters={allBulkMeters}
+            customers={allCustomers}
+            routes={allRoutes}
+            staff={allStaff}
+            individualReadings={allIndividualReadings}
+            bulkReadings={allBulkReadings}
+          />
+        </div>
+      )}
     </div>
   );
 }

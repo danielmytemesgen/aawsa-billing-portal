@@ -1,9 +1,13 @@
 
 import type { NextConfig } from 'next';
 
+// When building for the Android APK, we need a static export.
+// Set NEXT_BUILD_TARGET=export before the build command.
+const isApkBuild = process.env.NEXT_BUILD_TARGET === 'export';
+
 const nextConfig: NextConfig = {
   /* config options here */
-  output: 'standalone', // Required for Docker deployment
+  output: isApkBuild ? 'export' : 'standalone', // 'export' for APK, 'standalone' for Docker/Vercel
   typescript: {
     ignoreBuildErrors: false,
   },
@@ -51,6 +55,9 @@ const nextConfig: NextConfig = {
     ],
   },
   webpack: (config, { isServer }) => {
+    if (isApkBuild) {
+      config.resolve.alias['@/lib/actions'] = require('path').resolve(__dirname, 'src/lib/actions-mock.ts');
+    }
     if (isServer) {
       config.ignoreWarnings = [
         { module: /@opentelemetry\/exporter-jaeger/ },

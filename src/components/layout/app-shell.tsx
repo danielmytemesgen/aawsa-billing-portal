@@ -9,6 +9,9 @@ import {
   Menu,
   UserCircle,
   Sun,
+  WifiOff,
+  CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,7 +27,7 @@ import {
   Sidebar,
   SidebarHeader,
   SidebarContent,
-
+  SidebarFooter,
   SidebarTrigger,
   SidebarInset,
   useSidebar,
@@ -35,6 +38,7 @@ import { NotificationBell } from './notification-bell';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { SupportChatbot } from './support-chatbot';
 import { SyncHub } from './sync-hub';
+import { useNetworkStatus } from '@/hooks/use-network-status';
 
 interface UserProfile {
   id: string;
@@ -55,6 +59,7 @@ interface AppHeaderContentProps {
 
 function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: AppHeaderContentProps) {
   const { isMobile, state: sidebarState } = useSidebar();
+  const { pendingCount } = useNetworkStatus();
 
   let dashboardHref = "/";
   if (user) {
@@ -99,7 +104,6 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
           </span>
         </Link>
         <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
-          {user && <SyncHub />}
           <Button 
             variant="ghost" 
             size="icon" 
@@ -113,8 +117,13 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
           {user && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="overflow-hidden rounded-full h-9 w-9 text-white hover:bg-white/20 flex-shrink-0">
+                <Button variant="ghost" size="icon" className="relative overflow-visible rounded-full h-9 w-9 text-white hover:bg-white/20 flex-shrink-0">
                   <UserCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+                  {pendingCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white shadow-sm ring-1 ring-white animate-bounce">
+                      {pendingCount}
+                    </span>
+                  )}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -151,6 +160,8 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   const router = useRouter();
   const [appName, setAppName] = React.useState("AAWSA Billing Portal");
   const currentYear = new Date().getFullYear();
+  const { isOnline, wasOffline, pendingCount } = useNetworkStatus();
+  const [syncProgress, setSyncProgress] = React.useState<{ syncing: boolean; success: number; failed: number; total: number } | null>(null);
 
   const handleLogout = React.useCallback(async () => {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -179,6 +190,18 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
 
   }, []);
 
+  React.useEffect(() => {
+    const handleSyncProgress = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setSyncProgress(detail);
+    };
+
+    window.addEventListener('sync-progress', handleSyncProgress);
+    return () => {
+      window.removeEventListener('sync-progress', handleSyncProgress);
+    };
+  }, []);
+
   return (
     <SidebarProvider defaultOpen>
       <Sidebar
@@ -190,9 +213,41 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
         <SidebarContent className="overflow-y-auto">
           {sidebar}
         </SidebarContent>
+        {user && (
+          <SidebarFooter className="p-2 border-t border-sidebar-border bg-sidebar">
+            <SyncHub />
+          </SidebarFooter>
+        )}
       </Sidebar>
       <SidebarInset className="min-w-0 flex flex-col">
         <AppHeaderContent user={user} appName={appName} onLogout={handleLogout} />
+        
+        {/* Network and Sync Status Banners */}
+        <div className="no-print">
+          {syncProgress?.syncing ? (
+            <div className="bg-blue-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 animate-pulse shadow-inner">
+              <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
+              <span>
+                Syncing offline readings: {syncProgress.success + syncProgress.failed} / {syncProgress.total}...
+              </span>
+            </div>
+          ) : !isOnline ? (
+            <div className="bg-amber-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
+              <WifiOff className="h-4 w-4 animate-pulse flex-shrink-0" />
+              <span>
+                You are currently working offline. {pendingCount > 0 ? `${pendingCount} reading(s) queued for sync.` : 'Your changes will be saved locally.'}
+              </span>
+            </div>
+          ) : (wasOffline || (syncProgress && !syncProgress.syncing && syncProgress.success > 0)) ? (
+            <div className="bg-emerald-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
+              <CheckCircle2 className="h-4 w-4 animate-bounce flex-shrink-0" />
+              <span>
+                Connectivity restored! Offline readings synchronized successfully.
+              </span>
+            </div>
+          ) : null}
+        </div>
+
         <main className="flex-1 p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 bg-background overflow-x-hidden">
           {children}
         </main>

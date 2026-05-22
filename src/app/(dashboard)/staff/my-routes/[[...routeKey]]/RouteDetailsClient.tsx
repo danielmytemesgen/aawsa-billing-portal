@@ -38,9 +38,10 @@ import type { FaultCodeRow } from "@/lib/actions";
 import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
 import { MapPin } from "lucide-react";
 
-export default function RouteDetailsPage() {
+export default function RouteDetailsClient() {
     const params = useParams();
-    const routeKey = params?.routeKey as string;
+    const routeKeyRaw = params?.routeKey;
+    const routeKey = Array.isArray(routeKeyRaw) ? routeKeyRaw[0] : (routeKeyRaw as string);
     const router = useRouter();
     const { toast } = useToast();
     const { currentUser } = useCurrentUser();
@@ -53,6 +54,7 @@ export default function RouteDetailsPage() {
     const [individualReadings, setIndividualReadings] = React.useState<any[]>([]);
 
     const [isLoading, setIsLoading] = React.useState(true);
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [searchTerm, setSearchTerm] = React.useState("");
     const [viewMode, setViewMode] = React.useState<'list' | 'map'>('list');
     const [isReadingModalOpen, setIsReadingModalOpen] = React.useState(false);
@@ -67,59 +69,169 @@ export default function RouteDetailsPage() {
     const [expandedMeters, setExpandedMeters] = React.useState<Set<string>>(new Set());
     const [userLocation, setUserLocation] = React.useState<Coordinates | null>(null);
     const [pathHistory, setPathHistory] = React.useState<Coordinates[]>([]);
-    const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed'>('Open');
+    const [periodStatus, setPeriodStatus] = React.useState<'Open' | 'Closed'>('Closed');
+    const [syncProgress, setSyncProgress] = React.useState<string | null>(null);
+    const [locationError, setLocationError] = React.useState<string | null>(null);
+    const [nearbyOnly, setNearbyOnly] = React.useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('meter_nearby_only');
+            return saved !== null ? saved === 'true' : true;
+        }
+        return true;
+    });
+    const PROXIMITY_THRESHOLD = 50; // 50 meters as requested
+
+    // Persist nearby preference
+    React.useEffect(() => {
+        localStorage.setItem('meter_nearby_only', String(nearbyOnly));
+    }, [nearbyOnly]);
 
     React.useEffect(() => {
         if (!navigator.geolocation) return;
 
-        const watchId = navigator.geolocation.watchPosition(
-            (position) => {
-                const newCoords = {
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                    accuracy: position.coords.accuracy
-                };
-                setUserLocation(newCoords);
-                
-                // Update path history if the user has moved more than 5 meters
-                setPathHistory(prev => {
-                    if (prev.length === 0) return [newCoords];
-                    const lastCoord = prev[prev.length - 1];
-                    const dist = calculateDistance(lastCoord, newCoords);
-                    if (dist > 5) { // 5 meters threshold to avoid GPS noise jitter
-                        return [...prev, newCoords];
-                    }
-                    return prev;
-                });
-            },
-            (error) => {
-                console.error("Geolocation error:", error);
-            },
-            { enableHighAccuracy: true, maximumAge: 10000 }
-        );
+        let highAccuracyFailed = false;
 
+        const startWatching = (highAccuracy: boolean) => {
+            return navigator.geolocation.watchPosition(
+                (position) => {
+                    const newCoords = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy
+                    };
+                    setUserLocation(newCoords);
+                    setLocationError(null);
+                    
+                    setPathHistory(prev => {
+                        if (prev.length === 0) return [newCoords];
+                        const lastCoord = prev[prev.length - 1];
+                        const dist = calculateDistance(lastCoord, newCoords);
+                        if (dist > 5) return [...prev, newCoords];
+                        return prev;
+                    });
+                },
+                (error) => {
+                    // Fix: Robust null/undefined check for the error object
+                    if (!error) return;
+
+                    console.warn("Geolocation attempt failed:", { 
+                        code: error.code, 
+                        message: error.message,
+                        highAccuracy
+                    });
+
+                    // Fallback logic: If high accuracy fails while offline/indoors, try low accuracy
+                    if (highAccuracy && !highAccuracyFailed && (error.code === error.POSITION_UNAVAILABLE || error.code === error.TIMEOUT)) {
+                        highAccuracyFailed = true;
+                        navigator.geolocation.clearWatch(watchId);
+                        watchId = startWatching(false);
+                        return;
+                    }
+                    
+                    let errorMsg = "Unable to retrieve your location.";
+                    if (error.code === error.PERMISSION_DENIED) {
+                        errorMsg = "Location access denied. Please enable GPS.";
+                        setLocationError("Permission denied");
+                    } else if (error.code === error.POSITION_UNAVAILABLE) {
+                        errorMsg = "Location unavailable. Ensure you have clear sky view.";
+                        setLocationError("Unavailable");
+                    } else if (error.code === error.TIMEOUT) {
+                        setLocationError("Timeout");
+                    }
+
+                    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+                    const shouldShowToast = error.code === error.PERMISSION_DENIED || (isOnline && error.code !== error.TIMEOUT);
+
+                    if (shouldShowToast) {
+                        toast({
+                            title: "GPS Status",
+                            description: errorMsg,
+                            variant: error.code === error.PERMISSION_DENIED ? "destructive" : "default"
+                        });
+                    }
+                },
+                { 
+                    enableHighAccuracy: highAccuracy, 
+                    maximumAge: highAccuracy ? 10000 : 30000,
+                    timeout: highAccuracy ? 15000 : 20000
+                }
+            );
+        };
+
+        let watchId = startWatching(true);
         return () => navigator.geolocation.clearWatch(watchId);
     }, []);
 
     React.useEffect(() => {
-        const load = async () => {
-            setIsLoading(true);
+        const initializeData = async () => {
+        setIsLoading(true);
+        setSyncProgress("Initializing...");
+        try {
+            // First, fetch route metadata and meters (Targeted)
+            setSyncProgress("Loading meters...");
+            
+            // Period status caching logic
+            const fetchPeriodStatus = async () => {
+                try {
+                    const status = await getReadingPeriodStatusAction();
+                    if (status) {
+                        setPeriodStatus(status);
+                        localStorage.setItem('cached_period_status', status);
+                        return status;
+                    }
+                } catch (e) {
+                    console.warn("Failed to fetch period status, using cache if available:", e);
+                    const cached = localStorage.getItem('cached_period_status');
+                    if (cached) {
+                        setPeriodStatus(cached as 'Open' | 'Closed');
+                        return cached;
+                    }
+                }
+                return 'Closed'; // Default fallback
+            };
+
             await Promise.all([
+                fetchPeriodStatus(),
                 fetchRoutes(),
-                initializeBulkMeters(true),
-                initializeCustomers(true),
-                initializeFaultCodes(true),
-                initializeBulkMeterReadings(true),
-                initializeIndividualCustomerReadings(true)
+                initializeBulkMeters(true, { routeKey }),
+                initializeFaultCodes(true)
             ]);
+
+            // Then fetch customers (Targeted)
+            setSyncProgress("Loading customers...");
+            await initializeCustomers(true, { routeKey });
+
+            // Finally fetch latest readings (Targeted)
+            setSyncProgress("Syncing readings...");
+            try {
+                await Promise.all([
+                    initializeBulkMeterReadings(true, { routeKey }),
+                    initializeIndividualCustomerReadings(true, { routeKey })
+                ]);
+            } catch (e) {
+                console.warn("Failed to sync latest readings, some data might be stale:", e);
+            }
+
             setAllCustomers(getCustomers());
             setFaultCodesForForm(getFaultCodes());
             setBulkReadings(getBulkMeterReadings());
             setIndividualReadings(getIndividualCustomerReadings());
+            
+            setSyncProgress("Complete");
+        } catch (error) {
+            console.error("Failed to initialize route data:", error);
+            toast({ 
+                title: "Partial Initialization", 
+                description: "Using offline cache where available.", 
+                variant: "destructive" 
+            });
+        } finally {
             setIsLoading(false);
-        };
-        load();
-    }, []);
+            setSyncProgress(null);
+        }
+    };
+    initializeData();
+    }, [routeKey]);
 
     const route = React.useMemo(() =>
         routes.find(r => r.routeKey === routeKey),
@@ -141,6 +253,8 @@ export default function RouteDetailsPage() {
 
     const filteredBulkMeters = React.useMemo(() => {
         let result = bulkMeters;
+        
+        // 1. Filter by search term
         if (searchTerm) {
             const lowSearch = searchTerm.toLowerCase();
             result = result.filter(bm =>
@@ -149,13 +263,39 @@ export default function RouteDetailsPage() {
                 bm.meterNumber?.toLowerCase().includes(lowSearch)
             );
         }
+
+        // 2. Filter by proximity if requested
+        if (nearbyOnly) {
+            if (!userLocation) {
+                return []; // Return empty list while waiting for GPS to ensure "Strict Nearby" mode
+            }
+            result = result.filter(bm => {
+                if (!bm.xCoordinate || !bm.yCoordinate) return false;
+                const dist = calculateDistance(userLocation, {
+                    latitude: bm.yCoordinate,
+                    longitude: bm.xCoordinate
+                });
+                return dist <= PROXIMITY_THRESHOLD;
+            });
+        }
         
+        // 3. Sort by: Unread first, then Distance (if location available), then Read
         return [...result].sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'bulk') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'bulk') ? 1 : 0;
-            return aRead - bRead;
+            
+            if (aRead !== bRead) return aRead - bRead;
+
+            // If both are same read status, sort by distance if location is available
+            if (userLocation && a.xCoordinate && a.yCoordinate && b.xCoordinate && b.yCoordinate) {
+                const distA = calculateDistance(userLocation, { latitude: a.yCoordinate, longitude: a.xCoordinate });
+                const distB = calculateDistance(userLocation, { latitude: b.yCoordinate, longitude: b.xCoordinate });
+                return distA - distB;
+            }
+
+            return 0;
         });
-    }, [bulkMeters, searchTerm, isMeterRead]);
+    }, [bulkMeters, searchTerm, isMeterRead, nearbyOnly, userLocation]);
 
     const toggleExpand = (meterId: string) => {
         const newExpanded = new Set(expandedMeters);
@@ -168,7 +308,7 @@ export default function RouteDetailsPage() {
     };
 
     const handleReadClick = (meter: any, type: 'bulk' | 'individual') => {
-        if (readingPeriodStatus === 'Closed') {
+        if (periodStatus === 'Closed') {
             toast({
                 title: "Access Denied",
                 description: "Reading period is currently closed.",
@@ -192,7 +332,7 @@ export default function RouteDetailsPage() {
             return;
         }
 
-        setIsLoading(true);
+        setIsSubmitting(true);
         try {
             let result;
             if (values.meterType === 'bulk_meter') {
@@ -203,7 +343,9 @@ export default function RouteDetailsPage() {
                     readingDate: format(values.date, "yyyy-MM-dd"),
                     monthYear: format(values.date, "yyyy-MM"),
                     faultCode: values.faultCode === 'none' ? undefined : values.faultCode,
-                    notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`
+                    notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
+                    capturedCoordinates: values.capturedCoordinates,
+                    meter_photo: values.meterPhoto,
                 });
             } else {
                 result = await addIndividualCustomerReading({
@@ -213,25 +355,64 @@ export default function RouteDetailsPage() {
                     readingDate: format(values.date, "yyyy-MM-dd"),
                     monthYear: format(values.date, "yyyy-MM"),
                     faultCode: values.faultCode === 'none' ? undefined : values.faultCode,
-                    notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`
+                    notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
+                    capturedCoordinates: values.capturedCoordinates,
+                    meter_photo: values.meterPhoto,
                 });
             }
 
             if (result.success) {
-                toast({ title: "Success", description: "Meter reading updated successfully." });
+                toast({ title: "Success", description: result.message || "Meter reading updated successfully." });
                 setIsReadingModalOpen(false);
                 setSelectedMeter(null);
-                // Refresh data
+
+                // Optimistically update the local readings state so the "Read" badge
+                // flips immediately in the UI — even in offline mode before sync.
+                const submittedMonthYear = format(values.date, 'yyyy-MM');
+                if (values.meterType === 'bulk_meter') {
+                    setBulkReadings(prev => {
+                        const already = prev.some(r => r.CUSTOMERKEY === values.entityId && r.monthYear === submittedMonthYear);
+                        if (already) return prev;
+                        return [...prev, { CUSTOMERKEY: values.entityId, monthYear: submittedMonthYear, readingValue: values.reading }];
+                    });
+                } else {
+                    setIndividualReadings(prev => {
+                        const already = prev.some(r => r.individualCustomerId === values.entityId && r.monthYear === submittedMonthYear);
+                        if (already) return prev;
+                        return [...prev, { individualCustomerId: values.entityId, monthYear: submittedMonthYear, readingValue: values.reading }];
+                    });
+                }
+
+                // Also refresh from the in-memory store (covers online case)
                 setAllCustomers(getCustomers());
-                setBulkReadings(getBulkMeterReadings());
-                setIndividualReadings(getIndividualCustomerReadings());
+                setBulkReadings(prev => {
+                    const fromStore = getBulkMeterReadings();
+                    // Merge: keep optimistic entries that aren't in the store yet
+                    const merged = [...fromStore];
+                    prev.forEach(p => {
+                        if (!merged.some(s => s.CUSTOMERKEY === p.CUSTOMERKEY && s.monthYear === p.monthYear)) {
+                            merged.push(p);
+                        }
+                    });
+                    return merged;
+                });
+                setIndividualReadings(prev => {
+                    const fromStore = getIndividualCustomerReadings();
+                    const merged = [...fromStore];
+                    prev.forEach(p => {
+                        if (!merged.some(s => s.individualCustomerId === p.individualCustomerId && s.monthYear === p.monthYear)) {
+                            merged.push(p);
+                        }
+                    });
+                    return merged;
+                });
             } else {
                 toast({ variant: "destructive", title: "Error", description: result.message });
             }
         } catch (error: any) {
             toast({ variant: "destructive", title: "Error", description: error.message || "Failed to submit reading." });
         } finally {
-            setIsLoading(false);
+            setIsSubmitting(false);
         }
     };
 
@@ -258,9 +439,10 @@ export default function RouteDetailsPage() {
 
     if (isLoading && !route) {
         return (
-            <div className="flex flex-col items-center justify-center p-12 space-y-4">
-                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                <p className="text-muted-foreground">Loading route details...</p>
+            <div className="flex flex-col items-center justify-center h-screen space-y-4">
+                <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                <div className="text-lg font-medium text-muted-foreground">{syncProgress || "Loading..."}</div>
+                <p className="text-sm text-muted-foreground animate-pulse">Optimizing your offline experience</p>
             </div>
         );
     }
@@ -301,6 +483,16 @@ export default function RouteDetailsPage() {
                         </div>
                         <div className="flex items-center bg-slate-100 p-1 rounded-md self-start sm:self-auto shrink-0">
                             <Button 
+                                variant={nearbyOnly ? 'secondary' : 'ghost'} 
+                                size="sm" 
+                                className={`h-8 px-3 ${nearbyOnly ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : ''}`}
+                                onClick={() => setNearbyOnly(!nearbyOnly)}
+                                title={nearbyOnly ? "Showing meters within 50m" : "Show all meters"}
+                            >
+                                <MapPin className={`h-4 w-4 mr-1.5 ${nearbyOnly ? 'fill-current' : ''}`} /> Nearby
+                            </Button>
+                            <div className="w-px h-4 bg-slate-300 mx-1" />
+                            <Button 
                                 variant={viewMode === 'list' ? 'secondary' : 'ghost'} 
                                 size="sm" 
                                 className="h-8 px-3"
@@ -335,9 +527,41 @@ export default function RouteDetailsPage() {
             ) : (
                 <div className="space-y-4 animate-in fade-in duration-300">
                     {filteredBulkMeters.length === 0 ? (
-                        <div className="p-12 text-center border-dashed border-2 rounded-lg">
-                            <Gauge className="mx-auto h-12 w-12 text-muted-foreground opacity-20 mb-4" />
-                            <p>No meters match your search in this route.</p>
+                        <div className="p-12 text-center border-dashed border-2 rounded-lg bg-slate-50/50">
+                            {nearbyOnly && !userLocation ? (
+                                locationError ? (
+                                    <>
+                                        <MapPin className="mx-auto h-12 w-12 text-destructive opacity-50 mb-4" />
+                                        <p className="font-medium text-destructive">GPS Failure: {locationError}</p>
+                                        <p className="text-xs text-muted-foreground mt-2 px-6">
+                                            We couldn&apos;t get your location. Please turn off &quot;Nearby&quot; filter to see all meters.
+                                        </p>
+                                        <Button 
+                                            variant="outline" 
+                                            size="sm" 
+                                            className="mt-4"
+                                            onClick={() => setNearbyOnly(false)}
+                                        >
+                                            Turn off Nearby Filter
+                                        </Button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Loader2 className="mx-auto h-12 w-12 text-blue-400 animate-spin mb-4" />
+                                        <p className="font-medium text-blue-800">Waiting for GPS signal...</p>
+                                        <p className="text-xs text-muted-foreground mt-2 px-6">
+                                            Proximity filter is ON. Looking for your location to show nearby meters. 
+                                            You can turn off &quot;Nearby&quot; to see all meters.
+                                        </p>
+                                    </>
+                                )
+                            ) : (
+                                <>
+                                    <Gauge className="mx-auto h-12 w-12 text-muted-foreground opacity-20 mb-4" />
+                                    <p className="font-medium">{nearbyOnly ? "No meters within 50m." : "No meters match your search."}</p>
+                                    <p className="text-xs text-muted-foreground mt-1">Try disabling the filter or moving closer to the meters.</p>
+                                </>
+                            )}
                         </div>
                 ) : (
                     filteredBulkMeters.map(bm => {
@@ -377,9 +601,9 @@ export default function RouteDetailsPage() {
                                             size="sm"
                                             className="text-xs font-bold bg-blue-600 hover:bg-blue-700 shadow-md transition-all rounded-full h-8 px-4"
                                             onClick={() => handleReadClick(bm, 'bulk')}
-                                            disabled={readingPeriodStatus === 'Closed'}
+                                            disabled={periodStatus === 'Closed'}
                                         >
-                                            {readingPeriodStatus === 'Closed' ? 'Locked' : (isMeterRead(bm.customerKeyNumber, 'bulk') ? 'Update' : 'Read Meter')}
+                                            {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(bm.customerKeyNumber, 'bulk') ? 'Update' : 'Read Meter')}
                                         </Button>
                                         {customers.length > 0 && (
                                             <Button
@@ -429,9 +653,9 @@ export default function RouteDetailsPage() {
                                                     <Button
                                                         className="text-[10px] h-7 px-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-full shadow-sm"
                                                         onClick={() => handleReadClick(c, 'individual')}
-                                                        disabled={readingPeriodStatus === 'Closed'}
+                                                        disabled={periodStatus === 'Closed'}
                                                     >
-                                                        {readingPeriodStatus === 'Closed' ? 'Locked' : (isMeterRead(c.customerKeyNumber, 'individual') ? 'Update' : 'Read')}
+                                                        {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(c.customerKeyNumber, 'individual') ? 'Update' : 'Read')}
                                                     </Button>
                                                 </div>
                                             ))}
@@ -461,7 +685,8 @@ export default function RouteDetailsPage() {
                                 customers={selectedMeter.type === 'individual' ? [allCustomers.find(c => c.customerKeyNumber === selectedMeter.id)!] : []}
                                 bulkMeters={selectedMeter.type === 'bulk' ? [allBulkMeters.find(bm => bm.customerKeyNumber === selectedMeter.id)!] : []}
                                 faultCodes={faultCodesForForm}
-                                isLoading={isLoading}
+                                isLoading={isSubmitting}
+                                initialLocation={userLocation}
                                 defaultValues={{
                                     meterType: selectedMeter.type === 'bulk' ? 'bulk_meter' : 'individual_customer_meter',
                                     entityId: selectedMeter.id,

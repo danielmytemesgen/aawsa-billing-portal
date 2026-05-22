@@ -30,6 +30,7 @@ import {
     getStaffMembers,
     initializeStaffMembers
 } from "@/lib/data-store";
+import { getPhotosByReadingIdAction } from "@/lib/actions";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -58,9 +59,11 @@ interface ReadingRecord {
     category: ReadingCategory;
     faultCode?: string;
     readerName: string;
+    readerPhone?: string;
     branchName: string;
     route: string;
     meterType: 'Individual' | 'Bulk';
+    hasPhoto?: boolean;
 }
 
 const ClassificationBadge = ({ category, faultCode }: { category: ReadingCategory, faultCode?: string }) => {
@@ -115,6 +118,12 @@ export default function ReadingClassificationPage() {
     const [filteredReadings, setFilteredReadings] = React.useState<ReadingRecord[]>([]);
     const [selectedReading, setSelectedReading] = React.useState<ReadingData | null>(null);
     const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
+    const [isMounted, setIsMounted] = React.useState(false);
+    const [isDownloadingPhoto, setIsDownloadingPhoto] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+        setIsMounted(true);
+    }, []);
 
     const handleViewDetails = (r: ReadingRecord) => {
         const mappedData: ReadingData = {
@@ -129,7 +138,9 @@ export default function ReadingClassificationPage() {
             monthYear: r.month,
             faultCode: r.faultCode,
             readerName: r.readerName,
-            branchName: r.branchName
+            readerPhone: r.readerPhone,
+            branchName: r.branchName,
+            hasPhoto: r.hasPhoto
         };
         setSelectedReading(mappedData);
         setIsDetailsOpen(true);
@@ -170,9 +181,11 @@ export default function ReadingClassificationPage() {
             category: category,
             faultCode: fault,
             readerName: reader?.name || r.readerStaffId || 'System',
+            readerPhone: reader?.phone,
             branchName: branch?.name || 'N/A',
             route: type === 'Individual' ? (r.roundKey || (customer as any)?.bookNumber || 'N/A') : (r.roundKey || (customer as any)?.routeKey || 'N/A'),
-            meterType: type
+            meterType: type,
+            hasPhoto: r.hasPhoto
         };
     };
 
@@ -286,6 +299,7 @@ export default function ReadingClassificationPage() {
             'Category': r.category,
             'Fault Code': r.faultCode || '',
             'Reader': r.readerName,
+            'Reader Phone': r.readerPhone || 'N/A',
             'Branch': r.branchName,
             'Route': r.route,
             'Meter Type': r.meterType
@@ -302,17 +316,79 @@ export default function ReadingClassificationPage() {
         });
     };
 
+    const handleDownloadPhoto = async (r: ReadingRecord) => {
+        setIsDownloadingPhoto(r.id);
+        try {
+            const { data, error } = await getPhotosByReadingIdAction(r.id);
+            
+            if (error || !data || data.length === 0) {
+                toast({
+                    variant: "destructive",
+                    title: "Error",
+                    description: "No photo found for this reading."
+                });
+                return;
+            }
+
+            const photo = data[0];
+            const base64Data = photo.photo_data;
+            
+            let contentType = "image/webp";
+            let actualData = base64Data;
+            if (base64Data.startsWith("data:")) {
+                const parts = base64Data.split(",");
+                contentType = parts[0].split(":")[1].split(";")[0];
+                actualData = parts[1];
+            }
+
+            const byteCharacters = atob(actualData);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: contentType });
+            
+            const link = document.createElement('a');
+            link.href = window.URL.createObjectURL(blob);
+            const fileName = `${r.customerName.replace(/[^a-z0-9]/gi, '_')}_${r.customerKey}_${format(new Date(r.date), 'yyyyMMdd')}.webp`;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            toast({
+                title: "Photo Downloaded",
+                description: `Photo for ${r.customerName} has been saved.`
+            });
+        } catch (err) {
+            console.error("Download error:", err);
+            toast({
+                variant: "destructive",
+                title: "Download Failed",
+                description: "An error occurred while downloading the photo."
+            });
+        } finally {
+            setIsDownloadingPhoto(null);
+        }
+    };
+
     const months = Array.from(new Set(readings.map(r => r.month))).sort().reverse();
     const branches = Array.from(new Set(readings.map(r => r.branchName))).sort();
     const routes = Array.from(new Set(readings.map(r => r.route))).sort();
 
     return (
-    <div className="space-y-6 pb-10">
-      <ReadingDetailsDialog 
-        open={isDetailsOpen} 
-        onOpenChange={setIsDetailsOpen} 
-        reading={selectedReading} 
-      />
+        <>
+            {isMounted && (
+                <React.Suspense fallback={null}>
+                    <ReadingDetailsDialog 
+                        open={isDetailsOpen} 
+                        onOpenChange={setIsDetailsOpen} 
+                        reading={selectedReading} 
+                    />
+                </React.Suspense>
+            )}
+            <div className="space-y-6 pb-10">
 
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
@@ -411,6 +487,8 @@ export default function ReadingClassificationPage() {
                                     <TableHead className="font-bold px-6">Classification</TableHead>
                                     <TableHead className="font-bold text-center">Route</TableHead>
                                     <TableHead className="font-bold">Reader / Branch</TableHead>
+                                    <TableHead className="font-bold">Reader Phone</TableHead>
+                                    <TableHead className="font-bold text-center">Photo</TableHead>
                                     <TableHead className="font-bold text-right">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -418,14 +496,14 @@ export default function ReadingClassificationPage() {
                                 {isLoading ? (
                                     Array.from({ length: 5 }).map((_, i) => (
                                         <TableRow key={i}>
-                                            <TableCell colSpan={9} className="h-12">
+                                            <TableCell colSpan={11} className="h-12">
                                                 <div className="h-4 w-full bg-gray-100 animate-pulse rounded" />
                                             </TableCell>
                                         </TableRow>
                                     ))
                                 ) : filteredReadings.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={9} className="h-40 text-center text-muted-foreground font-medium">
+                                        <TableCell colSpan={11} className="h-40 text-center text-muted-foreground font-medium">
                                             No reading records found matching your filters.
                                         </TableCell>
                                     </TableRow>
@@ -471,12 +549,47 @@ export default function ReadingClassificationPage() {
                                                     <span className="text-xs text-muted-foreground">{r.branchName}</span>
                                                 </div>
                                             </TableCell>
+                                            <TableCell>
+                                                <span className="text-sm font-medium text-blue-600">{r.readerPhone || 'N/A'}</span>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                {r.hasPhoto ? (
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        <Button 
+                                                            variant="ghost" 
+                                                            size="icon" 
+                                                            className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                                            onClick={() => handleViewDetails(r)}
+                                                            title="View photo proof"
+                                                        >
+                                                            <Eye className="h-4 w-4" />
+                                                        </Button>
+                                                        <Button 
+                                                            variant="ghost" 
+                                                            size="icon" 
+                                                            className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                                            onClick={() => handleDownloadPhoto(r)}
+                                                            disabled={isDownloadingPhoto === r.id}
+                                                            title="Download proof photo"
+                                                        >
+                                                            {isDownloadingPhoto === r.id ? (
+                                                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <Download className="h-4 w-4" />
+                                                            )}
+                                                        </Button>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-xs text-muted-foreground italic">None</span>
+                                                )}
+                                            </TableCell>
                                             <TableCell className="text-right">
                                                 <Button 
                                                     variant="ghost" 
                                                     size="icon" 
                                                     className="h-8 w-8 hover:bg-blue-50 hover:text-blue-600 rounded-full transition-all"
                                                     onClick={() => handleViewDetails(r)}
+                                                    title="View full details"
                                                 >
                                                     <Eye className="h-4 w-4" />
                                                 </Button>
@@ -490,5 +603,6 @@ export default function ReadingClassificationPage() {
                 </CardContent>
             </Card>
         </div>
+        </>
     );
 }

@@ -55,22 +55,93 @@ export function AuthForm() {
   const onSubmit = async (values: LoginFormValues) => {
     setIsLoading(true);
 
+    const attemptOfflineLogin = () => {
+      const cachedCredsRaw = localStorage.getItem("offline_creds");
+      if (cachedCredsRaw) {
+        const cachedCreds = JSON.parse(cachedCredsRaw);
+        const enteredEmail = values.email.trim().toLowerCase();
+        const storedEmail = cachedCreds.email.trim().toLowerCase();
+
+        if (enteredEmail === storedEmail) {
+          if (btoa(values.password) === cachedCreds.passwordHash) {
+            // Use the user profile stored directly inside the offline_creds
+            const user = cachedCreds.user;
+            if (user) {
+              toast({
+                title: "Offline Login Successful",
+                description: `Logged in as ${enteredEmail} (Offline Mode)`,
+              });
+              
+              // Restore the user session to localStorage so dashboards can load
+              localStorage.setItem("user", JSON.stringify(user));
+
+              const permissions = user.permissions || [];
+              const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+              
+              setTimeout(() => {
+                if (isManagement) router.push("/admin/dashboard");
+                else router.push("/staff/dashboard");
+              }, 500);
+              
+              return true;
+            }
+          } else {
+            toast({
+              variant: "destructive",
+              title: "Offline Login Failed",
+              description: "Incorrect password for offline access.",
+            });
+            return true;
+          }
+        } else {
+           // Email doesn't match the one stored in offline_creds
+           console.log("Offline login: Email mismatch", { entered: enteredEmail, stored: storedEmail });
+        }
+      } else {
+        console.log("Offline login: No 'offline_creds' found in localStorage");
+      }
+      return false;
+    };
+
+    const isOffline = typeof window !== 'undefined' && !navigator.onLine;
+
+    if (isOffline) {
+      if (attemptOfflineLogin()) {
+        setIsLoading(false);
+        return;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Offline Login Failed",
+        description: "No cached credentials found for this user on this device. Please connect to the internet for your first login.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
     // Create FormData for the server action
     const formData = new FormData();
     formData.append("email", values.email);
     formData.append("password", values.password);
 
-    const result = await loginAction(formData);
+    try {
+      const result = await loginAction(formData);
 
-    if (result.success && result.user) {
-      toast({
-        title: "Login Successful",
-        description: "Welcome back! Redirecting...",
-      });
+      if (result.success && result.user) {
+        // Cache credentials AND user profile for future offline login
+        localStorage.setItem("offline_creds", JSON.stringify({
+          email: values.email.trim().toLowerCase(),
+          passwordHash: btoa(values.password), // Basic obfuscation for local matching
+          user: result.user // Cache the profile so it survives even if "user" is cleared from LS
+        }));
+        
+        toast({
+          title: "Login Successful",
+          description: "Welcome back! Redirecting...",
+        });
 
-      // Still storing minimal user info in localStorage for UI convenience (e.g., name display)
-      // but NOT for security checks anymore.
-      localStorage.setItem("user", JSON.stringify(result.user));
+        localStorage.setItem("user", JSON.stringify(result.user));
 
       const role = result.user.role.toLowerCase().trim();
       const permissions = result.user.permissions || [];
@@ -87,12 +158,22 @@ export function AuthForm() {
         router.push("/staff/dashboard");
       }
 
-    } else {
-      toast({
-        variant: "destructive",
-        title: "Login Failed",
-        description: result.message || "Invalid email or password.",
-      });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Login Failed",
+          description: result.message || "Invalid email or password.",
+        });
+      }
+    } catch (error) {
+      console.warn("Login action failed (likely network error). Attempting offline fallback.", error);
+      if (!attemptOfflineLogin()) {
+        toast({
+          variant: "destructive",
+          title: "Connection Error",
+          description: "Unable to reach the server and no offline credentials found. Please check your internet connection.",
+        });
+      }
     }
 
     setIsLoading(false);

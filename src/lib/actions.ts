@@ -1,5 +1,6 @@
 'use server'
 import { PERMISSIONS } from '@/lib/constants/auth';
+import { format } from 'date-fns';
 import fs from 'fs';
 import {
   dbCreateBranch,
@@ -125,6 +126,9 @@ import {
   dbUpsertSpatialRecord,
   dbGetSystemSetting,
   dbUpdateSystemSetting,
+  dbGetLatestReadingsByMeters,
+  dbCreateMeterReadingPhoto,
+  dbGetPhotosByReadingId,
 } from './db-queries';
 import { withTransaction } from './db';
 
@@ -439,7 +443,7 @@ export async function deleteBranchAction(id: string) {
   });
 }
 
-export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) {
+export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
@@ -585,7 +589,7 @@ export async function getCustomerByIdAction(customerKeyNumber: string) {
     return await dbGetCustomerById(customerKeyNumber);
   });
 }
-export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) {
+export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
@@ -1509,6 +1513,33 @@ export async function upsertSpatialRecordAction(entityId: string, entityType: 'i
   });
 }
 
+export async function getLatestReadingsByRouteAction(routeKey: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    // Fetch meters for the route
+    const { data: meters } = await getAllBulkMetersAction({ routeKey });
+    if (!meters || meters.length === 0) return { bulk: [], individual: [] };
+
+    const meterKeys = meters.map((m: any) => m.customerKeyNumber);
+    
+    // Fetch customers for these meters
+    const { data: customers } = await getAllCustomersAction({ routeKey });
+    const customerKeys = customers?.map((c: any) => c.customerKeyNumber) || [];
+
+    const [bulkReadings, individualReadings] = await Promise.all([
+      dbGetLatestReadingsByMeters(meterKeys, 'bulk'),
+      dbGetLatestReadingsByMeters(customerKeys, 'individual')
+    ]);
+
+    return {
+      bulk: bulkReadings,
+      individual: individualReadings
+    };
+  });
+}
+
 export async function getAllIndividualCustomerReadingsAction() {
   return await wrap(async () => {
     const session = await checkPermission();
@@ -1529,25 +1560,57 @@ export async function getAllIndividualCustomerReadingsAction() {
     return await dbGetAllIndividualCustomerReadings(filterBranchId, readerId);
   });
 }
-export async function createIndividualCustomerReadingAction(reading: IndividualCustomerReadingInsert, spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number }) {
+export async function createIndividualCustomerReadingAction(
+  reading: IndividualCustomerReadingInsert,
+  spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number },
+  meterPhoto?: string
+) {
   const status = await getReadingPeriodStatusAction();
   if (status === 'Closed') {
     return { success: false, message: "Reading period is currently closed globally." };
   }
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
     
     return await withTransaction(async (client) => {
+      // Fetch current state for sync
+      const custId = reading.individual_customer_id || (reading as any).CUST_KEY;
+      const customer = await dbGetCustomerById(custId, client);
+      if (!customer) throw new Error("Customer not found");
+
       const result = await dbCreateIndividualCustomerReading(reading, client);
       
       if (spatialData && (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined)) {
-        await dbUpsertSpatialRecord(reading.individual_customer_id, 'individual_customer', spatialData, client);
+        await dbUpsertSpatialRecord(custId, 'individual_customer', spatialData, client);
+      }
+
+      // Sync the main customer record
+      const rDate = (reading as any).READING_DATE || (reading as any).reading_date || reading.reading_date;
+      const rValue = (reading as any).METER_READING !== undefined ? (reading as any).METER_READING : ((reading as any).reading_value !== undefined ? (reading as any).reading_value : reading.reading_value);
+      
+      const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
+      const monthYear = format(readingDate, 'yyyy-MM');
+
+      await dbUpdateCustomer(custId, { 
+        previousReading: customer.currentReading ?? 0,
+        currentReading: rValue,
+        month: monthYear
+      }, client);
+
+      // Save photo to dedicated table if provided
+      if (meterPhoto && result?.id) {
+        await dbCreateMeterReadingPhoto({
+          reading_id: String(result.id),
+          reading_type: 'individual',
+          photo_data: meterPhoto,
+          uploaded_by: session?.id ?? null,
+        }, client);
       }
 
       await logSecurityEventAction({
         event: 'Create Indiv. Reading',
         customerKeyNumber: reading.individual_customer_id,
-        details: { reading, spatialData }
+        details: { reading, spatialData, hasPhoto: !!meterPhoto }
       });
       
       return result;
@@ -1597,29 +1660,68 @@ export async function getAllBulkMeterReadingsAction() {
     return await dbGetAllBulkMeterReadings(filterBranchId, readerId);
   });
 }
-export async function createBulkMeterReadingAction(reading: BulkMeterReadingInsert, spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number }) {
+export async function createBulkMeterReadingAction(
+  reading: BulkMeterReadingInsert,
+  spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number },
+  meterPhoto?: string
+) {
   const status = await getReadingPeriodStatusAction();
   if (status === 'Closed') {
     return { success: false, message: "Reading period is currently closed globally." };
   }
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
     
     return await withTransaction(async (client) => {
+      // Fetch current state for sync
+      const custKey = reading.CUSTOMERKEY || (reading as any).CUST_KEY;
+      const meter = await dbGetBulkMeterById(custKey, client);
+      if (!meter) throw new Error("Bulk meter not found");
+
       const result = await dbCreateBulkMeterReading(reading, client);
       
       if (spatialData && (spatialData.xCoordinate !== undefined || spatialData.yCoordinate !== undefined)) {
-        await dbUpsertSpatialRecord(reading.CUSTOMERKEY, 'bulk_meter', spatialData, client);
+        await dbUpsertSpatialRecord(custKey, 'bulk_meter', spatialData, client);
+      }
+
+      // Sync the main bulk meter record
+      const rDate = (reading as any).READING_DATE || (reading as any).reading_date || reading.reading_date;
+      const rValue = (reading as any).METER_READING !== undefined ? (reading as any).METER_READING : ((reading as any).reading_value !== undefined ? (reading as any).reading_value : reading.reading_value);
+
+      const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
+      const monthYear = format(readingDate, 'yyyy-MM');
+
+      await dbUpdateBulkMeter(custKey, { 
+        previousReading: meter.currentReading ?? 0,
+        currentReading: rValue,
+        month: monthYear
+      }, client);
+
+      // Save photo to dedicated table if provided
+      if (meterPhoto && result?.id) {
+        await dbCreateMeterReadingPhoto({
+          reading_id: String(result.id),
+          reading_type: 'bulk',
+          photo_data: meterPhoto,
+          uploaded_by: session?.id ?? null,
+        }, client);
       }
 
       await logSecurityEventAction({
         event: 'Create Bulk Reading',
         customerKeyNumber: reading.CUSTOMERKEY,
-        details: { reading, spatialData }
+        details: { reading, spatialData, hasPhoto: !!meterPhoto }
       });
       
       return result;
     });
+  });
+}
+
+export async function getPhotosByReadingIdAction(readingId: string) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    return await dbGetPhotosByReadingId(readingId);
   });
 }
 export async function updateBulkMeterReadingAction(id: string, reading: BulkMeterReadingUpdate) {
@@ -1856,7 +1958,10 @@ export async function updateNotificationAction(id: string, notification: Notific
 }
 export async function createNotificationAction(notification: NotificationInsert) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.NOTIFICATIONS_MANAGE);
+    // System-generated notifications (e.g. system logs, audit events) do not require manual permission gating
+    if (notification.sender_name !== "System") {
+      await checkPermission(PERMISSIONS.NOTIFICATIONS_MANAGE);
+    }
     const result = await dbCreateNotification(notification);
     await logSecurityEventAction({
       event: 'Create Notification',

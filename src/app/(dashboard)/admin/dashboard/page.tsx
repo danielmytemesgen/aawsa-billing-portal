@@ -7,9 +7,10 @@ import {
   AlertCircle,
   Users,
   Gauge,
-  BarChart as BarChartIcon,
   Table as TableIcon,
-  FileText
+  FileText,
+  Activity,
+  BarChart3 as BarChartIcon
 } from 'lucide-react';
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -36,16 +37,13 @@ import {
   getBulkMeters, subscribeToBulkMeters, initializeBulkMeters,
   getCustomers, subscribeToCustomers, initializeCustomers,
   getBranches, subscribeToBranches, initializeBranches,
-  getBills, subscribeToBills, initializeBills,
-  getIndividualCustomerReadings, subscribeToIndividualCustomerReadings, initializeIndividualCustomerReadings,
-  getBulkMeterReadings, subscribeToBulkMeterReadings, initializeBulkMeterReadings
+  initializeBills, subscribeToBills
 } from "@/lib/data-store";
 import type { BulkMeter } from '../bulk-meters/bulk-meter-types';
 import type { IndividualCustomer } from '../individual-customers/individual-customer-types';
 import type { Branch } from '../branches/branch-types';
-import { DomainBill } from "@/lib/data-store";
 import { getDashboardMetricsAction } from "@/lib/actions";
-import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { format } from 'date-fns';
 import { usePermissions } from "@/hooks/use-permissions";
 
 const chartConfig = {
@@ -85,6 +83,10 @@ export default function AdminDashboardPage() {
   const [waterUsageView, setWaterUsageView] = React.useState<'chart' | 'table'>('chart');
 
   const [selectedMonth, setSelectedMonth] = React.useState<string>(format(new Date(), 'yyyy-MM'));
+
+
+
+
 
   React.useEffect(() => {
     setIsClient(true);
@@ -155,6 +157,8 @@ export default function AdminDashboardPage() {
       }
     }
 
+
+
     // Client-side initialization fallback
     if (!metrics) {
       const currentBranches = getBranches();
@@ -218,9 +222,7 @@ export default function AdminDashboardPage() {
           initializeBranches(true),
           initializeBulkMeters(true),
           initializeCustomers(true),
-          initializeBills(true),
-          initializeIndividualCustomerReadings(true),
-          initializeBulkMeterReadings(true)
+          initializeBills(true)
         ]);
 
         if (isMounted) await processDashboardData();
@@ -238,8 +240,7 @@ export default function AdminDashboardPage() {
     const unsubBulkMeters = subscribeToBulkMeters(() => { if (isMounted) processDashboardData(); });
     const unsubCustomers = subscribeToCustomers(() => { if (isMounted) processDashboardData(); });
     const unsubBills = subscribeToBills(() => { if (isMounted) processDashboardData(); });
-    const unsubIndReadings = subscribeToIndividualCustomerReadings(() => { if (isMounted) processDashboardData(); });
-    const unsubBulkReadings = subscribeToBulkMeterReadings(() => { if (isMounted) processDashboardData(); });
+
 
     return () => {
       isMounted = false;
@@ -247,8 +248,7 @@ export default function AdminDashboardPage() {
       unsubBulkMeters();
       unsubCustomers();
       unsubBills();
-      unsubIndReadings();
-      unsubBulkReadings();
+
     };
   }, [processDashboardData]);
 
@@ -648,6 +648,9 @@ export default function AdminDashboardPage() {
           )}
         </CardContent>
       </Card>
+
+
+
     </div>
   );
 }

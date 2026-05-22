@@ -170,14 +170,14 @@ export const dbGetBranchById = async (id: string) => {
     return rows[0] ?? null;
 };
 
-export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
+export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) => {
     let sql = `
-        SELECT ic.*, b.name as branch_name, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
+        SELECT ic.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate 
         FROM individual_customers ic 
-        LEFT JOIN branches b ON ic.branch_id = b.id 
+        LEFT JOIN branches b ON ic.branch_id = b.id
         LEFT JOIN spatial_records sr ON ic."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'individual_customer'
         LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
-        LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key
+        LEFT JOIN routes r ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = r.route_key
         WHERE ic.deleted_at IS NULL
     `;
     const params: any[] = [];
@@ -187,10 +187,15 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?
         sql += ` AND ic.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
     }
-    
+
     if (options?.readerId) {
         sql += ` AND r.reader_id = $${paramIndex++}`;
         params.push(options.readerId);
+    }
+
+    if (options?.routeKey) {
+        sql += ` AND bm."ROUTE_KEY" = $${paramIndex++}`;
+        params.push(options.routeKey);
     }
 
     if (options?.excludePending) {
@@ -377,14 +382,16 @@ export const dbDeleteCustomer = async (customerKeyNumber: string, deletedBy?: st
     });
 };
 
-export const dbGetCustomerById = async (customerKeyNumber: string) => {
+export const dbGetCustomerById = async (customerKeyNumber: string, client?: any) => {
+    const qFunc = client ? client.query.bind(client) : query;
     const sql = `
         SELECT ic.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
         FROM individual_customers ic
         LEFT JOIN spatial_records sr ON ic."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'individual_customer'
         WHERE LOWER(TRIM(ic."customerKeyNumber")) = LOWER(TRIM($1)) AND ic.deleted_at IS NULL
     `;
-    const rows: any = await query(sql, [customerKeyNumber]);
+    const res = await qFunc(sql, [customerKeyNumber]);
+    const rows = client ? res.rows : res;
     return rows[0] ?? null;
 };
 
@@ -392,7 +399,7 @@ export const dbGetCustomersByBookNumber = async (bookNumber: string) => {
     return await query('SELECT * FROM individual_customers WHERE "bookNumber" = $1 AND status = \'Active\' AND deleted_at IS NULL', [bookNumber]);
 };
 
-export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean }) => {
+export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) => {
     let sql = `
         SELECT bm.*, b.name as branch_name, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
         FROM bulk_meters bm 
@@ -412,6 +419,11 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId
     if (options?.readerId) {
         sql += ` AND r.reader_id = $${paramIndex++}`;
         params.push(options.readerId);
+    }
+
+    if (options?.routeKey) {
+        sql += ` AND bm."ROUTE_KEY" = $${paramIndex++}`;
+        params.push(options.routeKey);
     }
 
     if (options?.excludePending) {
@@ -494,16 +506,18 @@ export const dbCreateBulkMeter = async (bulkMeter: any, client?: any) => {
     return rows[0] || cleanBm;
 };
 
-export const dbGetBulkMeterById = async (customerKeyNumber: string) => {
+export const dbGetBulkMeterById = async (customerKeyNumber: string, client?: any) => {
+    const qFunc = client ? client.query.bind(client) : query;
     const sql = `
         SELECT bm.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
         FROM bulk_meters bm
         LEFT JOIN spatial_records sr ON bm."customerKeyNumber" = sr.entity_id AND sr.entity_type = 'bulk_meter'
         WHERE LOWER(TRIM(bm."customerKeyNumber")) = LOWER(TRIM($1)) AND bm.deleted_at IS NULL
     `;
-    const rows: any = await query(sql, [customerKeyNumber]);
+    const res = await qFunc(sql, [customerKeyNumber]);
+    const rows = client ? res.rows : res;
     return rows[0] ?? null;
-}
+};
 
 export const dbUpdateBulkMeter = async (customerKeyNumber: string, bulkMeter: any, client?: any) => {
     const cleanBm = { ...bulkMeter };
@@ -933,7 +947,9 @@ export const dbGetBillWorkflowLogs = async (billId: string) => {
 
 export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string) => {
     let sql = `
-        SELECT r.* FROM individual_customer_readings r
+        SELECT r.*, 
+        EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
+        FROM individual_customer_readings r
         JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
         LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
         LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
@@ -997,7 +1013,9 @@ export const dbGetIndividualCustomerReadingsByCustomer = async (customerKey: str
 
 export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string) => {
     let sql = `
-        SELECT r.* FROM bulk_meter_readings r
+        SELECT r.*,
+        EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
+        FROM bulk_meter_readings r
         JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
         LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
         WHERE r.deleted_at IS NULL
@@ -1061,6 +1079,53 @@ export const dbGetBulkMeterReadingsByMeter = async (meterKey: string) => {
         'SELECT * FROM bulk_meter_readings WHERE "CUST_KEY" = $1 AND deleted_at IS NULL ORDER BY "READING_DATE" DESC',
         [meterKey]
     );
+};
+
+// =====================================================
+// Meter Reading Photos
+// =====================================================
+
+export const dbCreateMeterReadingPhoto = async (photo: {
+    reading_id: string;
+    reading_type: 'individual' | 'bulk';
+    photo_data: string;
+    uploaded_by?: string | null;
+    notes?: string | null;
+}, client?: any) => {
+    const keys = Object.keys(photo);
+    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
+    const sql = `INSERT INTO meter_reading_photos (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
+    const params = keys.map(k => (photo as any)[k]);
+
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0] || photo;
+    }
+    const rows: any = await query(sql, params);
+    return rows[0] || photo;
+};
+
+export const dbGetPhotosByReadingId = async (readingId: string) => {
+    return await query(
+        'SELECT * FROM meter_reading_photos WHERE "reading_id" = $1 ORDER BY "captured_at" DESC',
+        [readingId]
+    );
+};
+
+export const dbGetLatestReadingsByMeters = async (meterKeys: string[], type: 'individual' | 'bulk') => {
+    if (meterKeys.length === 0) return [];
+    const placeholders = meterKeys.map((_, i) => `$${i + 1}`).join(',');
+    const table = type === 'individual' ? 'individual_customer_readings' : 'bulk_meter_readings';
+    const keyColumn = type === 'individual' ? '"CUST_KEY"' : '"CUST_KEY"'; // Both use CUST_KEY now
+
+    const sql = `
+        SELECT DISTINCT ON (${keyColumn}) *
+        FROM ${table}
+        WHERE ${keyColumn} IN (${placeholders})
+        AND deleted_at IS NULL
+        ORDER BY ${keyColumn}, "READING_DATE" DESC
+    `;
+    return await query(sql, meterKeys);
 };
 
 export const dbGetMeterReadings = async (branchId?: string) => {

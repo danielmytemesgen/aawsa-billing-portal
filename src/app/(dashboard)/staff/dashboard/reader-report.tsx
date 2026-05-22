@@ -26,7 +26,7 @@ import {
     Tooltip,
     Legend,
     Bar,
-    CartesianGrid,
+    CartesianGrid,   
     Cell,
     AreaChart,
     Area,
@@ -67,13 +67,10 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
     const currentYear = format(new Date(), 'yyyy');
 
     const stats = React.useMemo(() => {
-        // Determine the most recent month from available readings
+        // Determine the current calendar month for Collected vs Pending stats
         const allReadings = [...individualReadings, ...bulkReadings];
-        const recentCycleMonth = allReadings.length > 0 
-            ? allReadings.reduce((latest, r) => (r.monthYear > latest ? r.monthYear : latest), "0000-00")
-            : format(new Date(), 'yyyy-MM');
-
-        const cycleDisplayText = recentCycleMonth !== "0000-00" ? recentCycleMonth : format(new Date(), 'yyyy-MM');
+        const recentCycleMonth = format(new Date(), 'yyyy-MM');
+        const cycleDisplayText = recentCycleMonth;
         
         const activeBulkMeters = bulkMeters.filter(bm => bm.status === 'Active' || !bm.status);
         const totalCustomers = activeBulkMeters.length;
@@ -81,10 +78,13 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
         // GPS Encoded: Meters with coordinates
         const gpsEncoded = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate).length;
 
-        // Collected vs Pending (Recent Cycle)
+        // Collected vs Pending (Current Month - supporting raw & mapped reading shapes)
         const cycleReadings = allReadings.filter(r => r.monthYear === recentCycleMonth);
-        const cycleBulkReadings = cycleReadings.filter(r => activeBulkMeters.some(bm => bm.customerKeyNumber === r.meterId));
-        const uniqueMetersRead = new Set(cycleBulkReadings.map(r => r.meterId));
+        const cycleBulkReadings = cycleReadings.filter(r => {
+            const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId;
+            return activeBulkMeters.some(bm => bm.customerKeyNumber === meterId);
+        });
+        const uniqueMetersRead = new Set(cycleBulkReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId));
         
         const collectedCount = uniqueMetersRead.size;
 
@@ -182,8 +182,11 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             const branchReaders = staff.filter(s => s.branchId === branch.id && s.role.toLowerCase() === 'reader').length;
             const branchRoutes = routes.filter(r => r.branchId === branch.id).length;
 
-            const branchReadings = cycleReadings.filter(r => bBulkMeters.some(b => b.customerKeyNumber === r.meterId));
-            const uniqueBranchMetersRead = new Set(branchReadings.map(r => r.meterId));
+            const branchReadings = cycleReadings.filter(r => {
+                const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId;
+                return bBulkMeters.some(b => b.customerKeyNumber === meterId);
+            });
+            const uniqueBranchMetersRead = new Set(branchReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId));
             const collected = uniqueBranchMetersRead.size;
             
             const pending = Math.max(0, totalInBranch - collected);
@@ -201,11 +204,14 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             };
         });
 
+        const readingQuality = collectedCount > 0 ? (faultReadings / collectedCount) * 100 : 0;
+
         // Charts: Customer Data Status (Modernized for Pie/Bar)
         const dataStatus = [
             { name: 'Collected', value: collectedCount, color: '#10b981', fill: '#10b981' },
             { name: 'Pending', value: pendingCount, color: '#f59e0b', fill: '#f59e0b' },
             { name: 'GPS Encoded', value: gpsEncoded, color: '#3b82f6', fill: '#3b82f6' },
+            { name: 'Reading Quality', value: readingQuality, color: '#8b5cf6', fill: '#8b5cf6', isPercentage: true },
         ];
 
         return {
@@ -356,7 +362,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                 <ResponsiveContainer width="100%" height="100%">
                                     <PieChart>
                                         <Pie
-                                            data={stats.dataStatus}
+                                            data={stats.dataStatus.filter((s: any) => !s.isPercentage)}
                                             cx="50%"
                                             cy="50%"
                                             innerRadius={60}
@@ -364,7 +370,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                             paddingAngle={5}
                                             dataKey="value"
                                         >
-                                            {stats.dataStatus.map((entry: any, index: number) => (
+                                            {stats.dataStatus.filter((s: any) => !s.isPercentage).map((entry: any, index: number) => (
                                                 <Cell key={`cell-${index}`} fill={entry.color} />
                                             ))}
                                         </Pie>
@@ -382,10 +388,14 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                                         <span className="text-sm font-medium text-gray-700">{item.name}</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="text-xs font-bold text-gray-900">{item.value.toLocaleString()}</span>
-                                        <Badge variant="secondary" className="text-[10px] py-0 px-1.5 h-4">
-                                            {stats.totalCustomers > 0 ? ((item.value / stats.totalCustomers) * 100).toFixed(1) : 0}%
-                                        </Badge>
+                                        <span className="text-xs font-bold text-gray-900">
+                                            {item.isPercentage ? `${item.value.toFixed(1)}%` : item.value.toLocaleString()}
+                                        </span>
+                                        {!item.isPercentage && (
+                                            <Badge variant="secondary" className="text-[10px] py-0 px-1.5 h-4">
+                                                {stats.totalCustomers > 0 ? ((item.value / stats.totalCustomers) * 100).toFixed(1) : 0}%
+                                            </Badge>
+                                        )}
                                     </div>
                                 </div>
                             ))}
