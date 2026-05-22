@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf node_modules package-lock.json",
     "supabase": "supabase",
-    "prepare": "node scripts/husky-skip.js"
+    "prepare": "node scripts/tools/husky-skip.js"
   },
   "dependencies": {
     "@genkit-ai/googleai": "^1.6.2",
