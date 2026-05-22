@@ -143,6 +143,15 @@ export function SyncHub() {
       detail: { syncing: false, success, failed, total: pending.length }
     }));
 
+    // Notify service worker (so other clients can be informed) that client sync completed
+    try {
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'CLIENT_SYNC_COMPLETE', success, failed });
+      }
+    } catch (e) {
+      console.warn('Failed to post CLIENT_SYNC_COMPLETE to service worker:', e);
+    }
+
     if (success > 0) {
       toast({
         title: "Sync Complete",
@@ -217,12 +226,32 @@ export function SyncHub() {
     // Listen for queue-updated events to refresh badge count
     window.addEventListener('offline-queue-updated', checkPending);
 
-    // Listen for Service Worker messages (e.g. background sync triggers)
-    const handleSWMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'BACKGROUND_SYNC_TRIGGER') {
-        runSync();
-      }
-    };
+      // Listen for Service Worker messages (e.g. background sync triggers)
+      const handleSWMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'BACKGROUND_SYNC_TRIGGER') {
+          runSync();
+          return;
+        }
+        if (event.data?.type === 'BACKGROUND_SYNC_STARTED') {
+          // SW reports background sync started
+          setIsSyncing(true);
+          return;
+        }
+        if (event.data?.type === 'BACKGROUND_SYNC_COMPLETE') {
+          // SW reports completed sync (may originate from other clients)
+          const { success = 0, failed = 0 } = event.data;
+          setIsSyncing(false);
+          setLastSyncResult({ success, failed });
+          checkPending();
+          if (success > 0) {
+            toast({ title: 'Background Sync', description: `Synced ${success} reading(s).` });
+          }
+          if (failed > 0) {
+            toast({ variant: 'destructive', title: 'Background Sync Issues', description: `Failed to sync ${failed} reading(s).` });
+          }
+          return;
+        }
+      };
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', handleSWMessage);
     }
@@ -245,6 +274,13 @@ export function SyncHub() {
     };
     registerBackgroundSync();
 
+    // When the offline queue updates, re-register background sync (helps ensure tag is present)
+    const handleQueueUpdated = async () => {
+      await checkPending();
+      await registerBackgroundSync();
+    };
+    window.addEventListener('offline-queue-updated', handleQueueUpdated);
+
     // Attempt sync on initial mount if already connected
     if (typeof navigator !== 'undefined' && navigator.onLine) {
       runSync();
@@ -265,6 +301,7 @@ export function SyncHub() {
     return () => {
       window.removeEventListener('online', handleBrowserOnline);
       window.removeEventListener('offline-queue-updated', checkPending);
+      window.removeEventListener('offline-queue-updated', handleQueueUpdated);
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       }

@@ -114,9 +114,28 @@ self.addEventListener('sync', (event) => {
   if (event.tag === 'offline-readings-sync') {
     event.waitUntil(
       self.clients.matchAll().then((clients) => {
+        // Notify clients that background sync started
+        clients.forEach((client) => {
+          client.postMessage({ type: 'BACKGROUND_SYNC_STARTED' });
+        });
+
+        // Trigger clients to run their sync logic
         clients.forEach((client) => {
           client.postMessage({ type: 'BACKGROUND_SYNC_TRIGGER' });
         });
+      })
+    );
+  }
+});
+
+// Listen for messages from clients (e.g., client finished sync)
+self.addEventListener('message', (event) => {
+  const data = event.data || {};
+  if (data && data.type === 'CLIENT_SYNC_COMPLETE') {
+    const payload = { type: 'BACKGROUND_SYNC_COMPLETE', success: data.success || 0, failed: data.failed || 0 };
+    event.waitUntil(
+      self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => client.postMessage(payload));
       })
     );
   }
