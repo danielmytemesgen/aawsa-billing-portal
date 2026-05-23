@@ -1658,6 +1658,26 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
       const cached = await offlineDb.getCachedMeters('individual');
       if (cached && cached.length > 0) {
         const cachedCustomers = cached.map(c => c.data);
+
+        // Apply reader isolation when offline, if user is restricted to assigned routes
+        try {
+          const userRaw = localStorage.getItem('user');
+          if (userRaw) {
+            const parsed = JSON.parse(userRaw || '{}');
+            const perms = parsed.permissions || [];
+            const readerId = (!perms.includes('customers_view_all') && perms.includes('routes_view_assigned')) ? parsed.id : undefined;
+            if (readerId) {
+              const matches = (rec: any) => {
+                return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
+              };
+              const filtered = cachedCustomers.filter(matches);
+              if (filtered.length > 0) cachedCustomers.splice(0, cachedCustomers.length, ...filtered);
+            }
+          }
+        } catch (e) {
+          // ignore parsing errors and fall back to full cache
+        }
+
         const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
         for (const cc of cachedCustomers) customerMap.set(cc.customerKeyNumber, cc);
         customers = Array.from(customerMap.values());
@@ -1676,6 +1696,26 @@ export const initializeBulkMeters = async (force: boolean = false, options?: { l
       const cached = await offlineDb.getCachedMeters('bulk');
       if (cached && cached.length > 0) {
         const cachedMeters = cached.map(c => c.data);
+
+        // Reader isolation for offline bulk meters
+        try {
+          const userRaw = localStorage.getItem('user');
+          if (userRaw) {
+            const parsed = JSON.parse(userRaw || '{}');
+            const perms = parsed.permissions || [];
+            const readerId = (!perms.includes('bulk_meters_view_all') && perms.includes('routes_view_assigned')) ? parsed.id : undefined;
+            if (readerId) {
+              const matches = (rec: any) => {
+                return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
+              };
+              const filtered = cachedMeters.filter(matches);
+              if (filtered.length > 0) cachedMeters.splice(0, cachedMeters.length, ...filtered);
+            }
+          }
+        } catch (e) {
+          // ignore and use full cache
+        }
+
         const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
         for (const cm of cachedMeters) meterMap.set(cm.customerKeyNumber, cm);
         bulkMeters = Array.from(meterMap.values());

@@ -5,7 +5,7 @@ To prepare the production database for the AAWSA Billing Portal, follow these st
 ## 1. Initial Schema Setup
 If you are starting with a fresh database, you should first apply the base schema. 
 > [!NOTE]
-> Most migrations expect the existing Supabase Auth schema to be present.
+> Most migrations expect an authentication schema (users and auth tables) to be present. If you are not using Supabase Auth, ensure your auth tables and relationships match the application's expectations before running migrations.
 
 ## 2. Apply Incremental Migrations
 Run the SQL scripts located in the `database_migrations/` folder in numerical order. These scripts handle RBAC, Tariffs, Meter Readings, and Billing logic.

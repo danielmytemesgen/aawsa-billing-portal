@@ -6,11 +6,11 @@ This document outlines the Work Package (WP) structure for the AAWSA Billing Por
 **Objective:** Establish the foundation, environment, and standards for the project.
 - [x] **1.1 Project Setup**: Repository initialization, linting/formatting rules, dependency management.
 - [x] **1.2 Documentation**: Maintain `README.md`, `DOCUMENTATION.md`, API docs, and user guides.
-- [x] **1.3 Environment Configuration**: Docker setup, Environment variables (.env), Supabase local/cloud config.
+ - [x] **1.3 Environment Configuration**: Docker setup, Environment variables (.env), database and auth provider configuration.
 
 ## WP2: System Core & Security
 **Objective:** Ensure secure access and system integrity.
-- [x] **2.1 Authentication**: User login/logout, password reset, session management (Supabase Auth).
+ - [x] **2.1 Authentication**: User login/logout, password reset, session management (authentication provider of choice).
 - [x] **2.2 Role-Based Access Control (RBAC)**: Manage permissions for Admin, Head Office, Staff Manager, Staff.
 - [x] **2.3 User Management**: Create, update, deactivate system users (Staff).
 - [x] **2.4 Security Logs**: Audit logging for sensitive actions (data entry, user changes) - `src/app/admin/security-logs`.

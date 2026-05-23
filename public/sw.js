@@ -36,8 +36,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
-  // Bypass cache completely for API routes, Supabase, and auth requests
-  if (url.pathname.startsWith('/api/') || url.hostname.includes('supabase') || url.pathname.includes('/auth/')) {
+  // Bypass cache completely for API routes and auth requests
+  if (url.pathname.startsWith('/api/') || url.pathname.includes('/auth/')) {
     return;
   }
 
@@ -200,57 +200,162 @@ self.addEventListener('sync', (event) => {
 
             const pendingUploads = await readAllUploads();
             if (pendingUploads.length > 0) {
-              // Attempt to get device token (if any) to use Authorization header
-              const getDeviceToken = async () => {
+
+              // Attempt to get device token (if any) to use Authorization header via refresh
+              const getDeviceAccessToken = async () => {
                 try {
                   const tx = db.transaction('device_tokens', 'readonly');
                   const store = tx.objectStore('device_tokens');
-                  const req = store.get('device');
-                  const entry = await new Promise((resolve, reject) => {
-                    req.onsuccess = () => resolve(req.result);
-                    req.onerror = () => reject(req.error);
+                  const reqAll = store.getAll();
+                  const entries = await new Promise((resolve, reject) => {
+                    reqAll.onsuccess = () => resolve(reqAll.result || []);
+                    reqAll.onerror = () => reject(reqAll.error);
                   });
-                  if (!entry) return null;
+                  const all = entries || [];
+                  if (!all.length) return null;
 
+                  // Choose latest by timestamp
+                  all.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                  const entry = all[0];
+
+                  // If plaintext token stored for tests
+                  if (entry.token) {
+                    // Exchange raw token for access token
+                    const r = await fetch('/api/device/refresh', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ token: entry.token })
+                    });
+                    if (r && r.ok) {
+                      const jb = await r.json();
+                      return jb.accessToken || null;
+                    }
+                    return null;
+                  }
+
+                  // Otherwise decrypt stored AES-GCM encrypted token
                   const rawKey = Uint8Array.from(atob(entry.exportedKeyBase64), c => c.charCodeAt(0));
                   const key = await crypto.subtle.importKey('raw', rawKey.buffer, 'AES-GCM', true, ['decrypt']);
                   const iv = Uint8Array.from(atob(entry.ivBase64), c => c.charCodeAt(0));
                   const cipher = Uint8Array.from(atob(entry.encryptedTokenBase64), c => c.charCodeAt(0));
                   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher.buffer);
-                  return new TextDecoder().decode(plain);
+                  const rawToken = new TextDecoder().decode(plain);
+
+                  // Exchange raw token for access token
+                  const refreshResp = await fetch('/api/device/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: rawToken })
+                  });
+                  if (refreshResp && refreshResp.ok) {
+                    const jb = await refreshResp.json();
+                    return jb.accessToken || null;
+                  }
+                  return null;
                 } catch (e) {
-                  console.warn('SW: failed to read device token', e);
+                  console.warn('SW: failed to read/refresh device token', e);
                   return null;
                 }
               };
 
-              const deviceToken = await getDeviceToken();
+              const accessToken = await getDeviceAccessToken();
 
               for (const up of pendingUploads) {
                 try {
-                  const form = new FormData();
                   const blob = up.blob;
                   const filename = up.filename || 'upload.jpg';
-                  form.append('file', blob, filename);
+                  const CHUNK_SIZE = 1024 * 1024; // 1 MB
 
-                  const headers = {};
-                  if (deviceToken) headers['Authorization'] = 'Bearer ' + deviceToken;
+                  // If large blob, perform chunked upload with retries
+                  if (blob && blob.size && blob.size > CHUNK_SIZE) {
+                    const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
+                    const initResp = await fetch('/api/upload/initiate', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ filename, totalChunks })
+                    });
+                    const initJson = await initResp.json();
+                    const uploadId = initJson.uploadId;
 
-                  const resp = await fetch('/api/upload', {
-                    method: 'POST',
-                    headers: Object.keys(headers).length ? headers : undefined,
-                    body: form,
-                    // if using token, no credentials; otherwise allow cookies
-                    credentials: deviceToken ? 'omit' : 'include'
-                  });
+                    for (let i = 0; i < totalChunks; i++) {
+                      const start = i * CHUNK_SIZE;
+                      const end = Math.min(start + CHUNK_SIZE, blob.size);
+                      const chunk = blob.slice(start, end);
+                      const chunkBuf = await chunk.arrayBuffer();
 
-                  if (resp && resp.ok) {
-                    // remove upload from IDB
-                    const tx = db.transaction('uploads', 'readwrite');
-                    const store = tx.objectStore('uploads');
-                    try { store.delete(up.id); } catch (e) { /* ignore */ }
+                      let attempt = 0;
+                      const maxAttempts = 5;
+                      let ok = false;
+                      while (!ok && attempt < maxAttempts) {
+                        try {
+                          const params = new URLSearchParams({ uploadId, index: String(i) });
+                          const r = await fetch('/api/upload/chunk?' + params.toString(), {
+                            method: 'POST',
+                            body: chunkBuf,
+                            headers: { 'Content-Type': 'application/octet-stream', ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}) },
+                            credentials: accessToken ? 'omit' : 'include'
+                          });
+                          if (!r.ok) throw new Error('chunk failed ' + i + ' status:' + r.status);
+                          ok = true;
+                        } catch (e) {
+                          attempt++;
+                          const backoff = Math.min(30000, Math.pow(2, attempt) * 500 + Math.random() * 200);
+                          await new Promise(res => setTimeout(res, backoff));
+                        }
+                      }
+                      if (!ok) throw new Error('chunk upload failed after retries ' + i);
+                    }
+
+                    // complete
+                    const comp = await fetch('/api/upload/complete', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ uploadId })
+                    });
+                    const compJson = await comp.json();
+                    if (comp && comp.ok && compJson && compJson.url) {
+                      const tx = db.transaction('uploads', 'readwrite');
+                      const store = tx.objectStore('uploads');
+                      try { store.delete(up.id); } catch (e) { }
+                      try { fetch('/api/offline/metrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'upload_chunked_success', details: { filename, uploadId, size: blob.size } }) }); } catch (e) {}
+                    } else {
+                      throw new Error('complete failed');
+                    }
                   } else {
-                    console.warn('SW: upload failed', resp && resp.status);
+                    // Small file: single request with retry/backoff
+                    let attempt = 0;
+                    const maxAttempts = 4;
+                    let success = false;
+                    while (!success && attempt < maxAttempts) {
+                      try {
+                        const form = new FormData();
+                        form.append('file', blob, filename);
+                        const headers = {};
+                        if (accessToken) headers['Authorization'] = 'Bearer ' + accessToken;
+                        const resp = await fetch('/api/upload', {
+                          method: 'POST',
+                          headers: Object.keys(headers).length ? headers : undefined,
+                          body: form,
+                          credentials: accessToken ? 'omit' : 'include'
+                        });
+                        if (resp && resp.ok) {
+                          const tx = db.transaction('uploads', 'readwrite');
+                          const store = tx.objectStore('uploads');
+                          try { store.delete(up.id); } catch (e) { }
+                          try { fetch('/api/offline/metrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'upload_success', details: { filename, size: blob ? blob.size : 0 } }) }); } catch (e) {}
+                          success = true;
+                        } else {
+                          attempt++;
+                          const backoff = Math.min(20000, Math.pow(2, attempt) * 300 + Math.random() * 200);
+                          await new Promise(res => setTimeout(res, backoff));
+                        }
+                      } catch (e) {
+                        attempt++;
+                        const backoff = Math.min(20000, Math.pow(2, attempt) * 300 + Math.random() * 200);
+                        await new Promise(res => setTimeout(res, backoff));
+                      }
+                    }
+                    if (!success) console.warn('SW: upload failed after retries');
                   }
                 } catch (e) {
                   console.warn('SW: upload attempt failed', e);

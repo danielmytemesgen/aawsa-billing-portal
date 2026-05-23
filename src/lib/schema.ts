@@ -244,4 +244,30 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const deviceTokens = pgTable('device_tokens', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid('user_id').notNull().references(() => staffMembers.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  tokenSalt: text('token_salt'),
+  deviceName: text('device_name'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+});
+
+export const offlineSyncMetrics = pgTable('offline_sync_metrics', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  event: text('event').notNull(),
+  details: jsonb('details'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const idempotencyKeys = pgTable('idempotency_keys', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  localId: text('local_id'),
+  serverId: text('server_id'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 

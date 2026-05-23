@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { LogIn, Eye, EyeOff } from "lucide-react";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
+import { saveDeviceTokenEncrypted } from '@/lib/offline-db';
 
 import { PERMISSIONS } from "@/lib/constants/auth";
 
@@ -142,6 +143,22 @@ export function AuthForm() {
         });
 
         localStorage.setItem("user", JSON.stringify(result.user));
+
+        // Try to register a device token for background SW uploads
+        (async () => {
+          try {
+            const resp = await fetch('/api/device/register', { method: 'POST' });
+            if (resp && resp.ok) {
+              const body = await resp.json();
+              if (body && body.token) {
+                // Save token along with server-assigned deviceId when available
+                await saveDeviceTokenEncrypted(body.token, body.deviceId);
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to register device token:', e);
+          }
+        })();
 
       const role = result.user.role.toLowerCase().trim();
       const permissions = result.user.permissions || [];

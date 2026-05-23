@@ -2,13 +2,13 @@
 
 ## 1. Getting Started: Local Development Setup
 
-This guide will walk you through setting up your local development environment for the AAWSA Billing Portal application using the Supabase CLI.
+This guide will walk you through setting up your local development environment for the AAWSA Billing Portal application using a local PostgreSQL instance (Docker or native).
 
 ### **1.1. Prerequisites**
 
 Before you begin, make sure you have the following installed and running:
 
-1.  **Docker Desktop**: Supabase uses Docker to run its services. Download and install it from the [official Docker website](https://www.docker.com/products/docker-desktop/).
+1.  **Docker Desktop**: Docker can be used to run a local PostgreSQL instance and other services. Download and install it from the [official Docker website](https://www.docker.com/products/docker-desktop/).
 2.  **Node.js and npm**: Ensure you have Node.js (which includes npm) installed. You can download it from [nodejs.org](https://nodejs.org/).
 3.  **Visual Studio Code (Recommended)**: For the best experience, we recommend using [VS Code](https://code.visualstudio.com/).
 
@@ -22,22 +22,32 @@ Before you begin, make sure you have the following installed and running:
     *   Open the integrated terminal in VS Code (`Terminal > New Terminal`).
     *   In the terminal, run the command: `npm install`
 
-3.  **Start Supabase Services**:
-    *   Make sure Docker Desktop is running.
-    *   In the terminal, run: `npm run supabase start`
-    *   Wait for it to finish. It will output your local Supabase credentials (API URL, Anon Key, etc.). Keep this terminal open.
+3.  **Start PostgreSQL (local or Docker)**:
+    *   Make sure Docker Desktop is running (if using Docker) or ensure a local PostgreSQL server is installed and running.
+    *   If you prefer Docker, start a Postgres container (example):
+        ```bash
+        docker run --name aawsa-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=aawsa_billing -p 5432:5432 -d postgres:15
+        ```
+    *   Alternatively use your system's Postgres service or a managed database and ensure connection details are available.
 
 4.  **Configure Environment Variables**:
     *   In the project's root directory, create a new file named `.env.local`.
-    *   Add the `API URL` and `Anon Key` from the previous step to this file:
+    *   Add your Postgres connection details and any required secrets, for example:
         ```.env
-        NEXT_PUBLIC_SUPABASE_URL=YOUR_LOCAL_API_URL
-        NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_LOCAL_ANON_KEY
+        POSTGRES_HOST=127.0.0.1
+        POSTGRES_PORT=5432
+        POSTGRES_USER=postgres
+        POSTGRES_PASSWORD=postgres
+        POSTGRES_DB=aawsa_billing
         ```
 
 5.  **Apply Database Migrations**:
-    *   In a **new** terminal window, run: `npm run supabase db reset`
-    *   This command sets up your local database schema.
+    *   Run the SQL migration files in `database/migrations` against your Postgres instance. Example using `psql`:
+        ```bash
+        psql "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB" -f database/migrations/002_rbac_setup.sql
+        # then run subsequent migration files in numeric order
+        ```
+    *   Or use the provided `database/run-migration.ts` tool to apply specific migrations (it loads `.env.local`).
 
 6.  **Run the Application**:
     *   In the terminal, run: `npm run dev`
@@ -135,18 +145,18 @@ The bill for the bulk meter is then calculated on this "difference" usage.
 
 -   **Frontend Framework**: [Next.js](https://nextjs.org/) (with React)
 -   **UI Components**: [ShadCN UI](https://ui.shadcn.com/) with [Tailwind CSS](https://tailwindcss.com/)
--   **Database & Backend**: [Supabase](https://supabase.com/) (Managed PostgreSQL)
--   **Client-side State Management**: A custom, reactive data store in `src/lib/data-store.ts`. This store acts as a real-time client-side cache for Supabase data, using a subscription model to keep components in sync without needing external state management libraries like Redux.
+ -   **Database & Backend**: PostgreSQL (self-hosted or managed)
+ -   **Client-side State Management**: A custom, reactive data store in `src/lib/data-store.ts`. This store acts as a client-side cache; data is fetched from server-side API routes or server components backed by PostgreSQL.
 -   **Generative AI**: [Genkit](https://firebase.google.com/docs/genkit) for AI-powered features like the support chatbot and report generation.
 
 ### 7.1. State Management (`data-store.ts`)
-The application uses a centralized, in-memory data store that acts as a real-time cache for the Supabase database.
--   **Initialization**: On app load, `initialize...` functions fetch all data from Supabase.
+The application uses a centralized, in-memory data store that acts as a client-side cache for the primary database.
+-   **Initialization**: On app load, `initialize...` functions fetch necessary data from server APIs backed by PostgreSQL.
 -   **Subscription**: UI components subscribe to data changes (e.g., `subscribeToBranches(setBranches)`).
 -   **Reactivity**: When an action modifies data (e.g., `addBranch`), the store updates its internal cache and notifies all subscribed components, which then re-render with the fresh data.
 
 ### 7.2. Database Migrations
-Schema changes are provided as SQL script files in the `database_migrations/` folder. These must be run manually in the Supabase SQL Editor to keep the database in sync.
+Schema changes are provided as SQL script files in the `database/migrations/` folder. Run them against your Postgres instance using `psql`, a database client, or the provided migration helper scripts.
 
 ---
 
@@ -161,4 +171,4 @@ A `Dockerfile` and `docker-compose.yml` are included for building and running th
 3.  Run the container: `docker-compose up -d`
 
 ### 8.2. Vercel, Netlify, Firebase Hosting
-The application can also be deployed to modern hosting platforms like Vercel (recommended), Netlify, or Firebase Hosting by connecting your Git repository and configuring the necessary environment variables (`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`).
+The application can also be deployed to modern hosting platforms like Vercel (recommended), Netlify, or Firebase Hosting by connecting your Git repository and configuring the necessary environment variables for your Postgres database and any service APIs.

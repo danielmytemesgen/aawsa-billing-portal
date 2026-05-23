@@ -12,6 +12,7 @@ import {
 } from '@/lib/offline-db';
 import { addIndividualCustomerReading, addBulkMeterReading } from '@/lib/data-store';
 import { useToast } from '@/hooks/use-toast';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import { 
   Loader2, 
   RefreshCw, 
@@ -42,6 +43,7 @@ export function SyncHub() {
   const [isQueueOpen, setIsQueueOpen] = React.useState(false);
   const [lastSyncResult, setLastSyncResult] = React.useState<{ success: number; failed: number } | null>(null);
   const { toast } = useToast();
+  const { currentUser, isManagement } = useCurrentUser();
   const syncInProgress = React.useRef(false);
 
   const retryDelay = React.useRef(2000);
@@ -56,10 +58,30 @@ export function SyncHub() {
       getPendingReadings(),
       getFailedReadings()
     ]);
-    setPendingCount(pending.length);
-    setFailedCount(failed.length);
-    setPendingList(pending);
-    setFailedList(failed);
+
+    // Reader isolation: only show readings belonging to current user unless user is management
+    const currentUserId = currentUser?.id;
+
+    const matchesCurrentUser = (r: any) => {
+      if (!currentUserId || isManagement) return true;
+      const payload = r.payload || {};
+      return (
+        payload.readerStaffId === currentUserId ||
+        payload.reader_staff_id === currentUserId ||
+        payload.readerId === currentUserId ||
+        payload.reader === currentUserId ||
+        r.readerStaffId === currentUserId ||
+        r.reader_staff_id === currentUserId
+      );
+    };
+
+    const filteredPending = pending.filter(matchesCurrentUser);
+    const filteredFailed = failed.filter(matchesCurrentUser);
+
+    setPendingCount(filteredPending.length);
+    setFailedCount(filteredFailed.length);
+    setPendingList(filteredPending);
+    setFailedList(filteredFailed);
   }, []);
 
   const runSync = React.useCallback(async () => {
@@ -80,7 +102,19 @@ export function SyncHub() {
     if (syncInProgress.current) return;
     syncInProgress.current = true;
 
-    const pending = await getPendingReadings();
+    const rawPending = await getPendingReadings();
+    const pending = rawPending.filter((r: any) => {
+      if (!currentUser?.id || isManagement) return true;
+      const p = r.payload || {};
+      return (
+        p.readerStaffId === currentUser.id ||
+        p.reader_staff_id === currentUser.id ||
+        p.readerId === currentUser.id ||
+        p.reader === currentUser.id ||
+        r.readerStaffId === currentUser.id ||
+        r.reader_staff_id === currentUser.id
+      );
+    });
     if (pending.length === 0) {
       syncInProgress.current = false;
       retryDelay.current = 2000; // Reset backoff delay
@@ -260,7 +294,19 @@ export function SyncHub() {
     const registerBackgroundSync = async () => {
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         try {
-          const pending = await getPendingReadings();
+          const rawPending = await getPendingReadings();
+          const pending = rawPending.filter((r: any) => {
+            if (!currentUser?.id || isManagement) return true;
+            const p = r.payload || {};
+            return (
+              p.readerStaffId === currentUser.id ||
+              p.reader_staff_id === currentUser.id ||
+              p.readerId === currentUser.id ||
+              p.reader === currentUser.id ||
+              r.readerStaffId === currentUser.id ||
+              r.reader_staff_id === currentUser.id
+            );
+          });
           if (pending.length > 0) {
             const reg = await navigator.serviceWorker.ready;
             if ('sync' in reg) {
@@ -289,7 +335,19 @@ export function SyncHub() {
     // Periodic sync polling: check every 30s if there are pending items and we are online
     const pollInterval = setInterval(() => {
       if (typeof navigator !== 'undefined' && navigator.onLine && !syncInProgress.current) {
-        getPendingReadings().then(pending => {
+        getPendingReadings().then(rawPending => {
+          const pending = rawPending.filter((r: any) => {
+            if (!currentUser?.id || isManagement) return true;
+            const p = r.payload || {};
+            return (
+              p.readerStaffId === currentUser.id ||
+              p.reader_staff_id === currentUser.id ||
+              p.readerId === currentUser.id ||
+              p.reader === currentUser.id ||
+              r.readerStaffId === currentUser.id ||
+              r.reader_staff_id === currentUser.id
+            );
+          });
           if (pending.length > 0) {
             runSync();
             registerBackgroundSync();

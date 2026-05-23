@@ -14,10 +14,9 @@ The following variables must be configured in your production environment (e.g.,
 - `POSTGRES_PORT`: Default is `5432`.
 - `POSTGRES_SSL`: Set to `true` if your DB requires SSL (common for cloud providers).
 
-### Supabase (Authentication & Storage)
-- `NEXT_PUBLIC_SUPABASE_URL`: Your Supabase project URL.
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Your Supabase anon key.
-- `SUPABASE_SERVICE_ROLE_KEY`: (Optional) Required for some administrative backend actions.
+### Authentication & Storage
+### Authentication & Storage
+If you are using an external authentication or object storage service, configure the appropriate credentials for that provider here. For a setup without Supabase, ensure your authentication system is ready and any storage (S3, GCS) keys are configured.
 
 ### AI Service (Genkit/Google AI)
 - `GOOGLE_GENAI_API_KEY`: Required for the AI Support Chatbot and Report Assistant.
@@ -33,7 +32,7 @@ The following variables must be configured in your production environment (e.g.,
 
 ### Using Vercel (Recommended)
 1. Connect your GitHub repository to Vercel.
-2. Add the environment variables listed above in the Vercel dashboard.
+2. Add the environment variables listed above (Postgres connection and any service API keys) in the Vercel dashboard.
 3. Vercel will automatically build and deploy the app on every push.
 
 ### Using Docker
