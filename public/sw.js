@@ -182,6 +182,85 @@ self.addEventListener('sync', (event) => {
           }
         }
 
+          // Process pending uploads (photos/blobs)
+          try {
+            const readAllUploads = () => new Promise((resolve, reject) => {
+              try {
+                const tx = db.transaction('uploads', 'readonly');
+                const store = tx.objectStore('uploads');
+                const req = store.getAll();
+                req.onsuccess = () => {
+                  const all = req.result || [];
+                  const pendingUploads = all.filter(u => u.status === 'pending');
+                  resolve(pendingUploads);
+                };
+                req.onerror = () => reject(req.error);
+              } catch (e) { reject(e); }
+            });
+
+            const pendingUploads = await readAllUploads();
+            if (pendingUploads.length > 0) {
+              // Attempt to get device token (if any) to use Authorization header
+              const getDeviceToken = async () => {
+                try {
+                  const tx = db.transaction('device_tokens', 'readonly');
+                  const store = tx.objectStore('device_tokens');
+                  const req = store.get('device');
+                  const entry = await new Promise((resolve, reject) => {
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                  });
+                  if (!entry) return null;
+
+                  const rawKey = Uint8Array.from(atob(entry.exportedKeyBase64), c => c.charCodeAt(0));
+                  const key = await crypto.subtle.importKey('raw', rawKey.buffer, 'AES-GCM', true, ['decrypt']);
+                  const iv = Uint8Array.from(atob(entry.ivBase64), c => c.charCodeAt(0));
+                  const cipher = Uint8Array.from(atob(entry.encryptedTokenBase64), c => c.charCodeAt(0));
+                  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher.buffer);
+                  return new TextDecoder().decode(plain);
+                } catch (e) {
+                  console.warn('SW: failed to read device token', e);
+                  return null;
+                }
+              };
+
+              const deviceToken = await getDeviceToken();
+
+              for (const up of pendingUploads) {
+                try {
+                  const form = new FormData();
+                  const blob = up.blob;
+                  const filename = up.filename || 'upload.jpg';
+                  form.append('file', blob, filename);
+
+                  const headers = {};
+                  if (deviceToken) headers['Authorization'] = 'Bearer ' + deviceToken;
+
+                  const resp = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: Object.keys(headers).length ? headers : undefined,
+                    body: form,
+                    // if using token, no credentials; otherwise allow cookies
+                    credentials: deviceToken ? 'omit' : 'include'
+                  });
+
+                  if (resp && resp.ok) {
+                    // remove upload from IDB
+                    const tx = db.transaction('uploads', 'readwrite');
+                    const store = tx.objectStore('uploads');
+                    try { store.delete(up.id); } catch (e) { /* ignore */ }
+                  } else {
+                    console.warn('SW: upload failed', resp && resp.status);
+                  }
+                } catch (e) {
+                  console.warn('SW: upload attempt failed', e);
+                }
+              }
+            }
+          } catch (uploadErr) {
+            console.error('SW: processing uploads failed', uploadErr);
+          }
+
         // Regardless, trigger clients to run their sync logic too (keeps UI consistent)
         clients.forEach((client) => client.postMessage({ type: 'BACKGROUND_SYNC_TRIGGER' }));
 
