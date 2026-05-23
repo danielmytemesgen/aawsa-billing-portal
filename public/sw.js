@@ -112,19 +112,86 @@ self.addEventListener('fetch', (event) => {
 // Listen for Background Sync events and notify open clients to run the page's sync
 self.addEventListener('sync', (event) => {
   if (event.tag === 'offline-readings-sync') {
-    event.waitUntil(
-      self.clients.matchAll().then((clients) => {
-        // Notify clients that background sync started
-        clients.forEach((client) => {
-          client.postMessage({ type: 'BACKGROUND_SYNC_STARTED' });
+    event.waitUntil((async () => {
+      // Attempt SW-side sync first (works even when no client open)
+      try {
+        // Open IndexedDB and read pending readings
+        const dbOpen = indexedDB.open('AAWSAReaderDB');
+        const db = await new Promise((resolve, reject) => {
+          dbOpen.onsuccess = () => resolve(dbOpen.result);
+          dbOpen.onerror = () => reject(dbOpen.error);
         });
 
-        // Trigger clients to run their sync logic
-        clients.forEach((client) => {
-          client.postMessage({ type: 'BACKGROUND_SYNC_TRIGGER' });
+        const readAllPending = () => new Promise((resolve, reject) => {
+          try {
+            const tx = db.transaction('readings', 'readonly');
+            const store = tx.objectStore('readings');
+            const req = store.getAll();
+            req.onsuccess = () => {
+              const all = req.result || [];
+              const pending = all.filter(r => r.status === 'pending');
+              resolve(pending);
+            };
+            req.onerror = () => reject(req.error);
+          } catch (e) { reject(e); }
         });
-      })
-    );
+
+        const pending = await readAllPending();
+
+        // Notify clients that background sync started
+        const clients = await self.clients.matchAll();
+        clients.forEach((client) => client.postMessage({ type: 'BACKGROUND_SYNC_STARTED' }));
+
+        if (pending.length > 0) {
+          try {
+            const resp = await fetch('/api/offline-sync', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ readings: pending })
+            });
+
+            if (resp && resp.ok) {
+              const body = await resp.json();
+              const results = body.results || [];
+
+              // Apply results: delete successes, mark failures
+              const tx = db.transaction('readings', 'readwrite');
+              const store = tx.objectStore('readings');
+              for (const res of results) {
+                if (res.success && (res.id !== undefined && res.id !== null)) {
+                  // Remove by local id if present, otherwise try by id field
+                  try { store.delete(res.id); } catch (e) { /* ignore */ }
+                } else if (res.id) {
+                  // Mark failed
+                  const getReq = store.get(res.id);
+                  getReq.onsuccess = () => {
+                    const rec = getReq.result;
+                    if (rec) {
+                      rec.status = 'failed';
+                      rec.errorMessage = res.message || 'Server error';
+                      store.put(rec);
+                    }
+                  };
+                }
+              }
+            }
+          } catch (err) {
+            // Network error — let SyncManager retry later
+            console.warn('SW: offline-sync POST failed:', err);
+          }
+        }
+
+        // Regardless, trigger clients to run their sync logic too (keeps UI consistent)
+        clients.forEach((client) => client.postMessage({ type: 'BACKGROUND_SYNC_TRIGGER' }));
+
+      } catch (swErr) {
+        console.error('SW-side sync error:', swErr);
+        // Fallback: still notify clients to attempt client-side sync
+        const clients = await self.clients.matchAll();
+        clients.forEach((client) => client.postMessage({ type: 'BACKGROUND_SYNC_TRIGGER' }));
+      }
+    })());
   }
 });
 
