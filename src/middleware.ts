@@ -37,10 +37,25 @@ function setSecurityHeaders(res: NextResponse) {
 
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  // Short-circuit static assets and service worker to avoid running full middleware
+  const staticPrefixes = ['/_next/', '/favicon.ico', '/manifest.json', '/sw.js', '/public/', '/api/'];
+  if (staticPrefixes.some(p => path === p || path.startsWith(p))) {
+    const res = NextResponse.next();
+    return setSecurityHeaders(res);
+  }
   const isProtectedRoute = protectedRoutes.some(route => path.startsWith(route));
 
   const cookie = request.cookies.get('session')?.value;
-  const session = cookie ? await decrypt(cookie).catch(() => null) : null;
+  let session = null;
+  if (cookie) {
+    try {
+      session = await decrypt(cookie);
+    } catch (e) {
+      // If session decryption fails, log minimally and continue as unauthenticated
+      console.warn('middleware: failed to decrypt session cookie', e);
+      session = null;
+    }
+  }
 
   // If route isn't protected, just continue and add security headers
   if (!isProtectedRoute) {
