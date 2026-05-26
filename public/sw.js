@@ -2,14 +2,20 @@ const CACHE_NAME = 'aawsa-cache-v2';
 const urlsToCache = [
   '/',
   '/manifest.json',
-  '/favicon.ico',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        return cache.addAll(urlsToCache);
+      .then(async (cache) => {
+        // Cache URLs individually so a 404 doesn't break the entire SW installation
+        for (const url of urlsToCache) {
+          try {
+            await cache.add(url);
+          } catch (e) {
+            console.warn('SW Install: failed to cache', url, e);
+          }
+        }
       })
       .then(() => self.skipWaiting())
   );
@@ -104,7 +110,15 @@ self.addEventListener('fetch', (event) => {
           if (rootCache) {
             return rootCache;
           }
+          
+          // Fallback if root cache is missing to avoid ERR_EMPTY_RESPONSE
+          return new Response(
+            '<html><head><title>Offline</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:sans-serif;padding:2rem;text-align:center;"><h2>You are offline</h2><p>Please check your internet connection and try again.</p></body></html>',
+            { headers: { 'Content-Type': 'text/html' } }
+          );
         }
+        
+        return Response.error();
       })
   );
 });
