@@ -153,13 +153,16 @@ export default function RouteDetailsClient() {
                     
                     let errorMsg = "Unable to retrieve your location.";
                     if (error.code === error.PERMISSION_DENIED) {
-                        errorMsg = "Location access denied. Please enable GPS.";
+                        errorMsg = "Location access denied. Please enable GPS in your browser settings.";
                         setLocationError("Permission denied");
+                        setNearbyOnly(false); // Automatically fall back to showing all meters
                     } else if (error.code === error.POSITION_UNAVAILABLE) {
                         errorMsg = "Location unavailable. Ensure you have clear sky view.";
                         setLocationError("Unavailable");
+                        setNearbyOnly(false); // Automatically fall back
                     } else if (error.code === error.TIMEOUT) {
                         setLocationError("Timeout");
+                        setNearbyOnly(false); // Automatically fall back
                     }
 
                     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
@@ -559,10 +562,14 @@ export default function RouteDetailsClient() {
                             {nearbyOnly && !userLocation ? (
                                 locationError ? (
                                     <>
-                                        <MapPin className="mx-auto h-12 w-12 text-destructive opacity-50 mb-4" />
-                                        <p className="font-medium text-destructive">GPS Failure: {locationError}</p>
-                                        <p className="text-xs text-muted-foreground mt-2 px-6">
-                                            We couldn&apos;t get your location. Please turn off &quot;Nearby&quot; filter to see all meters.
+                                        <MapPin className="mx-auto h-12 w-12 text-amber-500 opacity-50 mb-4" />
+                                        <p className="font-medium text-amber-600">
+                                            {locationError === "Permission denied" ? "Location Access Denied" : `GPS Signal Issue: ${locationError}`}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-2 px-6 max-w-sm mx-auto">
+                                            {locationError === "Permission denied" 
+                                                ? "We couldn't get your location because permission was denied. Please allow location access in your browser settings to use the nearby filter."
+                                                : "We couldn't get a reliable GPS signal. Please turn off the nearby filter to see all meters."}
                                         </p>
                                         <Button 
                                             variant="outline" 
@@ -698,7 +705,7 @@ export default function RouteDetailsClient() {
             )}
 
             <Dialog open={isReadingModalOpen} onOpenChange={setIsReadingModalOpen}>
-                <DialogContent className="sm:max-w-[480px]">
+                <DialogContent className="w-[95vw] max-w-[480px] max-h-[90vh] overflow-y-auto p-4 sm:p-6 custom-scrollbar">
                     <DialogHeader>
                         <UIDialogTitle>Meter Reading: {selectedMeter?.name}</UIDialogTitle>
                         <DialogDescription>

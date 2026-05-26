@@ -76,7 +76,20 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
         }
     }, [pathname]);
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+        try {
+            const customerData = localStorage.getItem("customer");
+            if (customerData) {
+                const customer = JSON.parse(customerData);
+                const sessionId = customer.sessionId;
+                if (sessionId) {
+                    const { revokeCustomerSessionAction } = await import("@/lib/actions");
+                    await revokeCustomerSessionAction(sessionId);
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to revoke customer session during logout:", e);
+        }
         localStorage.removeItem("customer");
         router.push("/customer-login");
     };

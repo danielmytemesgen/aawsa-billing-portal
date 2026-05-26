@@ -15,7 +15,7 @@ function setSecurityHeaders(res: NextResponse) {
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org",
     "connect-src 'self' https: wss:",
     "font-src 'self' data:",
     "object-src 'none'",
@@ -26,7 +26,7 @@ function setSecurityHeaders(res: NextResponse) {
   res.headers.set('X-Content-Type-Options', 'nosniff');
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.headers.set('X-Frame-Options', 'DENY');
-  res.headers.set('Permissions-Policy', "geolocation=(), camera=(), microphone=()");
+  res.headers.set('Permissions-Policy', "geolocation=(self), camera=(), microphone=()");
 
   if (process.env.NODE_ENV === 'production') {
     res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');

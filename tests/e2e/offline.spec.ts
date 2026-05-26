@@ -40,7 +40,7 @@ test.describe('Offline sync and auth checks', () => {
     });
 
     // Now navigate to the app
-    await page.goto('/login');
+    await page.goto('/');
 
     // Go offline
     await context.setOffline(true);
@@ -99,7 +99,7 @@ test.describe('Offline sync and auth checks', () => {
   });
 
   test('offline login fallback works', async ({ page }) => {
-    await page.goto('/login');
+    await page.goto('/');
 
     // Here we just check that the login page loads offline (example)
     await page.evaluate(() => {

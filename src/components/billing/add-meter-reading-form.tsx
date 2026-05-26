@@ -427,9 +427,9 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <div className="absolute top-0 left-[10%] h-full w-0.5 bg-emerald-600/30" title="5m Threshold" />
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-2">
+              <div className="flex flex-col gap-2">
                 <div className={cn(
-                  "flex-1 flex items-center gap-3 p-3 rounded-lg border shadow-sm transition-all",
+                  "w-full flex items-center gap-3 p-3 rounded-lg border shadow-sm transition-all",
                   proximityStatus.isWithinRange 
                     ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
                     : proximityStatus.distance < 20
@@ -475,16 +475,19 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 </div>
 
                 {/* GPS Health Indicator */}
-                <div className="sm:w-32 flex flex-row sm:flex-col items-center justify-center gap-1 p-2 rounded-lg border bg-slate-50/50 border-slate-200">
-                  <div className="flex gap-0.5 items-end h-3">
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-slate-50/50 border-slate-200 w-full shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">GPS Signal Status:</span>
+                    <span className="text-xs font-bold text-slate-800">
+                      {userLocation?.accuracy ? (
+                        userLocation.accuracy < 10 ? "High Quality" : userLocation.accuracy < 25 ? "Good Signal" : "Weak Signal"
+                      ) : "Syncing..."}
+                    </span>
+                  </div>
+                  <div className="flex gap-0.5 items-end h-4 shrink-0">
                     <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 50 && "bg-blue-500")} style={{height: '40%'}} />
                     <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 25 && "bg-blue-500")} style={{height: '70%'}} />
                     <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 10 && "bg-blue-500")} style={{height: '100%'}} />
-                  </div>
-                  <div className="text-[9px] font-bold text-slate-500 uppercase text-center">
-                    {userLocation?.accuracy ? (
-                      userLocation.accuracy < 10 ? "High Quality" : userLocation.accuracy < 25 ? "Good Signal" : "Weak Signal"
-                    ) : "Syncing..."}
                   </div>
                 </div>
               </div>
@@ -550,7 +553,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
               <Info className="h-3 w-3" /> Technical Information
             </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
               <div>
                 <span className="text-slate-500 block text-xs">Meter Number</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.meterNumber || "N/A"}</span>
@@ -559,7 +562,7 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <span className="text-slate-500 block text-xs">Customer Key</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.customerKeyNumber}</span>
               </div>
-              <div className="sm:col-span-2">
+              <div className="col-span-2">
                 <span className="text-slate-500 block text-xs">Customer Name</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.name}</span>
               </div>
@@ -573,13 +576,13 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                 <span className="text-slate-500 block text-xs">Diameter</span>
                 <span className="font-medium text-slate-900">{selectedMeterInfo.meterSize}&quot;</span>
               </div>
-              <div className="sm:col-span-2">
+              <div className="col-span-2">
                 <span className="text-slate-500 block text-xs">Address</span>
                 <span className="font-medium text-slate-900">
                   {selectedMeterInfo.subCity}, {selectedMeterInfo.woreda}, {selectedMeterInfo.specificArea}
                 </span>
               </div>
-              <div className="sm:col-span-2">
+              <div className="col-span-2">
                 <span className="text-slate-500 block text-xs">Coordinates (Y, X)</span>
                 <span className="font-medium text-slate-900 break-all">
                   {form.watch('capturedCoordinates') ? (

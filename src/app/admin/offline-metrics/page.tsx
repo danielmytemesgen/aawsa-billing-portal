@@ -1,16 +1,19 @@
-import React from 'react';
+"use client";
+import React, { useEffect, useState } from 'react';
 
-export default async function Page() {
-  let rows: any[] = [];
-  try {
-    const res = await fetch('/api/offline/metrics_summary');
-    const json = await res.json();
-    rows = json && json.rows ? json.rows : [];
-  } catch (e) {
-    // In prerender or environments where relative fetch may fail, show empty data instead of breaking build
-    console.warn('Failed to load offline metrics summary:', e);
-    rows = [];
-  }
+export default function Page() {
+  const [rows, setRows] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch('/api/offline/metrics_summary')
+      .then(res => res.json())
+      .then(json => {
+        if (json && json.rows) {
+          setRows(json.rows);
+        }
+      })
+      .catch(e => console.warn('Failed to load offline metrics summary:', e));
+  }, []);
 
   return (
     <div className="p-6">

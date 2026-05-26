@@ -39,6 +39,7 @@ import { PERMISSIONS } from '@/lib/constants/auth';
 import { SupportChatbot } from './support-chatbot';
 import { SyncHub } from './sync-hub';
 import { useNetworkStatus } from '@/hooks/use-network-status';
+import { logoutAction } from '@/lib/auth-actions';
 
 interface UserProfile {
   id: string;
@@ -130,7 +131,6 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none truncate">{user.name || user.email}</p>
-                    <p className="text-xs leading-none text-muted-foreground truncate">{user.email}</p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -169,8 +169,8 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
       window.localStorage.removeItem("session_expires_at");
       window.localStorage.removeItem("last-read-timestamp");
     }
-    router.push("/");
-  }, [router]);
+    await logoutAction();
+  }, []);
 
   useIdleTimeout(handleLogout);
 

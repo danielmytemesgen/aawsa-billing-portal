@@ -537,7 +537,7 @@ export default function AdminMeterReadingsPage() {
       {hasPermission('meter_readings_create') && (
         <>
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-            <DialogContent className="sm:max-w-[480px]">
+            <DialogContent className="w-[95vw] max-w-[480px] max-h-[90vh] overflow-y-auto p-4 sm:p-6 custom-scrollbar">
               <DialogHeader>
                 <UIDialogTitle>Add New Meter Reading</UIDialogTitle>
                 <UIDialogDescription>

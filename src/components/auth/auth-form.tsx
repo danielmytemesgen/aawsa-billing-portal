@@ -25,10 +25,19 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, Eye, EyeOff } from "lucide-react";
+import { LogIn, Eye, EyeOff, CheckCircle2, Circle, Loader2 } from "lucide-react";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
 import { saveDeviceTokenEncrypted } from '@/lib/offline-db';
+import {
+  initializeBranches,
+  initializeBulkMeters,
+  initializeCustomers,
+  initializeIndividualCustomerReadings,
+  initializeBulkMeterReadings,
+  fetchRoutes,
+  initializeFaultCodes,
+} from "@/lib/data-store";
 
 import { PERMISSIONS } from "@/lib/constants/auth";
 
@@ -44,6 +53,9 @@ export function AuthForm() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = React.useState(false);
   const [showPassword, setShowPassword] = React.useState(false);
+  const [syncState, setSyncState] = React.useState<
+    "idle" | "authenticating" | "caching_routes" | "caching_meters" | "caching_customers" | "caching_readings" | "caching_faults" | "completed"
+  >("idle");
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -55,6 +67,7 @@ export function AuthForm() {
 
   const onSubmit = async (values: LoginFormValues) => {
     setIsLoading(true);
+    setSyncState("authenticating");
 
     const attemptOfflineLogin = () => {
       const cachedCredsRaw = localStorage.getItem("offline_creds");
@@ -109,6 +122,7 @@ export function AuthForm() {
     if (isOffline) {
       if (attemptOfflineLogin()) {
         setIsLoading(false);
+        setSyncState("idle");
         return;
       }
       
@@ -118,6 +132,7 @@ export function AuthForm() {
         description: "No cached credentials found for this user on this device. Please connect to the internet for your first login.",
       });
       setIsLoading(false);
+      setSyncState("idle");
       return;
     }
 
@@ -160,20 +175,53 @@ export function AuthForm() {
           }
         })();
 
-      const role = result.user.role.toLowerCase().trim();
-      const permissions = result.user.permissions || [];
-      const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+        const role = result.user.role.toLowerCase().trim();
+        const permissions = result.user.permissions || [];
+        const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
-      if (isManagement) {
-        // Automatically sync billing aging debt in the background for management users
-        syncAllBillsAgingDebtAction().catch(err => {
-          console.error("Background sync failed on login:", err);
-        });
+        if (isManagement) {
+          // Automatically sync billing aging debt in the background for management users
+          syncAllBillsAgingDebtAction().catch(err => {
+            console.error("Background sync failed on login:", err);
+          });
 
-        router.push("/admin/dashboard");
-      } else {
-        router.push("/staff/dashboard");
-      }
+          router.push("/admin/dashboard");
+        } else {
+          if (role === 'reader') {
+            try {
+              setSyncState("caching_routes");
+              await fetchRoutes(true);
+              
+              setSyncState("caching_meters");
+              await initializeBulkMeters(true);
+              
+              setSyncState("caching_customers");
+              await initializeCustomers(true);
+              
+              setSyncState("caching_readings");
+              await Promise.all([
+                initializeIndividualCustomerReadings(true),
+                initializeBulkMeterReadings(true)
+              ]);
+              
+              setSyncState("caching_faults");
+              await Promise.all([
+                initializeFaultCodes(true),
+                initializeBranches(true)
+              ]);
+              
+              setSyncState("completed");
+            } catch (initErr) {
+              console.error("Offline prefetch during login failed:", initErr);
+              toast({
+                variant: "destructive",
+                title: "Offline Sync Alert",
+                description: "Some modules failed to cache. Proceeding to dashboard.",
+              });
+            }
+          }
+          router.push("/staff/dashboard");
+        }
 
       } else {
         toast({
@@ -181,6 +229,7 @@ export function AuthForm() {
           title: "Login Failed",
           description: result.message || "Invalid email or password.",
         });
+        setSyncState("idle");
       }
     } catch (error) {
       console.warn("Login action failed (likely network error). Attempting offline fallback.", error);
@@ -190,6 +239,7 @@ export function AuthForm() {
           title: "Connection Error",
           description: "Unable to reach the server and no offline credentials found. Please check your internet connection.",
         });
+        setSyncState("idle");
       }
     }
 
@@ -197,7 +247,97 @@ export function AuthForm() {
   };
 
   return (
-    <Card className="w-full max-w-md glass-card p-6 border-none">
+    <Card className="w-full max-w-md glass-card p-6 border-none relative overflow-hidden">
+      {/* Caching/Sync Overlay */}
+      {syncState !== "idle" && syncState !== "authenticating" && (
+        <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-md z-50 flex flex-col justify-center p-8 text-white animate-in fade-in duration-300">
+          <div className="text-center mb-8">
+            <Loader2 className="h-10 w-10 animate-spin text-blue-400 mx-auto mb-4" />
+            <h3 className="text-2xl font-bold">Initializing Offline Portal</h3>
+            <p className="text-sm text-white/60 mt-1">Preparing reader modules for field use...</p>
+          </div>
+          
+          <div className="space-y-4 max-w-xs mx-auto w-full">
+            {/* Step 1: Authentication */}
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
+              <span className="text-sm font-semibold text-emerald-400">Account Authenticated</span>
+            </div>
+
+            {/* Step 2: Routes */}
+            <div className="flex items-center gap-3">
+              {syncState === "caching_routes" ? (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-450 flex-shrink-0" />
+              ) : ["caching_meters", "caching_customers", "caching_readings", "caching_faults", "completed"].includes(syncState) ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
+              ) : (
+                <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
+              )}
+              <span className={`text-sm font-medium ${
+                syncState === "caching_routes" ? "text-blue-400 font-semibold" : 
+                ["caching_meters", "caching_customers", "caching_readings", "caching_faults", "completed"].includes(syncState) ? "text-white/80" : "text-white/40"
+              }`}>
+                Caching Assigned Routes
+              </span>
+            </div>
+
+            {/* Step 3: Meters & Customers */}
+            <div className="flex items-center gap-3">
+              {["caching_meters", "caching_customers"].includes(syncState) ? (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-400 flex-shrink-0" />
+              ) : ["caching_readings", "caching_faults", "completed"].includes(syncState) ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
+              ) : (
+                <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
+              )}
+              <span className={`text-sm font-medium ${
+                ["caching_meters", "caching_customers"].includes(syncState) ? "text-blue-400 font-semibold" : 
+                ["caching_readings", "caching_faults", "completed"].includes(syncState) ? "text-white/80" : "text-white/40"
+              }`}>
+                Caching Customer & Meter Directory
+              </span>
+            </div>
+
+            {/* Step 4: Readings */}
+            <div className="flex items-center gap-3">
+              {syncState === "caching_readings" ? (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-450 flex-shrink-0" />
+              ) : ["caching_faults", "completed"].includes(syncState) ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
+              ) : (
+                <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
+              )}
+              <span className={`text-sm font-medium ${
+                syncState === "caching_readings" ? "text-blue-400 font-semibold" : 
+                ["caching_faults", "completed"].includes(syncState) ? "text-white/80" : "text-white/40"
+              }`}>
+                Caching Historical Reading Logs
+              </span>
+            </div>
+
+            {/* Step 5: System codes / Faults */}
+            <div className="flex items-center gap-3">
+              {syncState === "caching_faults" ? (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-450 flex-shrink-0" />
+              ) : syncState === "completed" ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
+              ) : (
+                <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
+              )}
+              <span className={`text-sm font-medium ${
+                syncState === "caching_faults" ? "text-blue-400 font-semibold" : 
+                syncState === "completed" ? "text-white/80" : "text-white/40"
+              }`}>
+                Caching System Codes & Settings
+              </span>
+            </div>
+          </div>
+          
+          <div className="mt-8 text-center text-xs text-white/40">
+            Do not close this tab or disconnect your internet.
+          </div>
+        </div>
+      )}
       <CardHeader className="text-center pt-8 pb-12">
         <CardTitle className="text-3xl font-bold text-white tracking-wide">
           <span className="font-extrabold">AAWSA</span>{' '}
