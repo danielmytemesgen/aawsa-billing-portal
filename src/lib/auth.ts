@@ -1,29 +1,24 @@
-import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { env } from "./env";
-
-const key = new TextEncoder().encode(env.SESSION_SECRET);
-
-export async function encrypt(payload: any) {
-    return await new SignJWT(payload)
-        .setProtectedHeader({ alg: "HS256" })
-        .setIssuedAt()
-        .setExpirationTime("2h")
-        .sign(key);
-}
-
-export async function decrypt(token: string): Promise<any> {
-    const { payload } = await jwtVerify(token, key, {
-        algorithms: ["HS256"],
-    });
-    return payload;
-}
+import { encrypt, decrypt } from "./session";
+export { encrypt, decrypt };
 
 export async function getSession() {
-    const session = (await cookies()).get("session")?.value;
-    if (!session) return null;
-    return await decrypt(session);
+  // Try cookie first (online)
+  const sessionCookie = (await cookies()).get("session")?.value;
+  if (sessionCookie) {
+    return await decrypt(sessionCookie);
+  }
+  // Offline fallback: retrieve encrypted token from IndexedDB
+  const { getSessionToken } = await import("./offline-db");
+  const cachedToken = await getSessionToken();
+  if (!cachedToken) return null;
+  try {
+    return await decrypt(cachedToken);
+  } catch (e) {
+    console.error('Failed to decrypt offline session token', e);
+    return null;
+  }
 }
 
 export async function updateSession(request: NextRequest) {

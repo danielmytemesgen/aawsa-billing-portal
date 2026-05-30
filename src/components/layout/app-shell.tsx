@@ -37,7 +37,9 @@ import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import { NotificationBell } from './notification-bell';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { SupportChatbot } from './support-chatbot';
+import { PwaRegistry } from '@/components/pwa-registry';
 import { SyncHub } from './sync-hub';
+
 import { useNetworkStatus } from '@/hooks/use-network-status';
 import { logoutAction } from '@/lib/auth-actions';
 
@@ -164,13 +166,28 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   const [syncProgress, setSyncProgress] = React.useState<{ syncing: boolean; success: number; failed: number; total: number } | null>(null);
 
   const handleLogout = React.useCallback(async () => {
+    // 1. Clear all client-side session data immediately
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.removeItem("user");
       window.localStorage.removeItem("session_expires_at");
       window.localStorage.removeItem("last-read-timestamp");
     }
-    await logoutAction();
-  }, []);
+    // 2. Clear IndexedDB cached session (client-side, works offline)
+    try {
+      const { clearSessionToken } = await import('@/lib/offline-db');
+      await clearSessionToken();
+    } catch (_e) { /* ignore – IndexedDB may not be available */ }
+
+    // 3. Attempt server-side cookie clear (may fail if offline — that's OK)
+    try {
+      await logoutAction();
+    } catch (e) {
+      console.warn("Server logout action failed (offline?). Proceeding with client-side logout.", e);
+    }
+
+    // 4. Always redirect to login page regardless of server action outcome
+    router.push("/");
+  }, [router]);
 
   useIdleTimeout(handleLogout);
 
@@ -203,12 +220,9 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   }, []);
 
   return (
-    <SidebarProvider defaultOpen>
-      <Sidebar
-        variant="sidebar"
-        collapsible={true}
-        className={cn("border-r border-sidebar-border bg-sidebar text-sidebar-foreground no-print")}
-      >
+    <SidebarProvider defaultOpen={true}>
+      <PwaRegistry />
+      <Sidebar variant="sidebar" collapsible={true} className={cn("border-r border-sidebar-border bg-sidebar text-sidebar-foreground no-print")}>
         <SidebarHeader className="p-2" />
         <SidebarContent className="overflow-y-auto">
           {sidebar}
@@ -221,39 +235,30 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
       </Sidebar>
       <SidebarInset className="min-w-0 flex flex-col">
         <AppHeaderContent user={user} appName={appName} onLogout={handleLogout} />
-        
         {/* Network and Sync Status Banners */}
         <div className="no-print">
           {syncProgress?.syncing ? (
             <div className="bg-blue-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 animate-pulse shadow-inner">
               <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-              <span>
-                Syncing offline readings: {syncProgress.success + syncProgress.failed} / {syncProgress.total}...
-              </span>
+              <span>Syncing offline readings: {syncProgress.success + syncProgress.failed} / {syncProgress.total}...</span>
             </div>
           ) : !isOnline ? (
             <div className="bg-amber-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
               <WifiOff className="h-4 w-4 animate-pulse flex-shrink-0" />
-              <span>
-                You are currently working offline. {pendingCount > 0 ? `${pendingCount} reading(s) queued for sync.` : 'Your changes will be saved locally.'}
-              </span>
+              <span>You are currently working offline. {pendingCount > 0 ? `${pendingCount} reading(s) queued for sync.` : 'Your changes will be saved locally.'}</span>
             </div>
           ) : (wasOffline || (syncProgress && !syncProgress.syncing && syncProgress.success > 0)) ? (
             <div className="bg-emerald-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
               <CheckCircle2 className="h-4 w-4 animate-bounce flex-shrink-0" />
-              <span>
-                Connectivity restored! Offline readings synchronized successfully.
-              </span>
+              <span>Connectivity restored! Offline readings synchronized successfully.</span>
             </div>
           ) : null}
         </div>
-
         <main className="flex-1 p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 bg-background overflow-x-hidden">
           {children}
         </main>
         <footer className="text-xs text-center text-muted-foreground p-3 sm:p-4 no-print">
-          Design and Developed by Daniel Temesgen
-          &copy; {currentYear} {appName}. All rights reserved.
+          Design and Developed by Daniel Temesgen &copy; {currentYear} {appName}. All rights reserved.
         </footer>
         <SupportChatbot />
       </SidebarInset>

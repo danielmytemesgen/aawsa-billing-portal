@@ -135,15 +135,24 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
     }, [router]);
 
     const refreshPermissions = React.useCallback(async () => {
-        const result = await getLatestPermissionsAction();
-        if (result.data && !result.error) {
-            const latestPermissions = Array.isArray(result.data) ? result.data : String(result.data).split(',');
-            setUser(prev => {
-                if (!prev) return null;
-                const updatedUser = { ...prev, permissions: latestPermissions };
-                localStorage.setItem("user", JSON.stringify(updatedUser));
-                return updatedUser;
-            });
+        // Skip the network call when offline — permissions are already cached in localStorage
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            console.info('StaffLayout: offline – skipping permission refresh');
+            return;
+        }
+        try {
+            const result = await getLatestPermissionsAction();
+            if (result.data && !result.error) {
+                const latestPermissions = Array.isArray(result.data) ? result.data : String(result.data).split(',');
+                setUser(prev => {
+                    if (!prev) return null;
+                    const updatedUser = { ...prev, permissions: latestPermissions };
+                    localStorage.setItem("user", JSON.stringify(updatedUser));
+                    return updatedUser;
+                });
+            }
+        } catch (e) {
+            console.warn('StaffLayout: failed to refresh permissions (offline?)', e);
         }
     }, []);
 

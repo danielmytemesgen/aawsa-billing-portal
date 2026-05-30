@@ -198,6 +198,15 @@ export default function RouteDetailsClient() {
             
             // Period status caching logic
             const fetchPeriodStatus = async () => {
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                if (isOffline) {
+                    const cached = localStorage.getItem('cached_period_status');
+                    if (cached) {
+                        setPeriodStatus(cached as 'Open' | 'Closed');
+                        return cached;
+                    }
+                    return 'Closed';
+                }
                 try {
                     const status = await getReadingPeriodStatusAction();
                     if (status) {
@@ -503,6 +512,8 @@ export default function RouteDetailsClient() {
                         <div className="relative w-full sm:w-64">
                             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
+                                id="find-meter-search"
+                                name="find-meter-search"
                                 placeholder="Find meter..."
                                 className="pl-8 w-full"
                                 value={searchTerm}

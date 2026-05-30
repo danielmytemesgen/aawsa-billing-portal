@@ -110,8 +110,30 @@ export default function StaffDashboardPage() {
             // Try to resolve branchId from known branches
             (async () => {
               try {
-                const res = await getBranchesLookupAction();
-                const branches = res.data || [];
+                let branches: any[] = [];
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                
+                if (isOffline) {
+                  try {
+                    const cached = localStorage.getItem('cached_branches_lookup');
+                    if (cached) branches = JSON.parse(cached);
+                  } catch (e) { /* ignore */ }
+                } else {
+                  try {
+                    const res = await getBranchesLookupAction();
+                    branches = res.data || [];
+                    if (res.data) {
+                      localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+                    }
+                  } catch (e) {
+                    console.warn("Offline fetch during branch resolution failed, trying cache", e);
+                    try {
+                      const cached = localStorage.getItem('cached_branches_lookup');
+                      if (cached) branches = JSON.parse(cached);
+                    } catch (err) { /* ignore */ }
+                  }
+                }
+
                 const target = parsedUser.branchName || '';
                 let branch = branches.find((b: any) => b.name === target);
                 if (!branch) {
@@ -121,6 +143,7 @@ export default function StaffDashboardPage() {
                 if (!branch) {
                   branch = branches.find((b: any) => String(b.id) === String(target));
                 }
+                
                 if (branch) {
                   parsedUser.branchId = branch.id;
                   // persist resolved branchId so subsequent loads won't need to re-resolve
@@ -129,19 +152,53 @@ export default function StaffDashboardPage() {
                   setStaffBranchId(parsedUser.branchId ?? null);
                   setAuthStatus('authorized');
                 } else {
-                  setAuthStatus('unauthorized');
+                  if (isOffline) {
+                    setStaffBranchName(parsedUser.branchName ?? null);
+                    setStaffBranchId(parsedUser.branchId ?? null);
+                    setAuthStatus('authorized');
+                  } else {
+                    setAuthStatus('unauthorized');
+                  }
                 }
               } catch (e) {
                 console.error('Failed to resolve branch during auth check:', e);
-                setAuthStatus('unauthorized');
+                if (typeof window !== 'undefined' && !window.navigator.onLine) {
+                  setStaffBranchName(parsedUser.branchName ?? null);
+                  setStaffBranchId(parsedUser.branchId ?? null);
+                  setAuthStatus('authorized');
+                } else {
+                  setAuthStatus('unauthorized');
+                }
               }
             })();
           } else if (parsedUser.branchId) {
             // branchId present but branchName missing - try to fill branchName for display
             (async () => {
               try {
-                const res = await getBranchesLookupAction();
-                const branches = res.data || [];
+                let branches: any[] = [];
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                
+                if (isOffline) {
+                  try {
+                    const cached = localStorage.getItem('cached_branches_lookup');
+                    if (cached) branches = JSON.parse(cached);
+                  } catch (e) { /* ignore */ }
+                } else {
+                  try {
+                    const res = await getBranchesLookupAction();
+                    branches = res.data || [];
+                    if (res.data) {
+                      localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+                    }
+                  } catch (e) {
+                    console.warn("Offline fetch during branch resolution failed, trying cache", e);
+                    try {
+                      const cached = localStorage.getItem('cached_branches_lookup');
+                      if (cached) branches = JSON.parse(cached);
+                    } catch (err) { /* ignore */ }
+                  }
+                }
+
                 const branch = branches.find((b: any) => String(b.id) === String(parsedUser.branchId));
                 if (branch) {
                   parsedUser.branchName = branch.name;
@@ -150,11 +207,23 @@ export default function StaffDashboardPage() {
                   setStaffBranchId(parsedUser.branchId ?? null);
                   setAuthStatus('authorized');
                 } else {
-                  setAuthStatus('unauthorized');
+                  if (isOffline) {
+                    setStaffBranchName(parsedUser.branchName ?? 'Offline Branch');
+                    setStaffBranchId(parsedUser.branchId ?? null);
+                    setAuthStatus('authorized');
+                  } else {
+                    setAuthStatus('unauthorized');
+                  }
                 }
               } catch (e) {
                 console.error('Failed to fetch branches during auth check:', e);
-                setAuthStatus('unauthorized');
+                if (typeof window !== 'undefined' && !window.navigator.onLine) {
+                  setStaffBranchName(parsedUser.branchName ?? 'Offline Branch');
+                  setStaffBranchId(parsedUser.branchId ?? null);
+                  setAuthStatus('authorized');
+                } else {
+                  setAuthStatus('unauthorized');
+                }
               }
             })();
           } else {
@@ -212,12 +281,44 @@ export default function StaffDashboardPage() {
       }
 
       // Fetch branches via the permission-lite lookup (works for all authenticated users)
+      const initTasksPromise = Promise.all(initTasks);
+      const branchResultPromise = (async () => {
+        const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+        if (isOffline) {
+          try {
+            const cached = localStorage.getItem('cached_branches_lookup');
+            if (cached) return { data: JSON.parse(cached) };
+          } catch (e) {
+            console.warn("Failed to load cached branches lookup:", e);
+          }
+          return { data: [] };
+        }
+        try {
+          const res = await getBranchesLookupAction();
+          if (res && res.data) {
+            try {
+              localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+            } catch (e) {
+              console.warn("Failed to cache branches lookup:", e);
+            }
+          }
+          return res;
+        } catch (e) {
+          console.warn("Offline: failed to fetch branches lookup", e);
+          try {
+            const cached = localStorage.getItem('cached_branches_lookup');
+            if (cached) return { data: JSON.parse(cached) };
+          } catch (err) { /* ignore */ }
+          return { data: [] };
+        }
+      })();
+
       const [, branchResult] = await Promise.all([
-        Promise.all(initTasks),
-        getBranchesLookupAction(),
+        initTasksPromise,
+        branchResultPromise,
       ]);
 
-      if (branchResult.data) {
+      if (branchResult && branchResult.data) {
         setAllBranches(branchResult.data as any[]);
       }
       setAllBulkMeters(getBulkMeters());
@@ -231,8 +332,23 @@ export default function StaffDashboardPage() {
       console.error("Failed to fetch live dashboard data:", err);
     } finally {
       // Fetch reading period status
-      const status = await getReadingPeriodStatusAction();
-      setReadingPeriodStatus(status as 'Open' | 'Closed');
+      const isOfflineStatus = typeof window !== 'undefined' && !window.navigator.onLine;
+      if (isOfflineStatus) {
+        const cached = localStorage.getItem('cached_period_status');
+        setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+      } else {
+        try {
+          const status = await getReadingPeriodStatusAction();
+          setReadingPeriodStatus(status as 'Open' | 'Closed');
+          if (status) {
+            localStorage.setItem('cached_period_status', status);
+          }
+        } catch (err) {
+          console.warn("Offline: failed to fetch reading period status, assuming Open", err);
+          const cached = localStorage.getItem('cached_period_status');
+          setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+        }
+      }
       setIsLoading(false);
     }
   };

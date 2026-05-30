@@ -49,12 +49,24 @@ export async function loginAction(formData: FormData) {
 
     // Save the session in a cookie
     (await cookies()).set('session', session, { expires, httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+    // Cache the encrypted session token for offline use (dynamic import: IndexedDB is browser-only)
+    try {
+      const { saveSessionToken } = await import('./offline-db');
+      await saveSessionToken(session);
+    } catch (e) {
+      // Running on the server — IndexedDB not available, skip silently
+    }
 
     return { success: true, user: sessionUser };
 }
 
 export async function logoutAction() {
-    // Destroy the session
+    // Destroy the session on server
     (await cookies()).set('session', '', { expires: new Date(0) });
-    redirect('/');
+    // Note: we intentionally do NOT call redirect() here.
+    // Calling redirect() inside a server action that is invoked from a client component
+    // causes Next.js to throw a NEXT_REDIRECT which, when offline, results in a
+    // "TypeError: Failed to fetch" on the client. The client (app-shell.tsx)
+    // is responsible for calling router.push('/') after this action resolves.
+    return { success: true };
 }

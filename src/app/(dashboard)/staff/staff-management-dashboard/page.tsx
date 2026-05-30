@@ -91,8 +91,30 @@ export default function StaffManagementDashboardPage() {
             // Try to resolve branchId from known branches
             (async () => {
               try {
-                const res = await getBranchesLookupAction();
-                const branches = res.data || [];
+                let branches: any[] = [];
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                
+                if (isOffline) {
+                  try {
+                    const cached = localStorage.getItem('cached_branches_lookup');
+                    if (cached) branches = JSON.parse(cached);
+                  } catch (e) { /* ignore */ }
+                } else {
+                  try {
+                    const res = await getBranchesLookupAction();
+                    branches = res.data || [];
+                    if (res.data) {
+                      localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+                    }
+                  } catch (e) {
+                    console.warn("Offline fetch during branch resolution failed, trying cache", e);
+                    try {
+                      const cached = localStorage.getItem('cached_branches_lookup');
+                      if (cached) branches = JSON.parse(cached);
+                    } catch (err) { /* ignore */ }
+                  }
+                }
+
                 const target = parsedUser.branchName || '';
                 let branch = branches.find((b: any) => b.name === target);
                 if (!branch) branch = branches.find((b: any) => (b.name || '').toLowerCase() === target.toLowerCase());
@@ -103,18 +125,52 @@ export default function StaffManagementDashboardPage() {
                   setStaffBranchId(branch.id ?? null);
                   setAuthStatus('authorized');
                 } else {
-                  setAuthStatus('unauthorized');
+                  if (isOffline) {
+                    setStaffBranchName(parsedUser.branchName ?? null);
+                    setStaffBranchId(parsedUser.branchId ?? null);
+                    setAuthStatus('authorized');
+                  } else {
+                    setAuthStatus('unauthorized');
+                  }
                 }
               } catch (e) {
-                setAuthStatus('unauthorized');
+                if (typeof window !== 'undefined' && !window.navigator.onLine) {
+                  setStaffBranchName(parsedUser.branchName ?? null);
+                  setStaffBranchId(parsedUser.branchId ?? null);
+                  setAuthStatus('authorized');
+                } else {
+                  setAuthStatus('unauthorized');
+                }
               }
             })();
           } else if (parsedUser.branchId) {
             // branchId present but branchName missing — resolve from API
             (async () => {
               try {
-                const res = await getBranchesLookupAction();
-                const branches = res.data || [];
+                let branches: any[] = [];
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                
+                if (isOffline) {
+                  try {
+                    const cached = localStorage.getItem('cached_branches_lookup');
+                    if (cached) branches = JSON.parse(cached);
+                  } catch (e) { /* ignore */ }
+                } else {
+                  try {
+                    const res = await getBranchesLookupAction();
+                    branches = res.data || [];
+                    if (res.data) {
+                      localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+                    }
+                  } catch (e) {
+                    console.warn("Offline fetch during branch resolution failed, trying cache", e);
+                    try {
+                      const cached = localStorage.getItem('cached_branches_lookup');
+                      if (cached) branches = JSON.parse(cached);
+                    } catch (err) { /* ignore */ }
+                  }
+                }
+
                 const branch = branches.find((b: any) => String(b.id) === String(parsedUser.branchId));
                 if (branch) {
                   parsedUser.branchName = branch.name;
@@ -123,10 +179,22 @@ export default function StaffManagementDashboardPage() {
                   setStaffBranchId(parsedUser.branchId ?? null);
                   setAuthStatus('authorized');
                 } else {
-                  setAuthStatus('unauthorized');
+                  if (isOffline) {
+                    setStaffBranchName(parsedUser.branchName ?? 'Offline Branch');
+                    setStaffBranchId(parsedUser.branchId ?? null);
+                    setAuthStatus('authorized');
+                  } else {
+                    setAuthStatus('unauthorized');
+                  }
                 }
               } catch (e) {
-                setAuthStatus('unauthorized');
+                if (typeof window !== 'undefined' && !window.navigator.onLine) {
+                  setStaffBranchName(parsedUser.branchName ?? 'Offline Branch');
+                  setStaffBranchId(parsedUser.branchId ?? null);
+                  setAuthStatus('authorized');
+                } else {
+                  setAuthStatus('unauthorized');
+                }
               }
             })();
           } else {

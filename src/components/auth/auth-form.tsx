@@ -69,7 +69,17 @@ export function AuthForm() {
     setIsLoading(true);
     setSyncState("authenticating");
 
-    const attemptOfflineLogin = () => {
+    // Helper to hash password using SHA-256
+    const hashPassword = async (pwd: string) => {
+      const enc = new TextEncoder();
+      const data = enc.encode(pwd);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      // Convert to hex string
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    };
+
+    const attemptOfflineLogin = async () => {
       const cachedCredsRaw = localStorage.getItem("offline_creds");
       if (cachedCredsRaw) {
         const cachedCreds = JSON.parse(cachedCredsRaw);
@@ -77,7 +87,8 @@ export function AuthForm() {
         const storedEmail = cachedCreds.email.trim().toLowerCase();
 
         if (enteredEmail === storedEmail) {
-          if (btoa(values.password) === cachedCreds.passwordHash) {
+          const enteredHash = await hashPassword(values.password);
+          if (enteredHash === cachedCreds.passwordHash) {
             // Use the user profile stored directly inside the offline_creds
             const user = cachedCreds.user;
             if (user) {
@@ -120,7 +131,7 @@ export function AuthForm() {
     const isOffline = typeof window !== 'undefined' && !navigator.onLine;
 
     if (isOffline) {
-      if (attemptOfflineLogin()) {
+      if (await attemptOfflineLogin()) {
         setIsLoading(false);
         setSyncState("idle");
         return;
@@ -145,10 +156,11 @@ export function AuthForm() {
       const result = await loginAction(formData);
 
       if (result.success && result.user) {
-        // Cache credentials AND user profile for future offline login
+        // Cache credentials AND user profile for offline login
+        const passwordHash = await hashPassword(values.password);
         localStorage.setItem("offline_creds", JSON.stringify({
           email: values.email.trim().toLowerCase(),
-          passwordHash: btoa(values.password), // Basic obfuscation for local matching
+          passwordHash,
           user: result.user // Cache the profile so it survives even if "user" is cleared from LS
         }));
         

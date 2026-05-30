@@ -679,6 +679,8 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                   {/* Hidden inputs for Camera and File options */}
                   <input
                     ref={cameraInputRef}
+                    id="camera-photo-upload"
+                    name="camera-photo-upload"
                     type="file"
                     accept="image/*"
                     capture="environment"
@@ -688,6 +690,8 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
                   />
                   <input
                     ref={fileInputRef}
+                    id="file-photo-upload"
+                    name="file-photo-upload"
                     type="file"
                     accept="image/*"
                     className="hidden"

@@ -7,17 +7,24 @@ export function PwaRegistry() {
 
     // Determine user role first
     const checkRoleAndRegister = async () => {
-      try {
-        const resp = await fetch('/api/user/role');
-        const data = await resp.json();
-        const role = data.role;
-        if (role !== 'reader') {
-          console.info('PWA: non‑reader role, skipping service worker registration');
-          window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
-          return;
+      // If offline, skip the role API call and proceed straight to SW registration
+      // (the cached session already holds the role; the SW will serve cached pages)
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        console.info('PWA: offline – skipping role check, proceeding with SW registration');
+      } else {
+        try {
+          const resp = await fetch('/api/user/role');
+          const data = await resp.json();
+          const role = data.role;
+          if (role !== 'reader') {
+            console.info('PWA: non‑reader role, skipping service worker registration');
+            window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
+            return;
+          }
+        } catch (e) {
+          // Network error or offline — fall through and register SW anyway
+          console.warn('PWA: failed to fetch role (possibly offline), proceeding with registration');
         }
-      } catch (e) {
-        console.warn('PWA: failed to fetch role, proceeding with registration');
       }
       // Existing secure context check
       const isSecureContext =

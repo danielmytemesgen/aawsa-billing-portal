@@ -1323,18 +1323,22 @@ const mapDbKnowledgeBaseArticleToDomain = (dbArticle: KnowledgeBaseArticleRow): 
 });
 
 async function fetchAllTariffs() {
-  const { data, error } = await getPublicTariffsAction();
-  if (data) {
-    tariffs = data.map((t: any) => ({
-      ...t,
-      // Ensure effective_date is a string (YYYY-MM-DD) even if Postgres returns a Date object
-      effective_date: t.effective_date instanceof Date
-        ? `${t.effective_date.getFullYear()}-${String(t.effective_date.getMonth() + 1).padStart(2, '0')}-${String(t.effective_date.getDate()).padStart(2, '0')}`
-        : t.effective_date
-    }));
-    notifyTariffListeners();
-  } else {
-    console.error("DataStore: Failed to fetch tariffs. Database error:", JSON.stringify(error, null, 2));
+  try {  
+    const { data, error } = await getPublicTariffsAction();
+    if (data) {
+      tariffs = data.map((t: any) => ({
+        ...t,
+        // Ensure effective_date is a string (YYYY-MM-DD) even if Postgres returns a Date object
+        effective_date: t.effective_date instanceof Date
+          ? `${t.effective_date.getFullYear()}-${String(t.effective_date.getMonth() + 1).padStart(2, '0')}-${String(t.effective_date.getDate()).padStart(2, '0')}`
+          : t.effective_date
+      }));
+      notifyTariffListeners();
+    } else {
+      console.error("DataStore: Failed to fetch tariffs. Database error:", JSON.stringify(error, null, 2));
+    }
+    } catch (err) {
+    console.warn("DataStore: fetchAllTariffs failed (offline?)", err);
   }
   tariffsFetched = true;
   return tariffs;
@@ -1342,118 +1346,160 @@ async function fetchAllTariffs() {
 
 
 async function fetchAllBranches() {
-  const { data, error } = await getAllBranchesAction();
-  if (data) {
-    branches = data.map(mapDbBranchToDomain);
-    notifyBranchListeners();
-  } else {
-    // getAllBranchesAction requires branches_view permission (admin-only).
-    // Fall back to the permission-lite lookup so staff users still get id+name.
-    const fallback = await getBranchesLookupAction();
-    if (fallback.data && fallback.data.length > 0) {
-      branches = fallback.data.map((b: { id: string; name: string }) => ({
-        id: b.id,
-        name: b.name,
-        location: undefined,
-        contactPerson: undefined,
-        contactPhone: undefined,
-        status: 'Active',
-      } as unknown as DomainBranch));
+  // If offline, return whatever is already in memory — avoid network call
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    if (branches.length > 0) {
+      notifyBranchListeners();
+      return branches;
+    }
+    // Nothing in memory and offline — mark as fetched to avoid retry loops
+    branchesFetched = true;
+    return branches;
+  }
+
+  try {
+    const { data, error } = await getAllBranchesAction();
+    if (data) {
+      branches = data.map(mapDbBranchToDomain);
       notifyBranchListeners();
     } else {
-      console.warn("DataStore: Could not fetch branches (permission restricted and lookup failed).");
+      // getAllBranchesAction requires branches_view permission (admin-only).
+      // Fall back to the permission-lite lookup so staff users still get id+name.
+      const fallback = await getBranchesLookupAction();
+      if (fallback.data && fallback.data.length > 0) {
+        branches = fallback.data.map((b: { id: string; name: string }) => ({
+          id: b.id,
+          name: b.name,
+          location: undefined,
+          contactPerson: undefined,
+          contactPhone: undefined,
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as DomainBranch));
+        notifyBranchListeners();
+      } else {
+        console.error("DataStore: Failed to fetch branches. Database error:", JSON.stringify(error, null, 2));
+      }
     }
+  } catch (err) {
+    console.warn("DataStore: fetchAllBranches failed (offline?)", err);
   }
   branchesFetched = true;
   return branches;
 }
 
 async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
-  if (!tariffsFetched) {
-    await initializeTariffs();
-  }
-  const { data, error } = await getAllCustomersAction(options);
-  if (data) {
-    const newCustomers = await Promise.all(data.map(mapDbCustomerToDomain));
-    
-    // Merge strategy: update existing or append new
-    const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
-    for (const nc of newCustomers) {
-      customerMap.set(nc.customerKeyNumber, nc);
+  try {  
+    if (!tariffsFetched) {
+      await initializeTariffs();
     }
-    customers = Array.from(customerMap.values());
-    
-    // Cache for offline use
-    if (typeof window !== 'undefined') {
-      offlineDb.cacheMeters(newCustomers, 'individual').catch(err => console.error("DataStore: Failed to cache customers:", err));
+    const { data, error } = await getAllCustomersAction(options);
+    if (data) {
+      const newCustomers = await Promise.all(data.map(mapDbCustomerToDomain));
+      
+      // Merge strategy: update existing or append new
+      const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
+      for (const nc of newCustomers) {
+        customerMap.set(nc.customerKeyNumber, nc);
+      }
+      customers = Array.from(customerMap.values());
+      
+      // Cache for offline use
+      if (typeof window !== 'undefined') {
+        offlineDb.cacheMeters(newCustomers, 'individual').catch(err => console.error("DataStore: Failed to cache customers:", err));
+      }
+  
+      notifyCustomerListeners();
+    } else {
+      console.error("DataStore: Failed to fetch customers. Database error:", JSON.stringify(error, null, 2));
     }
-
-    notifyCustomerListeners();
-  } else {
-    console.error("DataStore: Failed to fetch customers. Database error:", JSON.stringify(error, null, 2));
+    customersFetched = !options; // Only mark as fully fetched if no filters/options applied
+  } catch (err) {
+    console.warn("DataStore: fetchAllCustomers failed (offline?)", err);
   }
-  customersFetched = !options; // Only mark as fully fetched if no filters/options applied
   return customers;
 }
 
 async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
-  if (!tariffsFetched) {
-    await initializeTariffs();
-  }
-  const { data: rawBulkMeters, error: fetchError } = await getAllBulkMetersAction(options);
-
-  if (fetchError) {
-    console.error("DataStore: Failed to fetch bulk meters. Database error:", JSON.stringify(fetchError, null, 2));
-    bulkMetersFetched = !options;
-    return [];
-  }
-
-  if (!rawBulkMeters) {
-    bulkMeters = [];
+  try {  
+    if (!tariffsFetched) {
+      await initializeTariffs();
+    }
+    const { data: rawBulkMeters, error: fetchError } = await getAllBulkMetersAction(options);
+  
+    if (fetchError) {
+      console.error("DataStore: Failed to fetch bulk meters. Database error:", JSON.stringify(fetchError, null, 2));
+      bulkMetersFetched = !options;
+      return [];
+    }
+  
+    if (!rawBulkMeters) {
+      bulkMeters = [];
+      notifyBulkMeterListeners();
+      bulkMetersFetched = !options;
+      return [];
+    }
+  
+    const newBulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
+    
+    // Merge strategy
+    const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+    for (const nbm of newBulkMeters) {
+      meterMap.set(nbm.customerKeyNumber, nbm);
+    }
+    bulkMeters = Array.from(meterMap.values());
+  
+    // Cache for offline use
+    if (typeof window !== 'undefined') {
+      offlineDb.cacheMeters(newBulkMeters, 'bulk').catch(err => console.error("DataStore: Failed to cache bulk meters:", err));
+    }
+  
     notifyBulkMeterListeners();
     bulkMetersFetched = !options;
-    return [];
+  } catch (err) {
+    console.warn("DataStore: fetchAllBulkMeters failed (offline?)", err);
   }
-
-  const newBulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
-  
-  // Merge strategy
-  const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
-  for (const nbm of newBulkMeters) {
-    meterMap.set(nbm.customerKeyNumber, nbm);
-  }
-  bulkMeters = Array.from(meterMap.values());
-
-  // Cache for offline use
-  if (typeof window !== 'undefined') {
-    offlineDb.cacheMeters(newBulkMeters, 'bulk').catch(err => console.error("DataStore: Failed to cache bulk meters:", err));
-  }
-
-  notifyBulkMeterListeners();
-  bulkMetersFetched = !options;
   return bulkMeters;
 }
 
 
 async function fetchAllStaffMembers() {
-  const { data, error } = await getAllStaffMembersAction();
-  if (data) {
-    staffMembers = data.map(mapDbStaffToDomain);
-    notifyStaffMemberListeners();
-  } else {
-    console.error("DataStore: Failed to fetch staff members. Database error:", JSON.stringify(error, null, 2));
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    staffMembersFetched = true;
+    return staffMembers;
   }
-  staffMembersFetched = true;
+  try {  
+    const { data, error } = await getAllStaffMembersAction();
+    if (data) {
+      staffMembers = data.map(mapDbStaffToDomain);
+      notifyStaffMemberListeners();
+    } else {
+      console.error("DataStore: Failed to fetch staff members. Database error:", JSON.stringify(error, null, 2));
+    }
+    staffMembersFetched = true;
+  } catch (err) {
+    console.warn("DataStore: fetchAllStaffMembers failed (offline?)", err);
+    staffMembersFetched = true; // prevent retry loops
+  }
   return staffMembers;
 }
 
 async function fetchAllBills() {
-  const { data, error } = await getAllBillsAction({ excludeUnfinalized: true });
-  if (data) {
-    bills = data.map(mapDbBillToDomain);
-    notifyBillListeners();
-  } else {
-    console.error("DataStore: Failed to fetch bills. Database error:", JSON.stringify(error, null, 2));
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    billsFetched = true;
+    return bills;
+  }
+  try {  
+    const { data, error } = await getAllBillsAction({ excludeUnfinalized: true });
+    if (data) {
+      bills = data.map(mapDbBillToDomain);
+      notifyBillListeners();
+    } else {
+      console.error("DataStore: Failed to fetch bills. Database error:", JSON.stringify(error, null, 2));
+    }
+  } catch (err) {
+    console.warn("DataStore: fetchAllBills failed (offline?)", err);
   }
   billsFetched = true;
   return bills;
@@ -1479,98 +1525,140 @@ export const upsertSpatialRecord = async (entityId: string, entityType: 'individ
 };
 
 async function fetchAllIndividualCustomerReadings() {
-  const { data, error } = await getAllIndividualCustomerReadingsAction();
-  if (data) {
-    individualCustomerReadings = data.map(mapDbIndividualReadingToDomain);
-    notifyIndividualCustomerReadingListeners();
-  } else {
-    console.error("DataStore: Failed to fetch individual customer readings. Database error:", JSON.stringify(error, null, 2));
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    individualCustomerReadingsFetched = true;
+    return individualCustomerReadings; // return whatever is in memory
   }
-  individualCustomerReadingsFetched = true;
+  try {  
+    const { data, error } = await getAllIndividualCustomerReadingsAction();
+    if (data) {
+      individualCustomerReadings = data.map(mapDbIndividualReadingToDomain);
+      notifyIndividualCustomerReadingListeners();
+    } else {
+      console.error("DataStore: Failed to fetch individual customer readings. Database error:", JSON.stringify(error, null, 2));
+    }
+    individualCustomerReadingsFetched = true;
+  } catch (err) {
+    console.warn("DataStore: fetchAllIndividualCustomerReadings failed (offline?)", err);
+    individualCustomerReadingsFetched = true;
+  }
   return individualCustomerReadings;
 }
 
 async function fetchAllBulkMeterReadings() {
-  const { data, error } = await getAllBulkMeterReadingsAction();
-  if (data) {
-    bulkMeterReadings = data.map(mapDbBulkReadingToDomain);
-    notifyBulkMeterReadingListeners();
-  } else {
-    console.error("DataStore: Failed to fetch bulk meter readings. Database error:", JSON.stringify(error, null, 2));
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    bulkMeterReadingsFetched = true;
+    return bulkMeterReadings; // return whatever is in memory
   }
-  bulkMeterReadingsFetched = true;
+  try {  
+    const { data, error } = await getAllBulkMeterReadingsAction();
+    if (data) {
+      bulkMeterReadings = data.map(mapDbBulkReadingToDomain);
+      notifyBulkMeterReadingListeners();
+    } else {
+      console.error("DataStore: Failed to fetch bulk meter readings. Database error:", JSON.stringify(error, null, 2));
+    }
+    bulkMeterReadingsFetched = true;
+  } catch (err) {
+    console.warn("DataStore: fetchAllBulkMeterReadings failed (offline?)", err);
+    bulkMeterReadingsFetched = true;
+  }
   return bulkMeterReadings;
 }
 
 async function fetchAllPayments() {
-  const { data, error } = await getAllPaymentsAction();
-  if (data) {
-    payments = data.map(mapDbPaymentToDomain);
-    notifyPaymentListeners();
-  } else {
-    console.error("DataStore: Failed to fetch payments. Database error:", JSON.stringify(error, null, 2));
+  try {  
+    const { data, error } = await getAllPaymentsAction();
+    if (data) {
+      payments = data.map(mapDbPaymentToDomain);
+      notifyPaymentListeners();
+    } else {
+      console.error("DataStore: Failed to fetch payments. Database error:", JSON.stringify(error, null, 2));
+    }
+    } catch (err) {
+    console.warn("DataStore: fetchAllPayments failed (offline?)", err);
   }
   paymentsFetched = true;
   return payments;
 }
 
 async function fetchAllReportLogs() {
-  const { data, error } = await getAllReportLogsAction();
-  if (data) {
-    reportLogs = data.map(mapDbReportLogToDomain);
-    notifyReportLogListeners();
-  } else {
-    console.error("DataStore: Failed to fetch report logs. Database error:", JSON.stringify(error, null, 2));
+  try {  
+    const { data, error } = await getAllReportLogsAction();
+    if (data) {
+      reportLogs = data.map(mapDbReportLogToDomain);
+      notifyReportLogListeners();
+    } else {
+      console.error("DataStore: Failed to fetch report logs. Database error:", JSON.stringify(error, null, 2));
+    }
+    reportLogsFetched = true;
+  } catch (err) {
+    console.warn("DataStore: fetchAllReportLogs failed (offline?)", err);
   }
-  reportLogsFetched = true;
   return reportLogs;
 }
 
 async function fetchAllNotifications() {
-  const { data, error } = await getAllNotificationsAction();
-  if (data) {
-    notifications = data.map(mapDbNotificationToDomain);
-    notifyNotificationListeners();
-  } else {
-    console.error("DataStore: Failed to fetch notifications. Database error:", JSON.stringify(error, null, 2));
+  try {
+    const { data, error } = await getAllNotificationsAction();
+    if (data) {
+      notifications = data.map(mapDbNotificationToDomain);
+      notifyNotificationListeners();
+    } else {
+      console.error("DataStore: Failed to fetch notifications. Database error:", JSON.stringify(error, null, 2));
+    }
+  } catch (err) {
+    console.warn("DataStore: fetchAllNotifications failed (offline?)", err);
   }
   notificationsFetched = true;
   return notifications;
 }
 
 async function fetchAllRoles() {
-  const { data, error } = await getAllRolesAction();
-  if (data) {
-    roles = data;
-    notifyRoleListeners();
-  } else {
-    console.error("DataStore: Failed to fetch roles. Database error:", JSON.stringify(error, null, 2));
+  try {  
+    const { data, error } = await getAllRolesAction();
+    if (data) {
+      roles = data;
+      notifyRoleListeners();
+    } else {
+      console.error("DataStore: Failed to fetch roles. Database error:", JSON.stringify(error, null, 2));
+    }
+    } catch (err) {
+    console.warn("DataStore: fetchAllRoles failed (offline?)", err);
   }
   rolesFetched = true;
   return roles;
 }
 
 async function fetchAllPermissions() {
-  const { data, error } = await getAllPermissionsAction();
-  if (data) {
-    permissions = data;
-    notifyPermissionListeners();
-  } else {
-    console.error("DataStore: Failed to fetch permissions. Database error:", JSON.stringify(error, null, 2));
+  try {  
+    const { data, error } = await getAllPermissionsAction();
+    if (data) {
+      permissions = data;
+      notifyPermissionListeners();
+    } else {
+      console.error("DataStore: Failed to fetch permissions. Database error:", JSON.stringify(error, null, 2));
+    }
+    } catch (err) {
+    console.warn("DataStore: fetchAllPermissions failed (offline?)", err);
   }
   permissionsFetched = true;
   return permissions;
 }
 
 async function fetchAllRolePermissions() {
-  const { data, error } = await getAllRolePermissionsAction();
-  if (data) {
-    rolePermissions = data;
-    notifyRolePermissionListeners();
-  } else {
-    console.error("DataStore: Failed to fetch role permissions. Database error:", JSON.stringify(error, null, 2));
+  try {  
+    const { data, error } = await getAllRolePermissionsAction();
+    if (data) {
+      rolePermissions = data;
+      notifyRolePermissionListeners();
+    } else {
+      console.error("DataStore: Failed to fetch role permissions. Database error:", JSON.stringify(error, null, 2));
+    }
+    rolePermissionsFetched = true;
+  } catch (err) {
+    console.warn("DataStore: fetchAllRolePermissions failed (offline?)", err);
   }
-  rolePermissionsFetched = true;
   return rolePermissions;
 }
 
@@ -1582,17 +1670,21 @@ export async function refetchUserPermissions() {
 }
 
 async function fetchAllKnowledgeBaseArticles() {
-  // Use the public action so the chatbot (mounted for ALL users) doesn't
-  // require knowledge_base_view. Falls back to empty on any error.
-  const { data, error } = await getPublicKnowledgeBaseArticlesAction();
-  if (error) {
-    console.error("DataStore: Failed to fetch knowledge base articles.", error);
-    knowledgeBaseArticles = [];
-  } else {
-    knowledgeBaseArticles = data.map(mapDbKnowledgeBaseArticleToDomain);
+  try {  
+    // Use the public action so the chatbot (mounted for ALL users) doesn't
+    // require knowledge_base_view. Falls back to empty on any error.
+    const { data, error } = await getPublicKnowledgeBaseArticlesAction();
+    if (error) {
+      console.error("DataStore: Failed to fetch knowledge base articles.", error);
+      knowledgeBaseArticles = [];
+    } else {
+      knowledgeBaseArticles = data.map(mapDbKnowledgeBaseArticleToDomain);
+    }
+    notifyKnowledgeBaseArticleListeners();
+    knowledgeBaseArticlesFetched = true;
+  } catch (err) {
+    console.warn("DataStore: fetchAllKnowledgeBaseArticles failed (offline?)", err);
   }
-  notifyKnowledgeBaseArticleListeners();
-  knowledgeBaseArticlesFetched = true;
   return knowledgeBaseArticles;
 }
 
@@ -1768,12 +1860,22 @@ export const initializeBills = async (force: boolean = false) => {
 };
 export const initializeIndividualCustomerReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
   if (options?.routeKey) {
-    const { data } = await getLatestReadingsByRouteAction(options.routeKey);
-    if (data?.individual) {
-      const newReadings = data.individual.map(mapDbIndividualReadingToDomain);
-      const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
-      for (const nr of newReadings) readingMap.set(nr.id, nr);
-      individualCustomerReadings = Array.from(readingMap.values());
+    // If offline, skip the network call — serve from what is already in memory
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      notifyIndividualCustomerReadingListeners();
+      return;
+    }
+    try {
+      const { data } = await getLatestReadingsByRouteAction(options.routeKey);
+      if (data?.individual) {
+        const newReadings = data.individual.map(mapDbIndividualReadingToDomain);
+        const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
+        for (const nr of newReadings) readingMap.set(nr.id, nr);
+        individualCustomerReadings = Array.from(readingMap.values());
+        notifyIndividualCustomerReadingListeners();
+      }
+    } catch (err) {
+      console.warn('DataStore: initializeIndividualCustomerReadings by route failed (offline?)', err);
       notifyIndividualCustomerReadingListeners();
     }
     return;
@@ -1783,12 +1885,22 @@ export const initializeIndividualCustomerReadings = async (force: boolean = fals
 
 export const initializeBulkMeterReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
   if (options?.routeKey) {
-    const { data } = await getLatestReadingsByRouteAction(options.routeKey);
-    if (data?.bulk) {
-      const newReadings = data.bulk.map(mapDbBulkReadingToDomain);
-      const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
-      for (const nr of newReadings) readingMap.set(nr.id, nr);
-      bulkMeterReadings = Array.from(readingMap.values());
+    // If offline, skip the network call — serve from what is already in memory
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      notifyBulkMeterReadingListeners();
+      return;
+    }
+    try {
+      const { data } = await getLatestReadingsByRouteAction(options.routeKey);
+      if (data?.bulk) {
+        const newReadings = data.bulk.map(mapDbBulkReadingToDomain);
+        const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
+        for (const nr of newReadings) readingMap.set(nr.id, nr);
+        bulkMeterReadings = Array.from(readingMap.values());
+        notifyBulkMeterReadingListeners();
+      }
+    } catch (err) {
+      console.warn('DataStore: initializeBulkMeterReadings by route failed (offline?)', err);
       notifyBulkMeterReadingListeners();
     }
     return;
@@ -3164,11 +3276,51 @@ export const subscribeToRoutes = (listener: Listener<Route>): (() => void) => {
 
 export const fetchRoutes = async (force: boolean = false) => {
   if (routesFetched && !force) return routes;
-  const result = await getAllRoutesAction();
-  if (!result.error && result.data) {
-    routes = result.data.map(mapDbRouteToDomain);
-    routesFetched = true;
-    notifyRouteListeners();
+
+  // --- Offline-first: serve from IndexedDB cache when no network ---
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    try {
+      const cached = await offlineDb.getCachedRoutes();
+      if (cached && cached.length > 0) {
+        routes = cached.map(c => c.data);
+        routesFetched = true;
+        notifyRouteListeners();
+        return routes;
+      }
+    } catch (e) {
+      console.warn('DataStore: failed to read cached routes from IndexedDB', e);
+    }
+    // Nothing cached — return whatever we have in memory
+    return routes;
+  }
+
+  // --- Online path: fetch from server and cache result ---
+  try {
+    const result = await getAllRoutesAction();
+    if (!result.error && result.data) {
+      routes = result.data.map(mapDbRouteToDomain);
+      routesFetched = true;
+      notifyRouteListeners();
+      // Cache routes for offline use
+      if (typeof window !== 'undefined') {
+        offlineDb.cacheRoutes(routes).catch(e =>
+          console.warn('DataStore: failed to cache routes to IndexedDB', e)
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('DataStore: fetchRoutes failed (offline?)', err);
+    // Attempt to serve from IndexedDB cache as fallback
+    try {
+      const cached = await offlineDb.getCachedRoutes();
+      if (cached && cached.length > 0) {
+        routes = cached.map(c => c.data);
+        routesFetched = true;
+        notifyRouteListeners();
+      }
+    } catch (e) {
+      console.warn('DataStore: also failed to read cached routes', e);
+    }
   }
   return routes;
 };

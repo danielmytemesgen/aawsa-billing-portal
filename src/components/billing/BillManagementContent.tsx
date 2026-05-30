@@ -137,7 +137,32 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 }
             }
 
-            const branchRes = await getBranchesLookupAction();
+            const branchRes = await (async () => {
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                if (isOffline) {
+                    try {
+                        const cached = localStorage.getItem('cached_branches_lookup');
+                        if (cached) return { data: JSON.parse(cached) };
+                    } catch (e) { /* ignore */ }
+                    return { data: [] };
+                }
+                try {
+                    const res = await getBranchesLookupAction();
+                    if (res && res.data) {
+                        try {
+                            localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+                        } catch (e) { /* ignore */ }
+                    }
+                    return res;
+                } catch (e) {
+                    console.warn("Offline: failed to fetch branches lookup in bill management", e);
+                    try {
+                        const cached = localStorage.getItem('cached_branches_lookup');
+                        if (cached) return { data: JSON.parse(cached) };
+                    } catch (err) { /* ignore */ }
+                    return { data: [] };
+                }
+            })();
             if (branchRes.data) setBranches(branchRes.data);
         } catch (error) {
             console.error(error);

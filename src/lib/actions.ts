@@ -129,16 +129,20 @@ import {
   dbGetLatestReadingsByMeters,
   dbCreateMeterReadingPhoto,
   dbGetPhotosByReadingId,
+
 } from './db-queries';
 import { withTransaction } from './db';
 
 import { calculateBill, type CustomerType, type SewerageConnection } from './billing';
 import { encrypt, getSession } from './auth';
-import { redirect } from 'next/navigation';
+// Removed unused redirect import
 import { revalidatePath } from 'next/cache';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from './billing-config';
 
 import type { Database } from '@/types/db';
+
+export type PendingReading = { id: number; payload: any };
+export type PendingUpload = { id: number; blob: Blob };
 
 export async function getReadingPeriodStatusAction() {
   const status = await dbGetSystemSetting('reading_period_status');

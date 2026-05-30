@@ -56,10 +56,35 @@ export function NotificationBell({ user, className }: NotificationBellProps) {
       // Always fetch live branch names from the DB (no branches_view required)
       const [, branchResult] = await Promise.all([
         initializeNotifications(),
-        getBranchesLookupAction(),
+        (async () => {
+          const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+          if (isOffline) {
+            try {
+              const cached = localStorage.getItem('cached_branches_lookup');
+              if (cached) return { data: JSON.parse(cached) };
+            } catch (e) { /* ignore */ }
+            return { data: [] };
+          }
+          try {
+            const res = await getBranchesLookupAction();
+            if (res && res.data) {
+              try {
+                localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+              } catch (e) { /* ignore */ }
+            }
+            return res;
+          } catch (e) {
+            console.warn("Offline: failed to fetch branches lookup in bell", e);
+            try {
+              const cached = localStorage.getItem('cached_branches_lookup');
+              if (cached) return { data: JSON.parse(cached) };
+            } catch (err) { /* ignore */ }
+            return { data: [] };
+          }
+        })(),
       ]);
       setNotifications(getNotifications());
-      if (branchResult.data) {
+      if (branchResult && branchResult.data) {
         setAllBranches(branchResult.data as any[]);
       }
       // Also prime the full branch cache for admin users

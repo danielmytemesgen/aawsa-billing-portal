@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { decrypt } from '@/lib/auth';
+import { decrypt } from '@/lib/session';
 import { PERMISSIONS } from '@/lib/constants/auth';
 
 const protectedRoutes = ['/admin', '/staff'];
@@ -11,15 +11,26 @@ const hasAny = (permissions: string[], ...perms: string[]) =>
   perms.some(p => permissions.includes(p));
 
 function setSecurityHeaders(res: NextResponse) {
+  const isDev = process.env.NODE_ENV !== 'production';
   const csp = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org",
-    "connect-src 'self' https: wss:",
-    "font-src 'self' data:",
+    // Allow inline scripts (Next.js needs this) and eval in dev
+    isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    // Images: self, data URIs, blob (for camera captures), and known remote hosts
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org https://veiethiopia.com https://www.shutterstock.com https://lh3.googleusercontent.com https://picsum.photos https://*.picsum.photos",
+    // Connections: self + any https/wss (needed for Supabase, API calls, SW)
+    "connect-src 'self' https: wss: blob:",
+    // Fonts: self, data URIs, and Google Fonts CDN
+    "font-src 'self' data: https://fonts.gstatic.com",
     "object-src 'none'",
-    "frame-ancestors 'none'"
+    // Allow camera and media for meter photo capture
+    "media-src 'self' blob:",
+    // Workers need blob: for service worker
+    "worker-src 'self' blob:",
+    "frame-ancestors 'none'",
   ].join('; ');
 
   res.headers.set('Content-Security-Policy', csp);

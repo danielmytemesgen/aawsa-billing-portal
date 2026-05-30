@@ -108,7 +108,32 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         setIsLoadingMeters(true);
         const [res, branchRes] = await Promise.all([
             getAllBulkMetersAction({ excludePending: false }), // load all so count is accurate
-            getBranchesLookupAction()
+            (async () => {
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                if (isOffline) {
+                    try {
+                        const cached = localStorage.getItem('cached_branches_lookup');
+                        if (cached) return { data: JSON.parse(cached) as { id: string; name: string }[], error: null };
+                    } catch (e) { /* ignore */ }
+                    return { data: [] as { id: string; name: string }[], error: null };
+                }
+                try {
+                    const r = await getBranchesLookupAction();
+                    if (r && r.data) {
+                        try {
+                            localStorage.setItem('cached_branches_lookup', JSON.stringify(r.data));
+                        } catch (e) { /* ignore */ }
+                    }
+                    return r;
+                } catch (e) {
+                    console.warn("Offline: failed to fetch branches lookup in billing cycle dialog", e);
+                    try {
+                        const cached = localStorage.getItem('cached_branches_lookup');
+                        if (cached) return { data: JSON.parse(cached) as { id: string; name: string }[], error: null };
+                    } catch (err) { /* ignore */ }
+                    return { data: [] as { id: string; name: string }[], error: null };
+                }
+            })()
         ]);
         if (res.data) setBulkMeters(res.data);
         if (!branchRes.error && branchRes.data) setBranches(branchRes.data);

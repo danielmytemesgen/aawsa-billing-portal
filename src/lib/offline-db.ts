@@ -36,32 +36,64 @@ export interface DeviceTokenEntry {
   timestamp: number;
 }
 
+export interface SessionCache {
+  id: string; // fixed id 'session'
+  token: string; // encrypted JWT
+  timestamp: number;
+}
+
+export interface CachedRoute {
+  routeKey: string; // primary key
+  data: any;
+  lastUpdated: number;
+}
+
 export class OfflineDB extends Dexie {
   readings!: Table<OfflineReading>;
   meters!: Table<CachedMeter>;
   uploads!: Table<UploadEntry>;
   device_tokens!: Table<DeviceTokenEntry, string>;
-
+  session!: Table<SessionCache, string>;
+  routes!: Table<CachedRoute, string>;
+  
   constructor() {
     super('AAWSAReaderDB');
     this.version(1).stores({
       readings: '++id, localId, idempotencyKey, status, type, timestamp',
       meters: 'customerKeyNumber, type, lastUpdated'
     });
-
-    // upgrade to add uploads and device_tokens
+    // upgrade to add uploads, device_tokens, and session
     this.version(2).stores({
       uploads: '++id, status, readingId, timestamp',
-      device_tokens: 'id'
+      device_tokens: 'id',
+      session: 'id, token, timestamp'
     });
     // add sw cache store for tokens and small key/value data
     this.version(3).stores({
       sw_cache: 'key'
     });
+    // add routes cache store
+    this.version(4).stores({
+      routes: 'routeKey, lastUpdated'
+    });
   }
 }
 
 export const db = new OfflineDB();
+
+// --- Route cache helpers ---
+export async function cacheRoutes(routesData: any[]) {
+  const entries: CachedRoute[] = routesData.map(r => ({
+    routeKey: r.routeKey || r.route_key,
+    data: r,
+    lastUpdated: Date.now(),
+  }));
+  return await db.routes.bulkPut(entries);
+}
+
+export async function getCachedRoutes(): Promise<CachedRoute[]> {
+  return await db.routes.toArray();
+}
 
 // --- Upload helpers ---
 export async function queueUpload(filename: string, blob: Blob, readingId?: number | null) {
@@ -112,6 +144,19 @@ export async function saveDeviceTokenEncrypted(token: string, deviceId?: string)
   };
 
   return await db.device_tokens.put(entry);
+}
+
+export async function saveSessionToken(token: string) {
+  return await db.session.put({ id: 'session', token, timestamp: Date.now() });
+}
+
+export async function getSessionToken(): Promise<string | null> {
+  const rec = await db.session.get('session');
+  return rec ? rec.token : null;
+}
+
+export async function clearSessionToken() {
+  return await db.session.delete('session');
 }
 
 export async function getDecryptedDeviceToken(): Promise<string | null> {
