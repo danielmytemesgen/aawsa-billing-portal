@@ -6,7 +6,6 @@ const nextConfig = {
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
   images: {
-    domains: ['veiethiopia.com', 'www.shutterstock.com', 'lh3.googleusercontent.com'],
     remotePatterns: [
       { protocol: 'https', hostname: 'picsum.photos', pathname: '/**' },
       { protocol: 'https', hostname: 'placehold.co', pathname: '/**' },
@@ -14,6 +13,8 @@ const nextConfig = {
       { protocol: 'https', hostname: 'veiethiopia.com', pathname: '/**' },
       { protocol: 'https', hostname: 'www.undp.org', pathname: '/**' },
       { protocol: 'http', hostname: 'www.stronsmart.com', pathname: '/**' },
+      { protocol: 'https', hostname: 'www.shutterstock.com', pathname: '/**' },
+      { protocol: 'https', hostname: 'lh3.googleusercontent.com', pathname: '/**' },
     ],
   },
 

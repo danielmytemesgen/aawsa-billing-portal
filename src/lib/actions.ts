@@ -1031,11 +1031,24 @@ export async function runBillingCycleAction(payload: {
 
     const associatedCustomers = await dbGetCustomersByBulkMeterId(payload.bulkMeterId);
 
-    // 2. Calculate Usage
-    const bmUsage = (bulkMeter.current_reading ?? 0) - (bulkMeter.previous_reading ?? 0);
-    const totalIndivUsage = associatedCustomers.reduce((sum, cust) => sum + ((cust.current_reading ?? 0) - (cust.previous_reading ?? 0)), 0);
+    // 2. Fetch readings from bulk_meter_readings for the given month (preferred source)
+    //    Fall back to the bulk_meters stored readings if no reading record exists for this month.
+    const { dbGetReadingsForMonth } = await import('./db-queries');
+    const monthReadings = await dbGetReadingsForMonth('bulk_meters', [payload.bulkMeterId], payload.monthYear);
+    const readingRecord = monthReadings.find((r: any) => r.CUST_KEY === payload.bulkMeterId);
 
-    // 3. Determine Charge Group and Fetch Tariff Settings
+    const currRead = readingRecord?.METER_READING != null
+      ? Number(readingRecord.METER_READING)
+      : Number(bulkMeter.currentReading ?? 0);
+    const prevRead = readingRecord?.PREVIOUS_READING != null
+      ? Number(readingRecord.PREVIOUS_READING)
+      : Number(bulkMeter.previousReading ?? 0);
+
+    // 3. Calculate Usage
+    const bmUsage = currRead - prevRead;
+    const totalIndivUsage = associatedCustomers.reduce((sum, cust) => sum + ((Number(cust.currentReading) || 0) - (Number(cust.previousReading) || 0)), 0);
+
+    // 4. Determine Charge Group and Fetch Tariff Settings
     const chargeGroup = (bulkMeter.charge_group || 'Non-domestic') as CustomerType;
     const sewerageConn = (bulkMeter.sewerage_connection || 'No') as SewerageConnection;
 
@@ -1059,7 +1072,7 @@ export async function runBillingCycleAction(payload: {
       rawDifferenceUsage,
       chargeGroup,
       sewerageConn,
-      bulkMeter.meter_size ?? 0.5,
+      bulkMeter.meterSize ?? 0.5,
       payload.monthYear
     );
 
@@ -1136,8 +1149,8 @@ export async function runBillingCycleAction(payload: {
       bill_period_start_date: periodStartDate,
       bill_period_end_date: periodEndDate,
       month_year: payload.monthYear,
-      PREVREAD: bulkMeter.previous_reading || 0,
-      CURRREAD: bulkMeter.current_reading || 0,
+      PREVREAD: prevRead,
+      CURRREAD: currRead,
       CONS: bmUsage,
       difference_usage: differenceUsageForCycle,
       THISMONTHBILLAMT: billingResult.totalBill,
@@ -1174,7 +1187,7 @@ export async function runBillingCycleAction(payload: {
 
     // 6. Update Bulk Meter — carry forward the new total payable as the outstanding balance
     const newOutstandingBalance = payload.carryBalance ? totalPayableForCycle : 0;
-    const newPreviousReading = bulkMeter.current_reading ?? bulkMeter.previous_reading ?? 0;
+    const newPreviousReading = bulkMeter.currentReading ?? bulkMeter.previousReading ?? 0;
     const meterUpdate: BulkMeterUpdate = {
       previousReading: newPreviousReading,
       outStandingbill: newOutstandingBalance as any,
@@ -2974,6 +2987,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
       dbBatchRolloverBulkMeters,
       dbBatchRolloverIndividualCustomersOfBulkMeters,
       dbBatchRolloverIndividualCustomers,
+      dbGetReadingsForMonth,
     } = await import('./db-queries');
 
 
@@ -3015,6 +3029,15 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
       tariffCache.set(cg, tariff);
     }));
 
+    // Pre-fetch 4: all current month readings for this chunk
+    let currentMonthReadingsMap = new Map<string, any>();
+    if (customerKeys.length > 0) {
+      const readings = await dbGetReadingsForMonth(job.type, customerKeys, job.month_year);
+      for (const r of readings) {
+        currentMonthReadingsMap.set(r.CUST_KEY, r);
+      }
+    }
+
     const billsToInsert: any[] = [];
     let lastId = job.last_processed_id;
     const failedItems: string[] = [];
@@ -3027,14 +3050,23 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         const sewerageConn = (item.sewerage_connection || 'No') as SewerageConnection;
 
         // Calculate Usage
-        const usage = (item.currentReading || item.current_reading || 0) - (item.previousReading || item.previous_reading || 0);
+        let currRead = Number(item.currentReading ?? item.current_reading ?? 0);
+        let prevRead = Number(item.previousReading ?? item.previous_reading ?? 0);
+        
+        const readingRecord = currentMonthReadingsMap.get(customerKey);
+        if (readingRecord) {
+            currRead = readingRecord.METER_READING != null ? Number(readingRecord.METER_READING) : currRead;
+            prevRead = readingRecord.PREVIOUS_READING != null ? Number(readingRecord.PREVIOUS_READING) : prevRead;
+        }
+
+        const usage = currRead - prevRead;
         let diffUsage = usage;
 
         if (job.type === 'bulk_meters') {
           // Use pre-fetched sub-customers instead of a per-meter query
           const associatedCustomers = subCustomersMap.get(customerKey) || [];
           const totalIndivUsage = associatedCustomers.reduce((sum: number, cust: any) =>
-            sum + ((cust.current_reading ?? 0) - (cust.previous_reading ?? 0)), 0);
+            sum + ((Number(cust.currentReading) || 0) - (Number(cust.previousReading) || 0)), 0);
           diffUsage = usage - totalIndivUsage;
         }
 
@@ -3084,8 +3116,8 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           bill_period_start_date: periodStartDate,
           bill_period_end_date: periodEndDate,
           due_date: dueDate,
-          PREVREAD: item.previousReading || item.previous_reading || 0,
-          CURRREAD: item.currentReading || item.current_reading || 0,
+          PREVREAD: prevRead,
+          CURRREAD: currRead,
           CONS: usage,
           difference_usage: diffUsage,
           THISMONTHBILLAMT: billBreakdown.totalBill,

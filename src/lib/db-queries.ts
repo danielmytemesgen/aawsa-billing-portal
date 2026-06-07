@@ -1514,11 +1514,7 @@ export const dbLogSecurityEvent = async (event: string, staff_email?: string, br
 
         console.log('Logging security event:', { event, staff_email, branch_name, ip_address, severity, customer_key_number });
 
-        // Map application severity to database ENUM severity_level
-        let dbSeverity = 'Medium';
-        if (severity === 'info') dbSeverity = 'Low';
-        else if (severity === 'warning') dbSeverity = 'Medium';
-        else if (severity === 'critical') dbSeverity = 'Critical';
+        const dbSeverity = severity === 'warning' || severity === 'critical' ? severity : 'info';
 
         const sql = 'INSERT INTO security_logs (event, staff_email, branch_name, ip_address, severity, details, customer_key_number) VALUES ($1, $2, $3, $4, $5, $6, $7)';
         await query(sql, [event, staff_email, branch_name, ip_address, dbSeverity, JSON.stringify(details), customer_key_number]);
@@ -2619,4 +2615,31 @@ export const dbRunDataAudit = async (branchId?: string) => {
         ...(orphans as any[]),
         ...(system as any[])
     ];
+};
+
+export const dbGetReadingsForMonth = async (type: string, customerKeys: string[], monthYear: string) => {
+    if (customerKeys.length === 0) return [];
+    
+    // Extract YYYY-MM if reading_date is a timestamp, but month_year comes in as 'YYYY-MM' format.
+    // e.g. TO_CHAR("READING_DATE", 'YYYY-MM') = $1
+    const placeholders = customerKeys.map((_, i) => `$${i + 2}`).join(',');
+    
+    let sql = '';
+    if (type === 'bulk_meters') {
+        sql = `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
+               FROM bulk_meter_readings 
+               WHERE TO_CHAR("READING_DATE", 'YYYY-MM') = $1 
+               AND "CUST_KEY" IN (${placeholders}) 
+               AND deleted_at IS NULL`;
+    } else {
+        sql = `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
+               FROM individual_customer_readings 
+               WHERE TO_CHAR("READING_DATE", 'YYYY-MM') = $1 
+               AND "CUST_KEY" IN (${placeholders}) 
+               AND deleted_at IS NULL`;
+    }
+    
+    const params = [monthYear, ...customerKeys];
+    const rows = await query(sql, params);
+    return rows;
 };

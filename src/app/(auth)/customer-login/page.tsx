@@ -1,7 +1,7 @@
 "use client";
 
-import { CustomerAuthForm } from "@/components/auth/customer-auth-form";
-import { AuthAds } from "@/components/auth/auth-ads";
+import { CustomerAuthForm } from "@/features/auth/components/customer-auth-form";
+import { AuthAds } from "@/features/auth/components/auth-ads";
 
 export default function CustomerLoginPage() {
     return (

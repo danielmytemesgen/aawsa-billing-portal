@@ -43,7 +43,7 @@ import { getAllFaultCodes } from "@/lib/fault-codes";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
-import { ReadingDetailsDialog, type ReadingData } from "@/components/billing/reading-details-dialog";
+import { ReadingDetailsDialog, type ReadingData } from "@/features/billing/components/reading-details-dialog";
 
 type ReadingCategory = 'Increase' | 'Decrease' | 'Zero' | 'Fault';
 

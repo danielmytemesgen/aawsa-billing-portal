@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { useRouter } from 'next/navigation';
 import { getLatestPermissionsAction } from "@/lib/actions";
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 
 interface UserProfile {
@@ -34,21 +35,21 @@ const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => 
     });
 
     // For users with assigned routes, show My Routes
-    if (hasPermission('routes_view_assigned')) {
+    if (hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED)) {
         navItems.push({
             items: [{ title: "My Routes", href: "/staff/my-routes", iconName: "MapPin" }]
         });
     }
 
     const managementItems: NavItem[] = [];
-    if (hasPermission('branches_view')) managementItems.push({ title: "Branch Management", href: "/staff/branches", iconName: "Building" });
-    if (hasPermission('staff_view')) managementItems.push({ title: "Staff Management", href: "/staff/staff-management", iconName: "UserCog" });
-    if (hasPermission('customers_approve')) managementItems.push({ title: "Approvals", href: "/staff/approvals", iconName: "UserCheck" });
-    if (hasPermission('permissions_view')) managementItems.push({ title: "Roles & Permissions", href: "/staff/roles-and-permissions", iconName: "ShieldCheck" });
-    if (hasPermission('notifications_view')) managementItems.push({ title: "Notifications", href: "/staff/notifications", iconName: "Bell" });
-    if (hasPermission('tariffs_view')) managementItems.push({ title: "Tariff Management", href: "/staff/tariffs", iconName: "LibraryBig" });
-    if (hasPermission('knowledge_base_manage')) managementItems.push({ title: "Knowledge Base", href: "/staff/knowledge-base", iconName: "BookText" });
-    if (hasPermission('bill:view_drafts') || hasPermission('bill:approve') || hasPermission('bill:create')) {
+    if (hasPermission(PERMISSIONS.BRANCHES_VIEW)) managementItems.push({ title: "Branch Management", href: "/staff/branches", iconName: "Building" });
+    if (hasPermission(PERMISSIONS.STAFF_VIEW)) managementItems.push({ title: "Staff Management", href: "/staff/staff-management", iconName: "UserCog" });
+    if (hasPermission(PERMISSIONS.CUSTOMERS_APPROVE)) managementItems.push({ title: "Approvals", href: "/staff/approvals", iconName: "UserCheck" });
+    if (hasPermission(PERMISSIONS.ROLES_VIEW)) managementItems.push({ title: "Roles & Permissions", href: "/staff/roles-and-permissions", iconName: "ShieldCheck" });
+    if (hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)) managementItems.push({ title: "Notifications", href: "/staff/notifications", iconName: "Bell" });
+    if (hasPermission(PERMISSIONS.TARIFFS_VIEW)) managementItems.push({ title: "Tariff Management", href: "/staff/tariffs", iconName: "LibraryBig" });
+    if (hasPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE)) managementItems.push({ title: "Knowledge Base", href: "/staff/knowledge-base", iconName: "BookText" });
+    if (hasPermission(PERMISSIONS.BILL_VIEW_DRAFTS) || hasPermission(PERMISSIONS.BILL_APPROVE) || hasPermission(PERMISSIONS.BILL_CREATE)) {
         managementItems.push({ title: "Bill Management", href: "/staff/bill-management", iconName: "FileText" });
     }
 
@@ -57,22 +58,22 @@ const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => 
     }
 
     const customerMeteringItems: NavItem[] = [];
-    if (hasPermission('bulk_meters_view_branch') || hasPermission('bulk_meters_view_all')) customerMeteringItems.push({ title: "Bulk Meters", href: "/staff/bulk-meters", iconName: "Gauge" });
-    if (hasPermission('customers_view_branch') || hasPermission('customers_view_all')) customerMeteringItems.push({ title: "Individual Customers", href: "/staff/individual-customers", iconName: "Users" });
+    if (hasPermission(PERMISSIONS.BULK_METERS_VIEW_BRANCH) || hasPermission(PERMISSIONS.BULK_METERS_VIEW_ALL)) customerMeteringItems.push({ title: "Bulk Meters", href: "/staff/bulk-meters", iconName: "Gauge" });
+    if (hasPermission(PERMISSIONS.CUSTOMERS_VIEW_BRANCH) || hasPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL)) customerMeteringItems.push({ title: "Individual Customers", href: "/staff/individual-customers", iconName: "Users" });
 
     if (customerMeteringItems.length > 0) {
         navItems.push({ title: "Customer & Metering", items: customerMeteringItems });
     }
 
     const dataReportsItems: NavItem[] = [];
-    if (hasPermission('data_entry_access')) dataReportsItems.push({ title: "Data Entry", href: "/staff/data-entry", iconName: "FileText" });
-    if (hasPermission('meter_readings_view_branch') || hasPermission('meter_readings_view_all')) {
+    if (hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS)) dataReportsItems.push({ title: "Data Entry", href: "/staff/data-entry", iconName: "FileText" });
+    if (hasPermission(PERMISSIONS.METER_READINGS_VIEW_BRANCH) || hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL)) {
         dataReportsItems.push({ title: "Meter Readings", href: "/staff/meter-readings", iconName: "ClipboardList" });
-        if (hasPermission('routes_view_assigned')) {
+        if (hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED)) {
             dataReportsItems.push({ title: "Reading Analytics", href: "/staff/reports/reading-classification", iconName: "TrendingUp" });
         }
     }
-    if (hasPermission('reports_generate_branch') || hasPermission('reports_generate_all')) {
+    if (hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH) || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)) {
         dataReportsItems.push({ title: "Reports", href: "/staff/reports", iconName: "BarChart2" });
         dataReportsItems.push({ title: "List Of Paid Bills", href: "/staff/reports/paid-bills", iconName: "CheckCircle2" });
         dataReportsItems.push({ title: "List Of Sent Bills", href: "/staff/reports/sent-bills", iconName: "Send" });
@@ -83,7 +84,7 @@ const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => 
         navItems.push({ title: "Data & Reports", items: dataReportsItems });
     }
 
-    if (hasPermission('settings_view')) {
+    if (hasPermission(PERMISSIONS.SETTINGS_VIEW)) {
         navItems.push({
             items: [{ title: "Settings", href: "/staff/settings", iconName: "Settings" }]
         });

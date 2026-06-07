@@ -28,7 +28,7 @@ import { type CustomerType, type SewerageConnection, type PaymentStatus, type Bi
 import { calculateBillAction, closeBillingCycleAction } from "@/lib/actions";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
-import { AddReadingDialog } from "@/components/billing/add-reading-dialog";
+import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
@@ -687,11 +687,35 @@ export default function StaffBulkMeterDetailsPage() {
     if (!bulkMeter) return false;
 
     if (bill) {
-      setBillForPrintView(bill);
+      // Apply reconstructed historical financials so the print shows the bill's
+      // own data (saved at billing time) — not the current live meter state.
+      const recon = reconstructedHistoryMap.get(bill.id);
+      if (recon) {
+        setBillForPrintView({
+          ...bill,
+          OUTSTANDINGAMT: recon.outstanding,
+          PENALTYAMT: recon.penalty,
+          THISMONTHBILLAMT: recon.currentMonthly,
+          TOTALBILLAMOUNT: recon.totalPayable
+        });
+      } else {
+        setBillForPrintView(bill);
+      }
     } else {
       const recentBill = billingHistory.length > 0 ? billingHistory[0] : null;
       if (recentBill) {
-        setBillForPrintView(recentBill);
+        const recon = reconstructedHistoryMap.get(recentBill.id);
+        if (recon) {
+          setBillForPrintView({
+            ...recentBill,
+            OUTSTANDINGAMT: recon.outstanding,
+            PENALTYAMT: recon.penalty,
+            THISMONTHBILLAMT: recon.currentMonthly,
+            TOTALBILLAMOUNT: recon.totalPayable
+          });
+        } else {
+          setBillForPrintView(recentBill);
+        }
       } else {
         toast({
           title: "Generating Live Payslip",
@@ -886,7 +910,7 @@ export default function StaffBulkMeterDetailsPage() {
               <div className="print-header">
                 <div className="print-header-top">
                   <span>Invoice generated on: {currentDateTime}</span>
-                  <span className="font-bold">INVOICE #{bulkMeter.customerKeyNumber}-{billCardDetails.month}</span>
+                  <span className="font-bold">INVOICE #{bulkMeter.customerKeyNumber}-{billForPrintView?.monthYear || billCardDetails.month}</span>
                 </div>
                 <div className="print-header-main flex flex-col items-center px-2 text-center">
                   <h1 className="uppercase tracking-tighter">ADDIS ABABA WATER AND SEWERAGE AUTHORITY</h1>
@@ -915,13 +939,13 @@ export default function StaffBulkMeterDetailsPage() {
                   <div className="print-banner">Reading & Consumption</div>
                   <table className="print-table">
                     <tbody>
-                      <tr><td>Meter Category</td><td>{bulkMeter.chargeGroup}</td></tr>
-                      <tr><td>Sewerage Connection</td><td>{bulkMeter.sewerageConnection}</td></tr>
-                      <tr><td>Assigned Customers</td><td>{associatedCustomers.length}</td></tr>
-                      <tr><td>Reading Range</td><td>{billCardDetails.prevReading.toFixed(2)} - {billCardDetails.currReading.toFixed(2)} m³</td></tr>
-                      <tr><td>Main Meter Usage</td><td>{billCardDetails.usage.toFixed(2)} m³</td></tr>
-                      <tr><td>Sub-Meter Total Usage</td><td>{totalIndividualUsage.toFixed(2)} m³</td></tr>
-                      <tr className="font-bold"><td>Billable Difference</td><td>{billCardDetails.differenceUsage.toFixed(2)} m³</td></tr>
+                      <tr><td>Meter Category</td><td>{billForPrintView?.snapshot_data?.chargeGroup || bulkMeter.chargeGroup}</td></tr>
+                      <tr><td>Sewerage Connection</td><td>{billForPrintView?.snapshot_data?.sewerageConnection || bulkMeter.sewerageConnection}</td></tr>
+                      <tr><td>Assigned Customers</td><td>{billForPrintView?.snapshot_data?.individualCustomerCount ?? associatedCustomers.length}</td></tr>
+                      <tr><td>Reading Range</td><td>{(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} - {(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
+                      <tr><td>Main Meter Usage</td><td>{(billForPrintView?.CONS ?? billCardDetails.usage).toFixed(2)} m³</td></tr>
+                      <tr><td>Sub-Meter Total Usage</td><td>{(billForPrintView?.snapshot_data?.totalIndividualUsage ?? (billForPrintView ? (billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0) : totalIndividualUsage)).toFixed(2)} m³</td></tr>
+                      <tr className="font-bold"><td>Billable Difference</td><td>{(billForPrintView?.differenceUsage ?? billCardDetails.differenceUsage).toFixed(2)} m³</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -932,13 +956,13 @@ export default function StaffBulkMeterDetailsPage() {
                     <tbody>
                       <tr>
                         <td>Base Water Charge (Standard Rate)</td>
-                        <td>ETB {billCardDetails.baseWaterCharge.toFixed(2)}</td>
+                        <td>ETB {(billForPrintView?.baseWaterCharge ?? billCardDetails.baseWaterCharge).toFixed(2)}</td>
                       </tr>
-                      <tr><td>Maintenance Service Fee</td><td>ETB {billCardDetails.maintenanceFee.toFixed(2)}</td></tr>
-                      <tr><td>Sanitation Service Fee</td><td>ETB {billCardDetails.sanitationFee.toFixed(2)}</td></tr>
-                      <tr><td>Meter Rental Fee</td><td>ETB {billCardDetails.meterRent.toFixed(2)}</td></tr>
-                      <tr><td>Sewerage Disposal Fee</td><td>ETB {billCardDetails.sewerageCharge.toFixed(2)}</td></tr>
-                      <tr><td>Value Added Tax (15%)</td><td>ETB {billCardDetails.vatAmount.toFixed(2)}</td></tr>
+                      <tr><td>Maintenance Service Fee</td><td>ETB {(billForPrintView?.maintenanceFee ?? billCardDetails.maintenanceFee).toFixed(2)}</td></tr>
+                      <tr><td>Sanitation Service Fee</td><td>ETB {(billForPrintView?.sanitationFee ?? billCardDetails.sanitationFee).toFixed(2)}</td></tr>
+                      <tr><td>Meter Rental Fee</td><td>ETB {(billForPrintView?.meterRent ?? billCardDetails.meterRent).toFixed(2)}</td></tr>
+                      <tr><td>Sewerage Disposal Fee</td><td>ETB {(billForPrintView?.sewerageCharge ?? billCardDetails.sewerageCharge).toFixed(2)}</td></tr>
+                      <tr><td>Value Added Tax (15%)</td><td>ETB {(billForPrintView?.vatAmount ?? billCardDetails.vatAmount).toFixed(2)}</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -947,12 +971,12 @@ export default function StaffBulkMeterDetailsPage() {
                   <div className="print-banner">Payment Summary</div>
                   <table className="print-table">
                     <tbody>
-                      <tr><td>Current Period Bill</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
-                      <tr><td>Accrued Penalty</td><td>ETB {billCardDetails.penaltyAmt.toFixed(2)}</td></tr>
-                      <tr><td>Outstanding Balance</td><td>ETB {billCardDetails.outstandingBill.toFixed(2)}</td></tr>
+                      <tr><td>Current Period Bill</td><td>ETB {(billForPrintView ? Number(billForPrintView.THISMONTHBILLAMT ?? billForPrintView.TOTALBILLAMOUNT ?? 0) : billCardDetails.totalDifferenceBill).toFixed(2)}</td></tr>
+                      <tr><td>Accrued Penalty</td><td>ETB {(billForPrintView ? Number(billForPrintView.PENALTYAMT || 0) : billCardDetails.penaltyAmt).toFixed(2)}</td></tr>
+                      <tr><td>Outstanding Balance</td><td>ETB {(billForPrintView ? Number(billForPrintView.OUTSTANDINGAMT || 0) : billCardDetails.outstandingBill).toFixed(2)}</td></tr>
                       <tr className="print-table-total">
                         <td className="uppercase tracking-wider">Total Amount Payable</td>
-                        <td>ETB {billCardDetails.totalPayable.toFixed(2)}</td>
+                        <td>ETB {(billForPrintView ? Number(billForPrintView.TOTALBILLAMOUNT || 0) : billCardDetails.totalPayable).toFixed(2)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -961,10 +985,10 @@ export default function StaffBulkMeterDetailsPage() {
                 <div className="flex justify-between items-center mt-12 bg-slate-50 p-6 rounded-lg border border-slate-100">
                   <div className="space-y-2">
                     <div className="text-xs text-slate-500 font-bold uppercase tracking-widest leading-none">Billing Cycle</div>
-                    <div className="text-lg font-bold text-slate-900">{billCardDetails.month}</div>
+                    <div className="text-lg font-bold text-slate-900">{billForPrintView?.monthYear || billCardDetails.month}</div>
                   </div>
                   <div className="print-status-box">
-                    {billCardDetails.paymentStatus}
+                    {billForPrintView?.paymentStatus || billCardDetails.paymentStatus}
                   </div>
                 </div>
 

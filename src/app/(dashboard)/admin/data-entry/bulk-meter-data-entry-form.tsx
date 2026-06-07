@@ -36,7 +36,8 @@ import {
   Package,
   GitBranch,
   Network,
-  Globe
+  Globe,
+  Layers
 } from "lucide-react";
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_";
@@ -88,6 +89,7 @@ export function BulkMeterDataEntryForm() {
       branchId: undefined,
       chargeGroup: "Non-domestic",
       sewerageConnection: "No",
+      routeKey: undefined,
       xCoordinate: undefined,
       yCoordinate: undefined,
       zCoordinate: undefined,
@@ -131,11 +133,6 @@ export function BulkMeterDataEntryForm() {
           
           {/* Section: Assignment */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <GitBranch className="h-3.5 w-3.5" /> Assignment
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
@@ -176,11 +173,6 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Meter Identity */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Package className="h-3.5 w-3.5" /> Bulk Meter Identity
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -257,11 +249,6 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Meter Specs */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Settings className="h-3.5 w-3.5" /> Meter Specifications
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -340,11 +327,6 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Usage */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Calendar className="h-3.5 w-3.5" /> Usage & Period
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -422,11 +404,6 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Location & Contact */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <MapPin className="h-3.5 w-3.5" /> Location & Contact
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -519,11 +496,6 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Infrastructure */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Crosshair className="h-3.5 w-3.5" /> Infrastructure & GPS
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -551,6 +523,49 @@ export function BulkMeterDataEntryForm() {
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="routeKey"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Route Key</FormLabel>
+                    <div className="premium-input-group">
+                      <GitBranch className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          placeholder="Enter route key"
+                          {...field}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ordinal"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Ordinal</FormLabel>
+                    <div className="premium-input-group">
+                      <Layers className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="Enter ordinal"
+                          {...field}
+                          value={field.value ?? ""}
+                          onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
                     </div>
                     <FormMessage />
                   </FormItem>

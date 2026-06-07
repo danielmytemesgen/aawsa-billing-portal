@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import { useParams } from 'next/navigation';
-import { BillManagementContent } from "@/components/billing/BillManagementContent";
-import { BillDetailsContent } from "@/components/billing/BillDetailsContent";
+import { BillManagementContent } from "@/features/billing/components/BillManagementContent";
+import { BillDetailsContent } from "@/features/billing/components/BillDetailsContent";
 
 export default function StaffBillManagementCatchAll() {
     const params = useParams();

@@ -192,11 +192,6 @@ export function IndividualCustomerDataEntryForm() {
           
           {/* Section: Assignment */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <GitBranch className="h-3.5 w-3.5" /> Assignment
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
@@ -274,11 +269,6 @@ export function IndividualCustomerDataEntryForm() {
 
           {/* Section: Basic Identity */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <User className="h-3.5 w-3.5" /> Customer Identity
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem>
@@ -338,11 +328,6 @@ export function IndividualCustomerDataEntryForm() {
 
           {/* Section: Meter Details */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Activity className="h-3.5 w-3.5" /> Meter Specifications
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField control={form.control} name="meterNumber" render={({ field }) => (
                 <FormItem>
@@ -416,11 +401,6 @@ export function IndividualCustomerDataEntryForm() {
 
           {/* Section: Readings */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Calendar className="h-3.5 w-3.5" /> Usage & Period
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField control={form.control} name="previousReading" render={({ field }) => (
                 <FormItem>
@@ -458,11 +438,6 @@ export function IndividualCustomerDataEntryForm() {
 
           {/* Section: Location */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <MapPin className="h-3.5 w-3.5" /> Location & Services
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField control={form.control} name="specificArea" render={({ field }) => (
                 <FormItem>
@@ -574,11 +549,6 @@ export function IndividualCustomerDataEntryForm() {
 
           {/* Section: Administrative */}
           <div>
-            <div className="form-section-divider">
-              <span className="flex items-center gap-2 px-4 py-1.5 bg-primary/5 text-primary rounded-full text-xs font-bold uppercase tracking-wider">
-                <Settings className="h-3.5 w-3.5" /> Administrative
-              </span>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField control={form.control} name="status" render={({ field }) => (
                 <FormItem>

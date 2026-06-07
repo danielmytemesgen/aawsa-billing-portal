@@ -16,7 +16,7 @@ import {
   CheckCircle2
 } from "lucide-react";
 import { getSystemStatsAction, archiveOldRecordsAction } from "@/lib/actions";
-import { DiscrepancyAudit } from "@/components/maintenance/discrepancy-audit";
+import { DiscrepancyAudit } from "@/features/maintenance/components/discrepancy-audit";
 
 import { useToast } from "@/hooks/use-toast";
 

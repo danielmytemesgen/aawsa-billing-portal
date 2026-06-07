@@ -37,7 +37,7 @@ import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import { NotificationBell } from './notification-bell';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { SupportChatbot } from './support-chatbot';
-import { PwaRegistry } from '@/components/pwa-registry';
+import { PwaRegistry } from '@/components/layout/pwa-registry';
 import { SyncHub } from './sync-hub';
 
 import { useNetworkStatus } from '@/hooks/use-network-status';

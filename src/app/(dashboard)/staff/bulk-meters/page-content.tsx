@@ -14,7 +14,7 @@ import { BulkMeterTable } from "./bulk-meter-table";
 import { BatchInvoiceDialog } from "@/app/(dashboard)/admin/bulk-meters/batch-invoice-dialog";
 import dynamic from 'next/dynamic';
 
-const BulkMeterMap = dynamic(() => import('@/components/maps/BulkMeterMap').then(mod => mod.BulkMeterMap), {
+const BulkMeterMap = dynamic(() => import('@/features/maps/components/BulkMeterMap').then(mod => mod.BulkMeterMap), {
   ssr: false,
   loading: () => <p>Loading map...</p>
 });

@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import Providers from './providers';
-import { PwaRegistry } from '@/components/pwa-registry';
+import { PwaRegistry } from '@/components/layout/pwa-registry';
 
 // Removed geistSans and geistMono constant declarations
 

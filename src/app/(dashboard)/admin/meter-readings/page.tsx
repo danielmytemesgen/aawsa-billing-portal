@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
 import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, CheckCircle, ListPlus, Database } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/components/billing/add-meter-reading-form";
-import MeterReadingsTable from "@/components/billing/meter-readings-table";
+import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
+import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -45,14 +45,14 @@ import type { DisplayReading } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import type { Route } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { format } from "date-fns";
-import { CsvReadingUploadDialog } from "@/components/export/csv-reading-upload-dialog";
+import { CsvReadingUploadDialog } from "@/features/export/components/csv-reading-upload-dialog";
 import { ReaderReport } from "@/app/(dashboard)/staff/dashboard/reader-report";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { DatReadingExportDialog } from "@/components/export/dat-reading-export-dialog";
+import { DatReadingExportDialog } from "@/features/export/components/dat-reading-export-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
-import { ReadingPeriodToggle } from "@/components/admin/reading-period-toggle";
+import { ReadingPeriodToggle } from "@/features/admin/components/reading-period-toggle";
 
 interface User {
   id?: string;

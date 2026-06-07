@@ -33,6 +33,7 @@ export const staffMembers = pgTable('staff_members', {
   password: text('password'),
   phone: text('phone'),
   branch: text('branch'),
+  branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
   role: text('role').notNull(),
   roleId: smallint('role_id').references(() => roles.id, { onDelete: 'set null' }),
   status: text('status').default('Active'),
@@ -61,6 +62,8 @@ export const routes = pgTable('routes', {
   status: text('status').default('Active'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by'),
 }, (t) => ({
   readerIdx: index('idx_routes_reader').on(t.readerId),
 }));
@@ -93,9 +96,19 @@ export const bulkMeters = pgTable('bulk_meters', {
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).defaultNow(),
+  outStandingbill: numeric('outStandingbill').default('0.00'),
+  bulkUsage: numeric('bulk_usage').default('0.000'),
+  differenceBill: numeric('difference_bill').default('0.00'),
+  differenceUsage: numeric('difference_usage').default('0.000'),
+  totalBulkBill: numeric('total_bulk_bill').default('0.00'),
+  phoneNumber: text('phoneNumber'),
+  roundKey: text('ROUND_KEY'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by'),
 }, (t) => ({
   routeKeyIdx: index('idx_bulk_route_key').on(t.routeKey),
 }));
+
 
 export const individualCustomers = pgTable('individual_customers', {
   customerKeyNumber: text('customerKeyNumber').primaryKey(),
@@ -201,19 +214,25 @@ export const payments = pgTable('payments', {
 export const tariffs = pgTable('tariffs', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
   customerType: text('customer_type').notNull(),
-  year: integer('year').notNull(),
+  effectiveDate: date('effective_date').notNull(),
   tiers: jsonb('tiers').notNull(),
+  sewerageTiers: jsonb('sewerage_tiers'),
   maintenancePercentage: numeric('maintenance_percentage').default('0.01'),
   sanitationPercentage: numeric('sanitation_percentage'),
-  sewerageRatePerM3: numeric('sewerage_rate_per_m3'),
   vatRate: numeric('vat_rate').default('0.15'),
-  fixedTierIndex: integer('fixed_tier_index'), // Which tier to use for rental types (0-based), null = default (3 = 4th tier)
-  useRuleOfThree: boolean('use_rule_of_three').default(true), // If true, consumption < 3 is treated as 3
+  domesticVatThresholdM3: numeric('domestic_vat_threshold_m3'),
+  meterRentPrices: jsonb('meter_rent_prices'),
+  fixedTierIndex: integer('fixed_tier_index'),
+  useRuleOfThree: boolean('use_rule_of_three').default(true),
   penaltyMonthThreshold: integer('penalty_month_threshold').default(3),
   bankLendingRate: numeric('bank_lending_rate').default('0.15'),
   penaltyTieredRates: jsonb('penalty_tiered_rates').default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by'),
 }, (t) => ({
-  unq: sql`UNIQUE(${t.customerType}, ${t.year})`, // Drizzle workaround for unique constraints in earlier versions or specific needs
+  unq: sql`UNIQUE(${t.customerType}, ${t.effectiveDate})`,
 }));
 
 // 10. System Settings

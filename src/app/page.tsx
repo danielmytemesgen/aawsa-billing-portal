@@ -1,8 +1,8 @@
 
 "use client";
 
-import { AuthForm } from "@/components/auth/auth-form";
-import { AuthAds } from "@/components/auth/auth-ads";
+import { AuthForm } from "@/features/auth/components/auth-form";
+import { AuthAds } from "@/features/auth/components/auth-ads";
 
 export default function HomePage() {
   return (

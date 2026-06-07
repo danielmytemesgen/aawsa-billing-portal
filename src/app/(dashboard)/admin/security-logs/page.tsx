@@ -28,7 +28,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Eye, LogOut, Download, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AuditLogDetails } from '@/components/audit-log-details';
+import { AuditLogDetails } from '@/features/admin/components/audit-log-details';
 
 interface SecurityLogsResponse {
     logs: SecurityLog[];

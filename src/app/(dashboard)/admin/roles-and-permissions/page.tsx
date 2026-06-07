@@ -24,8 +24,8 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreateRoleDialog } from "@/components/create-role-dialog";
-import { CreateEditPermissionDialog } from "@/components/create-edit-permission-dialog";
+import { CreateRoleDialog } from "@/features/admin/components/create-role-dialog";
+import { CreateEditPermissionDialog } from "@/features/admin/components/create-edit-permission-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   AlertDialog,

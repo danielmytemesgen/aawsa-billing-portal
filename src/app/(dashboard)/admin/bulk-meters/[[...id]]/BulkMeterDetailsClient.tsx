@@ -28,7 +28,7 @@ import { type CustomerType, type SewerageConnection, type PaymentStatus, type Bi
 import { calculateBillAction } from "@/lib/actions";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "../bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "../../individual-customers/individual-customer-form-dialog";
-import { AddReadingDialog } from "@/components/billing/add-reading-dialog";
+import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
@@ -878,11 +878,11 @@ export default function BulkMeterDetailsPage() {
                     <tbody>
                       <tr><td>Bulk Meter Category:</td><td>{snapshot_data?.chargeGroup || currentBulkMeter.chargeGroup}</td></tr>
                       <tr><td>Sewerage Connection:</td><td>{snapshot_data?.sewerageConnection || currentBulkMeter.sewerageConnection}</td></tr>
-                      <tr><td>Number of Assigned Individual Customers:</td><td>{snapshot_data?.individualCustomerCount || associatedCustomers.length}</td></tr>
-                      <tr><td>Previous and current reading:</td><td>{billCardDetails.prevReading.toFixed(2)} / {billCardDetails.currReading.toFixed(2)} m³</td></tr>
-                      <tr><td>Bulk usage:</td><td>{billCardDetails.usage.toFixed(2)} m³</td></tr>
-                      <tr><td>Total Individual Usage:</td><td>{(snapshot_data?.totalIndividualUsage ?? totalIndividualUsage).toFixed(2)} m³</td></tr>
-                      <tr><td>Difference usage:</td><td>{billCardDetails.differenceUsage.toFixed(2)} m³</td></tr>
+                      <tr><td>Number of Assigned Individual Customers:</td><td>{snapshot_data?.individualCustomerCount ?? associatedCustomers.length}</td></tr>
+                      <tr><td>Previous and current reading:</td><td>{(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} / {(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
+                      <tr><td>Bulk usage:</td><td>{(billForPrintView?.CONS ?? billCardDetails.usage).toFixed(2)} m³</td></tr>
+                      <tr><td>Total Individual Usage:</td><td>{(snapshot_data?.totalIndividualUsage ?? (billForPrintView ? (billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0) : totalIndividualUsage)).toFixed(2)} m³</td></tr>
+                      <tr><td>Difference usage:</td><td>{(billForPrintView?.differenceUsage ?? billCardDetails.differenceUsage).toFixed(2)} m³</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -893,13 +893,13 @@ export default function BulkMeterDetailsPage() {
                     <tbody>
                       <tr>
                         <td>Base Water Charge (Rate/m³):</td>
-                        <td>ETB {billCardDetails.baseWaterCharge.toFixed(2)}</td>
+                        <td>ETB {(billForPrintView?.baseWaterCharge ?? billCardDetails.baseWaterCharge).toFixed(2)}</td>
                       </tr>
-                      <tr><td>Maintenance Fee:</td><td>ETB {billCardDetails.maintenanceFee.toFixed(2)}</td></tr>
-                      <tr><td>Sanitation Fee:</td><td>ETB {billCardDetails.sanitationFee.toFixed(2)}</td></tr>
-                      <tr><td>Meter Rent:</td><td>ETB {billCardDetails.meterRent.toFixed(2)}</td></tr>
-                      <tr><td>Sewerage Fee:</td><td>ETB {billCardDetails.sewerageCharge.toFixed(2)}</td></tr>
-                      <tr><td>VAT (15%):</td><td>ETB {billCardDetails.vatAmount.toFixed(2)}</td></tr>
+                      <tr><td>Maintenance Fee:</td><td>ETB {(billForPrintView?.maintenanceFee ?? billCardDetails.maintenanceFee).toFixed(2)}</td></tr>
+                      <tr><td>Sanitation Fee:</td><td>ETB {(billForPrintView?.sanitationFee ?? billCardDetails.sanitationFee).toFixed(2)}</td></tr>
+                      <tr><td>Meter Rent:</td><td>ETB {(billForPrintView?.meterRent ?? billCardDetails.meterRent).toFixed(2)}</td></tr>
+                      <tr><td>Sewerage Fee:</td><td>ETB {(billForPrintView?.sewerageCharge ?? billCardDetails.sewerageCharge).toFixed(2)}</td></tr>
+                      <tr><td>VAT (15%):</td><td>ETB {(billForPrintView?.vatAmount ?? billCardDetails.vatAmount).toFixed(2)}</td></tr>
                       {Boolean(differenceBillBreakdown?.additionalFeesCharge && differenceBillBreakdown.additionalFeesCharge > 0) ? (
                         <>
                           <tr className="border-t-2 border-dashed border-black">
@@ -921,12 +921,12 @@ export default function BulkMeterDetailsPage() {
                   <div className="print-banner">Total Amount Payable:</div>
                   <table className="print-table">
                     <tbody>
-                      <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {billCardDetails.totalDifferenceBill.toFixed(2)}</td></tr>
-                      <tr><td>Penalty (ETB):</td><td>ETB {billCardDetails.penaltyAmt.toFixed(2)}</td></tr>
-                      <tr><td>Outstanding (ETB):</td><td>ETB {billCardDetails.outstandingBill.toFixed(2)}</td></tr>
+                      <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {(billForPrintView ? Number(billForPrintView.THISMONTHBILLAMT ?? billForPrintView.TOTALBILLAMOUNT ?? 0) : billCardDetails.totalDifferenceBill).toFixed(2)}</td></tr>
+                      <tr><td>Penalty (ETB):</td><td>ETB {(billForPrintView ? Number(billForPrintView.PENALTYAMT || 0) : billCardDetails.penaltyAmt).toFixed(2)}</td></tr>
+                      <tr><td>Outstanding (ETB):</td><td>ETB {(billForPrintView ? Number(billForPrintView.OUTSTANDINGAMT || 0) : billCardDetails.outstandingBill).toFixed(2)}</td></tr>
                       <tr className="print-table-total" style={{ fontSize: '10pt' }}>
                         <td>Total Amount Payable:</td>
-                        <td>ETB {billCardDetails.totalPayable.toFixed(2)}</td>
+                        <td>ETB {(billForPrintView ? Number(billForPrintView.TOTALBILLAMOUNT || 0) : billCardDetails.totalPayable).toFixed(2)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -934,11 +934,11 @@ export default function BulkMeterDetailsPage() {
 
                 <div className="flex justify-between items-end mt-1 px-1">
                   <div className="space-y-0 text-[9px] font-medium">
-                    <div>Paid/Unpaid: {billCardDetails.paymentStatus}</div>
-                    <div>Month: {billCardDetails.month}</div>
+                    <div>Paid/Unpaid: {billForPrintView?.paymentStatus || billCardDetails.paymentStatus}</div>
+                    <div>Month: {billForPrintView?.monthYear || billCardDetails.month}</div>
                   </div>
                   <div className="print-status-box scale-[0.6] origin-bottom-right">
-                    {billCardDetails.paymentStatus}
+                    {billForPrintView?.paymentStatus || billCardDetails.paymentStatus}
                   </div>
                 </div>
 

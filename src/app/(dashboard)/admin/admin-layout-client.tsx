@@ -6,6 +6,7 @@ import { SidebarNav, type NavItemGroup, type NavItem } from "@/components/layout
 import { AppShell } from "@/components/layout/app-shell";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { getLatestPermissionsAction } from "@/lib/actions";
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 
 interface UserProfile {
@@ -29,53 +30,56 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     const navItems: NavItemGroup[] = [];
 
     let dashboardHref = "/admin/dashboard"; // Default
-    if (hasPermission('dashboard_view_all') && !hasPermission('staff_view')) dashboardHref = '/admin/head-office-dashboard'; // Simple heuristic for HO
-    if (hasPermission('staff_view') && !hasPermission('bill:manage_all')) dashboardHref = '/admin/staff-management-dashboard'; // Simple heuristic for Staff Mgmt
-    // Note: Ideally, these should be explicit permissions or based on the role stored in session, 
-    // but here we align with the goal of moving away from hard-coded role strings where possible.
-    // Given the role is still in the user object, we can use it for specific page routing if needed,
-    // but the visibility should be perm-based.
+    if (hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) && !hasPermission(PERMISSIONS.STAFF_VIEW)) dashboardHref = '/admin/head-office-dashboard';
+    if (hasPermission(PERMISSIONS.STAFF_VIEW) && !hasPermission(PERMISSIONS.BILL_VIEW_ALL)) dashboardHref = '/admin/staff-management-dashboard';
     if (userRoleLower === 'head office management') dashboardHref = '/admin/head-office-dashboard';
     if (userRoleLower === 'staff management') dashboardHref = '/admin/staff-management-dashboard';
 
-    if (hasPermission('dashboard_view_all') || hasPermission('dashboard_view_branch')) {
+    if (hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) || hasPermission(PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
         navItems.push({
             items: [{ title: "Dashboard", href: dashboardHref, iconName: "LayoutDashboard" }]
         });
     }
 
     const managementItems: NavItem[] = [];
-    if (hasPermission('branches_view')) managementItems.push({ title: "Branch Management", href: "/admin/branches", iconName: "Building" });
-    if (hasPermission('staff_view')) managementItems.push({ title: "Staff Management", href: "/admin/staff-management", iconName: "UserCog" });
-    if (hasPermission('customers_approve')) managementItems.push({ title: "Approvals", href: "/admin/approvals", iconName: "UserCheck" });
-    if (hasPermission('permissions_view')) managementItems.push({ title: "Roles & Permissions", href: "/admin/roles-and-permissions", iconName: "ShieldCheck" });
-    if (hasPermission('notifications_view')) managementItems.push({ title: "Notifications", href: "/admin/notifications", iconName: "Bell" });
-    if (hasPermission('tariffs_view')) managementItems.push({ title: "Tariff Management", href: "/admin/tariffs", iconName: "LibraryBig" });
-    if (hasPermission('settings_manage') || hasPermission('meter_readings_view_all') || hasPermission('staff_view')) {
+    if (hasPermission(PERMISSIONS.BRANCHES_VIEW)) managementItems.push({ title: "Branch Management", href: "/admin/branches", iconName: "Building" });
+    if (hasPermission(PERMISSIONS.STAFF_VIEW)) managementItems.push({ title: "Staff Management", href: "/admin/staff-management", iconName: "UserCog" });
+    if (hasPermission(PERMISSIONS.CUSTOMERS_APPROVE)) managementItems.push({ title: "Approvals", href: "/admin/approvals", iconName: "UserCheck" });
+    if (hasPermission(PERMISSIONS.ROLES_VIEW)) managementItems.push({ title: "Roles & Permissions", href: "/admin/roles-and-permissions", iconName: "ShieldCheck" });
+    if (hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)) managementItems.push({ title: "Notifications", href: "/admin/notifications", iconName: "Bell" });
+    if (hasPermission(PERMISSIONS.TARIFFS_VIEW)) managementItems.push({ title: "Tariff Management", href: "/admin/tariffs", iconName: "LibraryBig" });
+    if (hasPermission(PERMISSIONS.ROUTES_VIEW_ALL) || hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED) || hasPermission(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
         managementItems.push({ title: "Route Management", href: "/admin/routes", iconName: "Map" });
     }
-    if (hasPermission('knowledge_base_manage')) managementItems.push({ title: "Knowledge Base", href: "/admin/knowledge-base", iconName: "BookText" });
-    if (hasPermission('bill:view_drafts') || hasPermission('bill:approve') || hasPermission('bill:create') || hasPermission('bill:manage_all')) {
+    if (hasPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE)) managementItems.push({ title: "Knowledge Base", href: "/admin/knowledge-base", iconName: "BookText" });
+    if (hasPermission(PERMISSIONS.BILL_VIEW_DRAFTS) || hasPermission(PERMISSIONS.BILL_APPROVE) || hasPermission(PERMISSIONS.BILL_CREATE) || hasPermission(PERMISSIONS.BILL_VIEW_ALL)) {
         managementItems.push({ title: "Bill Management", href: "/admin/bill-management", iconName: "FileText" });
     }
 
-    if (managementItems.length > 0) {
+    const canViewFaultCodes = hasPermission(PERMISSIONS.SETTINGS_MANAGE)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL)
+        || hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL);
+
+    if (canViewFaultCodes) {
         managementItems.push({ title: "Fault Codes", href: "/admin/fault-codes", iconName: "AlertOctagon" });
+    }
+
+    if (managementItems.length > 0) {
         navItems.push({ title: "Management", items: managementItems });
     }
 
     const customerMeteringItems: NavItem[] = [];
-    if (hasPermission('bulk_meters_view_all') || hasPermission('bulk_meters_view_branch')) customerMeteringItems.push({ title: "Bulk Meters", href: "/admin/bulk-meters", iconName: "Gauge" });
-    if (hasPermission('customers_view_all') || hasPermission('customers_view_branch')) customerMeteringItems.push({ title: "Individual Customers", href: "/admin/individual-customers", iconName: "Users" });
+    if (hasPermission(PERMISSIONS.BULK_METERS_VIEW_ALL) || hasPermission(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) customerMeteringItems.push({ title: "Bulk Meters", href: "/admin/bulk-meters", iconName: "Gauge" });
+    if (hasPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL) || hasPermission(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) customerMeteringItems.push({ title: "Individual Customers", href: "/admin/individual-customers", iconName: "Users" });
 
     if (customerMeteringItems.length > 0) {
         navItems.push({ title: "Customer & Metering", items: customerMeteringItems });
     }
 
     const dataReportsItems: NavItem[] = [];
-    if (hasPermission('data_entry_access')) dataReportsItems.push({ title: "Data Entry", href: "/admin/data-entry", iconName: "FileText" });
-    if (hasPermission('meter_readings_view_all') || hasPermission('meter_readings_view_branch')) dataReportsItems.push({ title: "Meter Readings", href: "/admin/meter-readings", iconName: "ClipboardList" });
-    if (hasPermission('reports_generate_all') || hasPermission('reports_generate_branch')) {
+    if (hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS)) dataReportsItems.push({ title: "Data Entry", href: "/admin/data-entry", iconName: "FileText" });
+    if (hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) || hasPermission(PERMISSIONS.METER_READINGS_VIEW_BRANCH)) dataReportsItems.push({ title: "Meter Readings", href: "/admin/meter-readings", iconName: "ClipboardList" });
+    if (hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
         dataReportsItems.push({ title: "Reports", href: "/admin/reports", iconName: "BarChart2" });
         dataReportsItems.push({ title: "List Of Paid Bills", href: "/admin/reports/paid-bills", iconName: "CheckCircle2" });
         dataReportsItems.push({ title: "List Of Sent Bills", href: "/admin/reports/sent-bills", iconName: "Send" });
@@ -87,9 +91,9 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     }
 
     const settingsItems: NavItem[] = [];
-    if (hasPermission('settings_view')) settingsItems.push({ title: "Settings", href: "/admin/settings", iconName: "Settings" });
-    if (hasPermission('settings_view') || hasPermission('promotions_manage')) settingsItems.push({ title: "Promotions", href: "/admin/settings/promotions", iconName: "Megaphone" });
-    if (hasPermission('settings_manage')) {
+    if (hasPermission(PERMISSIONS.SETTINGS_VIEW)) settingsItems.push({ title: "Settings", href: "/admin/settings", iconName: "Settings" });
+    if (hasPermission(PERMISSIONS.SETTINGS_VIEW) || hasPermission('promotions_manage')) settingsItems.push({ title: "Promotions", href: "/admin/settings/promotions", iconName: "Megaphone" });
+    if (hasPermission(PERMISSIONS.SETTINGS_MANAGE)) {
         settingsItems.push({ title: "Security Logs", href: "/admin/security-logs", iconName: "Shield" });
         settingsItems.push({ title: "Recycle Bin", href: "/admin/recycle-bin", iconName: "Trash2" });
         settingsItems.push({ title: "System Maintenance", href: "/admin/maintenance", iconName: "Activity" });

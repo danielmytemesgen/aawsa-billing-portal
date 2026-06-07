@@ -18,8 +18,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Save, Loader2, PlusCircle, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreateRoleDialog } from "@/components/create-role-dialog";
-import { CreateEditPermissionDialog } from "@/components/create-edit-permission-dialog";
+import { CreateRoleDialog } from "@/features/admin/components/create-role-dialog";
+import { CreateEditPermissionDialog } from "@/features/admin/components/create-edit-permission-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
     AlertDialog,
