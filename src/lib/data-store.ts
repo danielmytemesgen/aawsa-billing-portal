@@ -1749,7 +1749,7 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
       const cached = await offlineDb.getCachedMeters('individual');
       if (cached && cached.length > 0) {
-        const cachedCustomers = cached.map(c => c.data);
+        const cachedCustomers = cached.map((c: any) => c.data);
 
         // Apply reader isolation when offline, if user is restricted to assigned routes
         try {
@@ -1787,7 +1787,7 @@ export const initializeBulkMeters = async (force: boolean = false, options?: { l
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
       const cached = await offlineDb.getCachedMeters('bulk');
       if (cached && cached.length > 0) {
-        const cachedMeters = cached.map(c => c.data);
+        const cachedMeters = cached.map((c: any) => c.data);
 
         // Reader isolation for offline bulk meters
         try {
