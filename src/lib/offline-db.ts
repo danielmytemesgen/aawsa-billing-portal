@@ -79,7 +79,41 @@ export class OfflineDB extends Dexie {
   }
 }
 
-export const db = new OfflineDB();
+class MockTable {
+  async put() {}
+  async get() { return null; }
+  async delete() {}
+  async toArray() { return []; }
+  async bulkPut() {}
+  async add() {}
+  async update() {}
+  where() {
+    return {
+      equals: () => ({
+        toArray: async () => []
+      })
+    };
+  }
+  orderBy() {
+    return {
+      toArray: async () => []
+    };
+  }
+}
+
+class MockDB {
+  readings = new MockTable();
+  meters = new MockTable();
+  uploads = new MockTable();
+  device_tokens = new MockTable();
+  session = new MockTable();
+  routes = new MockTable();
+  table() {
+    return new MockTable();
+  }
+}
+
+export const db = typeof window !== 'undefined' ? new OfflineDB() : (new MockDB() as any);
 
 // --- Route cache helpers ---
 export async function cacheRoutes(routesData: any[]) {
