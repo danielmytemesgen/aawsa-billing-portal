@@ -34,11 +34,14 @@ export async function updateSession(request: NextRequest) {
         // Refresh the session so it doesn't expire
         const parsed = await decrypt(session);
         parsed.expires = new Date(Date.now() + 2 * 60 * 60 * 1000);
+        const isSecure = process.env.NODE_ENV === 'production' && 
+          (process.env.NEXTAUTH_URL ? process.env.NEXTAUTH_URL.startsWith('https://') : false);
         const res = NextResponse.next();
         res.cookies.set({
             name: "session",
             value: await encrypt(parsed),
             httpOnly: true,
+            secure: isSecure,
             expires: parsed.expires,
         });
         return res;

@@ -47,8 +47,11 @@ export async function loginAction(formData: FormData) {
 
     const session = await encrypt(sessionUser);
 
+    const isSecure = process.env.NODE_ENV === 'production' && 
+      (process.env.NEXTAUTH_URL ? process.env.NEXTAUTH_URL.startsWith('https://') : false);
+
     // Save the session in a cookie
-    (await cookies()).set('session', session, { expires, httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+    (await cookies()).set('session', session, { expires, httpOnly: true, secure: isSecure });
     // Cache the encrypted session token for offline use (dynamic import: IndexedDB is browser-only)
     try {
       const { saveSessionToken } = await import('./offline-db');
