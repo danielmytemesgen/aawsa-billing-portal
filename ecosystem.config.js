@@ -11,8 +11,7 @@ module.exports = {
   apps: [
     {
       name: 'aawsa-billing-web',
-      script: 'node_modules/next/dist/bin/next',
-      args: 'start',
+      script: path.join(__dirname, '.next/standalone/server.js'),
       instances: 'max', // Utilize all CPU cores in cluster mode
       exec_mode: 'cluster',
       env: {
