@@ -5,6 +5,7 @@ const nextConfig = {
   output: process.env.NEXT_BUILD_TARGET === 'export' ? 'export' : 'standalone',
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
+  allowedDevOrigins: ['10.10.0.0/16', 'localhost', '127.0.0.1'],
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'picsum.photos', pathname: '/**' },

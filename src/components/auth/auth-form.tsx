@@ -26,6 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { LogIn, Eye, EyeOff, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { sha256 } from "@noble/hashes/sha256";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
 import { saveDeviceTokenEncrypted } from '@/lib/offline-db';
@@ -69,14 +70,25 @@ export function AuthForm() {
     setIsLoading(true);
     setSyncState("authenticating");
 
+    const getSubtle = () => {
+      if (typeof window === 'undefined') return undefined;
+      const subtle = window.crypto?.subtle || (window.crypto as any)?.webkitSubtle;
+      return subtle && typeof subtle.digest === 'function' ? subtle : undefined;
+    };
+
     // Helper to hash password using SHA-256
     const hashPassword = async (pwd: string) => {
       const enc = new TextEncoder();
       const data = enc.encode(pwd);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      // Convert to hex string
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      const subtle = getSubtle();
+      if (subtle) {
+        const hashBuffer = await subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      const hashArray = sha256(data);
+      return Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
     };
 
     const attemptOfflineLogin = async () => {
