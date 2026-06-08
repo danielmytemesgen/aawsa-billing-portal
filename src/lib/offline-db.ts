@@ -156,28 +156,52 @@ export async function markUploadFailed(id: number, error: string) {
 /**
  * Save an encrypted device token. This generates an AES-GCM key (if needed),
  * encrypts the token and stores the exported key + ciphertext in `device_tokens` store.
+ * On HTTP (no crypto.subtle), silently skips encryption.
  */
 export async function saveDeviceTokenEncrypted(token: string, deviceId?: string) {
-  // create key
-  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-  const raw = await crypto.subtle.exportKey('raw', key);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const enc = new TextEncoder().encode(token);
-  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc);
+  // Skip encryption on HTTP (crypto.subtle unavailable)
+  if (!crypto.subtle) {
+    return await db.device_tokens.put({
+      id: deviceId || 'device',
+      exportedKeyBase64: '',
+      encryptedTokenBase64: btoa(token),
+      ivBase64: '',
+      timestamp: Date.now()
+    });
+  }
 
-  const exportedKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(raw)));
-  const encryptedTokenBase64 = btoa(String.fromCharCode(...new Uint8Array(cipher)));
-  const ivBase64 = btoa(String.fromCharCode(...iv));
+  try {
+    // create key
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const raw = await crypto.subtle.exportKey('raw', key);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const enc = new TextEncoder().encode(token);
+    const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc);
 
-  const entry: DeviceTokenEntry = {
-    id: deviceId || 'device',
-    exportedKeyBase64,
-    encryptedTokenBase64,
-    ivBase64,
-    timestamp: Date.now()
-  };
+    const exportedKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(raw)));
+    const encryptedTokenBase64 = btoa(String.fromCharCode(...new Uint8Array(cipher)));
+    const ivBase64 = btoa(String.fromCharCode(...iv));
 
-  return await db.device_tokens.put(entry);
+    const entry: DeviceTokenEntry = {
+      id: deviceId || 'device',
+      exportedKeyBase64,
+      encryptedTokenBase64,
+      ivBase64,
+      timestamp: Date.now()
+    };
+
+    return await db.device_tokens.put(entry);
+  } catch (e) {
+    console.warn('Device token encryption failed:', e);
+    // Fallback: store unencrypted (not ideal but better than crashing)
+    return await db.device_tokens.put({
+      id: deviceId || 'device',
+      exportedKeyBase64: '',
+      encryptedTokenBase64: btoa(token),
+      ivBase64: '',
+      timestamp: Date.now()
+    });
+  }
 }
 
 export async function saveSessionToken(token: string) {
@@ -196,6 +220,22 @@ export async function clearSessionToken() {
 export async function getDecryptedDeviceToken(): Promise<string | null> {
   const entry = await db.device_tokens.get('device');
   if (!entry) return null;
+
+  // If no encryption key (HTTP context), return base64-decoded token
+  if (!entry.exportedKeyBase64) {
+    try {
+      return atob(entry.encryptedTokenBase64);
+    } catch (e) {
+      console.error('Failed to decode unencrypted device token', e);
+      return null;
+    }
+  }
+
+  // Encrypted token — only decrypt if crypto.subtle is available
+  if (!crypto.subtle) {
+    console.warn('crypto.subtle unavailable; cannot decrypt device token');
+    return null;
+  }
 
   try {
     const raw = Uint8Array.from(atob(entry.exportedKeyBase64), c => c.charCodeAt(0));
