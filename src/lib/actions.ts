@@ -192,9 +192,9 @@ function getEffectiveBranchId(session: any, optionsBranchId?: string, permission
     return session.branchId;
   }
   
-  // 3. Otherwise (Head Office WITHOUT view_all permission), they should NOT see all data.
-  // Return a non-matching ID or undefined to ensure isolation if restricted.
-  return session.branchId || 'restricted_access';
+  // 3. Otherwise there is no branch restriction to apply.
+  // Callers that need isolation should rely on explicit permission checks.
+  return undefined;
 }
 
 

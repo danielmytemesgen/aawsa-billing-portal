@@ -1,11 +1,10 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { getStaffMemberForAuth } from './db-queries';
 import { encrypt } from './auth';
 import { redirect } from 'next/navigation';
 import { checkRateLimit, resetRateLimit } from './rate-limiter';
-import { isSecureRequest } from './request-security';
 
 export async function loginAction(formData: FormData) {
     const email = formData.get('email') as string;
@@ -48,7 +47,8 @@ export async function loginAction(formData: FormData) {
 
     const session = await encrypt(sessionUser);
 
-        const isSecure = isSecureRequest();
+    const isSecure = process.env.NODE_ENV === 'production' && 
+      (process.env.NEXTAUTH_URL ? process.env.NEXTAUTH_URL.startsWith('https://') : false);
 
     // Save the session in a cookie
     (await cookies()).set('session', session, { expires, httpOnly: true, secure: isSecure });

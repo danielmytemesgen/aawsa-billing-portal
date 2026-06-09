@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import CryptoJS from 'crypto-js';
 
 export interface OfflineReading {
   id?: number;
@@ -30,9 +31,9 @@ export interface UploadEntry {
 
 export interface DeviceTokenEntry {
   id: string; // use fixed id 'device'
-  exportedKeyBase64: string; // raw AES-GCM key exported as base64
+  exportedKeyBase64: string; // base64-encoded passphrase used for AES decryption
   encryptedTokenBase64: string; // ciphertext
-  ivBase64: string;
+  ivBase64: string; // retained for backward compatibility
   timestamp: number;
 }
 
@@ -152,47 +153,30 @@ export async function markUploadFailed(id: number, error: string) {
   return await db.uploads.update(id, { status: 'failed', errorMessage: error });
 }
 
-// --- Device token helpers (simple PoC encryption using Web Crypto) ---
+// --- Device token helpers (CryptoJS encryption - works on HTTP and HTTPS) ---
 /**
- * Save an encrypted device token. This generates an AES-GCM key (if needed),
- * encrypts the token and stores the exported key + ciphertext in `device_tokens` store.
- * On HTTP (no crypto.subtle), silently skips encryption.
+ * Save an encrypted device token using CryptoJS AES (pure JS, HTTP/HTTPS compatible).
+ * Generates a random password for each token, stores encrypted token with the password.
  */
 export async function saveDeviceTokenEncrypted(token: string, deviceId?: string) {
-  // Skip encryption on HTTP (crypto.subtle unavailable)
-  if (!crypto.subtle) {
-    return await db.device_tokens.put({
-      id: deviceId || 'device',
-      exportedKeyBase64: '',
-      encryptedTokenBase64: btoa(token),
-      ivBase64: '',
-      timestamp: Date.now()
-    });
-  }
-
   try {
-    // create key
-    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-    const raw = await crypto.subtle.exportKey('raw', key);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const enc = new TextEncoder().encode(token);
-    const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc);
-
-    const exportedKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(raw)));
-    const encryptedTokenBase64 = btoa(String.fromCharCode(...new Uint8Array(cipher)));
-    const ivBase64 = btoa(String.fromCharCode(...iv));
+    // Generate a random password using CryptoJS
+    const password = CryptoJS.lib.WordArray.random(32).toString();
+    
+    // Encrypt using CryptoJS AES (works on HTTP + HTTPS)
+    const encrypted = CryptoJS.AES.encrypt(token, password).toString();
 
     const entry: DeviceTokenEntry = {
       id: deviceId || 'device',
-      exportedKeyBase64,
-      encryptedTokenBase64,
-      ivBase64,
+      exportedKeyBase64: btoa(password),
+      encryptedTokenBase64: encrypted,
+      ivBase64: '', // not used with CryptoJS
       timestamp: Date.now()
     };
 
     return await db.device_tokens.put(entry);
   } catch (e) {
-    console.warn('Device token encryption failed:', e);
+    console.error('Device token encryption failed:', e);
     // Fallback: store unencrypted (not ideal but better than crashing)
     return await db.device_tokens.put({
       id: deviceId || 'device',
@@ -231,19 +215,18 @@ export async function getDecryptedDeviceToken(): Promise<string | null> {
     }
   }
 
-  // Encrypted token — only decrypt if crypto.subtle is available
-  if (!crypto.subtle) {
-    console.warn('crypto.subtle unavailable; cannot decrypt device token');
-    return null;
-  }
-
+  // Decrypt using CryptoJS (pure JS, HTTP/HTTPS compatible)
   try {
-    const raw = Uint8Array.from(atob(entry.exportedKeyBase64), c => c.charCodeAt(0));
-    const key = await crypto.subtle.importKey('raw', raw.buffer, 'AES-GCM', true, ['decrypt']);
-    const iv = Uint8Array.from(atob(entry.ivBase64), c => c.charCodeAt(0));
-    const cipher = Uint8Array.from(atob(entry.encryptedTokenBase64), c => c.charCodeAt(0));
-    const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher.buffer);
-    return new TextDecoder().decode(plainBuf as ArrayBuffer);
+    const password = atob(entry.exportedKeyBase64);
+    const decrypted = CryptoJS.AES.decrypt(entry.encryptedTokenBase64, password);
+    const token = decrypted.toString(CryptoJS.enc.Utf8);
+
+    if (!token) {
+      console.error('Device token decryption failed: authentication failed');
+      return null;
+    }
+
+    return token;
   } catch (e) {
     console.error('Device token decryption failed', e);
     return null;

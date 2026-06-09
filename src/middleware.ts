@@ -10,19 +10,7 @@ const staffRoutes = ['/staff'];
 const hasAny = (permissions: string[], ...perms: string[]) =>
   perms.some(p => permissions.includes(p));
 
-function isSecureIncomingRequest(request: NextRequest) {
-  if (request.nextUrl.protocol.toLowerCase() === 'https:') return true;
-
-  const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
-  if (forwardedProto === 'https') return true;
-
-  const forwarded = request.headers.get('forwarded')?.toLowerCase() || '';
-  if (forwarded.includes('proto=https')) return true;
-
-  return false;
-}
-
-function setSecurityHeaders(res: NextResponse, request?: NextRequest) {
+function setSecurityHeaders(res: NextResponse) {
   const isDev = process.env.NODE_ENV !== 'production';
   const csp = [
     "default-src 'self'",
@@ -51,7 +39,7 @@ function setSecurityHeaders(res: NextResponse, request?: NextRequest) {
   res.headers.set('X-Frame-Options', 'DENY');
   res.headers.set('Permissions-Policy', "geolocation=(self), camera=(), microphone=()");
 
-  if (process.env.NODE_ENV === 'production' && request && isSecureIncomingRequest(request)) {
+  if (process.env.NODE_ENV === 'production') {
     res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   }
 
@@ -64,7 +52,7 @@ export async function middleware(request: NextRequest) {
   const staticPrefixes = ['/_next/', '/favicon.ico', '/manifest.json', '/sw.js', '/public/', '/api/'];
   if (staticPrefixes.some(p => path === p || path.startsWith(p))) {
     const res = NextResponse.next();
-    return setSecurityHeaders(res, request);
+    return setSecurityHeaders(res);
   }
   const isProtectedRoute = protectedRoutes.some(route => path.startsWith(route));
 
@@ -83,13 +71,13 @@ export async function middleware(request: NextRequest) {
   // If route isn't protected, just continue and add security headers
   if (!isProtectedRoute) {
     const res = NextResponse.next();
-    return setSecurityHeaders(res, request);
+    return setSecurityHeaders(res);
   }
 
   // Protected route: require valid session
   if (!session) {
     const redirect = NextResponse.redirect(new URL('/', request.url));
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   const role = session.role?.toLowerCase()?.trim();
@@ -101,12 +89,12 @@ export async function middleware(request: NextRequest) {
 
   if (isAdminRoute && !hasAdminAccess) {
     const redirect = NextResponse.redirect(new URL('/staff/dashboard', request.url));
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   if (isStaffRoute && !role) {
     const redirect = NextResponse.redirect(new URL('/', request.url));
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   const dashboardFallback = isAdminRoute
@@ -115,22 +103,22 @@ export async function middleware(request: NextRequest) {
 
   if (path.startsWith('/admin/roles-and-permissions') && !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   if (path.startsWith('/admin/security-logs') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   if (path.startsWith('/admin/recycle-bin') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   if (path.startsWith('/admin/maintenance') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect, request);
+    return setSecurityHeaders(redirect);
   }
 
   if (path.startsWith('/admin/settings') && !permissions.includes(PERMISSIONS.SETTINGS_VIEW)) {
