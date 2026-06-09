@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { getAllBranchesAction } from "@/lib/actions";
+import { getBranchesLookupAction } from "@/lib/actions";
 
 export default function PrintInvoicesPage() {
   const router = useRouter();
@@ -23,11 +23,11 @@ export default function PrintInvoicesPage() {
       const data = JSON.parse(dataStr);
       setInvoiceData(data);
 
-      // Load branches via server action (live DB)
-      const branchRes = await getAllBranchesAction();
-      if (branchRes && Array.isArray(branchRes)) {
+      // Load branch labels via the permission-lite lookup action.
+      const branchRes = await getBranchesLookupAction();
+      if (branchRes && Array.isArray(branchRes.data)) {
         const map: Record<string, string> = {};
-        branchRes.forEach((b: any) => { if (b.id) map[b.id] = b.name; });
+        branchRes.data.forEach((b: any) => { if (b.id) map[b.id] = b.name; });
         setBranchMap(map);
       }
 

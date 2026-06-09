@@ -34,7 +34,7 @@ import {
 } from 'recharts';
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getBulkMeters, subscribeToBulkMeters, initializeBulkMeters, getCustomers, subscribeToCustomers, initializeCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
-import { getAllBranchesAction } from "@/lib/actions";
+import { getBranchesLookupAction } from "@/lib/actions";
 import { format } from 'date-fns';
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
@@ -92,7 +92,7 @@ export default function StaffManagementDashboardPage() {
             // Try to resolve branchId from known branches
             (async () => {
               try {
-                const res = await getAllBranchesAction();
+                const res = await getBranchesLookupAction();
                 const branches = res.data || [];
                 const target = parsedUser.branchName || '';
                 let branch = branches.find((b: any) => b.name === target);
@@ -114,7 +114,7 @@ export default function StaffManagementDashboardPage() {
             // branchId present but branchName missing — resolve from API
             (async () => {
               try {
-                const res = await getAllBranchesAction();
+                const res = await getBranchesLookupAction();
                 const branches = res.data || [];
                 const branch = branches.find((b: any) => String(b.id) === String(parsedUser.branchId));
                 if (branch) {

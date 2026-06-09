@@ -5,10 +5,16 @@ export function PwaRegistry() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
+    const isSecureContext = window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '[::1]';
+    if (!isSecureContext) {
+      console.warn('Service workers require a secure context (HTTPS) or localhost. Skipping registration.');
+      window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
+      return;
+    }
+
     // Determine user role first
     const checkRoleAndRegister = async () => {
-      // If offline, skip the role API call and proceed straight to SW registration
-      // (the cached session already holds the role; the SW will serve cached pages)
+      // If offline, skip the role API call and proceed straight to SW registration.
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         console.info('PWA: offline – skipping role check, proceeding with SW registration');
       } else {
@@ -25,18 +31,6 @@ export function PwaRegistry() {
           // Network error or offline — fall through and register SW anyway
           console.warn('PWA: failed to fetch role (possibly offline), proceeding with registration');
         }
-      }
-      // Existing secure context check
-      const isSecureContext =
-        window.location.protocol === 'https:' ||
-        window.location.hostname === 'localhost' ||
-        window.location.hostname === '127.0.0.1' ||
-        window.location.hostname === '[::1]';
-
-      if (!isSecureContext) {
-        console.warn('Service workers require a secure context (HTTPS) or localhost. Skipping registration.');
-        window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
-        return;
       }
 
       const registerSW = async () => {

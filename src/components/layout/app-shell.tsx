@@ -164,6 +164,7 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   const currentYear = new Date().getFullYear();
   const { isOnline, wasOffline, pendingCount } = useNetworkStatus();
   const [syncProgress, setSyncProgress] = React.useState<{ syncing: boolean; success: number; failed: number; total: number } | null>(null);
+  const [isSecureContext, setIsSecureContext] = React.useState(true);
 
   const handleLogout = React.useCallback(async () => {
     // 1. Clear all client-side session data immediately
@@ -195,6 +196,8 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
     if (typeof window === 'undefined' || !window.localStorage) {
       return;
     }
+
+    setIsSecureContext(window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '[::1]');
 
     const storedAppName = window.localStorage.getItem("aawsa-app-name");
     if (storedAppName) {
@@ -237,6 +240,11 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
         <AppHeaderContent user={user} appName={appName} onLogout={handleLogout} />
         {/* Network and Sync Status Banners */}
         <div className="no-print">
+          {!isSecureContext && userRole === 'staff' ? (
+            <div className="bg-slate-700 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
+              <span>HTTP mode is active. Reader offline queue and cached data still work, but installable PWA and background sync require HTTPS.</span>
+            </div>
+          ) : null}
           {syncProgress?.syncing ? (
             <div className="bg-blue-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 animate-pulse shadow-inner">
               <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />

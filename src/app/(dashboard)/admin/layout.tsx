@@ -4,20 +4,10 @@
 import type { ReactNode } from "react";
 import * as React from "react";
 import { usePathname, useRouter } from 'next/navigation';
-import dynamic from 'next/dynamic';
 import { Skeleton } from "@/components/ui/skeleton";
+import AdminLayoutClient from '@/app/(dashboard)/admin/admin-layout-client';
 
 import { PERMISSIONS } from "@/lib/constants/auth";
-
-// Dynamically import the client-side wrapper to prevent SSR issues with localStorage
-const AdminLayoutClient = dynamic(() => import('@/app/(dashboard)/admin/admin-layout-client'), {
-  loading: () => (
-     <div className="flex items-center justify-center h-screen">
-       <Skeleton className="h-16 w-16 rounded-full" />
-     </div>
-  ),
-  ssr: false, // Ensure this component only renders on the client
-});
 
 interface UserProfile {
   id: string; 
