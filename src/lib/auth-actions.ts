@@ -6,6 +6,18 @@ import { encrypt } from './auth';
 import { redirect } from 'next/navigation';
 import { checkRateLimit, resetRateLimit } from './rate-limiter';
 
+function isSecureRequest() {
+    const requestHeaders = headers();
+    const forwardedProto = requestHeaders.get('x-forwarded-proto')?.split(',')[0]?.trim();
+    if (forwardedProto) {
+        return forwardedProto === 'https';
+    }
+
+    const host = requestHeaders.get('x-forwarded-host') || requestHeaders.get('host') || '';
+    const configuredUrl = process.env.NEXTAUTH_URL || '';
+    return configuredUrl.startsWith('https://') && !host.startsWith('localhost') && !host.startsWith('127.0.0.1');
+}
+
 export async function loginAction(formData: FormData) {
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
@@ -47,8 +59,7 @@ export async function loginAction(formData: FormData) {
 
     const session = await encrypt(sessionUser);
 
-    const isSecure = process.env.NODE_ENV === 'production' && 
-      (process.env.NEXTAUTH_URL ? process.env.NEXTAUTH_URL.startsWith('https://') : false);
+    const isSecure = isSecureRequest();
 
     // Save the session in a cookie
     (await cookies()).set('session', session, { expires, httpOnly: true, secure: isSecure });

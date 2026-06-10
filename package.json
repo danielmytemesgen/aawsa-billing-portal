@@ -2,6 +2,9 @@
   "name": "nextn",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "dev-http": "next dev -H 0.0.0.0 -p 3000",
@@ -15,6 +18,8 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf node_modules package-lock.json",
     "check-sw": "node ./scripts/check-sw.js",
+    "check:deploy": "powershell -ExecutionPolicy Bypass -File ./scripts/check-webapp.ps1",
+    "deploy:windows": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy.ps1",
     "generate-seed": "node scripts/generate-seed.js",
     "prepare": "node scripts/tools/husky-skip.js",
     "test:e2e": "playwright test"

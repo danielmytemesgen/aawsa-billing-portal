@@ -1,5 +1,6 @@
 const path = require('path');
 const dotenv = require('dotenv');
+const isWindows = process.platform === 'win32';
 
 // Load environment variables from .env files sequentially
 // (dotenv won't overwrite already-defined keys, prioritizing production envs)
@@ -12,11 +13,14 @@ module.exports = {
     {
       name: 'aawsa-billing-web',
       script: path.join(__dirname, '.next/standalone/server.js'),
-      instances: 'max', // Utilize all CPU cores in cluster mode
-      exec_mode: 'cluster',
+      instances: isWindows ? 1 : 'max',
+      exec_mode: isWindows ? 'fork' : 'cluster',
       env: {
         NODE_ENV: 'production',
         PORT: process.env.PORT || 3000,
+        HOSTNAME: process.env.HOSTNAME || '0.0.0.0',
+        PUBLIC_SERVER_IP: process.env.PUBLIC_SERVER_IP,
+        NEXTAUTH_URL: process.env.NEXTAUTH_URL || `http://${process.env.PUBLIC_SERVER_IP || 'localhost'}:${process.env.PORT || 3000}`,
         POSTGRES_HOST: process.env.POSTGRES_HOST,
         POSTGRES_PORT: process.env.POSTGRES_PORT,
         POSTGRES_USER: process.env.POSTGRES_USER,

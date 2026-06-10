@@ -8,7 +8,7 @@
 - Ports: 3000, 5432, 443 available
 
 ### Software to Install
-1. **Node.js 18+** (LTS) from https://nodejs.org/
+1. **Node.js 24.16.0** from https://nodejs.org/
 2. **PostgreSQL 12+** from https://www.postgresql.org/download/windows/
 3. **Git** (optional) from https://git-scm.com/download/win
 
@@ -45,6 +45,8 @@ npm install -g pm2
 # Create C:\Apps\aawsa-billing-portal\.env.production
 # With these essential variables:
 
+# Keep localhost here if PostgreSQL is on the same server as Next.js.
+# Use the database server's IP or hostname only if PostgreSQL is remote.
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
@@ -54,7 +56,12 @@ NODE_ENV=production
 PORT=3000
 SESSION_SECRET=your_32_char_random_string_here
 NEXTAUTH_SECRET=your_32_char_random_string_here
-NEXTAUTH_URL=https://your-server-ip:3000
+# This is the public app URL, not the database host.
+PUBLIC_SERVER_IP=10.10.254.78
+NEXTAUTH_URL=http://10.10.254.78:3000
+
+# Optional but recommended when exposing the app directly on the server.
+HOSTNAME=0.0.0.0
 ```
 
 ### 5. Setup Database
@@ -79,9 +86,18 @@ npm run build
 ```powershell
 pm2 start ecosystem.config.js
 pm2 list
-pm2 startup windows
 pm2 save
 ```
+
+On Windows Server, PM2 is configured to run the app in single-process `fork` mode.
+Restart PM2 after changing `.env.production` or the public server IP.
+
+### 7b. Verify Listening Status
+```powershell
+npm run check:deploy
+```
+
+This confirms PM2 is online, port 3000 is listening, and `http://10.10.254.78:3000` responds.
 
 ### 8. Open Firewall Ports
 ```powershell
@@ -93,7 +109,7 @@ New-NetFirewallRule -DisplayName "Allow Port 443" -Direction Inbound -Action All
 ### 9. Access Application
 ```
 http://localhost:3000
-https://your-server-ip:3000
+http://10.10.254.78:3000
 ```
 
 ---

@@ -28,7 +28,7 @@ This guide provides complete step-by-step instructions for deploying the AAWSA B
 ### B. SOFTWARE REQUIREMENTS
 
 #### 1. **Node.js & NPM**
-   - **Version**: Node.js 18+ (LTS recommended)
+   - **Version**: Node.js 24.16.0 (recommended for this deployment)
    - **Download**: https://nodejs.org/
    - **Install**: Download Windows Installer (.msi) and run it
    - **Verify Installation**:
@@ -63,7 +63,7 @@ This guide provides complete step-by-step instructions for deploying the AAWSA B
 ## PRE-DEPLOYMENT CHECKLIST
 
 - [ ] Windows Server 2019 fully updated with latest Windows Updates
-- [ ] Node.js 18+ installed and verified
+- [ ] Node.js 24.16.0 installed and verified
 - [ ] PostgreSQL 12+ installed and running
 - [ ] Git installed (if not already)
 - [ ] Firewall rules allow ports: 3000, 5432, 443
@@ -122,6 +122,8 @@ Create `.env.production` file in the project root:
 # Using PowerShell, create the file
 @"
 # ============= DATABASE CONFIGURATION =============
+# Keep localhost here if PostgreSQL is installed on the same Windows Server.
+# Only use a remote host if the database lives on another machine.
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
@@ -142,7 +144,11 @@ NEXTAUTH_SECRET=YOUR_NEXTAUTH_SECRET_HERE_MIN_32_CHARS
 GOOGLE_GENAI_API_KEY=YOUR_GOOGLE_AI_KEY_HERE
 
 # ============= APPLICATION URL =============
-NEXTAUTH_URL=https://your-server-ip-or-domain:3000
+# This is the public app URL that browsers should hit.
+# Use http://<static-ip>:3000 if you expose the app directly.
+# Use https://<domain> if you place SSL/reverse proxy in front.
+PUBLIC_SERVER_IP=10.10.254.78
+NEXTAUTH_URL=http://10.10.254.78:3000
 "@ | Out-File .env.production -Encoding UTF8
 ```
 
@@ -226,7 +232,10 @@ psql -U postgres -h localhost -d aawsa_billing -c "\dt"
 
 ### STEP 6: Configure PM2 Ecosystem
 
-The `ecosystem.config.js` file is already configured. Update it if needed:
+The `ecosystem.config.js` file is already configured for Windows Server 2019.
+It uses `fork` mode on Windows and binds to `0.0.0.0` so the app is reachable from the server IP.
+
+Update it only if your public URL or database host changes:
 
 ```powershell
 # Edit the PM2 config if necessary
@@ -234,9 +243,11 @@ notepad C:\Apps\aawsa-billing-portal\ecosystem.config.js
 ```
 
 **Key Settings**:
-- `script`: Runs Next.js start command
-- `instances`: 'max' uses all CPU cores
-- `exec_mode`: 'cluster' for multi-process management
+- `script`: Runs the standalone Next.js server
+- `instances`: `1` on Windows for stable process management
+- `exec_mode`: `fork` on Windows, `cluster` on Linux
+- `HOSTNAME=0.0.0.0` makes the app listen on all interfaces
+- `NEXTAUTH_URL` should use the server's public IP or domain
 - Environment variables are loaded from `.env.production`
 
 ---
@@ -255,13 +266,21 @@ pm2 list
 # View logs
 pm2 logs aawsa-billing-web
 
+# Verify the app is listening on the static server IP over HTTP
+npm run check:deploy
+
 # Expected output:
 # ┌─────┬──────────────────┬──────────┬──────┬────────┬─────────┐
 # │ id  │ name             │ mode     │ ↺    │ status │ cpu  %  │
 # ├─────┼──────────────────┼──────────┼──────┼────────┼─────────┤
-# │ 0   │ aawsa-billing-web│ cluster  │ 0    │ online │ 0.0 %   │
-# │ 1   │ aawsa-billing-web│ cluster  │ 0    │ online │ 0.0 %   │
+# │ 0   │ aawsa-billing-web│ fork     │ 0    │ online │ 0.0 %   │
 # └─────┴──────────────────┴──────────┴──────┴────────┴─────────┘
+```
+
+If you want the full deployment flow in one command, use:
+
+```powershell
+npm run deploy:windows
 ```
 
 ---
@@ -269,16 +288,17 @@ pm2 logs aawsa-billing-web
 ### STEP 8: Setup PM2 to Start on Server Reboot
 
 ```powershell
-# Run as Administrator
-pm2 startup windows
-
 # Save current process list
 pm2 save
-
-# Verify
-pm2 list
-pm2 startup
 ```
+
+Then create a Windows Task Scheduler job that runs the existing helper at startup:
+
+```powershell
+schtasks /Create /SC ONSTART /TN "AAWSA Billing Portal PM2" /TR "C:\Apps\aawsa-billing-portal\scripts\pm2-resurrect.bat" /RL HIGHEST /F
+```
+
+The helper restores the saved PM2 process list after a reboot.
 
 ---
 
@@ -437,7 +457,7 @@ pm2 monit
 ### Access Application
 ```
 http://localhost:3000
-https://your-server-ip:3000
+http://10.10.254.78:3000
 https://your-domain.com
 ```
 
@@ -576,6 +596,13 @@ certbot renew --force-renewal
    netstat -ano | findstr :3000
    ```
 
+4. Run the listening check against the server IP:
+   ```powershell
+   npm run check:deploy
+   ```
+
+   The script uses `PUBLIC_SERVER_IP` or `NEXTAUTH_URL` from your environment, so there is no hardcoded IP in the command.
+
 ### Common Error Messages
 
 | Error | Cause | Solution |
@@ -626,7 +653,7 @@ After deployment, verify everything is working:
 pm2 list
 
 # 2. Access application in browser
-# Open: http://localhost:3000 or https://your-server-ip:3000
+# Open: http://localhost:3000 or http://10.10.254.78:3000
 
 # 3. Verify database connection
 # Login and verify data loads correctly

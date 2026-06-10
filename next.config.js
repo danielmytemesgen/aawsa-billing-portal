@@ -1,11 +1,21 @@
 // next.config.js – simplified configuration for development (no PWA/Workbox)
 
+const publicServerIp = process.env.PUBLIC_SERVER_IP;
+
+const allowedDevOrigins = [
+  ...(publicServerIp ? [`http://${publicServerIp}:3000`, `https://${publicServerIp}:3001`] : []),
+  'http://localhost:3000',
+  'https://localhost:3001',
+  'http://127.0.0.1:3000',
+  'https://127.0.0.1:3001',
+];
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: process.env.NEXT_BUILD_TARGET === 'export' ? 'export' : 'standalone',
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
-  allowedDevOrigins: ['10.10.0.0/16', 'localhost', '127.0.0.1'],
+  allowedDevOrigins,
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'picsum.photos', pathname: '/**' },
