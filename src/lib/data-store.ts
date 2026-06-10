@@ -142,7 +142,7 @@ type TariffUpdate = any;
 export type { RoleRow, PermissionRow, RolePermissionRow, Branch, BulkMeterRow, IndividualCustomer, StaffMember, Bill, IndividualCustomerReading, BulkMeterReading, Payment, ReportLog, NotificationRow, BranchInsert, BranchUpdate, BulkMeterInsert, BulkMeterUpdate, IndividualCustomerInsert, IndividualCustomerUpdate, StaffMemberInsert, StaffMemberUpdate, BillInsert, BillUpdate, IndividualCustomerReadingInsert, IndividualCustomerReadingUpdate, BulkMeterReadingInsert, BulkMeterReadingUpdate, PaymentInsert, PaymentUpdate, ReportLogInsert, ReportLogUpdate, NotificationInsert, TariffRow, TariffInsert, TariffUpdate, RouteRow };
 
 
-export type { RoleRow as DomainRole, PermissionRow as DomainPermission, RolePermissionRow as DomainRolePermission, FaultCodeRow as DomainFaultCode, FaultCodeInsert as DomainFaultCodeInsert, FaultCodeUpdate as DomainFaultCodeUpdate } from './actions';
+export type { RoleRow as DomainRole, PermissionRow as DomainPermission, RolePermissionRow as DomainRolePermission, FaultCodeRow as DomainFaultCode, FaultCodeInsert as DomainFaultCodeInsert, FaultCodeUpdate as DomainFaultCodeUpdate } from './action-types';
 
 // Use TariffInfo and TariffTier types from the billing module to keep a single source of truth.
 
@@ -380,12 +380,12 @@ interface StoreOperationResult<T = any> {
 type BulkMeter = DomainBulkMeterTypeFromTypes;
 type Route = import('@/app/(dashboard)/admin/bulk-meters/bulk-meter-types').Route;
 type StaffMember = DomainStaffMember;
-type DomainRole = import('./actions').RoleRow;
-type DomainPermission = import('./actions').PermissionRow;
-type DomainRolePermission = import('./actions').RolePermissionRow;
-type DomainFaultCode = import('./actions').FaultCodeRow;
-type DomainFaultCodeInsert = import('./actions').FaultCodeInsert;
-type DomainFaultCodeUpdate = import('./actions').FaultCodeUpdate;
+type DomainRole = import('./action-types').RoleRow;
+type DomainPermission = import('./action-types').PermissionRow;
+type DomainRolePermission = import('./action-types').RolePermissionRow;
+type DomainFaultCode = import('./action-types').FaultCodeRow;
+type DomainFaultCodeInsert = import('./action-types').FaultCodeInsert;
+type DomainFaultCodeUpdate = import('./action-types').FaultCodeUpdate;
 
 let branches: DomainBranch[] = [];
 let customers: DomainIndividualCustomer[] = [];

@@ -19,6 +19,10 @@
 .env
 .env*.local
 
+# Production secrets — NEVER commit real credentials
+# Copy .env.production.example and fill in real values on the server
+.env.production
+
 # IDEs and editors
 /.vscode
 .idea

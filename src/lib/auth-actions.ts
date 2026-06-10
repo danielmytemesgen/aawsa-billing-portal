@@ -6,11 +6,24 @@ import { encrypt } from './auth';
 import { redirect } from 'next/navigation';
 import { checkRateLimit, resetRateLimit } from './rate-limiter';
 
-function isSecureRequest() {
-    const requestHeaders = headers();
+async function isSecureRequest() {
+    const requestHeaders = await headers(); // Next.js 15: headers() is async
     const forwardedProto = requestHeaders.get('x-forwarded-proto')?.split(',')[0]?.trim();
     if (forwardedProto) {
         return forwardedProto === 'https';
+    }
+
+    const referer = requestHeaders.get('referer') || '';
+    if (referer.startsWith('https://')) {
+        return true;
+    }
+    const origin = requestHeaders.get('origin') || '';
+    if (origin.startsWith('https://')) {
+        return true;
+    }
+
+    if (referer.startsWith('http://') || origin.startsWith('http://')) {
+        return false;
     }
 
     const host = requestHeaders.get('x-forwarded-host') || requestHeaders.get('host') || '';
@@ -59,10 +72,19 @@ export async function loginAction(formData: FormData) {
 
     const session = await encrypt(sessionUser);
 
-    const isSecure = isSecureRequest();
+    const isSecure = await isSecureRequest();
 
     // Save the session in a cookie
-    (await cookies()).set('session', session, { expires, httpOnly: true, secure: isSecure });
+    // path:'/' ensures the cookie is sent on every request (not just the current path).
+    // sameSite:'lax' allows the cookie to be sent when navigating from external links
+    // while still providing CSRF protection. This is required for server-IP deployments.
+    (await cookies()).set('session', session, {
+        expires,
+        httpOnly: true,
+        secure: isSecure,
+        sameSite: 'lax',
+        path: '/',
+    });
     // Cache the encrypted session token for offline use (dynamic import: IndexedDB is browser-only)
     try {
       const { saveSessionToken } = await import('./offline-db');
@@ -76,7 +98,9 @@ export async function loginAction(formData: FormData) {
 
 export async function logoutAction() {
     // Destroy the session on server
-    (await cookies()).set('session', '', { expires: new Date(0) });
+    // path:'/' must match the path used when setting the cookie, otherwise the
+    // browser will not delete it and the user will appear still logged in.
+    (await cookies()).set('session', '', { expires: new Date(0), path: '/', httpOnly: true, sameSite: 'lax' });
     // Note: we intentionally do NOT call redirect() here.
     // Calling redirect() inside a server action that is invoked from a client component
     // causes Next.js to throw a NEXT_REDIRECT which, when offline, results in a
