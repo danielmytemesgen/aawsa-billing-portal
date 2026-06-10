@@ -37,7 +37,7 @@ import {
   initializeBranches,
   getBills
 } from "@/lib/data-store";
-import type { FaultCodeRow } from "@/lib/actions";
+import type { FaultCodeRow } from "@/lib/action-types";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { DisplayReading } from "@/lib/data-store";

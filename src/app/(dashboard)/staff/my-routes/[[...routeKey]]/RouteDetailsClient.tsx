@@ -34,7 +34,7 @@ import { format } from "date-fns";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import type { FaultCodeRow } from "@/lib/actions";
+import type { FaultCodeRow } from "@/lib/action-types";
 import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
 import { MapPin } from "lucide-react";
 

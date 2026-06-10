@@ -39,7 +39,9 @@ function setSecurityHeaders(res: NextResponse) {
   res.headers.set('X-Frame-Options', 'DENY');
   res.headers.set('Permissions-Policy', "geolocation=(self), camera=(), microphone=()");
 
-  if (process.env.NODE_ENV === 'production') {
+  // Only enable HSTS in production if explicitly configured via environment variables
+  // to avoid blocking HTTP-only local network/intranet deployments.
+  if (process.env.NODE_ENV === 'production' && process.env.ENABLE_HSTS === 'true') {
     res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   }
 

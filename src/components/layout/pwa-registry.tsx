@@ -26,18 +26,7 @@ export function PwaRegistry() {
           console.warn('PWA: failed to fetch role (possibly offline), proceeding with registration');
         }
       }
-      // Existing secure context check
-      const isSecureContext =
-        window.location.protocol === 'https:' ||
-        window.location.hostname === 'localhost' ||
-        window.location.hostname === '127.0.0.1' ||
-        window.location.hostname === '[::1]';
 
-      if (!isSecureContext) {
-        console.warn('Service workers require a secure context (HTTPS) or localhost. Skipping registration.');
-        window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
-        return;
-      }
 
       const registerSW = async () => {
         try {

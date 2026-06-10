@@ -140,9 +140,22 @@ import { revalidatePath } from 'next/cache';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from './billing-config';
 
 import type { Database } from '@/types/db';
-
-export type PendingReading = { id: number; payload: any };
-export type PendingUpload = { id: number; blob: Blob };
+import type {
+  RoleRow, PermissionRow, RolePermissionRow, Branch, BulkMeterRow, IndividualCustomer,
+  StaffMember, Bill, IndividualCustomerReading, BulkMeterReading, Payment, ReportLog,
+  NotificationRow, TariffRow, KnowledgeBaseArticleRow,
+  BranchInsert, BranchUpdate, BulkMeterInsert, BulkMeterUpdate,
+  IndividualCustomerInsert, IndividualCustomerUpdate,
+  StaffMemberInsert, StaffMemberUpdate, BillInsert, BillUpdate,
+  IndividualCustomerReadingInsert, IndividualCustomerReadingUpdate,
+  BulkMeterReadingInsert, BulkMeterReadingUpdate,
+  PaymentInsert, PaymentUpdate, ReportLogInsert, ReportLogUpdate,
+  NotificationInsert, NotificationUpdate, TariffInsert, TariffUpdate,
+  KnowledgeBaseArticleInsert, KnowledgeBaseArticleUpdate,
+  FaultCodeRow, FaultCodeInsert, FaultCodeUpdate,
+  RouteRow, RouteInsert, RouteUpdate,
+  LogOptions, CustomerAuthResult,
+} from './action-types';
 
 export async function getReadingPeriodStatusAction() {
   const status = await dbGetSystemSetting('reading_period_status');
@@ -160,7 +173,7 @@ export async function updateReadingPeriodStatusAction(status: 'Open' | 'Closed')
   return result;
 }
 
-// Helper types to extract Row, Insert, and Update types from the database definition
+// Internal helper — PublicTables is only needed internally now that all types are in action-types.ts
 type PublicTables = Database['public']['Tables'];
 
 const generateBillKey = (billId: string) => {
@@ -198,106 +211,13 @@ function getEffectiveBranchId(session: any, optionsBranchId?: string, permission
 }
 
 
-type RoleRow = PublicTables['roles']['Row'];
-type PermissionRow = PublicTables['permissions']['Row'];
-type RolePermissionRow = PublicTables['role_permissions']['Row'];
+// Internal-only DB type aliases (not re-exported — all public type exports live in action-types.ts)
 type RoleInsert = PublicTables['roles']['Insert'];
 type PermissionInsert = PublicTables['permissions']['Insert'];
 type PermissionUpdate = PublicTables['permissions']['Update'];
-type Branch = PublicTables['branches']['Row'];
-type BulkMeterRow = PublicTables['bulk_meters']['Row'];
-type IndividualCustomer = PublicTables['individual_customers']['Row'];
-type StaffMember = PublicTables['staff_members']['Row'];
-type Bill = PublicTables['bills']['Row'];
-type IndividualCustomerReading = PublicTables['individual_customer_readings']['Row'];
-type BulkMeterReading = PublicTables['bulk_meter_readings']['Row'];
-type Payment = PublicTables['payments']['Row'];
-type ReportLog = PublicTables['reports']['Row'];
-type NotificationRow = PublicTables['notifications']['Row'];
-type TariffRow = PublicTables['tariffs']['Row'] & { effective_date: string; year?: number };
-type KnowledgeBaseArticleRow = PublicTables['knowledge_base_articles']['Row'];
 
-type BranchInsert = PublicTables['branches']['Insert'];
-type BranchUpdate = PublicTables['branches']['Update'];
-type BulkMeterInsert = PublicTables['bulk_meters']['Insert'];
-type BulkMeterUpdate = PublicTables['bulk_meters']['Update'];
-type IndividualCustomerInsert = PublicTables['individual_customers']['Insert'];
-type IndividualCustomerUpdate = PublicTables['individual_customers']['Update'];
-type StaffMemberInsert = PublicTables['staff_members']['Insert'];
-type StaffMemberUpdate = PublicTables['staff_members']['Update'];
-type BillInsert = PublicTables['bills']['Insert'];
-type BillUpdate = PublicTables['bills']['Update'];
-type IndividualCustomerReadingInsert = PublicTables['individual_customer_readings']['Insert'];
-type IndividualCustomerReadingUpdate = PublicTables['individual_customer_readings']['Update'];
-type BulkMeterReadingInsert = PublicTables['bulk_meter_readings']['Insert'];
-type BulkMeterReadingUpdate = PublicTables['bulk_meter_readings']['Update'];
-type PaymentInsert = PublicTables['payments']['Insert'];
-type PaymentUpdate = PublicTables['payments']['Update'];
-type ReportLogInsert = PublicTables['reports']['Insert'];
-type ReportLogUpdate = PublicTables['reports']['Update'];
-type NotificationInsert = PublicTables['notifications']['Insert'];
-type NotificationUpdate = PublicTables['notifications']['Update'];
-type TariffInsert = PublicTables['tariffs']['Insert'];
-type TariffUpdate = PublicTables['tariffs']['Update'];
-type KnowledgeBaseArticleInsert = PublicTables['knowledge_base_articles']['Insert'];
-type KnowledgeBaseArticleUpdate = PublicTables['knowledge_base_articles']['Update'];
 
-// Manually define FaultCode types since they are not in the generated Database type yet
-export interface FaultCodeRow {
-  id: string;
-  code: string;
-  description: string | null;
-  category: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
-
-export interface FaultCodeInsert {
-  id?: string;
-  code: string;
-  description?: string | null;
-  category?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface FaultCodeUpdate {
-  code?: string;
-  description?: string | null;
-  category?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface RouteRow {
-  route_key: string;
-  branch_id?: string | null;
-  reader_id?: string | null;
-  description?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface RouteInsert {
-  route_key: string;
-  branch_id?: string | null;
-  reader_id?: string | null;
-  description?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface RouteUpdate {
-  route_key?: string;
-  branch_id?: string | null;
-  reader_id?: string | null;
-  description?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export type { RoleRow, PermissionRow, RolePermissionRow, Branch, BulkMeterRow, IndividualCustomer, StaffMember, Bill, IndividualCustomerReading, BulkMeterReading, Payment, ReportLog, NotificationRow, BranchInsert, BranchUpdate, BulkMeterInsert, BulkMeterUpdate, IndividualCustomerInsert, IndividualCustomerUpdate, StaffMemberInsert, StaffMemberUpdate, BillInsert, BillUpdate, IndividualCustomerReadingInsert, IndividualCustomerReadingUpdate, BulkMeterReadingInsert, BulkMeterReadingUpdate, PaymentInsert, PaymentUpdate, ReportLogInsert, ReportLogUpdate, NotificationInsert, NotificationUpdate, TariffRow, TariffInsert, TariffUpdate, KnowledgeBaseArticleInsert, KnowledgeBaseArticleUpdate, KnowledgeBaseArticleRow };
-
+// FaultCode and Route types are defined in action-types.ts — imported above.
 
 const wrap = async <T>(fn: () => Promise<T>) => {
   try {
@@ -320,7 +240,7 @@ const wrap = async <T>(fn: () => Promise<T>) => {
   }
 };
 
-export const checkPermission = async (permission?: string) => {
+export async function checkPermission(permission?: string) {
   const session = await getSession();
   if (!session || !session.id) {
     throw new Error('User not authenticated');
@@ -340,7 +260,7 @@ export const checkPermission = async (permission?: string) => {
   }
 
   return { ...session, permissions: perms };
-};
+}
 
 /**
  * Asserts access to a specific customer/bulk-meter resource for RBAC enforcement.
@@ -355,11 +275,11 @@ export const checkPermission = async (permission?: string) => {
  * @returns the caller context: { kind: 'staff' | 'customer', session, perms }
  * @throws Error if neither staff nor customer access can be proven.
  */
-export const assertCustomerAccess = async (
+export async function assertCustomerAccess(
   customerKeyNumber: string,
   customerSessionId?: string,
   type: 'individual' | 'bulk' = 'individual'
-) => {
+) {
   // 1) Staff path — check permissions if a staff session exists
   const staffSession = await getSession();
   if (staffSession && staffSession.id) {
@@ -380,7 +300,7 @@ export const assertCustomerAccess = async (
   }
 
   throw new Error('Forbidden: You do not have access to this resource');
-};
+}
 
 const verifyBillBranchAccess = async (billId: string, session: any) => {
   const perms = session.permissions || [];
@@ -2012,35 +1932,41 @@ export async function getAllPermissionsAction() {
     return await dbGetAllPermissions();
   });
 }
-export const createPermissionAction = async (permission: PermissionInsert) => await wrap(async () => {
-  await checkPermission(PERMISSIONS.ROLES_MANAGE);
-  const result = await dbCreatePermission(permission);
-  await logSecurityEventAction({
-    event: 'Create Permission',
-    severity: 'warning',
-    details: { permission }
+export async function createPermissionAction(permission: PermissionInsert) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.ROLES_MANAGE);
+    const result = await dbCreatePermission(permission);
+    await logSecurityEventAction({
+      event: 'Create Permission',
+      severity: 'warning',
+      details: { permission }
+    });
+    return result;
   });
-  return result;
-});
-export const updatePermissionAction = async (id: number, permission: PermissionUpdate) => await wrap(async () => {
-  await checkPermission(PERMISSIONS.ROLES_MANAGE);
-  const result = await dbUpdatePermission(id, permission);
-  await logSecurityEventAction({
-    event: 'Update Permission',
-    severity: 'warning',
-    details: { id, updates: permission }
+}
+export async function updatePermissionAction(id: number, permission: PermissionUpdate) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.ROLES_MANAGE);
+    const result = await dbUpdatePermission(id, permission);
+    await logSecurityEventAction({
+      event: 'Update Permission',
+      severity: 'warning',
+      details: { id, updates: permission }
+    });
+    return result;
   });
-  return result;
-});
-export const deletePermissionAction = async (id: number) => await wrap(async () => {
-  await checkPermission(PERMISSIONS.ROLES_MANAGE);
-  await dbDeletePermission(id);
-  await logSecurityEventAction({
-    event: 'Delete Permission',
-    severity: 'critical',
-    details: { id }
+}
+export async function deletePermissionAction(id: number) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.ROLES_MANAGE);
+    await dbDeletePermission(id);
+    await logSecurityEventAction({
+      event: 'Delete Permission',
+      severity: 'critical',
+      details: { id }
+    });
   });
-});
+}
 export async function getAllRolePermissionsAction() {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.ROLES_VIEW);
@@ -2219,12 +2145,7 @@ export async function calculateBillAction(
 
 import { dbLogSecurityEvent } from './db-queries';
 
-export interface LogOptions {
-  event: string;
-  severity?: 'info' | 'warning' | 'critical';
-  customerKeyNumber?: string;
-  details?: any;
-}
+// LogOptions is defined and exported from action-types.ts — imported at the top.
 
 export async function logSecurityEventAction(options: LogOptions | string) {
   return await wrap(async () => {
@@ -2261,15 +2182,7 @@ export async function logSecurityEventAction(options: LogOptions | string) {
 // Customer Portal Actions
 // =====================================================
 
-export interface CustomerAuthResult {
-  customer_key_number: string | null;
-  name: string | null;
-  email: string | null;
-  phone_number: string | null;
-  is_portal_enabled: boolean;
-  success: boolean;
-  message: string;
-}
+// CustomerAuthResult is defined and exported from action-types.ts — imported at the top.
 
 export async function getCustomerAccountAction(
   customerKeyNumber: string,

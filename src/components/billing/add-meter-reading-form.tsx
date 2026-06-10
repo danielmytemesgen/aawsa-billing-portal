@@ -39,7 +39,7 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import { getCurrentPosition, checkProximity, type Coordinates } from "@/lib/geo-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload } from "lucide-react";
-import type { FaultCodeRow } from "@/lib/actions";
+import type { FaultCodeRow } from "@/lib/action-types";
 import { Badge } from "@/components/ui/badge";
 import { upsertSpatialRecord } from "@/lib/data-store";
 import { Camera as CameraIcon, X, Search } from "lucide-react";

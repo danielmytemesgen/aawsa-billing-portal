@@ -15,7 +15,7 @@ import {
   getTariff, initializeTariffs, subscribeToTariffs, updateTariff, addTariff
 } from "@/lib/data-store";
 import type { CustomerType } from "@/lib/billing";
-import type { TariffRow } from "@/lib/actions";
+import type { TariffRow } from "@/lib/action-types";
 import { TariffRateTable, type DisplayTariffRate } from "./tariff-rate-table";
 import { TariffFormDialog, type TariffFormValues } from "./tariff-form-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
