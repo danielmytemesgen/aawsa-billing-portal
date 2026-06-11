@@ -15,8 +15,10 @@ const nextConfig = {
   output: process.env.NEXT_BUILD_TARGET === 'export' ? 'export' : 'standalone',
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
-  serverActions: {
-    allowedOrigins: allowedDevOrigins,
+  experimental: {
+    serverActions: {
+      allowedOrigins: allowedDevOrigins,
+    },
   },
   images: {
     remotePatterns: [
