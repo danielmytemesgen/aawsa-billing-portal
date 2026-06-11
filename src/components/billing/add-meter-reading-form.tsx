@@ -75,7 +75,7 @@ interface AddMeterReadingFormProps {
   initialLocation?: Coordinates | null;
 }
 
-export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
+function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
   const [userLocation, setUserLocation] = React.useState<Coordinates | null>(initialLocation || null);
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
@@ -816,3 +816,5 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
     </Form>
   );
 }
+
+export { AddMeterReadingForm };

@@ -77,8 +77,7 @@ interface AddMeterReadingFormProps {
 
 // This component is always rendered within other 'use client' components, never
 // directly from a Server Component, so function props like `onSubmit` are valid.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
+function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
   const [userLocation, setUserLocation] = React.useState<Coordinates | null>(initialLocation || null);
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
@@ -819,3 +818,5 @@ export function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCode
     </Form>
   );
 }
+
+export { AddMeterReadingForm };
