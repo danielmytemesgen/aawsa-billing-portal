@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, Eye, EyeOff, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { LogIn, Eye, EyeOff, CheckCircle2, Circle, Loader2, WifiOff, Wifi } from "lucide-react";
 import { sha256 } from "@noble/hashes/sha256";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
@@ -54,9 +54,40 @@ export function AuthForm() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = React.useState(false);
   const [showPassword, setShowPassword] = React.useState(false);
+  const [isOfflineMode, setIsOfflineMode] = React.useState(false);
+  const [hasOfflineCreds, setHasOfflineCreds] = React.useState(false);
   const [syncState, setSyncState] = React.useState<
     "idle" | "authenticating" | "caching_routes" | "caching_meters" | "caching_customers" | "caching_readings" | "caching_faults" | "completed"
   >("idle");
+
+  // Detect offline state and whether cached credentials exist on mount
+  React.useEffect(() => {
+    const checkOffline = () => {
+      const offline = typeof window !== 'undefined' && !navigator.onLine;
+      setIsOfflineMode(offline);
+      if (offline) {
+        const creds = localStorage.getItem('offline_creds');
+        setHasOfflineCreds(!!creds);
+      }
+    };
+    checkOffline();
+    window.addEventListener('online', checkOffline);
+    window.addEventListener('offline', checkOffline);
+    return () => {
+      window.removeEventListener('online', checkOffline);
+      window.removeEventListener('offline', checkOffline);
+    };
+  }, []);
+
+  // Safety: if isLoading gets stuck (e.g. network error without catch), reset after 30s
+  React.useEffect(() => {
+    if (!isLoading) return;
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+      setSyncState("idle");
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [isLoading]);
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -273,6 +304,27 @@ export function AuthForm() {
 
   return (
     <Card className="w-full max-w-md glass-card p-6 border-none relative overflow-hidden">
+
+      {/* Offline Status Banner */}
+      {isOfflineMode && (
+        <div className={`mx-0 mb-0 flex items-start gap-3 px-5 py-3 text-sm rounded-t-xl ${
+          hasOfflineCreds
+            ? 'bg-emerald-900/80 text-emerald-200 border-b border-emerald-700'
+            : 'bg-amber-900/80 text-amber-200 border-b border-amber-700'
+        }`}>
+          <WifiOff className="h-4 w-4 mt-0.5 flex-shrink-0" />
+          <div>
+            <span className="font-semibold block">
+              {hasOfflineCreds ? 'Offline — Credentials Ready' : 'No Internet Connection'}
+            </span>
+            <span className="text-xs opacity-80">
+              {hasOfflineCreds
+                ? 'You can sign in using your cached credentials.'
+                : 'Connect to the internet to sign in for the first time.'}
+            </span>
+          </div>
+        </div>
+      )}
       {/* Caching/Sync Overlay */}
       {syncState !== "idle" && syncState !== "authenticating" && (
         <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-md z-50 flex flex-col justify-center p-8 text-white animate-in fade-in duration-300">

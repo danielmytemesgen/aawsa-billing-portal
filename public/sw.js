@@ -1,23 +1,62 @@
-const CACHE_NAME = 'aawsa-cache-v2';
-const urlsToCache = [
-  '/',
-  '/manifest.json',
-];
+const CACHE_NAME = 'aawsa-cache-v4';
+const CORE_PAGES = ['/', '/manifest.json'];
+
+/**
+ * Fetches an HTML page, parses all /_next/static script src + link href
+ * attributes, and caches every asset found. This ensures the JS bundles
+ * that React needs to hydrate are available when offline.
+ */
+async function deepCachePage(cache, pageUrl) {
+  try {
+    const res = await fetch(pageUrl, { credentials: 'same-origin' });
+    if (!res || !res.ok) return;
+    const html = await res.clone().text();
+    await cache.put(pageUrl, res);
+
+    // Collect all /_next/static/ script and stylesheet URLs from the HTML
+    const assetUrls = new Set();
+    for (const m of html.matchAll(/<script[^>]+src=["']([^"']+)["']/g)) {
+      if (m[1] && m[1].startsWith('/_next/')) assetUrls.add(m[1]);
+    }
+    for (const m of html.matchAll(/<link[^>]+href=["']([^"']+\.css[^"']*)["']/g)) {
+      if (m[1] && m[1].startsWith('/_next/')) assetUrls.add(m[1]);
+    }
+
+    // Cache each asset individually — a single failure won't abort the rest
+    await Promise.allSettled(
+      [...assetUrls].map(async (url) => {
+        try {
+          const already = await cache.match(url);
+          if (already) return; // skip if already cached
+          const r = await fetch(url, { credentials: 'same-origin' });
+          if (r && r.ok) await cache.put(url, r);
+        } catch (e) {
+          console.warn('SW Install: failed to cache asset', url, e);
+        }
+      })
+    );
+  } catch (e) {
+    console.warn('SW Install: deepCachePage failed for', pageUrl, e);
+  }
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(async (cache) => {
-        // Cache URLs individually so a 404 doesn't break the entire SW installation
-        for (const url of urlsToCache) {
-          try {
-            await cache.add(url);
-          } catch (e) {
-            console.warn('SW Install: failed to cache', url, e);
-          }
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      // Deep-cache the login page (/) so its JS bundles are available offline
+      await deepCachePage(cache, '/');
+      // Cache any remaining simple URLs
+      for (const url of CORE_PAGES) {
+        try {
+          const already = await cache.match(url);
+          if (!already) await cache.add(url);
+        } catch (e) {
+          console.warn('SW Install: failed to cache', url, e);
         }
-      })
-      .then(() => self.skipWaiting())
+      }
+      return self.skipWaiting();
+    })()
   );
 });
 
@@ -77,8 +116,10 @@ self.addEventListener('fetch', (event) => {
           }
 
           return networkResponse;
-        }).catch(() => {
-          // Silent catch for network failure on static files
+        }).catch(async () => {
+          // Offline and not in cache — return error so browser handles it gracefully
+          const cached = await caches.match(event.request);
+          return cached || Response.error();
         });
       })
     );
