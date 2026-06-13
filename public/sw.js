@@ -437,6 +437,13 @@ self.addEventListener('sync', (event) => {
 // Listen for messages from clients (e.g., client finished sync)
 self.addEventListener('message', (event) => {
   const data = event.data || {};
+
+  // Allow client to trigger immediate SW activation after update
+  if (data && data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+
   if (data && data.type === 'CLIENT_SYNC_COMPLETE') {
     const payload = { type: 'BACKGROUND_SYNC_COMPLETE', success: data.success || 0, failed: data.failed || 0 };
     event.waitUntil(
@@ -446,4 +453,3 @@ self.addEventListener('message', (event) => {
     );
   }
 });
-

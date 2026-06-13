@@ -5,69 +5,85 @@ export function PwaRegistry() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
-    // Determine user role first
-    const checkRoleAndRegister = async () => {
-      // If offline, skip the role API call and proceed straight to SW registration
-      // (the cached session already holds the role; the SW will serve cached pages)
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        console.info('PWA: offline – skipping role check, proceeding with SW registration');
-      } else {
-        try {
-          const resp = await fetch('/api/user/role');
-          const data = await resp.json();
-          const role = data.role;
-          if (role !== 'reader') {
-            console.info('PWA: non‑reader role, skipping service worker registration');
-            window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
-            return;
-          }
-        } catch (e) {
-          // Network error or offline — fall through and register SW anyway
-          console.warn('PWA: failed to fetch role (possibly offline), proceeding with registration');
+    const registerSW = async () => {
+      try {
+        const candidateUrls = [
+          new URL('sw.js', document.baseURI).toString(),
+          new URL('/sw.js', document.baseURI).toString(),
+        ];
+        let chosenSwUrl: string | null = null;
+        for (const candidate of candidateUrls) {
+          try {
+            const resp = await fetch(candidate, { cache: 'no-store', method: 'GET' });
+            const contentType = resp.headers.get('content-type') || '';
+            if (resp.ok && !contentType.includes('text/html')) {
+              chosenSwUrl = candidate;
+              break;
+            }
+          } catch {}
         }
-      }
-
-
-      const registerSW = async () => {
-        try {
-          const candidateUrls = [
-            new URL('sw.js', document.baseURI).toString(),
-            new URL('/sw.js', document.baseURI).toString(),
-          ];
-          let chosenSwUrl = null;
-          for (const candidate of candidateUrls) {
-            try {
-              const resp = await fetch(candidate, { cache: 'no-store', method: 'GET' });
-              const contentType = resp.headers.get('content-type') || '';
-              const ok = resp.ok && !contentType.includes('text/html');
-              if (ok) {
-                chosenSwUrl = candidate;
-                break;
-              }
-            } catch {}
-          }
-          if (!chosenSwUrl) {
-            console.error('PWA: no valid sw.js found; skipping registration');
-            window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
-            return;
-          }
-          const scope = new URL('.', chosenSwUrl).pathname || '/';
-          const registration = await navigator.serviceWorker.register(chosenSwUrl, { scope });
-          console.log('ServiceWorker registration successful with scope: ', registration.scope);
-        } catch (err) {
-          console.error('ServiceWorker registration failed: ', err);
+        if (!chosenSwUrl) {
+          console.error('PWA: no valid sw.js found; skipping registration');
           window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
+          return;
         }
-      };
+        const scope = new URL('.', chosenSwUrl).pathname || '/';
+        const registration = await navigator.serviceWorker.register(chosenSwUrl, { scope });
+        console.log('ServiceWorker registered with scope:', registration.scope);
 
-      if (document.readyState === 'complete') {
-        registerSW();
-      } else {
-        window.addEventListener('load', registerSW);
-        return () => {
-          window.removeEventListener('load', registerSW);
-        };
+        // Listen for SW updates so we can notify the user or reload silently
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // New SW installed — tell it to take over immediately
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
+
+        // When a new SW takes over, deep-cache the current page assets again
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          console.log('PWA: new service worker activated');
+        });
+
+      } catch (err) {
+        console.error('ServiceWorker registration failed:', err);
+        window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
       }
+    };
+
+    const checkRoleAndRegister = async () => {
+      // Always register when offline — the SW is needed to serve cached login page + JS
+      if (!navigator.onLine) {
+        console.info('PWA: offline – registering SW unconditionally for cached page access');
+        if (document.readyState === 'complete') registerSW();
+        else window.addEventListener('load', registerSW, { once: true });
+        return;
+      }
+
+      // Online: check role. Register for readers; also register for unauthenticated
+      // users (so the login page gets its JS cached for future offline use).
+      try {
+        const resp = await fetch('/api/user/role');
+        if (!resp.ok) throw new Error('no role');
+        const data = await resp.json();
+        const role = (data.role || '').toLowerCase();
+        if (role && role !== 'reader') {
+          // Admin / management users don't need offline SW
+          console.info('PWA: non-reader role, skipping SW registration');
+          window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
+          return;
+        }
+      } catch (e) {
+        // Unauthenticated or network error — register anyway so login page caches JS
+        console.info('PWA: role check failed (unauthenticated or error), registering SW for login page caching');
+      }
+
+      if (document.readyState === 'complete') registerSW();
+      else window.addEventListener('load', registerSW, { once: true });
     };
 
     checkRoleAndRegister();
