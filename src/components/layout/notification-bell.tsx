@@ -45,7 +45,15 @@ export function NotificationBell({ user, className }: NotificationBellProps) {
   const [lastReadTimestamp, setLastReadTimestamp] = React.useState<string | null>(null);
   const [selectedNotification, setSelectedNotification] = React.useState<DomainNotification | null>(null);
 
+  const canViewNotifications = React.useMemo(() => {
+    return hasPermission('notifications_view') || 
+           hasPermission('dashboard_view_all') || 
+           hasPermission('dashboard_view_branch');
+  }, [hasPermission]);
+
   React.useEffect(() => {
+    if (!canViewNotifications) return;
+
     if (typeof window !== "undefined") {
       setLastReadTimestamp(localStorage.getItem(LAST_READ_TIMESTAMP_KEY));
     }
@@ -158,7 +166,7 @@ export function NotificationBell({ user, className }: NotificationBellProps) {
     return allBranches.find(b => b.id === targetId)?.name || `Branch ID: ${targetId}`;
   };
 
-  if (!user) {
+  if (!user || !canViewNotifications) {
     return null;
   }
 

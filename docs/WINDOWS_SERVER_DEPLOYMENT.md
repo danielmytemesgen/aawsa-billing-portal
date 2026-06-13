@@ -163,9 +163,24 @@ cd C:\Apps\aawsa-billing-portal
 
 # Build Next.js application
 npm run build
-
-# This will create .next folder and optimize the application
 ```
+
+> [!IMPORTANT]
+> Because the application is configured in **standalone** mode (`output: 'standalone'` in `next.config.js`), the build command does not copy static and public folders to the `.next/standalone` folder. 
+> 
+> **To handle this:**
+> * **Recommended**: Run the automated deployment script (`npm run deploy:windows`), which copies these files automatically.
+> * **Manual alternative**: If building manually, you must run the following copy commands:
+>   ```powershell
+>   # Create folders
+>   New-Item -ItemType Directory -Path ".\.next\standalone\public" -Force | Out-Null
+>   New-Item -ItemType Directory -Path ".\.next\standalone\.next\static" -Force | Out-Null
+>   
+>   # Copy assets
+>   Copy-Item -Path ".\public\*" -Destination ".\.next\standalone\public\" -Recurse -Force
+>   Copy-Item -Path ".\.next\static\*" -Destination ".\.next\standalone\.next\static\" -Recurse -Force
+>   ```
+
 
 **Expected Output**:
 ```

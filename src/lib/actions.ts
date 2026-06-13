@@ -1661,6 +1661,21 @@ export async function getPhotosByReadingIdAction(readingId: string) {
     return await dbGetPhotosByReadingId(readingId);
   });
 }
+export async function uploadReadingPhotoAction(
+  readingId: string,
+  readingType: 'individual' | 'bulk',
+  photoData: string
+) {
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    return await dbCreateMeterReadingPhoto({
+      reading_id: readingId,
+      reading_type: readingType,
+      photo_data: photoData,
+      uploaded_by: session?.id ?? null,
+    });
+  });
+}
 export async function updateBulkMeterReadingAction(id: string, reading: BulkMeterReadingUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);

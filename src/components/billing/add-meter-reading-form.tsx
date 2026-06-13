@@ -38,7 +38,7 @@ import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-cust
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { getCurrentPosition, checkProximity, type Coordinates } from "@/lib/geo-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload } from "lucide-react";
+import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload, AlertCircle } from "lucide-react";
 import type { FaultCodeRow } from "@/lib/action-types";
 import { Badge } from "@/components/ui/badge";
 import { upsertSpatialRecord } from "@/lib/data-store";
@@ -59,6 +59,7 @@ const formSchemaBase = z.object({
   capturedCoordinates: z.object({
     latitude: z.number(),
     longitude: z.number(),
+    accuracy: z.number().optional(),
   }).optional(),
   meterPhoto: z.string().optional(),
 });
@@ -315,7 +316,15 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     if (!proximityStatus?.isWithinRange) {
       return; // Safety check
     }
-    onSubmit(values);
+    const finalValues = {
+      ...values,
+      capturedCoordinates: userLocation ? {
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
+        accuracy: userLocation.accuracy
+      } : undefined
+    };
+    onSubmit(finalValues);
   }
 
   React.useEffect(() => {
@@ -490,6 +499,19 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
                     <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 10 && "bg-blue-500")} style={{height: '100%'}} />
                   </div>
                 </div>
+
+                {/* GPS Weak Accuracy Warning */}
+                {userLocation?.accuracy && userLocation.accuracy > 20 && (
+                  <div className="p-3 bg-amber-50 border border-amber-250 text-amber-900 rounded-lg text-xs flex items-start gap-2 shadow-sm animate-in fade-in">
+                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Weak GPS Signal (Accuracy: {userLocation.accuracy.toFixed(1)}m)</p>
+                      <p className="text-[10px] opacity-90 leading-normal">
+                        Please move to a more open area or wait for signal stabilization to get a higher quality coordinate.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : selectedEntityId ? (

@@ -10,6 +10,8 @@ export interface OfflineReading {
   status: 'pending' | 'syncing' | 'failed';
   errorMessage?: string;
   timestamp: number;
+  retryCount?: number;
+  lastAttempt?: number;
 }
 
 export interface CachedMeter {
@@ -22,8 +24,11 @@ export interface CachedMeter {
 export interface UploadEntry {
   id?: number;
   readingId?: number | null;
+  readingLocalId?: string | null;
+  readingType?: 'individual' | 'bulk' | null;
   filename?: string;
   blob?: Blob;
+  photoData?: string | null;
   status: 'pending' | 'uploading' | 'failed';
   errorMessage?: string;
   timestamp: number;
@@ -305,18 +310,62 @@ export async function pruneStorageIfNeeded() {
 
 /**
  * Adds a reading to the offline queue.
+ * Decouples the base64 meter photo from the reading metadata and queues them separately.
  */
 export async function queueOfflineReading(type: 'individual' | 'bulk', payload: any) {
   const localId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2,8);
   const idempotencyKey = payload && payload.idempotencyKey ? payload.idempotencyKey : localId;
-  return await db.readings.add({
+  
+  // Extract photo if present
+  const photo = payload.meter_photo || payload.meterPhoto;
+  const cleanedPayload = { ...payload };
+  if (cleanedPayload.meter_photo !== undefined) delete cleanedPayload.meter_photo;
+  if (cleanedPayload.meterPhoto !== undefined) delete cleanedPayload.meterPhoto;
+
+  const readingId = await db.readings.add({
     localId,
     idempotencyKey,
     type,
-    payload,
+    payload: cleanedPayload,
     status: 'pending',
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    retryCount: 0
   });
+
+  if (photo) {
+    await db.uploads.add({
+      readingId: null, // to be updated with server ID when reading is synced
+      readingLocalId: localId,
+      readingType: type,
+      photoData: photo,
+      status: 'pending',
+      timestamp: Date.now()
+    });
+  }
+
+  return readingId;
+}
+
+/**
+ * Actively checks actual connectivity to the server backend by performing a GET request
+ * to the unauthenticated /api/health endpoint with a strict 3-second timeout.
+ */
+export async function checkActualConnectivity(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if (!navigator.onLine) return false;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch('/api/health', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -409,5 +458,22 @@ export async function cacheHistoricalReadings(readings: any[], type: 'individual
  */
 export async function getCachedHistoricalReadings(type: 'individual' | 'bulk') {
   return await db.cached_readings.where('type').equals(type).toArray();
+}
+
+/**
+ * Resets all failed upload entries back to pending.
+ */
+export async function resetFailedUploads() {
+  const failed = await db.uploads.where('status').equals('failed').toArray();
+  for (const u of failed) {
+    if (u.id) await db.uploads.update(u.id, { status: 'pending', errorMessage: undefined });
+  }
+}
+
+/**
+ * Resets a single failed upload entry back to pending.
+ */
+export async function resetSingleFailedUpload(id: number) {
+  return await db.uploads.update(id, { status: 'pending', errorMessage: undefined });
 }
 
