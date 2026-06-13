@@ -1346,13 +1346,19 @@ async function fetchAllTariffs() {
 
 
 async function fetchAllBranches() {
-  // If offline, return whatever is already in memory — avoid network call
+  // If offline, attempt to load from localStorage first
   if (typeof window !== 'undefined' && !window.navigator.onLine) {
-    if (branches.length > 0) {
-      notifyBranchListeners();
-      return branches;
+    const cached = localStorage.getItem('cached_branches');
+    if (cached) {
+      try {
+        branches = JSON.parse(cached);
+        branchesFetched = true;
+        notifyBranchListeners();
+        return branches;
+      } catch (e) {
+        console.error("DataStore: Failed to parse cached branches:", e);
+      }
     }
-    // Nothing in memory and offline — mark as fetched to avoid retry loops
     branchesFetched = true;
     return branches;
   }
@@ -1361,10 +1367,18 @@ async function fetchAllBranches() {
     const { data, error } = await getAllBranchesAction();
     if (data) {
       branches = data.map(mapDbBranchToDomain);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('cached_branches', JSON.stringify(branches));
+      }
       notifyBranchListeners();
     } else {
-      // getAllBranchesAction requires branches_view permission (admin-only).
-      // Fall back to the permission-lite lookup so staff users still get id+name.
+      throw new Error(JSON.stringify(error));
+    }
+  } catch (err: any) {
+    // getAllBranchesAction requires branches_view permission (admin-only).
+    // If it throws (e.g. Forbidden: Missing permission branches_view), fall back
+    // to the permission-lite lookup so staff/reader users still get id+name.
+    try {
       const fallback = await getBranchesLookupAction();
       if (fallback.data && fallback.data.length > 0) {
         branches = fallback.data.map((b: { id: string; name: string }) => ({
@@ -1377,13 +1391,16 @@ async function fetchAllBranches() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         } as unknown as DomainBranch));
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('cached_branches', JSON.stringify(branches));
+        }
         notifyBranchListeners();
       } else {
-        console.error("DataStore: Failed to fetch branches. Database error:", JSON.stringify(error, null, 2));
+        console.warn("DataStore: fetchAllBranches fallback also returned no data.");
       }
+    } catch (fallbackErr) {
+      console.warn("DataStore: fetchAllBranches fallback also failed (offline?):", fallbackErr);
     }
-  } catch (err) {
-    console.warn("DataStore: fetchAllBranches failed (offline?)", err);
   }
   branchesFetched = true;
   return branches;
@@ -1533,6 +1550,12 @@ async function fetchAllIndividualCustomerReadings() {
     const { data, error } = await getAllIndividualCustomerReadingsAction();
     if (data) {
       individualCustomerReadings = data.map(mapDbIndividualReadingToDomain);
+      // Cache for offline use
+      if (typeof window !== 'undefined') {
+        offlineDb.cacheHistoricalReadings(individualCustomerReadings, 'individual').catch(err =>
+          console.error("DataStore: Failed to cache individual readings:", err)
+        );
+      }
       notifyIndividualCustomerReadingListeners();
     } else {
       console.error("DataStore: Failed to fetch individual customer readings. Database error:", JSON.stringify(error, null, 2));
@@ -1554,6 +1577,12 @@ async function fetchAllBulkMeterReadings() {
     const { data, error } = await getAllBulkMeterReadingsAction();
     if (data) {
       bulkMeterReadings = data.map(mapDbBulkReadingToDomain);
+      // Cache for offline use
+      if (typeof window !== 'undefined') {
+        offlineDb.cacheHistoricalReadings(bulkMeterReadings, 'bulk').catch(err =>
+          console.error("DataStore: Failed to cache bulk readings:", err)
+        );
+      }
       notifyBulkMeterReadingListeners();
     } else {
       console.error("DataStore: Failed to fetch bulk meter readings. Database error:", JSON.stringify(error, null, 2));
@@ -1860,8 +1889,15 @@ export const initializeBills = async (force: boolean = false) => {
 };
 export const initializeIndividualCustomerReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
   if (options?.routeKey) {
-    // If offline, skip the network call — serve from what is already in memory
+    // If offline, attempt to load cached historical readings first
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      const cached = await offlineDb.getCachedHistoricalReadings('individual');
+      if (cached && cached.length > 0) {
+        const cachedReadings = cached.map((c: any) => c.data);
+        const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
+        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
+        individualCustomerReadings = Array.from(readingMap.values());
+      }
       notifyIndividualCustomerReadingListeners();
       return;
     }
@@ -1880,13 +1916,34 @@ export const initializeIndividualCustomerReadings = async (force: boolean = fals
     }
     return;
   }
-  if (force || !individualCustomerReadingsFetched || individualCustomerReadings.length === 0) await fetchAllIndividualCustomerReadings();
+  if (force || !individualCustomerReadingsFetched || individualCustomerReadings.length === 0) {
+    // If offline, attempt to load cached historical readings first
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      const cached = await offlineDb.getCachedHistoricalReadings('individual');
+      if (cached && cached.length > 0) {
+        const cachedReadings = cached.map((c: any) => c.data);
+        const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
+        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
+        individualCustomerReadings = Array.from(readingMap.values());
+        notifyIndividualCustomerReadingListeners();
+        return;
+      }
+    }
+    await fetchAllIndividualCustomerReadings();
+  }
 };
 
 export const initializeBulkMeterReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
   if (options?.routeKey) {
-    // If offline, skip the network call — serve from what is already in memory
+    // If offline, attempt to load cached historical readings first
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      const cached = await offlineDb.getCachedHistoricalReadings('bulk');
+      if (cached && cached.length > 0) {
+        const cachedReadings = cached.map((c: any) => c.data);
+        const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
+        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
+        bulkMeterReadings = Array.from(readingMap.values());
+      }
       notifyBulkMeterReadingListeners();
       return;
     }
@@ -1905,7 +1962,21 @@ export const initializeBulkMeterReadings = async (force: boolean = false, option
     }
     return;
   }
-  if (force || !bulkMeterReadingsFetched || bulkMeterReadings.length === 0) await fetchAllBulkMeterReadings();
+  if (force || !bulkMeterReadingsFetched || bulkMeterReadings.length === 0) {
+    // If offline, attempt to load cached historical readings first
+    if (typeof window !== 'undefined' && !window.navigator.onLine) {
+      const cached = await offlineDb.getCachedHistoricalReadings('bulk');
+      if (cached && cached.length > 0) {
+        const cachedReadings = cached.map((c: any) => c.data);
+        const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
+        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
+        bulkMeterReadings = Array.from(readingMap.values());
+        notifyBulkMeterReadingListeners();
+        return;
+      }
+    }
+    await fetchAllBulkMeterReadings();
+  }
 };
 export const initializePayments = async (force: boolean = false) => {
   if (force || !paymentsFetched || payments.length === 0) await fetchAllPayments();

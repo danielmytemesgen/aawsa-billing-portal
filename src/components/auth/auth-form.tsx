@@ -221,6 +221,20 @@ export function AuthForm() {
                 initializeBranches(true)
               ]);
               
+              // Cache HTML and RSC pages for offline use
+              try {
+                await Promise.all([
+                  fetch('/staff/dashboard').catch(() => {}),
+                  fetch('/staff/meter-readings').catch(() => {}),
+                  fetch('/staff/my-routes').catch(() => {}),
+                ]);
+                router.prefetch('/staff/dashboard');
+                router.prefetch('/staff/meter-readings');
+                router.prefetch('/staff/my-routes');
+              } catch (prefErr) {
+                console.warn("Offline page/router prefetch failed:", prefErr);
+              }
+              
               setSyncState("completed");
             } catch (initErr) {
               console.error("Offline prefetch during login failed:", initErr);

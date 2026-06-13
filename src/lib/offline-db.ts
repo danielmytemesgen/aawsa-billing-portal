@@ -56,6 +56,7 @@ export class OfflineDB extends Dexie {
   device_tokens!: Table<DeviceTokenEntry, string>;
   session!: Table<SessionCache, string>;
   routes!: Table<CachedRoute, string>;
+  cached_readings!: Table<any, string>;
   
   constructor() {
     super('AAWSAReaderDB');
@@ -76,6 +77,10 @@ export class OfflineDB extends Dexie {
     // add routes cache store
     this.version(4).stores({
       routes: 'routeKey, lastUpdated'
+    });
+    // add cached historical readings store
+    this.version(5).stores({
+      cached_readings: 'id, type, lastUpdated'
     });
   }
 }
@@ -109,6 +114,7 @@ class MockDB {
   device_tokens = new MockTable();
   session = new MockTable();
   routes = new MockTable();
+  cached_readings = new MockTable();
   table() {
     return new MockTable();
   }
@@ -384,3 +390,24 @@ export async function resetFailedReadings() {
 export async function resetSingleFailedReading(id: number) {
   return await db.readings.update(id, { status: 'pending', errorMessage: undefined });
 }
+
+/**
+ * Caches historical readings for offline use.
+ */
+export async function cacheHistoricalReadings(readings: any[], type: 'individual' | 'bulk') {
+  const cached = readings.map(r => ({
+    id: `${type}-${r.id}`,
+    type,
+    data: r,
+    lastUpdated: Date.now()
+  }));
+  return await db.cached_readings.bulkPut(cached);
+}
+
+/**
+ * Retrieves cached historical readings.
+ */
+export async function getCachedHistoricalReadings(type: 'individual' | 'bulk') {
+  return await db.cached_readings.where('type').equals(type).toArray();
+}
+

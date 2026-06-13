@@ -208,6 +208,26 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   }, []);
 
   React.useEffect(() => {
+    if (typeof window !== 'undefined' && navigator.onLine && user && user.role.toLowerCase() === 'reader') {
+      const prefetchRoutes = async () => {
+        try {
+          await Promise.all([
+            fetch('/staff/dashboard').catch(() => {}),
+            fetch('/staff/meter-readings').catch(() => {}),
+            fetch('/staff/my-routes').catch(() => {}),
+          ]);
+          router.prefetch('/staff/dashboard');
+          router.prefetch('/staff/meter-readings');
+          router.prefetch('/staff/my-routes');
+        } catch (e) {
+          console.warn("AppShell: failed to prefetch pages:", e);
+        }
+      };
+      prefetchRoutes();
+    }
+  }, [user, router]);
+
+  React.useEffect(() => {
     const handleSyncProgress = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       setSyncProgress(detail);
