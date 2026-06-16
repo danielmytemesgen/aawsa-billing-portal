@@ -48,6 +48,10 @@ export async function POST(request: Request) {
       }
     }
 
+    // #region agent log
+    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'A',location:'offline-sync/route.ts:results',message:'Offline sync API results',data:{inputCount:readings.length,results:results.map(r=>({localId:r.localId,success:r.success,serverId:r.serverId,message:r.message}))},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
     return NextResponse.json({ results });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });

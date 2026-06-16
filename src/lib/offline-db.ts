@@ -343,6 +343,9 @@ export async function queueOfflineReading(type: 'individual' | 'bulk', payload: 
     });
   }
 
+  // Auto-prune storage if approaching the 100 MB limit
+  pruneStorageIfNeeded().catch(e => console.warn('Storage prune error:', e));
+
   return readingId;
 }
 

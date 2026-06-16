@@ -210,6 +210,10 @@ self.addEventListener('sync', (event) => {
               const body = await resp.json();
               const results = body.results || [];
 
+              // #region agent log
+              fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'A',location:'sw.js:sync-results',message:'SW offline-sync response fields',data:{resultCount:results.length,sample:results.slice(0,3).map(r=>({success:r.success,id:r.id,localId:r.localId,serverId:r.serverId}))},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
+
               // Apply results: delete successes, mark failures
               const tx = db.transaction('readings', 'readwrite');
               const store = tx.objectStore('readings');

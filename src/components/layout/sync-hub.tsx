@@ -136,6 +136,10 @@ export function SyncHub() {
 
     const totalToSync = pending.length + pendingUploads.length;
 
+    // #region agent log
+    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'B',location:'sync-hub.tsx:runSync-start',message:'Sync run started',data:{pendingReadings:pending.length,pendingUploads:pendingUploads.length,samplePayloadKeys:pending[0]?.payload?Object.keys(pending[0].payload).slice(0,8):[]},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
     // Dispatch starting progress event
     window.dispatchEvent(new CustomEvent('sync-progress', {
       detail: { syncing: true, success: 0, failed: 0, total: totalToSync }
@@ -153,6 +157,10 @@ export function SyncHub() {
         } else {
           result = await addBulkMeterReading(reading.payload);
         }
+
+        // #region agent log
+        fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'B',location:'sync-hub.tsx:phase1-result',message:'Reading sync result',data:{readingId:reading.id,localId:reading.localId,type:reading.type,success:result.success,hasData:!!result.data,serverId:result.data?.id,message:result.message},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
 
         if (result.success && result.data) {
           const serverId = result.data.id;
@@ -186,6 +194,9 @@ export function SyncHub() {
 
     // --- PHASE 2: Sync decoupled uploads (photos, larger payloads) ---
     const uploadsToSync = await db.uploads.where('status').equals('pending').toArray();
+    // #region agent log
+    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'C',location:'sync-hub.tsx:phase2-start',message:'Photo upload queue state',data:{pendingUploadCount:uploadsToSync.length,skippedNoReadingId:uploadsToSync.filter(u=>!u.readingId).length,skippedNoPhoto:uploadsToSync.filter(u=>!u.photoData).length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     for (const upload of uploadsToSync) {
       if (!upload.id || !upload.readingId || !upload.photoData) continue;
       await db.uploads.update(upload.id, { status: 'uploading' });

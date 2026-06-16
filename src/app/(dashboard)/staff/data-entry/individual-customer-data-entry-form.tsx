@@ -27,6 +27,7 @@ import {
   subscribeToBulkMeters,
   initializeBulkMeters,
   initializeCustomers,
+  getCustomers,
   getBranches,
   subscribeToBranches,
   initializeBranches as initializeAdminBranches
@@ -40,6 +41,7 @@ import { individualCustomerStatuses } from "@/app/(dashboard)/admin/individual-c
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getAllFaultCodes } from "@/lib/fault-codes";
+
 
 
 interface StaffIndividualCustomerEntryFormProps {
@@ -106,6 +108,8 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
         setStaffBranchId(staffBranch.id);
         const branchFilteredBms = getBulkMeters().filter(bm => bm.branchId === staffBranch.id);
         setAvailableBulkMeters(branchFilteredBms.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+        
+        
       }
       setIsLoadingBulkMeters(false);
     });

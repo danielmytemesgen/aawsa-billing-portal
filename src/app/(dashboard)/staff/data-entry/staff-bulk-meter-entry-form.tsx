@@ -1,9 +1,9 @@
-
 "use client";
 
 import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useToast } from "@/hooks/use-toast";
+import { generateBulkMeterKeys } from "@/lib/utils";
 import { bulkMeterDataEntrySchema, type BulkMeterDataEntryFormValues, meterSizeOptions, subCityOptions, woredaOptions } from "@/app/(dashboard)/admin/data-entry/customer-data-entry-types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, getBulkMeters, getBranches, initializeBranches } from "@/lib/data-store";
@@ -35,21 +35,7 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
   const { toast } = useToast();
   const [staffBranchId, setStaffBranchId] = React.useState<string | undefined>(undefined);
 
-  React.useEffect(() => {
-    initializeBranches(true).then(() => {
-      const allBranches = getBranches();
-      const normalizedStaffBranchName = branchName.trim().toLowerCase();
-      const staffBranch = allBranches.find(b => {
-        const normalizedBranchName = b.name.trim().toLowerCase();
-        return normalizedBranchName.includes(normalizedStaffBranchName) || normalizedStaffBranchName.includes(normalizedBranchName);
-      });
-      if (staffBranch) {
-        setStaffBranchId(staffBranch.id);
-      }
-    });
 
-    if (getBulkMeters().length === 0) initializeBulkMeters(true);
-  }, [branchName]);
 
   const [hasFault, setHasFault] = React.useState(false);
 
@@ -76,6 +62,30 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
       yCoordinate: undefined,
     },
   });
+
+  // Initialize staff branch and generate bulk meter keys for staff entry
+  React.useEffect(() => {
+    // Initialize branch based on provided branchName
+    initializeBranches(true).then(() => {
+      const allBranches = getBranches();
+      const normalizedStaffBranchName = branchName.trim().toLowerCase();
+      const staffBranch = allBranches.find(b => {
+        const normalizedBranchName = b.name.trim().toLowerCase();
+        return normalizedBranchName.includes(normalizedStaffBranchName) || normalizedStaffBranchName.includes(normalizedBranchName);
+      });
+      if (staffBranch) {
+        setStaffBranchId(staffBranch.id);
+      }
+    });
+
+    // Initialize bulk meters and generate unique keys
+    initializeBulkMeters(true).then(() => {
+      const existing = getBulkMeters();
+      const { customerKey, instKey } = generateBulkMeterKeys(existing);
+      form.setValue("customerKeyNumber", customerKey);
+      form.setValue("instKey", instKey);
+    });
+  }, [branchName]);
 
   async function onSubmit(data: BulkMeterDataEntryFormValues) {
     const bulkMeterDataForStore = {

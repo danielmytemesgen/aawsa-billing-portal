@@ -19,15 +19,16 @@ import {
   addCustomer,
   initializeBulkMeters,
   initializeCustomers,
+  getCustomers
 } from "@/lib/data-store";
-import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
-import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
+import { generateCustomerKeys } from "@/lib/utils";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-
+import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "routeKey", "branchId"];
 const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId"];
+
+
 
 interface User {
   email: string;
@@ -69,7 +70,16 @@ export default function StaffDataEntryPage() {
   }, []);
 
 
+
+
   const handleBulkMeterCsvUpload = async (data: BulkMeterDataEntryFormValues) => {
+    // Auto‑generate keys if CSV omitted them
+    if (!data.customerKeyNumber || !data.instKey) {
+      const existing = getCustomers();
+      const { customerKey, instKey } = generateCustomerKeys(existing);
+      if (!data.customerKeyNumber) data.customerKeyNumber = customerKey;
+      if (!data.instKey) data.instKey = instKey;
+    }
     return await addBulkMeter(data);
   };
 

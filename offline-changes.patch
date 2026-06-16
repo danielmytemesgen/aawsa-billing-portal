@@ -1,0 +1,254 @@
+﻿diff --git a/src/components/auth/auth-form.tsx b/src/components/auth/auth-form.tsx
+index ec9fc83..f7c7d88 100644
+--- a/src/components/auth/auth-form.tsx
++++ b/src/components/auth/auth-form.tsx
+@@ -221,6 +221,20 @@ export function AuthForm() {
+                 initializeBranches(true)
+               ]);
+               
++              // Cache HTML and RSC pages for offline use
++              try {
++                await Promise.all([
++                  fetch('/staff/dashboard').catch(() => {}),
++                  fetch('/staff/meter-readings').catch(() => {}),
++                  fetch('/staff/my-routes').catch(() => {}),
++                ]);
++                router.prefetch('/staff/dashboard');
++                router.prefetch('/staff/meter-readings');
++                router.prefetch('/staff/my-routes');
++              } catch (prefErr) {
++                console.warn("Offline page/router prefetch failed:", prefErr);
++              }
++              
+               setSyncState("completed");
+             } catch (initErr) {
+               console.error("Offline prefetch during login failed:", initErr);
+diff --git a/src/components/layout/app-shell.tsx b/src/components/layout/app-shell.tsx
+index f8a32ab..cfea441 100644
+--- a/src/components/layout/app-shell.tsx
++++ b/src/components/layout/app-shell.tsx
+@@ -207,6 +207,26 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
+ 
+   }, []);
+ 
++  React.useEffect(() => {
++    if (typeof window !== 'undefined' && navigator.onLine && user && user.role.toLowerCase() === 'reader') {
++      const prefetchRoutes = async () => {
++        try {
++          await Promise.all([
++            fetch('/staff/dashboard').catch(() => {}),
++            fetch('/staff/meter-readings').catch(() => {}),
++            fetch('/staff/my-routes').catch(() => {}),
++          ]);
++          router.prefetch('/staff/dashboard');
++          router.prefetch('/staff/meter-readings');
++          router.prefetch('/staff/my-routes');
++        } catch (e) {
++          console.warn("AppShell: failed to prefetch pages:", e);
++        }
++      };
++      prefetchRoutes();
++    }
++  }, [user, router]);
++
+   React.useEffect(() => {
+     const handleSyncProgress = (e: Event) => {
+       const detail = (e as CustomEvent).detail;
+diff --git a/src/lib/data-store.ts b/src/lib/data-store.ts
+index bce653f..f45f26a 100644
+--- a/src/lib/data-store.ts
++++ b/src/lib/data-store.ts
+@@ -1346,13 +1346,19 @@ async function fetchAllTariffs() {
+ 
+ 
+ async function fetchAllBranches() {
+-  // If offline, return whatever is already in memory ΓÇö avoid network call
++  // If offline, attempt to load from localStorage first
+   if (typeof window !== 'undefined' && !window.navigator.onLine) {
+-    if (branches.length > 0) {
+-      notifyBranchListeners();
+-      return branches;
++    const cached = localStorage.getItem('cached_branches');
++    if (cached) {
++      try {
++        branches = JSON.parse(cached);
++        branchesFetched = true;
++        notifyBranchListeners();
++        return branches;
++      } catch (e) {
++        console.error("DataStore: Failed to parse cached branches:", e);
++      }
+     }
+-    // Nothing in memory and offline ΓÇö mark as fetched to avoid retry loops
+     branchesFetched = true;
+     return branches;
+   }
+@@ -1361,6 +1367,9 @@ async function fetchAllBranches() {
+     const { data, error } = await getAllBranchesAction();
+     if (data) {
+       branches = data.map(mapDbBranchToDomain);
++      if (typeof window !== 'undefined') {
++        localStorage.setItem('cached_branches', JSON.stringify(branches));
++      }
+       notifyBranchListeners();
+     } else {
+       // getAllBranchesAction requires branches_view permission (admin-only).
+@@ -1533,6 +1542,12 @@ async function fetchAllIndividualCustomerReadings() {
+     const { data, error } = await getAllIndividualCustomerReadingsAction();
+     if (data) {
+       individualCustomerReadings = data.map(mapDbIndividualReadingToDomain);
++      // Cache for offline use
++      if (typeof window !== 'undefined') {
++        offlineDb.cacheHistoricalReadings(individualCustomerReadings, 'individual').catch(err =>
++          console.error("DataStore: Failed to cache individual readings:", err)
++        );
++      }
+       notifyIndividualCustomerReadingListeners();
+     } else {
+       console.error("DataStore: Failed to fetch individual customer readings. Database error:", JSON.stringify(error, null, 2));
+@@ -1554,6 +1569,12 @@ async function fetchAllBulkMeterReadings() {
+     const { data, error } = await getAllBulkMeterReadingsAction();
+     if (data) {
+       bulkMeterReadings = data.map(mapDbBulkReadingToDomain);
++      // Cache for offline use
++      if (typeof window !== 'undefined') {
++        offlineDb.cacheHistoricalReadings(bulkMeterReadings, 'bulk').catch(err =>
++          console.error("DataStore: Failed to cache bulk readings:", err)
++        );
++      }
+       notifyBulkMeterReadingListeners();
+     } else {
+       console.error("DataStore: Failed to fetch bulk meter readings. Database error:", JSON.stringify(error, null, 2));
+@@ -1860,8 +1881,15 @@ export const initializeBills = async (force: boolean = false) => {
+ };
+ export const initializeIndividualCustomerReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
+   if (options?.routeKey) {
+-    // If offline, skip the network call ΓÇö serve from what is already in memory
++    // If offline, attempt to load cached historical readings first
+     if (typeof window !== 'undefined' && !window.navigator.onLine) {
++      const cached = await offlineDb.getCachedHistoricalReadings('individual');
++      if (cached && cached.length > 0) {
++        const cachedReadings = cached.map((c: any) => c.data);
++        const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
++        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
++        individualCustomerReadings = Array.from(readingMap.values());
++      }
+       notifyIndividualCustomerReadingListeners();
+       return;
+     }
+@@ -1880,13 +1908,34 @@ export const initializeIndividualCustomerReadings = async (force: boolean = fals
+     }
+     return;
+   }
+-  if (force || !individualCustomerReadingsFetched || individualCustomerReadings.length === 0) await fetchAllIndividualCustomerReadings();
++  if (force || !individualCustomerReadingsFetched || individualCustomerReadings.length === 0) {
++    // If offline, attempt to load cached historical readings first
++    if (typeof window !== 'undefined' && !window.navigator.onLine) {
++      const cached = await offlineDb.getCachedHistoricalReadings('individual');
++      if (cached && cached.length > 0) {
++        const cachedReadings = cached.map((c: any) => c.data);
++        const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
++        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
++        individualCustomerReadings = Array.from(readingMap.values());
++        notifyIndividualCustomerReadingListeners();
++        return;
++      }
++    }
++    await fetchAllIndividualCustomerReadings();
++  }
+ };
+ 
+ export const initializeBulkMeterReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
+   if (options?.routeKey) {
+-    // If offline, skip the network call ΓÇö serve from what is already in memory
++    // If offline, attempt to load cached historical readings first
+     if (typeof window !== 'undefined' && !window.navigator.onLine) {
++      const cached = await offlineDb.getCachedHistoricalReadings('bulk');
++      if (cached && cached.length > 0) {
++        const cachedReadings = cached.map((c: any) => c.data);
++        const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
++        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
++        bulkMeterReadings = Array.from(readingMap.values());
++      }
+       notifyBulkMeterReadingListeners();
+       return;
+     }
+@@ -1905,7 +1954,21 @@ export const initializeBulkMeterReadings = async (force: boolean = false, option
+     }
+     return;
+   }
+-  if (force || !bulkMeterReadingsFetched || bulkMeterReadings.length === 0) await fetchAllBulkMeterReadings();
++  if (force || !bulkMeterReadingsFetched || bulkMeterReadings.length === 0) {
++    // If offline, attempt to load cached historical readings first
++    if (typeof window !== 'undefined' && !window.navigator.onLine) {
++      const cached = await offlineDb.getCachedHistoricalReadings('bulk');
++      if (cached && cached.length > 0) {
++        const cachedReadings = cached.map((c: any) => c.data);
++        const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
++        for (const nr of cachedReadings) readingMap.set(nr.id, nr);
++        bulkMeterReadings = Array.from(readingMap.values());
++        notifyBulkMeterReadingListeners();
++        return;
++      }
++    }
++    await fetchAllBulkMeterReadings();
++  }
+ };
+ export const initializePayments = async (force: boolean = false) => {
+   if (force || !paymentsFetched || payments.length === 0) await fetchAllPayments();
+diff --git a/src/lib/offline-db.ts b/src/lib/offline-db.ts
+index 0639a32..d0209c0 100644
+--- a/src/lib/offline-db.ts
++++ b/src/lib/offline-db.ts
+@@ -56,6 +56,7 @@ export class OfflineDB extends Dexie {
+   device_tokens!: Table<DeviceTokenEntry, string>;
+   session!: Table<SessionCache, string>;
+   routes!: Table<CachedRoute, string>;
++  cached_readings!: Table<any, string>;
+   
+   constructor() {
+     super('AAWSAReaderDB');
+@@ -77,6 +78,10 @@ export class OfflineDB extends Dexie {
+     this.version(4).stores({
+       routes: 'routeKey, lastUpdated'
+     });
++    // add cached historical readings store
++    this.version(5).stores({
++      cached_readings: 'id, type, lastUpdated'
++    });
+   }
+ }
+ 
+@@ -109,6 +114,7 @@ class MockDB {
+   device_tokens = new MockTable();
+   session = new MockTable();
+   routes = new MockTable();
++  cached_readings = new MockTable();
+   table() {
+     return new MockTable();
+   }
+@@ -384,3 +390,24 @@ export async function resetFailedReadings() {
+ export async function resetSingleFailedReading(id: number) {
+   return await db.readings.update(id, { status: 'pending', errorMessage: undefined });
+ }
++
++/**
++ * Caches historical readings for offline use.
++ */
++export async function cacheHistoricalReadings(readings: any[], type: 'individual' | 'bulk') {
++  const cached = readings.map(r => ({
++    id: `${type}-${r.id}`,
++    type,
++    data: r,
++    lastUpdated: Date.now()
++  }));
++  return await db.cached_readings.bulkPut(cached);
++}
++
++/**
++ * Retrieves cached historical readings.
++ */
++export async function getCachedHistoricalReadings(type: 'individual' | 'bulk') {
++  return await db.cached_readings.where('type').equals(type).toArray();
++}
++

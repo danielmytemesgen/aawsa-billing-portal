@@ -31,11 +31,16 @@ export function AuthAds() {
 
     React.useEffect(() => {
         async function loadAds() {
+            const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+            const startedAt = Date.now();
             const result = await getActivePromotionsAction();
             if (result.success && result.data && result.data.length > 0) {
                 setAds(result.data);
             }
             setIsLoading(false);
+            // #region agent log
+            fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'E',location:'auth-ads.tsx:loadAds',message:'Promotions load finished',data:{offline,success:result.success,adCount:result.data?.length??0,durationMs:Date.now()-startedAt,message:result.message},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
         }
         loadAds();
     }, []);
