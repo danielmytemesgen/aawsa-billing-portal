@@ -12,7 +12,8 @@ import {
   db,
   checkActualConnectivity,
   resetFailedUploads,
-  resetSingleFailedUpload
+  resetSingleFailedUpload,
+  UploadEntry
 } from '@/lib/offline-db';
 import { addIndividualCustomerReading, addBulkMeterReading } from '@/lib/data-store';
 import { uploadReadingPhotoAction } from '@/lib/actions';
@@ -193,9 +194,9 @@ export function SyncHub() {
     }
 
     // --- PHASE 2: Sync decoupled uploads (photos, larger payloads) ---
-    const uploadsToSync = await db.uploads.where('status').equals('pending').toArray();
+    const uploadsToSync: UploadEntry[] = await db.uploads.where('status').equals('pending').toArray();
     // #region agent log
-    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'C',location:'sync-hub.tsx:phase2-start',message:'Photo upload queue state',data:{pendingUploadCount:uploadsToSync.length,skippedNoReadingId:uploadsToSync.filter(u=>!u.readingId).length,skippedNoPhoto:uploadsToSync.filter(u=>!u.photoData).length},timestamp:Date.now()})}).catch(()=>{});
+    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'C',location:'sync-hub.tsx:phase2-start',message:'Photo upload queue state',data:{pendingUploadCount:uploadsToSync.length,skippedNoReadingId:uploadsToSync.filter((u: UploadEntry) => !u.readingId).length,skippedNoPhoto:uploadsToSync.filter((u: UploadEntry) => !u.photoData).length},timestamp:Date.now()})}).catch(() => {});
     // #endregion
     for (const upload of uploadsToSync) {
       if (!upload.id || !upload.readingId || !upload.photoData) continue;
