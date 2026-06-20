@@ -278,6 +278,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             let d30_bucket = 0;
             let d30_60_bucket = 0;
             let d60_bucket = 0;
+            let unpaid_penalty_bucket = 0;
             let billIndexCounter = 0;
 
             for (const bill of historyOldestFirst) {
@@ -302,7 +303,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 const totalMissedCycles = billIndexCounter;
                 maxAge = Math.max(maxAge, totalMissedCycles);
 
-                const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
+                const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket + unpaid_penalty_bucket));
                 if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
                 if (maxAge >= threshold) {
@@ -314,13 +315,14 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
                 const totalD60AndLegacy = d60_bucket + legacyDebt;
 
-                const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+                const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + unpaid_penalty_bucket + penalty;
                 const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
 
                 results.set(bill.id, {
                     d30: d30_bucket,
                     d30_60: d30_60_bucket,
                     d60: totalD60AndLegacy,
+                    prev_penalty: unpaid_penalty_bucket,
                     penalty,
                     outstanding: derivedOutstanding,
                     currentMonthly: currentMonthlyCharge,
@@ -328,16 +330,21 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 });
 
                 const amtPaid = isVoided ? 0 : Number(bill.amountPaid || bill.amount_paid || bill.AMOUNTPAID || 0);
-                const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+                const debtForNextMonth = derivedOutstanding + currentMonthlyCharge;
                 carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
 
                 let remainingPayment = amtPaid;
+
+                const paidAgainstOldPenalty = Math.min(remainingPayment, unpaid_penalty_bucket);
+                const remaining_old_penalty = Math.max(0, unpaid_penalty_bucket - paidAgainstOldPenalty);
+                remainingPayment -= paidAgainstOldPenalty;
 
                 const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
                 const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
                 remainingPayment -= paidAgainstOldest;
 
                 const paidAgainstPenalty = Math.min(remainingPayment, penalty);
+                const remaining_new_penalty = Math.max(0, penalty - paidAgainstPenalty);
                 remainingPayment -= paidAgainstPenalty;
 
                 const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
@@ -351,6 +358,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
                 const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
 
+                unpaid_penalty_bucket = remaining_old_penalty + remaining_new_penalty;
                 d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
                 d30_60_bucket = remaining_d30;
                 d30_bucket = remaining_current;
@@ -440,9 +448,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
         const d60 = Number(b.debit60 || b.debit_60 || 0);
         const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+        const prevPenalty = Number(b.PREVPENALTY || 0); // fallback if added to db later
         const penalty = Number(b.PENALTYAMT || 0);
-        // Outstanding = all unpaid debt + current penalty
-        const outstanding = totalUnpaidDebt + penalty;
+        // Outstanding = all unpaid debt + prev penalty + current penalty
+        const outstanding = totalUnpaidDebt + prevPenalty + penalty;
         const current = getMonthlyBillAmt(b);
         // Total Payable = Outstanding + Current Bill
         return outstanding + current;
@@ -867,6 +876,7 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             <TableHead className="text-right text-[10px]">Debit_30</TableHead>
                             <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
                             <TableHead className="text-right text-[10px]">Debit_60</TableHead>
+                            <TableHead className="text-right text-[10px]">Prev_Penalty</TableHead>
                             <TableHead className="text-right">Penalty</TableHead>
                             <TableHead className="text-right">Outstanding</TableHead>
                             <TableHead className="text-right">Current Bill</TableHead>
@@ -884,9 +894,10 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             const d30 = recon ? recon.d30 : Number(bill.debit_30 || bill.debit30 || 0);
                             const d30_60 = recon ? recon.d30_60 : Number(bill.debit_30_60 || bill.debit30_60 || 0);
                             const d60 = recon ? recon.d60 : Number(bill.debit_60 || bill.debit60 || 0);
+                            const prevPenalty = recon ? recon.prev_penalty : Number(bill.PREVPENALTY || 0);
                             const penaltyAmt = recon ? recon.penalty : Number(bill.PENALTYAMT || 0);
 
-                            const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penaltyAmt;
+                            const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + prevPenalty + penaltyAmt;
                             const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
                             const totalPayable = currentOutstanding + currentBillAmt;
 
@@ -914,6 +925,7 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d30).toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d30_60).toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d60).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-[10px] text-gray-500">{Number(prevPenalty).toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs text-destructive font-medium">{Number(penaltyAmt).toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>
@@ -965,7 +977,7 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
             </div>
             <div className="mx-4 mb-3 mt-1 p-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 text-[10px] text-muted-foreground italic">
                 <span className="font-semibold not-italic text-foreground/70">📝 Note: </span>
-                Debit_30 = bill 1 month old  |  Debit_30_60 = bill 2 months old  |  Debit_60 = bill 3+ months old  |  Penalty applies to bills 3+ months old only  |  Outstanding = all unpaid debt + current penalty
+                Debit_30 = bill 1 month old  |  Debit_30_60 = bill 2 months old  |  Debit_60 = bill 3+ months old  |  Prev_Penalty = unpaid penalty from past months | Penalty applies to bills 3+ months old only  |  Outstanding = all unpaid debt + past/current penalty
             </div>
         </>
     );
