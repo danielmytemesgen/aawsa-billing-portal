@@ -26,6 +26,7 @@ import {
     postBillAction,
     getBranchesLookupAction
 } from '@/lib/actions';
+import { getBulkMeters, getCustomers, initializeBulkMeters, initializeCustomers, initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
 import { format, subDays, isBefore } from 'date-fns';
@@ -121,6 +122,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const loadData = async () => {
         setLoading(true);
         try {
+            await Promise.allSettled([
+                initializeBulkMeters(true),
+                initializeCustomers(true),
+                initializeTariffs(true)
+            ]);
+
             const res = await getAllBillsAction();
             if (res.data) {
                 setBills(res.data);
@@ -229,6 +236,32 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             }
         }
 
+        let globalMeters: any[] = [];
+        let globalCustomers: any[] = [];
+        try {
+            globalMeters = getBulkMeters() || [];
+            globalCustomers = getCustomers() || [];
+        } catch (e) {
+            console.error(e);
+        }
+
+        const findCustomerType = (key: string) => {
+            const meter = globalMeters.find((m: any) => m.customerKeyNumber === key);
+            if (meter) return meter.chargeGroup || meter.charge_group || "Non-domestic";
+            const cust = globalCustomers.find((c: any) => c.customerKeyNumber === key);
+            if (cust) return cust.customerType || cust.customer_type || "Domestic";
+            return "Non-domestic";
+        };
+
+        const findActiveTariff = (customerType: string, dateStr: string) => {
+            try {
+                return getTariff(customerType as any, dateStr);
+            } catch (e) {
+                console.error(e);
+            }
+            return null;
+        };
+
         for (const [key, customerBills] of billsByCustomer.entries()) {
             const historyOldestFirst = [...customerBills].sort((a, b) => {
                 const dateA = new Date(a.billPeriodEndDate || a.created_at || 0).getTime();
@@ -239,78 +272,94 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 return cA - cB;
             });
 
-            let carriedForwardUnpaidPrincipal = 0;
-            let d30_bucket_principal = 0;
-            let d30_60_bucket_principal = 0;
-            let d60_bucket_principal = 0;
-            let lastBillUnpaidPenalty = 0;
+            const customerType = findCustomerType(key);
+
+            let carriedForwardUnpaid = 0;
+            let d30_bucket = 0;
+            let d30_60_bucket = 0;
+            let d60_bucket = 0;
+            let billIndexCounter = 0;
 
             for (const bill of historyOldestFirst) {
-                const currentPenalty = Number(bill.PENALTYAMT || 0);
-                const currentMonthlyPrincipal = getMonthlyBillAmt(bill);
                 const isVoided = bill.status === 'Deleted' || bill.status === 'Void';
+                
+                const billMonth = bill.month_year || format(new Date(bill.created_at || Date.now()), 'yyyy-MM');
+                const activeTariff = findActiveTariff(customerType, billMonth);
 
-                const legacyPrincipal = Math.max(0, carriedForwardUnpaidPrincipal - (d30_bucket_principal + d30_60_bucket_principal + d60_bucket_principal));
-                const totalD60Principal = d60_bucket_principal + legacyPrincipal;
+                const threshold = activeTariff?.penalty_month_threshold ?? 3;
+                const bankRate = Number(activeTariff?.bank_lending_rate ?? 0.15);
+                const tieredRates = Array.isArray(activeTariff?.penalty_tiered_rates) ? activeTariff.penalty_tiered_rates : [];
 
-                // Reconstruct buckets as per user rule: Debit_60 = Principals 3+ mo + Recent Penalty
-                const displayD60 = totalD60Principal + lastBillUnpaidPenalty;
-                const derivedOutstanding = d30_bucket_principal + d30_60_bucket_principal + displayD60;
-                const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyPrincipal + currentPenalty;
+                const arrearsSum = carriedForwardUnpaid;
+
+                let penalty = 0;
+                let maxAge = 0;
+
+                if (d60_bucket > 0.01) maxAge = 3;
+                else if (d30_60_bucket > 0.01) maxAge = 2;
+                else if (d30_bucket > 0.01) maxAge = 1;
+
+                const totalMissedCycles = billIndexCounter;
+                maxAge = Math.max(maxAge, totalMissedCycles);
+
+                const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
+                if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
+
+                if (maxAge >= threshold) {
+                    const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
+                    const totalRate = bankRate + Number(applicableTier?.rate || 0);
+                    penalty = arrearsSum * totalRate;
+                }
+
+                const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
+                const totalD60AndLegacy = d60_bucket + legacyDebt;
+
+                const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+                const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
 
                 results.set(bill.id, {
-                    d30: d30_bucket_principal,
-                    d30_60: d30_60_bucket_principal,
-                    d60: displayD60,
-                    penalty: currentPenalty,
-                    outstanding: derivedOutstanding + currentPenalty, // Total arrears including current penalty
-                    currentMonthly: currentMonthlyPrincipal,
+                    d30: d30_bucket,
+                    d30_60: d30_60_bucket,
+                    d60: totalD60AndLegacy,
+                    penalty,
+                    outstanding: derivedOutstanding,
+                    currentMonthly: currentMonthlyCharge,
                     totalPayable: derivedTotalPayable
                 });
 
                 const amtPaid = isVoided ? 0 : Number(bill.amountPaid || bill.amount_paid || bill.AMOUNTPAID || 0);
-                
-                // Calculate unpaid portions for next cycle
-                const unpaidPrincipalThisMonth = Math.max(0, currentMonthlyPrincipal - Math.max(0, amtPaid - (d30_bucket_principal + d30_60_bucket_principal + totalD60Principal + lastBillUnpaidPenalty)));
-                // Simplified payment logic: assume payment covers Arrears (Oldest First) then Current Principal then Current Penalty
+                const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+                carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
+
                 let remainingPayment = amtPaid;
 
-                // 1. Pay against Oldest Arrears (Principal D60 then Last Penalty)
-                const paidAgainstD60 = Math.min(remainingPayment, totalD60Principal);
-                const remD60 = totalD60Principal - paidAgainstD60;
-                remainingPayment -= paidAgainstD60;
+                const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
+                const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
+                remainingPayment -= paidAgainstOldest;
 
-                const paidAgainstLastPenalty = Math.min(remainingPayment, lastBillUnpaidPenalty);
-                const remLastPenalty = lastBillUnpaidPenalty - paidAgainstLastPenalty;
-                remainingPayment -= paidAgainstLastPenalty;
+                const paidAgainstPenalty = Math.min(remainingPayment, penalty);
+                remainingPayment -= paidAgainstPenalty;
 
-                // 2. Pay against D30_60
-                const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket_principal);
-                const remD30_60 = d30_60_bucket_principal - paidAgainstD30_60;
+                const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
+                const remaining_d30_60 = Math.max(0, d30_60_bucket - paidAgainstD30_60);
                 remainingPayment -= paidAgainstD30_60;
 
-                // 3. Pay against D30
-                const paidAgainstD30 = Math.min(remainingPayment, d30_bucket_principal);
-                const remD30 = d30_bucket_principal - paidAgainstD30;
+                const paidAgainstD30 = Math.min(remainingPayment, d30_bucket);
+                const remaining_d30 = Math.max(0, d30_bucket - paidAgainstD30);
                 remainingPayment -= paidAgainstD30;
 
-                // 4. Pay against Current Principal
-                const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyPrincipal);
-                const remCurrent = currentMonthlyPrincipal - paidAgainstCurrent;
-                remainingPayment -= paidAgainstCurrent;
+                const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
+                const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
 
-                // 5. Update the "All Historical Unpaid Penalties" for the next month's reconstruction
-                const paidAgainstCurrentPenalty = Math.min(remainingPayment, currentPenalty);
-                const unpaidCurrentPenalty = currentPenalty - paidAgainstCurrentPenalty;
+                d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
+                d30_60_bucket = remaining_d30;
+                d30_bucket = remaining_current;
 
-                // Sum all unpaid penalties (older remaining + current unpaid)
-                lastBillUnpaidPenalty = remLastPenalty + unpaidCurrentPenalty;
-
-                // Update buckets for next month (Chronological shift)
-                d60_bucket_principal = remD60 + remD30_60;
-                d30_60_bucket_principal = remD30;
-                d30_bucket_principal = remCurrent;
-                carriedForwardUnpaidPrincipal = d60_bucket_principal + d30_60_bucket_principal + d30_bucket_principal;
+                if (carriedForwardUnpaid > 0.01) {
+                    billIndexCounter++;
+                } else {
+                    billIndexCounter = 0;
+                }
             }
         }
         return results;

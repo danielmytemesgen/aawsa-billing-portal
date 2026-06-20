@@ -23,6 +23,7 @@ import {
     getBillsByCustomerKeyAction
 } from '@/lib/actions';
 import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
+import { initializeTariffs, getTariff } from '@/lib/data-store';
 
 import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
@@ -81,7 +82,7 @@ interface BillDetailsPageProps {
 const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
     bill: Bill,
     relatedData: any,
-    reconstructedAging: { d30: number, d30_60: number, d60: number } | null
+    reconstructedAging: { d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null
 }) => {
     const [currentDateTime, setCurrentDateTime] = React.useState(new Date().toLocaleString('en-US'));
 
@@ -89,15 +90,17 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
         setCurrentDateTime(new Date().toLocaleString('en-US'));
     }, []);
 
-    const d30 = Number(bill.debit30 || bill.debit_30 || 0);
-    const d30_60 = Number(bill.debit30_60 || bill.debit_30_60 || 0);
-    const d60 = Number(bill.debit60 || bill.debit_60 || 0);
-    const penalty = Number(bill.PENALTYAMT || 0);
-    const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
-        ? Number(bill.OUTSTANDINGAMT)
-        : (d30 + d30_60 + d60);
+    const d30 = reconstructedAging ? reconstructedAging.d30 : Number(bill.debit30 || bill.debit_30 || 0);
+    const d30_60 = reconstructedAging ? reconstructedAging.d30_60 : Number(bill.debit30_60 || bill.debit_30_60 || 0);
+    const d60 = reconstructedAging ? reconstructedAging.d60 : Number(bill.debit60 || bill.debit_60 || 0);
+    const penalty = reconstructedAging && reconstructedAging.penalty !== undefined ? reconstructedAging.penalty : Number(bill.PENALTYAMT || 0);
+    const outstanding = reconstructedAging && reconstructedAging.outstanding !== undefined
+        ? reconstructedAging.outstanding
+        : (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
+            ? Number(bill.OUTSTANDINGAMT)
+            : (d30 + d30_60 + d60);
     const current = getMonthlyBillAmt(bill);
-    const total = outstanding + current + penalty;
+    const total = reconstructedAging && reconstructedAging.totalPayable !== undefined ? reconstructedAging.totalPayable : outstanding + current + penalty;
 
     return (
         <div className="printable-bill-card-wrapper border-none shadow-none bg-transparent w-full flex flex-col items-start">
@@ -251,7 +254,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     const [logs, setLogs] = useState<any[]>([]);
 
     const [loading, setLoading] = useState(true);
-    const [reconstructedAging, setReconstructedAging] = useState<{ d30: number, d30_60: number, d60: number } | null>(null);
+    const [reconstructedAging, setReconstructedAging] = useState<{ d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null>(null);
 
     // Edit state
     const [isEditing, setIsEditing] = useState(false);
@@ -333,9 +336,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     previous: Number(b.PREVREAD || 0)
                 });
 
+                let customerType = "Non-domestic";
                 if (b.individual_customer_id) {
                     const custRes = await getCustomerByIdAction(b.individual_customer_id);
-                    if (custRes.data) setRelatedData({ type: 'individual', ...custRes.data });
+                    if (custRes.data) {
+                        setRelatedData({ type: 'individual', ...custRes.data });
+                        customerType = custRes.data.customerType || custRes.data.customer_type || "Domestic";
+                    }
                 } else if (b.CUSTOMERKEY) {
                     const bulkRes = await getBulkMeterByIdAction(b.CUSTOMERKEY);
                     if (bulkRes.data) {
@@ -345,8 +352,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                             if (branchRes.data) bulkData.branch = branchRes.data;
                         }
                         setRelatedData({ type: 'bulk', ...bulkData });
+                        customerType = bulkData.chargeGroup || bulkData.charge_group || "Non-domestic";
                     }
                 }
+
+                await initializeTariffs(true);
 
                 const logsRes = await getBillWorkflowLogsAction(id);
                 if (logsRes.data) setLogs(logsRes.data);
@@ -357,44 +367,106 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     const historyRes = await getBillsByCustomerKeyAction(customerKey);
                     if (historyRes.data) {
                         const history = historyRes.data as any[];
-                        // Reconstruct buckets FIFO-style up to the current bill
+                        
+                        // Process from OLDEST to NEWEST
+                        const historyOldestFirst = [...history].sort((x, y) => {
+                            const dateA = new Date(x.billPeriodEndDate || x.created_at || 0).getTime();
+                            const dateB = new Date(y.billPeriodEndDate || y.created_at || 0).getTime();
+                            if (dateA !== dateB) return dateA - dateB;
+                            const cA = x.created_at ? new Date(x.created_at).getTime() : 0;
+                            const cB = y.created_at ? new Date(y.created_at).getTime() : 0;
+                            return cA - cB;
+                        });
+
+                        let carriedForwardUnpaid = 0;
                         let d30_bucket = 0;
                         let d30_60_bucket = 0;
                         let d60_bucket = 0;
+                        let billIndexCounter = 0;
 
-                        for (const h of history) {
+                        for (const h of historyOldestFirst) {
+                            const isVoided = h.status === 'Deleted' || h.status === 'Void';
+                            
+                            const billMonth = h.month_year || format(new Date(h.created_at || Date.now()), 'yyyy-MM');
+                            const activeTariff = getTariff(customerType as any, billMonth);
+
+                            const threshold = activeTariff?.penalty_month_threshold ?? 3;
+                            const bankRate = Number(activeTariff?.bank_lending_rate ?? 0.15);
+                            const tieredRates = Array.isArray(activeTariff?.penalty_tiered_rates) ? activeTariff.penalty_tiered_rates : [];
+
+                            const arrearsSum = carriedForwardUnpaid;
+
+                            let penalty = 0;
+                            let maxAge = 0;
+
+                            if (d60_bucket > 0.01) maxAge = 3;
+                            else if (d30_60_bucket > 0.01) maxAge = 2;
+                            else if (d30_bucket > 0.01) maxAge = 1;
+
+                            const totalMissedCycles = billIndexCounter;
+                            maxAge = Math.max(maxAge, totalMissedCycles);
+
+                            const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
+                            if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
+
+                            if (maxAge >= threshold) {
+                                const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
+                                const totalRate = bankRate + Number(applicableTier?.rate || 0);
+                                penalty = arrearsSum * totalRate;
+                            }
+
+                            const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(h);
+                            const totalD60AndLegacy = d60_bucket + legacyDebt;
+
+                            const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+                            const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
+
                             if (h.id === b.id) {
-                                // We stop at the current bill. The buckets we have now (before this bill's addition)
-                                // are exactly what this bill's "Outstanding" represents.
-                                setReconstructedAging({ d30: d30_bucket, d30_60: d30_60_bucket, d60: d60_bucket });
+                                // Save reconstructed aging buckets and details for this bill
+                                setReconstructedAging({
+                                    d30: d30_bucket,
+                                    d30_60: d30_60_bucket,
+                                    d60: totalD60AndLegacy,
+                                    penalty,
+                                    outstanding: derivedOutstanding,
+                                    totalPayable: derivedTotalPayable
+                                });
                                 break;
                             }
 
-                            // 1. Shift buckets (FIFO)
-                            d60_bucket += d30_60_bucket;
-                            d30_60_bucket = d30_bucket;
-                            d30_bucket = getMonthlyBillAmt(h);
+                            const amtPaid = isVoided ? 0 : Number(h.amountPaid || h.amount_paid || h.AMOUNTPAID || 0);
+                            const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+                            carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
 
-                            // 2. Add penalty to oldest bucket (60+)
-                            d60_bucket += Number(h.PENALTYAMT || 0);
+                            let remainingPayment = amtPaid;
 
-                            // 3. Apply payments (FIFO)
-                            let paymentRemaining = Number(h.amount_paid ?? h.amountPaid ?? h.AMOUNTPAID ?? 0);
+                            const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
+                            const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
+                            remainingPayment -= paidAgainstOldest;
 
-                            // 3a. Pay 60+
-                            const pay60 = Math.min(d60_bucket, paymentRemaining);
-                            d60_bucket -= pay60;
-                            paymentRemaining -= pay60;
+                            const paidAgainstPenalty = Math.min(remainingPayment, penalty);
+                            remainingPayment -= paidAgainstPenalty;
 
-                            // 3b. Pay 30-60
-                            const pay30_60 = Math.min(d30_60_bucket, paymentRemaining);
-                            d30_60_bucket -= pay30_60;
-                            paymentRemaining -= pay30_60;
+                            const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
+                            const remaining_d30_60 = Math.max(0, d30_60_bucket - paidAgainstD30_60);
+                            remainingPayment -= paidAgainstD30_60;
 
-                            // 3c. Pay 30
-                            const pay30 = Math.min(d30_bucket, paymentRemaining);
-                            d30_bucket -= pay30;
-                            paymentRemaining -= pay30;
+                            const paidAgainstD30 = Math.min(remainingPayment, d30_bucket);
+                            const remaining_d30 = Math.max(0, d30_bucket - paidAgainstD30);
+                            remainingPayment -= paidAgainstD30;
+
+                            const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
+                            const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
+
+                            d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
+                            d30_60_bucket = remaining_d30;
+                            d30_bucket = remaining_current;
+
+                            if (carriedForwardUnpaid > 0.01) {
+                                billIndexCounter++;
+                            } else {
+                                billIndexCounter = 0;
+                            }
                         }
                     }
                 }
@@ -648,15 +720,17 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                 ) : (
                                     <>
                                         {(() => {
-                                            const d30 = Number(bill.debit30 || bill.debit_30 || 0);
-                                            const d30_60 = Number(bill.debit30_60 || bill.debit_30_60 || 0);
-                                            const d60 = Number(bill.debit60 || bill.debit_60 || 0);
-                                            const outstanding = (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
-                                                ? Number(bill.OUTSTANDINGAMT)
-                                                : (d30 + d30_60 + d60);
-                                            const penalty = Number(bill.PENALTYAMT || 0);
+                                            const d30 = reconstructedAging ? reconstructedAging.d30 : Number(bill.debit30 || bill.debit_30 || 0);
+                                            const d30_60 = reconstructedAging ? reconstructedAging.d30_60 : Number(bill.debit30_60 || bill.debit_30_60 || 0);
+                                            const d60 = reconstructedAging ? reconstructedAging.d60 : Number(bill.debit60 || bill.debit_60 || 0);
+                                            const outstanding = reconstructedAging && reconstructedAging.outstanding !== undefined
+                                                ? reconstructedAging.outstanding
+                                                : (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
+                                                    ? Number(bill.OUTSTANDINGAMT)
+                                                    : (d30 + d30_60 + d60);
+                                            const penalty = reconstructedAging && reconstructedAging.penalty !== undefined ? reconstructedAging.penalty : Number(bill.PENALTYAMT || 0);
                                             const current = getMonthlyBillAmt(bill);
-                                            const total = outstanding + current + penalty;
+                                            const total = reconstructedAging && reconstructedAging.totalPayable !== undefined ? reconstructedAging.totalPayable : outstanding + current + penalty;
 
                                             return (
                                                 <>
