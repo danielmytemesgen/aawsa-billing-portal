@@ -2643,3 +2643,230 @@ export const dbGetReadingsForMonth = async (type: string, customerKeys: string[]
     const rows = await query(sql, params);
     return rows;
 };
+
+export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) => {
+    const qFunc = client ? client.query.bind(client) : query;
+
+    let customerType = 'Non-domestic';
+    let isBulk = false;
+
+    // 1. Fetch customer details
+    const bmRes = await qFunc(
+        `SELECT charge_group FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+        [customerKey]
+    );
+    const bm = client ? bmRes.rows[0] : bmRes[0];
+    if (bm) {
+        customerType = bm.charge_group || 'Non-domestic';
+        isBulk = true;
+    } else {
+        const custRes = await qFunc(
+            `SELECT "customerType", customer_type FROM individual_customers WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+            [customerKey]
+        );
+        const cust = client ? custRes.rows[0] : custRes[0];
+        if (cust) {
+            customerType = cust.customerType || cust.customer_type || 'Domestic';
+        }
+    }
+
+    // 2. Fetch all bills sorted oldest to newest
+    const billsRes = await qFunc(
+        `SELECT * FROM bills 
+         WHERE deleted_at IS NULL 
+           AND (LOWER(TRIM("CUSTOMERKEY")) = LOWER(TRIM($1)) OR LOWER(TRIM(individual_customer_id)) = LOWER(TRIM($1)))
+         ORDER BY
+           COALESCE(bill_period_end_date, created_at::date) ASC,
+           created_at ASC`,
+        [customerKey]
+    );
+    const bills = client ? billsRes.rows : billsRes;
+
+    if (bills.length === 0) {
+        if (isBulk) {
+            await qFunc(
+                `UPDATE bulk_meters SET "outStandingbill" = 0, "paymentStatus" = 'Paid' WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
+                [customerKey]
+            );
+        } else {
+            await qFunc(
+                `UPDATE individual_customers SET "outStandingbill" = 0, "paymentStatus" = 'Paid' WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
+                [customerKey]
+            );
+        }
+        return;
+    }
+
+    // 3. Process history oldest to newest
+    let carriedForwardUnpaid = 0;
+    let d30_bucket = 0;
+    let d30_60_bucket = 0;
+    let d60_bucket = 0;
+    let billIndexCounter = 0;
+
+    const tariffsRes = await qFunc(
+        `SELECT * FROM tariffs WHERE customer_type = $1 ORDER BY effective_date DESC`,
+        [customerType]
+    );
+    const tariffs = client ? tariffsRes.rows : tariffsRes;
+
+    const findActiveTariff = (dateStr: string) => {
+        let lookupDate = dateStr;
+        if (dateStr && dateStr.length === 7 && dateStr.includes('-')) {
+            const [year, month] = dateStr.split('-').map(Number);
+            const lastDay = new Date(year, month, 0).getDate();
+            lookupDate = `${dateStr}-${lastDay}`;
+        }
+        const matched = tariffs.find((t: any) => {
+            const tDate = t.effective_date instanceof Date ? t.effective_date.toISOString().split('T')[0] : String(t.effective_date);
+            return tDate <= lookupDate;
+        });
+        return matched || tariffs[0];
+    };
+
+    const getMonthlyBillAmtLocal = (bill: any): number => {
+        if (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined) {
+            return Number(bill.THISMONTHBILLAMT);
+        }
+        return Math.max(
+            0,
+            Number(bill.TOTALBILLAMOUNT || 0)
+            - Number(bill.OUTSTANDINGAMT || 0)
+            - Number(bill.PENALTYAMT || 0)
+        );
+    };
+
+    for (const bill of bills) {
+        const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed';
+        const billMonth = bill.month_year || (bill.created_at ? (bill.created_at instanceof Date ? bill.created_at.toISOString().slice(0,7) : String(bill.created_at).slice(0,7)) : '');
+        
+        const activeTariff = findActiveTariff(billMonth);
+        const threshold = activeTariff?.penalty_month_threshold ? Number(activeTariff.penalty_month_threshold) : 3;
+        const bankRate = activeTariff?.bank_lending_rate ? Number(activeTariff.bank_lending_rate) : 0.15;
+        
+        let tieredRates: any[] = [];
+        if (activeTariff?.penalty_tiered_rates) {
+            try {
+                tieredRates = typeof activeTariff.penalty_tiered_rates === 'string' 
+                    ? JSON.parse(activeTariff.penalty_tiered_rates) 
+                    : activeTariff.penalty_tiered_rates;
+            } catch (e) {
+                console.error("Error parsing tiered rates in dbSyncAgingForCustomer", e);
+            }
+        }
+
+        const arrearsSum = carriedForwardUnpaid;
+        let penalty = 0;
+        let maxAge = 0;
+
+        if (d60_bucket > 0.01) maxAge = 3;
+        else if (d30_60_bucket > 0.01) maxAge = 2;
+        else if (d30_bucket > 0.01) maxAge = 1;
+
+        const totalMissedCycles = billIndexCounter;
+        maxAge = Math.max(maxAge, totalMissedCycles);
+
+        const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
+        if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
+
+        if (maxAge >= threshold) {
+            const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
+            const totalRate = bankRate + Number(applicableTier?.rate || 0);
+            penalty = arrearsSum * totalRate;
+        }
+
+        const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmtLocal(bill);
+        const totalD60AndLegacy = d60_bucket + legacyDebt;
+
+        const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+        const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
+
+        const d30_rounded = Number(d30_bucket.toFixed(2));
+        const d30_60_rounded = Number(d30_60_bucket.toFixed(2));
+        const d60_rounded = Number(totalD60AndLegacy.toFixed(2));
+        const penalty_rounded = Number(penalty.toFixed(2));
+        const outstanding_rounded = Number(derivedOutstanding.toFixed(2));
+        const totalPayable_rounded = Number(derivedTotalPayable.toFixed(2));
+        const currentMonthlyCharge_rounded = Number(currentMonthlyCharge.toFixed(2));
+
+        const amtPaid = isVoided ? 0 : Number(bill.amount_paid || bill.amountPaid || bill.AMOUNTPAID || 0);
+        const billUnpaid = Math.max(0, derivedTotalPayable - amtPaid);
+        const billPaymentStatus = billUnpaid <= 0.01 ? 'Paid' : 'Unpaid';
+
+        await qFunc(
+            `UPDATE bills 
+             SET debit_30 = $1, 
+                 debit_30_60 = $2, 
+                 debit_60 = $3, 
+                 "PENALTYAMT" = $4, 
+                 "OUTSTANDINGAMT" = $5, 
+                 "THISMONTHBILLAMT" = $6, 
+                 "TOTALBILLAMOUNT" = $7,
+                 payment_status = $8
+             WHERE id = $9`,
+            [
+                d30_rounded,
+                d30_60_rounded,
+                d60_rounded,
+                penalty_rounded,
+                outstanding_rounded,
+                currentMonthlyCharge_rounded,
+                totalPayable_rounded,
+                billPaymentStatus,
+                bill.id
+            ]
+        );
+
+        const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+        carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
+
+        let remainingPayment = amtPaid;
+
+        const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
+        const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
+        remainingPayment -= paidAgainstOldest;
+
+        const paidAgainstPenalty = Math.min(remainingPayment, penalty);
+        remainingPayment -= paidAgainstPenalty;
+
+        const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
+        const remaining_d30_60 = Math.max(0, d30_60_bucket - paidAgainstD30_60);
+        remainingPayment -= paidAgainstD30_60;
+
+        const paidAgainstD30 = Math.min(remainingPayment, d30_bucket);
+        const remaining_d30 = Math.max(0, d30_bucket - paidAgainstD30);
+        remainingPayment -= paidAgainstD30;
+
+        const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
+        const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
+
+        d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
+        d30_60_bucket = remaining_d30;
+        d30_bucket = remaining_current;
+
+        if (carriedForwardUnpaid > 0.01) {
+            billIndexCounter++;
+        } else {
+            billIndexCounter = 0;
+        }
+    }
+
+    const finalOutstandingBalance = Number(carriedForwardUnpaid.toFixed(2));
+    const finalStatus = finalOutstandingBalance > 0.01 ? 'Unpaid' : 'Paid';
+
+    if (isBulk) {
+        await qFunc(
+            `UPDATE bulk_meters 
+             SET "outStandingbill" = $1, "paymentStatus" = $2 
+             WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($3))`,
+            [finalOutstandingBalance, finalStatus, customerKey]
+        );
+    } else {
+        await qFunc(
+            `UPDATE individual_customers 
+             SET "outStandingbill" = $1, "paymentStatus" = $2 
+             WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($3))`,
+            [finalOutstandingBalance, finalStatus, customerKey]
+        );
+    }
+};

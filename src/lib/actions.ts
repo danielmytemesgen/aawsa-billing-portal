@@ -129,7 +129,7 @@ import {
   dbGetLatestReadingsByMeters,
   dbCreateMeterReadingPhoto,
   dbGetPhotosByReadingId,
-
+  dbSyncAgingForCustomer,
 } from './db-queries';
 import { withTransaction } from './db';
 
@@ -1344,13 +1344,14 @@ export async function correctBillAction(id: string, reason: string) {
     const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL); // Core management needed
     await verifyBillBranchAccess(id, session);
 
-    const { 
+      const { 
       dbGetBillById, 
       dbUpdateBillStatus, 
       dbCreateBillWorkflowLog,
       dbCreateBill, 
       dbUpdateBulkMeter, 
-      dbUpdateCustomer 
+      dbUpdateCustomer,
+      dbSyncAgingForCustomer
     } = await import('./db-queries');
 
     return await withTransaction(async (client) => {
@@ -1361,17 +1362,10 @@ export async function correctBillAction(id: string, reason: string) {
       // 1. Mark original bill as reversed
       await dbUpdateBillStatus(id, 'Reversed', null, null, client);
 
-      // 2. Reconcile balance (revert the addition of debt from the original bill)
-      const totalAmt = Number(originalBill.TOTALBILLAMOUNT || 0);
-      const paidAmt = Number(originalBill.amount_paid || 0);
-      const unpaidAmt = Number((totalAmt - paidAmt).toFixed(2));
-
-      if (unpaidAmt > 0) {
-        if (originalBill.CUSTOMERKEY) {
-          await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalBill.CUSTOMERKEY]);
-        } else if (originalBill.individual_customer_id) {
-          await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) - $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalBill.individual_customer_id]);
-        }
+      // 2. Reconcile balance by recalculating aging debt for the customer
+      const customerKey = originalBill.CUSTOMERKEY || originalBill.individual_customer_id;
+      if (customerKey) {
+        await dbSyncAgingForCustomer(customerKey, client);
       }
 
       // 3. Skip Credit Note creation (removed per user request)
@@ -1723,33 +1717,13 @@ export async function createPaymentAction(payment: PaymentInsert) {
       // 1. Create Payment
       const result = await dbCreatePayment(payment);
 
-    // 2. Update Bill Status and Meter Balance
+    // 2. Sync Aging Debt and Updates
     if (payment.bill_id) {
-      const totalPaid = await dbGetTotalPaymentsForBill(payment.bill_id);
       const bill = await dbGetBillByIdQuery(payment.bill_id);
-
       if (bill) {
-        const billAmount = Number(bill.TOTALBILLAMOUNT || 0);
-        const newPaymentStatus = totalPaid >= (billAmount - 0.01) ? 'Paid' : 'Unpaid';
-
-        await dbUpdateBill(payment.bill_id, {
-          amount_paid: totalPaid,
-          payment_status: newPaymentStatus
-        });
-
-        // 3. Update Bulk Meter Balance if applicable
-        if (bill.CUSTOMERKEY) {
-          const bulkMeter = await dbGetBulkMeterById(bill.CUSTOMERKEY);
-          if (bulkMeter) {
-            // Subtract the new payment amount from the meter's outstanding balance
-            const currentMeterBalance = Number(bulkMeter.outStandingbill || 0);
-            const newMeterBalance = currentMeterBalance - Number(payment.amount_paid);
-
-            await dbUpdateBulkMeter(bill.CUSTOMERKEY, {
-              outStandingbill: newMeterBalance as any,
-              paymentStatus: newMeterBalance <= 0.01 ? 'Paid' as any : 'Unpaid' as any
-            });
-          }
+        const customerKey = bill.CUSTOMERKEY || bill.individual_customer_id;
+        if (customerKey) {
+            await dbSyncAgingForCustomer(customerKey);
         }
       }
     }
@@ -1765,7 +1739,25 @@ export async function createPaymentAction(payment: PaymentInsert) {
 export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.PAYMENTS_CREATE); // Assume same for now
+    
+    // Fetch payment to get bill_id
+    const payments = await dbGetAllPayments();
+    const existingPayment = payments.find((p: any) => p.id === id);
+
     const result = await dbUpdatePayment(id, payment);
+
+    let customerKeyToSync = null;
+    if (existingPayment && existingPayment.bill_id) {
+      const bill = await dbGetBillByIdQuery(existingPayment.bill_id);
+      if (bill) {
+         customerKeyToSync = bill.CUSTOMERKEY || bill.individual_customer_id;
+      }
+    }
+
+    if (customerKeyToSync) {
+        await dbSyncAgingForCustomer(customerKeyToSync);
+    }
+
     await logSecurityEventAction({
       event: 'Update Payment',
       details: { id, updates: payment }
@@ -1780,38 +1772,20 @@ export async function deletePaymentAction(id: string) {
     const payments = await dbGetAllPayments();
     const payment = payments.find((p: any) => p.id === id);
 
+    let customerKeyToSync = null;
     if (payment && payment.bill_id) {
       const bill = await dbGetBillByIdQuery(payment.bill_id);
-      if (bill && bill.CUSTOMERKEY) {
-        const bulkMeter = await dbGetBulkMeterById(bill.CUSTOMERKEY);
-        if (bulkMeter) {
-          // Restore the meter's outstanding balance
-          const currentMeterBalance = Number(bulkMeter.outStandingbill || 0);
-          const restoredMeterBalance = currentMeterBalance + Number(payment.amount_paid);
-
-          await dbUpdateBulkMeter(bill.CUSTOMERKEY, {
-            outStandingbill: restoredMeterBalance as any,
-            paymentStatus: restoredMeterBalance <= 0.01 ? 'Paid' as any : 'Unpaid' as any
-          });
-        }
+      if (bill) {
+         customerKeyToSync = bill.CUSTOMERKEY || bill.individual_customer_id;
       }
     }
 
     // 2. Delete the payment
     await dbDeletePayment(id, session.id);
 
-    // 3. Update Bill Status if applicable
-    if (payment && payment.bill_id) {
-      const totalPaid = await dbGetTotalPaymentsForBill(payment.bill_id);
-      const bill = await dbGetBillByIdQuery(payment.bill_id);
-      if (bill) {
-        const billAmount = Number(bill.TOTALBILLAMOUNT || 0);
-        const newPaymentStatus = totalPaid >= (billAmount - 0.01) ? 'Paid' : 'Unpaid';
-        await dbUpdateBill(payment.bill_id, {
-          amount_paid: totalPaid,
-          payment_status: newPaymentStatus
-        });
-      }
+    // 3. Sync Aging Debt and Updates
+    if (customerKeyToSync) {
+        await dbSyncAgingForCustomer(customerKeyToSync);
     }
 
     await logSecurityEventAction({
@@ -2744,64 +2718,22 @@ export async function syncAllBillsAgingDebtAction() {
     const branchId = !hasManageAll ? session.branchId : undefined;
 
     const bills = await dbGetAllBills({ branchId });
-    const { calculateDebtAging } = await import('./billing-utils');
+    
+    // Get distinct customer keys (can be bulk or individual)
+    const customerKeys = Array.from(new Set(
+      bills.map(b => b.CUSTOMERKEY || b.individual_customer_id)
+        .filter(key => key !== null && key !== undefined)
+    )) as string[];
 
     let count = 0;
-    for (const bill of bills) {
-      if (!bill.CUSTOMERKEY) continue;
-
-      // Get all bills for this meter to reconstruct the history
-      const historicalBills = await dbGetBillsByBulkMeterId(bill.CUSTOMERKEY, branchId);
-
-      // Filter for bills that were created BEFORE this specific bill
-      const olderBills = historicalBills.filter((b: any) => {
-        const bDate = new Date(b.created_at || b.createdAt || 0);
-        const billDate = new Date(bill.created_at || bill.createdAt || 0);
-        return bDate.getTime() < billDate.getTime();
-      }).sort((a: any, b: any) => {
-        const aDate = new Date(a.created_at || a.createdAt || 0);
-        const bDate = new Date(b.created_at || b.createdAt || 0);
-        return bDate.getTime() - aDate.getTime(); // Most recent first
-      });
-
-      // DYNAMIC RECONSTRUCTION: Sum up unpaid portions of all older bills
-      const reconstructedOutstanding = olderBills.reduce((sum: number, b: any) => {
-        const monthlyAmt = (b.THISMONTHBILLAMT !== null && b.THISMONTHBILLAMT !== undefined)
-          ? Number(b.THISMONTHBILLAMT)
-          : Number(b.TOTALBILLAMOUNT);
-        const unpaid = Math.max(0, monthlyAmt - Number(b.amount_paid || 0));
-        return sum + unpaid;
-      }, 0);
-
-      const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(reconstructedOutstanding, olderBills);
-
-      // Prepare updates
-      const updates: any = {
-        debit_30: debit30,
-        debit_30_60: debit30_60,
-        debit_60: debit60,
-        PENALTYAMT: penaltyAmt,
-        OUTSTANDINGAMT: reconstructedOutstanding
-      };
-
-      // Ensure THISMONTHBILLAMT is correctly derived if missing
-      const currentMonthBill = (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined)
-        ? Number(bill.THISMONTHBILLAMT)
-        : Number(bill.TOTALBILLAMOUNT);
-
-      if (bill.THISMONTHBILLAMT === null || bill.THISMONTHBILLAMT === undefined) {
-        updates.THISMONTHBILLAMT = currentMonthBill;
-      }
-
-      // Update TOTALBILLAMOUNT to reflect the sum (Total Payable)
-      updates.TOTALBILLAMOUNT = currentMonthBill + reconstructedOutstanding + penaltyAmt;
-
-      await dbUpdateBill(bill.id, updates);
+    for (const key of customerKeys) {
+      await dbSyncAgingForCustomer(key);
       count++;
     }
 
     revalidatePath('/admin/bulk-meters');
     revalidatePath('/admin/reports');
+    revalidatePath('/staff/reports');
     return { success: true, updatedCount: count };
   });
 }

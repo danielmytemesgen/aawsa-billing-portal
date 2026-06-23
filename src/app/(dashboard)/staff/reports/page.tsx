@@ -41,6 +41,7 @@ import type { DateRange } from "react-day-picker";
 import { customerTypes } from "@/lib/billing-calculations";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
 import { usePermissions } from "@/hooks/use-permissions";
+import { getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllBranchesAction, getAllTariffsAction } from "@/lib/actions";
 
 interface User {
   email: string;
@@ -83,11 +84,11 @@ const availableStaffReports: ReportType[] = [
       "Meter Size", "Meter Number", "Previous Reading", "Current Reading", "Month", "Specific Area",
       "SubCity", "Woreda", "Sewerage Connection", "Assigned Bulk Meter ID", "Status", "Payment Status", "Calculated Bill"
     ],
-    getData: (filters: ReportFilters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
-      const allCustomers = getCustomers();
-      const allBulkMeters = getBulkMeters();
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
 
       const branchCUSTOMERKEYs = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
@@ -138,10 +139,10 @@ const availableStaffReports: ReportType[] = [
       "Customer Key", "Name", "Contract Number", "Meter Size", "Meter Number",
       "Previous Reading", "Current Reading", "Month", "Specific Area", "SubCity", "Woreda", "Status", "Payment Status"
     ],
-    getData: (filters: ReportFilters) => {
+    getData: async (filters) => {
       const { branchId } = filters;
       if (!branchId) return [];
-      const filteredData = getBulkMeters().filter(bm => bm.branchId === branchId);
+      const filteredData = ((await getAllBulkMetersAction())?.data as any[] ?? []).filter(bm => bm.branchId === branchId);
       return filteredData.map(bm => ({
         "Customer Key":     bm.customerKeyNumber,
         "Name":             bm.name,
@@ -170,15 +171,15 @@ const availableStaffReports: ReportType[] = [
       "Meter Rent", "Current Bill", "Total Bill", "Amount Paid", "Outstanding", "Due Date",
       "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
-    getData: (filters: ReportFilters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
 
       // allBills: the FULL, unfiltered bill store — used as the history pool for
       // outstanding reconstruction (matches the Admin billing-summary report exactly).
-      const allBills = getBills();
-      const allCustomers = getCustomers();
-      const allBulkMeters = getBulkMeters();
+      const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
       let filteredBills = allBills.filter(bill => {
@@ -277,14 +278,14 @@ const availableStaffReports: ReportType[] = [
       "CURRREAD", "PREVREAD", "CONS", "TOTALBILLAMOUNT", "THISMONTHBILLAMT",
       "OUTSTANDINGAMT", "PENALTYAMT", "VAT_AMOUNT", "DRACCTNO", "CRACCTNO"
     ],
-    getData: (filters: ReportFilters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
       
-      const allBills = getBills();
-      const allCustomers = getCustomers();
-      const allBulkMeters = getBulkMeters();
-      const branches = getBranches();
+      const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const branches = ((await getAllBranchesAction())?.data as any[] ?? []);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
       
@@ -415,11 +416,11 @@ const availableStaffReports: ReportType[] = [
       "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
       "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
     ],
-    getData: (filters: ReportFilters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
-      const allBills = getBills();
-      const allCustomers = getCustomers();
-      const allBulkMeters = getBulkMeters();
+      const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
@@ -566,11 +567,11 @@ const availableStaffReports: ReportType[] = [
       "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
       "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
     ],
-    getData: (filters: ReportFilters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
-      const allBills = getBills();
-      const allCustomers = getCustomers();
-      const allBulkMeters = getBulkMeters();
+      const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
@@ -719,13 +720,13 @@ const availableStaffReports: ReportType[] = [
       "Meter Rent", "Total Bill Amount", "Amount Paid", "Outstanding Amount", "Due Date",
       "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
-    getData: (filters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
-      let bills = getBills().filter(b => b.paymentStatus === 'Paid');
+      let bills = ((await getAllBillsAction())?.data as any[] ?? []).filter(b => b.paymentStatus === 'Paid');
 
-      const bulkMetersInBranch = getBulkMeters().filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
-      const customersInBranch = getCustomers().filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
+      const bulkMetersInBranch = ((await getAllBulkMetersAction())?.data as any[] ?? []).filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
+      const customersInBranch = ((await getAllCustomersAction())?.data as any[] ?? []).filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
       bills = bills.filter(b =>
         (b.CUSTOMERKEY && bulkMetersInBranch.includes(b.CUSTOMERKEY)) ||
         (b.individualCustomerId && customersInBranch.includes(b.individualCustomerId))
@@ -783,13 +784,13 @@ const availableStaffReports: ReportType[] = [
       "Meter Rent", "Total Bill Amount", "Amount Paid", "Outstanding Amount", "Due Date",
       "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
-    getData: (filters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
-      let bills = getBills();
+      let bills = ((await getAllBillsAction())?.data as any[] ?? []);
 
-      const bulkMetersInBranch = getBulkMeters().filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
-      const customersInBranch = getCustomers().filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
+      const bulkMetersInBranch = ((await getAllBulkMetersAction())?.data as any[] ?? []).filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
+      const customersInBranch = ((await getAllCustomersAction())?.data as any[] ?? []).filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
       bills = bills.filter(b =>
         (b.CUSTOMERKEY && bulkMetersInBranch.includes(b.CUSTOMERKEY)) ||
         (b.individualCustomerId && customersInBranch.includes(b.individualCustomerId))
@@ -845,13 +846,13 @@ const availableStaffReports: ReportType[] = [
       "Reading Date", "Month/Year", "Reading Value", "Is Estimate", "Notes",
       "Created At", "Updated At"
     ],
-    getData: (filters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
-      let readings = getMeterReadings();
+      let readings = ([...((await getAllIndividualCustomerReadingsAction())?.data as any[] ?? []), ...((await getAllBulkMeterReadingsAction())?.data as any[] ?? [])]);
 
-      const bulkMetersInBranch = getBulkMeters().filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
-      const customersInBranch = getCustomers().filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
+      const bulkMetersInBranch = ((await getAllBulkMetersAction())?.data as any[] ?? []).filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
+      const customersInBranch = ((await getAllCustomersAction())?.data as any[] ?? []).filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
       readings = readings.filter(r =>
         (isBulkReading(r) && r.CUSTOMERKEY && bulkMetersInBranch.includes(r.CUSTOMERKEY)) ||
         (isIndividualReading(r) && r.individualCustomerId && customersInBranch.includes(r.individualCustomerId))
@@ -895,12 +896,12 @@ const availableStaffReports: ReportType[] = [
       "Payment Method", "Reference", "Processed By", "Notes",
       "Created At", "Updated At"
     ],
-    getData: (filters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
-      let payments = getPayments();
+      let payments = ((await getAllPaymentsAction())?.data as any[] ?? []);
 
-      const customersInBranch = getCustomers().filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
+      const customersInBranch = ((await getAllCustomersAction())?.data as any[] ?? []).filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
       payments = payments.filter(p => p.individualCustomerId && customersInBranch.includes(p.individualCustomerId));
 
       if (startDate && endDate) {
@@ -936,13 +937,13 @@ const availableStaffReports: ReportType[] = [
       "Reading ID", "Meter Identifier", "Meter Type", "Reading Date", "Month/Year",
       "Reading Value", "Is Estimate", "Reader Name", "Reader Staff ID", "Notes"
     ],
-    getData: (filters) => {
+    getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
       if (!branchId) return [];
-      let readings = getMeterReadings();
-      const customers = getCustomers();
-      const bulkMeters = getBulkMeters();
-      const staffList = getStaffMembers();
+      let readings = ([...((await getAllIndividualCustomerReadingsAction())?.data as any[] ?? []), ...((await getAllBulkMeterReadingsAction())?.data as any[] ?? [])]);
+      const customers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const bulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const staffList = ((await getAllStaffMembersAction())?.data as any[] ?? []);
 
       const bulkMetersInBranch = bulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber);
       const customersInBranch = customers.filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
@@ -1052,17 +1053,8 @@ export default function StaffReportsPage() {
   React.useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
-      await initializeCustomers(true);
-      await initializeBulkMeters(true);
-      await initializeBranches(true);
-      await initializeBills(true);
-      await initializeIndividualCustomerReadings(true);
-      await initializeBulkMeterReadings(true);
-      await initializePayments(true);
-      if (hasPermission('staff_view')) {
-        await initializeStaffMembers(true);
-      }
-      setBulkMeters(getBulkMeters());
+      // Only load bulk meters for the usage chart widget (not for reports)
+      setBulkMeters(((await getAllBulkMetersAction())?.data as any[] ?? []));
       setIsLoading(false);
     };
     fetchData();
