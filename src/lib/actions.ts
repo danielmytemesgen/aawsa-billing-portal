@@ -1093,6 +1093,9 @@ export async function runBillingCycleAction(payload: {
       debit_60: debit60,
       due_date: dueDate.toISOString(),
       payment_status: payload.carryBalance ? 'Unpaid' : 'Paid',
+      // When marking as Paid, record the full amount as paid so dbSyncAgingForCustomer
+      // recalculates consistently and never reverts payment_status back to 'Unpaid'.
+      amount_paid: payload.carryBalance ? 0 : totalPayableForCycle,
       status: 'Draft', // New cycles start as drafts
       bill_number: `BILL-${Date.now()}`,
       snapshot_data: {
