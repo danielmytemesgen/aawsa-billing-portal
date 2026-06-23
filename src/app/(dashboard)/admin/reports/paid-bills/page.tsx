@@ -14,12 +14,13 @@ import { getPaidBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { CheckCircle2, Search } from "lucide-react";
+import { CheckCircle2, Search, Lock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
+import { Alert, AlertTitle } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 
@@ -89,12 +90,12 @@ export default function PaidBillsReportPage() {
     const fetchBills = async () => {
       setIsLoading(true);
       const branchIdToFilter = currentUser?.role?.toLowerCase() === 'staff management' ? currentUser.branchId : selectedBranchId;
-
+      const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const result = await getPaidBillsAction({
         page,
         limit: rowsPerPage,
         searchTerm: debouncedSearch,
-        branchId: branchIdToFilter
+        branchId: normalizedBranchId
       });
 
       if (result.success) {
@@ -106,6 +107,18 @@ export default function PaidBillsReportPage() {
 
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser]);
+
+  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to view reports.</CardDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-10">

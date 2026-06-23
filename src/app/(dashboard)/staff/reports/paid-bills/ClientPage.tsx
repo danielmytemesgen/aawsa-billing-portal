@@ -1,11 +1,5 @@
-
+// "use client";
 "use client";
-
-export const metadata = {
-  title: 'Sent Bills Report',
-  description: 'List of sent bills for staff members.'
-};
-
 
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -15,11 +9,11 @@ import {
   getCustomers, initializeCustomers, subscribeToCustomers,
   getBulkMeters, initializeBulkMeters, subscribeToBulkMeters
 } from "@/lib/data-store";
-import { getAllSentBillsAction } from "@/lib/actions";
+import { getPaidBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { Send, Search } from "lucide-react";
+import { CheckCircle2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -33,7 +27,7 @@ interface UserProfile {
   branchName?: string;
 }
 
-export default function StaffSentBillsReportPage() {
+export default function StaffPaidBillsReportPage() {
   const { hasPermission } = usePermissions();
 
   const [bills, setBills] = React.useState<DomainBill[]>([]);
@@ -83,14 +77,14 @@ export default function StaffSentBillsReportPage() {
     };
   }, []);
 
-  // Fetch paginated sent bills from server
+  // Fetch paginated paid bills from server
   React.useEffect(() => {
     if (!currentUser) return;
 
     const fetchBills = async () => {
       setIsLoading(true);
       const normalizedBranchId = currentUser.branchId === 'all' ? undefined : currentUser.branchId;
-      const result = await getAllSentBillsAction({
+      const result = await getPaidBillsAction({
         page,
         limit: rowsPerPage,
         searchTerm: debouncedSearch,
@@ -125,10 +119,10 @@ export default function StaffSentBillsReportPage() {
         <CardHeader>
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <Send className="h-8 w-8 text-primary" />
+              <CheckCircle2 className="h-8 w-8 text-primary" />
               <div>
-                <CardTitle>List of All Sent Bills ({currentUser?.branchName || 'Your Branch'})</CardTitle>
-                <CardDescription>A list of all generated bills for your branch.</CardDescription>
+                <CardTitle>List of Paid Bills ({currentUser?.branchName || 'Your Branch'})</CardTitle>
+                <CardDescription>A real-time list of all bills marked as paid for your branch.</CardDescription>
               </div>
             </div>
             <div className="relative w-full md:w-auto md:min-w-[250px]">
@@ -145,7 +139,7 @@ export default function StaffSentBillsReportPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center p-8 text-muted-foreground">Loading all bills...</div>
+            <div className="text-center p-8 text-muted-foreground">Loading paid bills...</div>
           ) : (
             <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} />
           )}

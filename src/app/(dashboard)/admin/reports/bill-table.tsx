@@ -52,7 +52,29 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
     return branch ? branch.name : "Unknown";
   };
 
+  const getBillField = <T,>(bill: DomainBill, keys: Array<keyof DomainBill | string>): T | undefined => {
+    for (const key of keys) {
+      const value = (bill as any)[key];
+      if (value !== undefined && value !== null) {
+        return value as T;
+      }
+    }
+    return undefined;
+  };
 
+  const parseNumber = (value: unknown): number | undefined => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const normalizeNumber = parseNumber;
+
+  const getPaymentStatus = (bill: DomainBill): string => {
+    return getBillField<string>(bill, ['paymentStatus', 'payment_status']) || 'Unpaid';
+  };
 
   return (
     <div className="rounded-3xl border border-slate-200/60 shadow-md bg-white overflow-hidden mt-6">
@@ -89,27 +111,37 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                     {getBranchName(bill)}
                   </div>
                 </TableCell>
-                <TableCell className="text-slate-600 py-4 italic">{bill.monthYear}</TableCell>
-                <TableCell className="text-right text-slate-600 py-4">{typeof bill.PREVREAD === 'number' ? bill.PREVREAD.toFixed(2) : '-'}</TableCell>
-                <TableCell className="text-right text-slate-900 font-medium py-4">{typeof bill.CURRREAD === 'number' ? bill.CURRREAD.toFixed(2) : '-'}</TableCell>
-                <TableCell className="text-right py-4">
-                  <div className={cn(
-                    "font-bold",
-                    Number(bill.CONS || 0) > 0 ? "text-emerald-600" : "text-slate-400"
-                  )}>
-                    {(() => {
-                      const usage = typeof bill.CONS === 'number' ? bill.CONS : (typeof bill.CURRREAD === 'number' && typeof bill.PREVREAD === 'number' ? bill.CURRREAD - bill.PREVREAD : null);
-                      return usage !== null ? usage.toFixed(2) : '-';
-                    })()}
-                  </div>
-                </TableCell>
-                <TableCell className="text-right py-4 font-bold text-amber-600">
-                  {typeof bill.differenceUsage === 'number' ? bill.differenceUsage.toFixed(2) : '-'}
-                </TableCell>
                 {(() => {
-                  const debit30 = bill.debit30 || (bill as any).debit_30 || 0;
-                  const debit30_60 = bill.debit30_60 || (bill as any).debit_30_60 || 0;
-                  const debit60 = bill.debit60 || (bill as any).debit_60 || 0;
+                  const monthValue = getBillField<string>(bill, ['monthYear', 'month_year']);
+                  const prevReadValue = parseNumber(getBillField<number>(bill, ['PREVREAD', 'prevRead', 'prevread']));
+                  const currReadValue = parseNumber(getBillField<number>(bill, ['CURRREAD', 'currRead', 'currread']));
+                  const rawUsage = parseNumber(getBillField<number>(bill, ['CONS', 'cons']));
+                  const usageValue = rawUsage !== undefined ? rawUsage : (prevReadValue !== undefined && currReadValue !== undefined ? currReadValue - prevReadValue : undefined);
+                  const diffUsageValue = parseNumber(getBillField<number>(bill, ['differenceUsage', 'difference_usage']));
+
+                  return (
+                    <>
+                      <TableCell className="text-slate-600 py-4 italic">{monthValue || '-'}</TableCell>
+                      <TableCell className="text-right text-slate-600 py-4">{prevReadValue !== undefined ? prevReadValue.toFixed(2) : '-'}</TableCell>
+                      <TableCell className="text-right text-slate-900 font-medium py-4">{currReadValue !== undefined ? currReadValue.toFixed(2) : '-'}</TableCell>
+                      <TableCell className="text-right py-4">
+                        <div className={cn(
+                          "font-bold",
+                          (usageValue ?? 0) > 0 ? "text-emerald-600" : "text-slate-400"
+                        )}>
+                          {usageValue !== undefined ? usageValue.toFixed(2) : '-'}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right py-4 font-bold text-amber-600">
+                        {diffUsageValue !== undefined ? diffUsageValue.toFixed(2) : '-'}
+                      </TableCell>
+                    </>
+                  );
+                })()}
+                {(() => {
+                  const debit30 = normalizeNumber(bill.debit30 ?? (bill as any).debit_30) ?? 0;
+                  const debit30_60 = normalizeNumber(bill.debit30_60 ?? (bill as any).debit_30_60) ?? 0;
+                  const debit60 = normalizeNumber(bill.debit60 ?? (bill as any).debit_60) ?? 0;
 
                   return (
                     <>
@@ -120,35 +152,36 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                   );
                 })()}
                 <TableCell className="text-right font-medium text-slate-900 py-4">{(() => {
-                  const outstanding = (
-                    (Number((bill as any).debit_30 || bill.debit30 || 0)) + 
-                    (Number((bill as any).debit_30_60 || bill.debit30_60 || 0)) + 
-                    (Number((bill as any).debit_60 || bill.debit60 || 0))
+                  const outstanding = normalizeNumber(bill.OUTSTANDINGAMT) ?? (
+                    (normalizeNumber((bill as any).debit_30 ?? bill.debit30) ?? 0) + 
+                    (normalizeNumber((bill as any).debit_30_60 ?? bill.debit30_60) ?? 0) + 
+                    (normalizeNumber((bill as any).debit_60 ?? bill.debit60) ?? 0)
                   );
                   return outstanding.toFixed(2);
                 })()}</TableCell>
                 <TableCell className="text-right text-slate-600 py-4">{getMonthlyBillAmt(bill).toFixed(2)}</TableCell>
-                <TableCell className="text-right text-red-500 font-bold py-4">{(Number(bill.PENALTYAMT || 0)).toFixed(2)}</TableCell>
+                <TableCell className="text-right text-red-500 font-bold py-4">{normalizeNumber(bill.PENALTYAMT)?.toFixed(2) ?? '-'}</TableCell>
                 <TableCell className="text-right font-black font-mono text-indigo-700 bg-indigo-50/30 py-4 pr-6">{(() => {
-                  const outstanding = (
-                    (Number((bill as any).debit_30 || bill.debit30 || 0)) + 
-                    (Number((bill as any).debit_30_60 || bill.debit30_60 || 0)) + 
-                    (Number((bill as any).debit_60 || bill.debit60 || 0))
+                  const outstanding = normalizeNumber(bill.OUTSTANDINGAMT) ?? (
+                    (normalizeNumber((bill as any).debit_30 ?? bill.debit30) ?? 0) + 
+                    (normalizeNumber((bill as any).debit_30_60 ?? bill.debit30_60) ?? 0) + 
+                    (normalizeNumber((bill as any).debit_60 ?? bill.debit60) ?? 0)
                   );
                   const current = getMonthlyBillAmt(bill);
-                  const penalty = Number(bill.PENALTYAMT || 0);
+                  const penalty = normalizeNumber(bill.PENALTYAMT) ?? 0;
+                  const totalDue = normalizeNumber((bill as any).totalAmountDue ?? bill.TOTALBILLAMOUNT) ?? (outstanding + current + penalty);
 
-                  return (outstanding + current + penalty).toFixed(2);
+                  return totalDue.toFixed(2);
                 })()}</TableCell>
                 <TableCell className="text-slate-600 py-4 whitespace-nowrap">{formatDate(bill.dueDate)}</TableCell>
                 <TableCell className="py-4">
                   <Badge className={cn(
                     "rounded-xl px-3 py-1 font-bold text-white shadow-sm border-none whitespace-nowrap",
-                    bill.paymentStatus === 'Paid' 
-                      ? "bg-emerald-500 hover:bg-emerald-600" 
+                    getPaymentStatus(bill) === 'Paid'
+                      ? "bg-emerald-500 hover:bg-emerald-600"
                       : "bg-red-500 hover:bg-red-600"
                   )}>
-                    {bill.paymentStatus}
+                    {getPaymentStatus(bill) === 'Paid' ? 'Paid' : 'Unpaid'}
                   </Badge>
                 </TableCell>
               </TableRow>

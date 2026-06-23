@@ -22,9 +22,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { usePermissions } from "@/hooks/use-permissions";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { Alert, AlertTitle } from '@/components/ui/alert';
+import { Lock } from 'lucide-react';
 
 export default function UnsettledBillsReportPage() {
   const { hasPermission } = usePermissions();
+  // Permission check: ensure user can view reports
+  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to view reports.</CardDescription>
+        </Alert>
+      </div>
+    );
+  }
+
 
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
 
@@ -91,12 +106,13 @@ export default function UnsettledBillsReportPage() {
       const branchIdToFilter = (currentUser && currentUser.branchId && !hasPermission('reports_generate_all'))
         ? currentUser.branchId
         : selectedBranchId;
+      const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
 
       const result = await getUnsettledBillsAction({
         page,
         limit: rowsPerPage,
         searchTerm: debouncedSearch,
-        branchId: branchIdToFilter
+        branchId: normalizedBranchId
       });
 
       if (result.success) {

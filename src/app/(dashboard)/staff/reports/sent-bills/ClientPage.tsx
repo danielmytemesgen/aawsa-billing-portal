@@ -1,11 +1,5 @@
-
-"use client";
-
-export const metadata = {
-  title: 'Sent Bills Report',
-  description: 'List of sent bills for staff members.'
-};
-
+// "use client"
+"use client"
 
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -64,10 +58,7 @@ export default function StaffSentBillsReportPage() {
 
     const fetchStaticData = async () => {
       setIsLoading(true);
-      await Promise.all([
-        initializeCustomers(true),
-        initializeBulkMeters(true),
-      ]);
+      await Promise.all([initializeCustomers(true), initializeBulkMeters(true)]);
       setCustomers(getCustomers());
       setBulkMeters(getBulkMeters());
       setIsLoading(false);
@@ -76,7 +67,6 @@ export default function StaffSentBillsReportPage() {
 
     const unsubCustomers = subscribeToCustomers(setCustomers);
     const unsubBms = subscribeToBulkMeters(setBulkMeters);
-
     return () => {
       unsubCustomers();
       unsubBms();
@@ -86,7 +76,6 @@ export default function StaffSentBillsReportPage() {
   // Fetch paginated sent bills from server
   React.useEffect(() => {
     if (!currentUser) return;
-
     const fetchBills = async () => {
       setIsLoading(true);
       const normalizedBranchId = currentUser.branchId === 'all' ? undefined : currentUser.branchId;
@@ -96,14 +85,12 @@ export default function StaffSentBillsReportPage() {
         searchTerm: debouncedSearch,
         branchId: normalizedBranchId
       });
-
       if (result.success) {
         setBills(result.bills || []);
         setTotalBills(result.total || 0);
       }
       setIsLoading(false);
     };
-
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, currentUser]);
 
@@ -145,7 +132,7 @@ export default function StaffSentBillsReportPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center p-8 text-muted-foreground">Loading all bills...</div>
+            <div className="text-center p-8 text-muted-foreground">Loading sent bills...</div>
           ) : (
             <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} />
           )}

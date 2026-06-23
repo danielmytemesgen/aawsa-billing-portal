@@ -222,7 +222,11 @@ type PermissionUpdate = PublicTables['permissions']['Update'];
 const wrap = async <T>(fn: () => Promise<T>) => {
   try {
     const data = await fn();
-    return { data, error: null } as any;
+    const baseResult: any = { success: true, data, error: null };
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return { ...baseResult, ...data };
+    }
+    return baseResult;
   } catch (e) {
     console.error("Server Action Error in wrap:", e);
     // Write to file for immediate visibility
@@ -236,7 +240,7 @@ const wrap = async <T>(fn: () => Promise<T>) => {
       : typeof e === 'object' && e !== null
         ? e
         : { message: String(e) };
-    return { data: null, error: errorObject } as any;
+    return { success: false, data: null, error: errorObject } as any;
   }
 };
 
@@ -3102,11 +3106,12 @@ export async function getUnsettledBillsAction(params: {
 
     // If user doesn't have global access, they are restricted to their own branch
     const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+    const normalizedBranchId = effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
     const [bills, total] = await Promise.all([
-      dbGetUnsettledBillsPaginated({ ...params, offset, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true }),
-      dbGetUnsettledBillsCount({ ...params, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true })
+      dbGetUnsettledBillsPaginated({ ...params, offset, branchId: normalizedBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true }),
+      dbGetUnsettledBillsCount({ ...params, branchId: normalizedBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true })
     ]);
     return { success: true, bills, total };
   });
@@ -3128,11 +3133,12 @@ export async function getPaidBillsAction(params: {
 
     // If user doesn't have global access, they are restricted to their own branch
     const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+    const normalizedBranchId = effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
     const [bills, total] = await Promise.all([
-      dbGetPaidBillsPaginated({ ...params, offset, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true }),
-      dbGetPaidBillsCount({ ...params, branchId: effectiveBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true })
+      dbGetPaidBillsPaginated({ ...params, offset, branchId: normalizedBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true }),
+      dbGetPaidBillsCount({ ...params, branchId: normalizedBranchId, excludeUnfinalized: params.excludeUnfinalized ?? true })
     ]);
     return { success: true, bills, total };
   });
@@ -3152,11 +3158,12 @@ export async function getAllSentBillsAction(params: {
     const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
 
     const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+    const normalizedBranchId = effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
     const [bills, total] = await Promise.all([
-      dbGetAllSentBillsPaginated({ ...params, offset, branchId: effectiveBranchId }),
-      dbGetAllSentBillsCount({ ...params, branchId: effectiveBranchId })
+      dbGetAllSentBillsPaginated({ ...params, offset, branchId: normalizedBranchId }),
+      dbGetAllSentBillsCount({ ...params, branchId: normalizedBranchId })
     ]);
     return { success: true, bills, total };
   });

@@ -33,6 +33,10 @@ export function BillTable({ bills, customers, bulkMeters }: BillTableProps) {
     return bill.individualCustomerId || bill.CUSTOMERKEY || "N/A";
   };
 
+  const getPaymentStatus = (bill: DomainBill): string => {
+    return bill.paymentStatus || (bill as any).payment_status || 'Unpaid';
+  };
+
 
 
   return (
@@ -84,8 +88,8 @@ export function BillTable({ bills, customers, bulkMeters }: BillTableProps) {
                 })()}</TableCell>
                 <TableCell>{formatDate(bill.dueDate)}</TableCell>
                 <TableCell>
-                  <Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'} className={cn(bill.paymentStatus === 'Paid' && "bg-green-500 hover:bg-green-600")}>
-                    {bill.paymentStatus}
+                  <Badge variant={getPaymentStatus(bill) === 'Paid' ? 'default' : 'destructive'} className={cn(getPaymentStatus(bill) === 'Paid' && "bg-green-500 hover:bg-green-600")}>
+                    {getPaymentStatus(bill) === 'Paid' ? 'Paid' : 'Unpaid'}
                   </Badge>
                 </TableCell>
               </TableRow>

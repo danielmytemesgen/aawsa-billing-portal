@@ -1,5 +1,9 @@
 
-"use client";
+export const metadata = {
+  title: 'Unsettled Bills Report',
+  description: 'List of unsettled bills for staff members.'
+};
+
 
 // This component simply re-exports the main Unsettled Bills Report Page component.
 // This allows staff with the correct permission to view the report page
