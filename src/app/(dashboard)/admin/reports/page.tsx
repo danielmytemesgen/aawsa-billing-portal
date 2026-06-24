@@ -1070,12 +1070,34 @@ const availableReports: ReportType[] = [
           billKeyFormatted = isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
         }
 
-        // Format REASON (monthYear → M/D/YYYY, e.g. "2025-12" → "12/1/2025")
-        let reasonFormatted = bill.monthYear || bill.REASON || "";
-        if (reasonFormatted && reasonFormatted.includes('-') && reasonFormatted.length === 7) {
-          const [year, month] = reasonFormatted.split('-');
-          reasonFormatted = `${parseInt(month)}/1/${year}`;
-        }
+        const formatExportReason = (value: string | undefined, fallbackDate?: string | undefined) => {
+          const parseMonthYear = (monthYear?: string) => {
+            if (!monthYear || !monthYear.includes('-')) return "";
+            const [year, month] = monthYear.split('-');
+            if (!year || !month) return "";
+            const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+            const monthName = date.toLocaleString('en-US', { month: 'short' });
+            return `${monthName}-${year}`;
+          };
+
+          const first = parseMonthYear(value);
+          if (first) return first;
+
+          if (fallbackDate) {
+            const date = new Date(fallbackDate);
+            if (!Number.isNaN(date.getTime())) {
+              const monthName = date.toLocaleString('en-US', { month: 'short' });
+              return `${monthName}-${date.getUTCFullYear()}`;
+            }
+          }
+
+          return "";
+        };
+
+        const reasonFormatted = formatExportReason(
+          bill.monthYear || bill.month_year || bill.REASON,
+          bill.billPeriodEndDate || bill.bill_period_end_date || bill.createdAt || bill.created_at
+        );
 
         // Resolve branch name: from bill record first, then from customer lookup
         const branchNameFromBill = branchMap.get(bill.CUSTOMERBRANCH) || bill.CUSTOMERBRANCH;
@@ -1085,7 +1107,7 @@ const availableReports: ReportType[] = [
           "BILLKEY":         billKeyFormatted,
           "CUSTOMERKEY":     customerKey,
           "CUSTOMERNAME":    customerName,
-          "CUSTOMERTIN":     customerTin,
+          "CUSTOMERTIN":     "",
           "CUSTOMERBRANCH":  finalBranchName,
           "REASON":          reasonFormatted,
           "CURRREAD":        bill.CURRREAD,

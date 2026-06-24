@@ -2793,6 +2793,8 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         const billUnpaid = Math.max(0, derivedTotalPayable - amtPaid);
         const billPaymentStatus = billUnpaid <= 0.01 ? 'Paid' : 'Unpaid';
 
+        // Preserve any bills already manually marked as 'Paid'.
+        // If a bill's current payment_status is 'Paid', keep it as 'Paid'; otherwise set to computed status.
         await qFunc(
             `UPDATE bills 
              SET debit_30 = $1, 
@@ -2802,7 +2804,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "OUTSTANDINGAMT" = $5, 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
-                 payment_status = $8
+                 payment_status = CASE WHEN payment_status = 'Paid' THEN 'Paid' ELSE $8 END
              WHERE id = $9`,
             [
                 d30_rounded,

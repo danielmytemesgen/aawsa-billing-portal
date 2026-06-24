@@ -1,13 +1,5 @@
 'use client';
 
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog";
-
 import React, { useEffect, useState } from 'react';
 import { BillTaskBoard } from '@/features/billing/components/BillTaskBoard';
 import Link from 'next/link';
@@ -31,8 +23,7 @@ import {
     submitBillAction,
     approveBillAction,
     postBillAction,
-    getBranchesLookupAction,
-    syncAllBillsAgingDebtAction
+    getBranchesLookupAction
 } from '@/lib/actions';
 import { getBulkMeters, getCustomers, initializeBulkMeters, initializeCustomers, initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -59,7 +50,6 @@ import {
     Eye,
     Printer
 ,
-    Zap,
     RefreshCw} from 'lucide-react';
 import {
     AlertDialog,
@@ -96,8 +86,6 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const { toast } = useToast();
     const { hasPermission } = usePermissions();
     const [bills, setBills] = useState<any[]>([]);
-    const [isSyncing, setIsSyncing] = useState(false);
-    const [isSyncDialogOpen, setIsSyncDialogOpen] = useState(false);
     const [loading, setLoading] = useState(true);
     const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
     const [branches, setBranches] = useState<any[]>([]);
@@ -546,34 +534,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
 
 
-        const handleSyncFinancialDatabase = async () => {
-        setIsSyncing(true);
-        try {
-            const result = await syncAllBillsAgingDebtAction();
-            if (result.data?.success) {
-                await initializeBulkMeters(true);
-                await initializeCustomers(true);
-                await loadData();
-                toast({ 
-                    title: 'Synchronization Complete', 
-                    description: `Successfully synchronized ${result.data.updatedCount} records.` 
-                });
-                setIsSyncDialogOpen(false);
-            } else { 
-                throw new Error(result.error?.message || 'Sync failed'); 
-            }
-        } catch (error: any) { 
-            toast({ 
-                title: 'Sync Error', 
-                description: error.message, 
-                variant: 'destructive' 
-            }); 
-        } finally {
-            setIsSyncing(false);
-        }
-    };
-
-    const handleExportCSV = () => {
+        const handleExportCSV = () => {
         const headers = ['Bill ID', 'Customer Key', 'Month', 'Date Billed', 'Due Date', 'Status', 'Total Payable'];
         const rows = filteredOutstanding.map(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
@@ -611,54 +572,11 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     <p className="text-muted-foreground mt-1">Review, approve and track billing workflow across branches.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                                        <Dialog open={isSyncDialogOpen} onOpenChange={setIsSyncDialogOpen}>
-                        <DialogTrigger asChild>
-                            <Button variant="outline" className="h-10 border-blue-200 text-blue-600 hover:bg-blue-50 font-medium flex items-center gap-2 shadow-sm">
-                                <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
-                                Sync Financial Database
-                            </Button>
-                        </DialogTrigger>
-                        <DialogContent className="sm:max-w-[480px] p-0 border-0 overflow-hidden rounded-2xl bg-white shadow-xl">
-                            <div className="relative overflow-hidden">
-                                <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-blue-500 to-indigo-600" />
-                                <div className="pl-6 pr-6 pt-5 pb-4 border-b border-slate-100 flex items-center gap-3">
-                                    <div className="h-9 w-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm shrink-0">
-                                        <RefreshCw className="h-4 w-4" />
-                                    </div>
-                                    <div>
-                                        <DialogTitle className="font-bold text-slate-800 text-lg">System Synchronization</DialogTitle>
-                                        <DialogDescription className="text-xs text-slate-500 mt-0.5">Recalculate aging debt buckets and payable mappings.</DialogDescription>
-                                    </div>
-                                </div>
-                                <div className="p-6 space-y-5">
-                                    <div className="rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 p-5 flex gap-4">
-                                        <Zap className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
-                                        <div>
-                                            <p className="text-sm font-bold text-blue-800">Refresh Billing State</p>
-                                            <p className="text-xs text-blue-600 mt-1 leading-relaxed">
-                                                Ensures all records (aging debt, total payables) correctly reflect the latest system business logic. Safe to run at any time.
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <Button 
-                                        className="w-full h-12 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md font-semibold flex items-center justify-center gap-2" 
-                                        disabled={isSyncing}
-                                        onClick={handleSyncFinancialDatabase}
-                                    >
-                                        <RefreshCw className={cn('h-4 w-4', isSyncing && 'animate-spin')} />
-                                        {isSyncing ? 'Syncing...' : 'Sync Financial Database'}
-                                    </Button>
-                                </div>
-                            </div>
-                        </DialogContent>
-                    </Dialog>
-
                     {hasPermission('billing:close_cycle') && (
                         <Button className="h-10 bg-blue-600 hover:bg-blue-700 shadow-sm" onClick={() => setIsCycleDialogOpen(true)}>
                             Start New Billing Cycle
                         </Button>
                     )}
-
                 </div>
             </div>
 

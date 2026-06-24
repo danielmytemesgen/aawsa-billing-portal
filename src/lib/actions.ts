@@ -765,17 +765,20 @@ export async function createBillAction(bill: BillInsert) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BILL_CREATE);
 
-    // Ensure accurate mappings if partial data provided
-    if (bill.TOTALBILLAMOUNT !== undefined) {
-      if (bill.THISMONTHBILLAMT === undefined || bill.THISMONTHBILLAMT === null) {
+    // Ensure accurate mappings if partial data provided — always compute TOTALBILLAMOUNT
+    // Use provided parts when available, otherwise fallback sensibly.
+    if (bill.THISMONTHBILLAMT === undefined || bill.THISMONTHBILLAMT === null) {
+      // If only TOTALBILLAMOUNT was provided, assume that as this month's amount
+      if (bill.TOTALBILLAMOUNT !== undefined && bill.TOTALBILLAMOUNT !== null) {
         bill.THISMONTHBILLAMT = bill.TOTALBILLAMOUNT;
       }
-      if (bill.OUTSTANDINGAMT === undefined || bill.OUTSTANDINGAMT === null) {
-        bill.OUTSTANDINGAMT = bill.balance_carried_forward || 0;
-      }
-      // Set TOTALBILLAMOUNT to Total Payable (Current + Outstanding + Penalty)
-      bill.TOTALBILLAMOUNT = (bill.THISMONTHBILLAMT || 0) + (bill.OUTSTANDINGAMT || 0) + (bill.PENALTYAMT || 0);
     }
+    if (bill.OUTSTANDINGAMT === undefined || bill.OUTSTANDINGAMT === null) {
+      bill.OUTSTANDINGAMT = bill.balance_carried_forward || 0;
+    }
+    // Compute TOTALBILLAMOUNT from parts to ensure downstream logic has a value
+    const computedTotal = (bill.THISMONTHBILLAMT || 0) + (bill.OUTSTANDINGAMT || 0) + (bill.PENALTYAMT || 0);
+    bill.TOTALBILLAMOUNT = computedTotal;
 
     // Status Check: Ensure account is Active before billing
     if (bill.CUSTOMERKEY) {
@@ -812,6 +815,19 @@ export async function createBillAction(bill: BillInsert) {
       }
     }
 
+    // If the bill is being created as Paid, ensure `amount_paid` reflects the total
+    // so downstream aging syncs don't recalculate it back to Unpaid.
+    const incomingPaymentStatus = (bill.payment_status || (bill as any).paymentStatus || '').toString();
+    if (incomingPaymentStatus.toLowerCase() === 'paid') {
+      const total = bill.TOTALBILLAMOUNT; // computed above
+      if (bill.amount_paid === undefined || bill.amount_paid === null) {
+        bill.amount_paid = total;
+      }
+      // Normalize both possible keys to the DB column name
+      bill.payment_status = 'Paid';
+      (bill as any).paymentStatus = 'Paid';
+    }
+
     return await withTransaction(async (client) => {
       const result = await dbCreateBill(bill, client);
 
@@ -836,6 +852,17 @@ export async function createBillAction(bill: BillInsert) {
         customerKeyNumber: bill.CUSTOMERKEY || undefined,
         details: { billId: result.id }
       });
+
+      // Ensure aging/payment status is synchronized for this customer now that the bill exists
+      const customerKeyToSync = bill.CUSTOMERKEY || bill.individual_customer_id;
+      if (customerKeyToSync) {
+        try {
+          await dbSyncAgingForCustomer(customerKeyToSync, client);
+        } catch (e) {
+          // Don't fail the creation if sync fails; log and continue
+          console.error('dbSyncAgingForCustomer failed after bill create:', e);
+        }
+      }
       return result;
     });
   });
@@ -922,7 +949,10 @@ export async function closeBillingCycleAction(payload: {
         reason: 'Initial creation via billing cycle closure'
       }, client);
 
-      // 4. Log Security Event (outside client transaction if it's a separate utility, but we want it logged)
+      // 4. Sync customer aging now that the bill has been created and meter records updated.
+      await dbSyncAgingForCustomer(payload.meterUpdate.customerKeyNumber, client);
+
+      // 5. Log Security Event (outside client transaction if it's a separate utility, but we want it logged)
       await logSecurityEventAction({
         event: 'Close Billing Cycle',
         customerKeyNumber: payload.meterUpdate.customerKeyNumber,
@@ -1123,7 +1153,7 @@ export async function runBillingCycleAction(payload: {
 
     await dbUpdateBulkMeter(payload.bulkMeterId, meterUpdate);
     await dbBatchRolloverIndividualCustomersOfBulkMeters([payload.bulkMeterId]);
-
+    await dbSyncAgingForCustomer(payload.bulkMeterId);
 
     await logSecurityEventAction({
       event: 'Run Billing Cycle',
