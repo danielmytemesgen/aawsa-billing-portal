@@ -24,14 +24,13 @@ import {
 } from 'recharts';
 import { motion } from "framer-motion";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
-import { getBranchesLookupAction, getReadingPeriodStatusAction } from "@/lib/actions";
+import { getBranchesLookupAction, getReadingPeriodStatusAction, getDashboardMetricsAction } from "@/lib/actions";
 import {
   initializeBranches,
   initializeBulkMeters,
   initializeCustomers,
   initializeIndividualCustomerReadings,
   initializeBulkMeterReadings,
-  initializeBills,
   initializeStaffMembers,
   fetchRoutes,
   getBranches,
@@ -39,7 +38,6 @@ import {
   getCustomers,
   getIndividualCustomerReadings,
   getBulkMeterReadings,
-  getBills,
   getRoutes,
   getStaffMembers
 } from "@/lib/data-store";
@@ -79,7 +77,7 @@ export default function StaffDashboardPage() {
   const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
   const [allIndividualReadings, setAllIndividualReadings] = React.useState<any[]>([]);
   const [allBulkReadings, setAllBulkReadings] = React.useState<any[]>([]);
-  const [allBills, setAllBills] = React.useState<any[]>([]);
+  const [dashboardMetrics, setDashboardMetrics] = React.useState<any>(null);
   const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed'>('Open');
   const [isLoading, setIsLoading] = React.useState(true);
 
@@ -257,7 +255,7 @@ export default function StaffDashboardPage() {
       if (hasPermission('bill_view_all') || 
           hasPermission('bill_view_branch') || 
           hasPermission('billing_view')) {
-        initTasks.push(initializeBills(true));
+        // Dashboard metrics are computed on the server; avoid fetching full bill lists for initial page load.
       }
 
       // Guard reading-related data
@@ -325,9 +323,9 @@ export default function StaffDashboardPage() {
       setAllCustomers(getCustomers());
       setAllIndividualReadings(getIndividualCustomerReadings());
       setAllBulkReadings(getBulkMeterReadings());
-      setAllBills(getBills());
       setAllRoutes(getRoutes());
       setAllStaff(getStaffMembers());
+      await fetchDashboardMetrics();
     } catch (err) {
       console.error("Failed to fetch live dashboard data:", err);
     } finally {
@@ -350,6 +348,19 @@ export default function StaffDashboardPage() {
         }
       }
       setIsLoading(false);
+    }
+  };
+
+  const fetchDashboardMetrics = async () => {
+    try {
+      const { data: metrics, error } = await getDashboardMetricsAction();
+      if (metrics) {
+        setDashboardMetrics(metrics);
+      } else if (error) {
+        console.warn('Dashboard metrics fetch error:', error);
+      }
+    } catch (err) {
+      console.warn('Failed to load dashboard metrics:', err);
     }
   };
 
@@ -397,110 +408,40 @@ export default function StaffDashboardPage() {
     const pendingBulkMeters = branchBMs.filter(bm => bm.status === 'Pending Approval').length;
     const totalPendingApprovals = pendingCustomers + pendingBulkMeters;
 
-
-    // --- Data for Top Delinquent Accounts (Filtered by branch and Posted status) ---
-    // User requested: "Highest outstanding balances needing attention."
-    // We only show bills with payment_status = 'Unpaid' AND status = 'Posted'
-
-    // Get branch-specific bills
-    const branchBills = allBills.filter(bill => {
-      // Cross-reference with branchBMs or branchCustomers to ensure it belongs to this branch
-      if (bill.CUSTOMERKEY) {
-        return branchBMKeys.has(bill.CUSTOMERKEY);
-      }
-      if (bill.individualCustomerId) {
-        // Individual customers might be linked via branchId directly or via their meter
-        const customer = branchCustomers.find(c => c.customerKeyNumber === bill.individualCustomerId);
-        return !!customer;
-      }
-      return false;
-    });
-
-    // Calculation for the "Bills Status" card (Current month only for the branch, POSTED bills only)
-    const currentMonthBills = branchBills.filter(bill => bill.monthYear === currentMonthYear && bill.status === 'Posted');
-
-    const paidCount = currentMonthBills.filter(bill => bill.paymentStatus === 'Paid').length;
-    const unpaidCount = currentMonthBills.filter(bill => bill.paymentStatus === 'Unpaid').length;
+    // Use the server-side dashboard metrics when available for bill counts and performance summaries.
+    const metrics = dashboardMetrics;
+    const billStatusCounts = metrics?.billStatuses ?? [];
+    const paidCount = billStatusCounts.find((m: any) => m.status === 'Paid')?.count || 0;
+    const unpaidCount = billStatusCounts.find((m: any) => m.status === 'Unpaid')?.count || 0;
     const totalBillsCount = paidCount + unpaidCount;
-    const billsPaymentStatusData = [
+    const billsPaymentStatusData = metrics ? [
+      { name: 'Paid', value: paidCount, fill: '#10b981' },
+      { name: 'Unpaid', value: unpaidCount, fill: '#ef4444' },
+    ] : [
       { name: 'Paid', value: paidCount, fill: '#10b981' },
       { name: 'Unpaid', value: unpaidCount, fill: '#ef4444' },
     ];
 
-    // Calculation for "Payment Collection Rate" card (Bulk Meters ONLY, THIS MONTH for the branch, POSTED bills only)
-    const currentMonthBulkBills = currentMonthBills.filter(bill => bill.CUSTOMERKEY);
-    const paidBMsCount = currentMonthBulkBills.filter(bill => bill.paymentStatus === 'Paid').length;
-    const totalBMsCount = currentMonthBulkBills.length;
-    const paidPercentage = totalBMsCount > 0 ? `${((paidBMsCount / totalBMsCount) * 100).toFixed(0)}%` : "0%";
-
     // --- Data for Branch Performance Chart (ALL branches, Bulk Meters ONLY, THIS MONTH) ---
-    const performanceMap = new Map<string, { branchName: string, paid: number, unpaid: number }>();
-    const displayableBranches = allBranches.filter(b => b.name.toLowerCase() !== 'head office');
+    const branchPerformanceData = metrics?.branchPerformance?.map((item: any) => ({
+      branch: (item.branch_name || item.branch || '').replace(/ Branch$/i, ""),
+      paid: Number(item.paid || 0),
+      unpaid: Number(item.unpaid || 0)
+    })) ?? [];
 
-    displayableBranches.forEach(branch => {
-      performanceMap.set(branch.id, { branchName: branch.name, paid: 0, unpaid: 0 });
-    });
+    const waterUsageTrendData = metrics?.usageTrend?.map((item: any) => ({
+      month: item.month,
+      usage: Number(item.usage || 0)
+    }))?.sort((a: any, b: any) => new Date(`${a.month}-01`).getTime() - new Date(`${b.month}-01`).getTime()) ?? [];
 
-    allBulkMeters.filter(bm => bm.month === currentMonthYear).forEach(bm => {
-      if (bm.branchId && performanceMap.has(bm.branchId)) {
-        const entry = performanceMap.get(bm.branchId)!;
-        if (bm.paymentStatus === 'Paid') entry.paid++;
-        else if (bm.paymentStatus === 'Unpaid') entry.unpaid++;
-        performanceMap.set(bm.branchId, entry);
-      }
-    });
+    const topDelinquentAccounts = metrics?.delinquent?.combined?.map((bill: any) => ({
+      name: bill.name || 'Unknown Account',
+      balance: Number(bill.outstanding || 0),
+      type: bill.type || 'Bulk'
+    })) ?? [];
 
-    const branchPerformanceData = Array.from(performanceMap.values()).map(p => ({
-      branch: p.branchName.replace(/ Branch$/i, ""),
-      paid: p.paid,
-      unpaid: p.unpaid
-    }));
-
-    // --- Data for Water Usage Trend Chart (filtered by staff manager's branch, historical) ---
-    const usageMap = new Map<string, number>();
-    branchBMs.forEach(bm => {
-      if (bm.month) {
-        const usage = (bm.currentReading ?? 0) - (bm.previousReading ?? 0);
-        if (typeof usage === 'number' && !isNaN(usage)) {
-          const currentMonthUsage = usageMap.get(bm.month) || 0;
-          usageMap.set(bm.month, currentMonthUsage + usage);
-        }
-      }
-    });
-    branchCustomers.forEach(c => {
-      if (c.month && c.status === 'Active') {
-        const usage = (c.currentReading ?? 0) - (c.previousReading ?? 0);
-        if (typeof usage === 'number' && !isNaN(usage)) {
-          const currentMonthUsage = usageMap.get(c.month) || 0;
-          usageMap.set(c.month, currentMonthUsage + usage);
-        }
-      }
-    });
-    const waterUsageTrendData = Array.from(usageMap.entries())
-      .map(([month, usage]) => ({ month, usage }))
-      .sort((a, b) => new Date(a.month + "-01").getTime() - new Date(b.month + "-01").getTime());
-
-    const topDelinquentAccounts = branchBills
-      .filter(bill => bill.paymentStatus === 'Unpaid' && bill.status === 'Posted')
-      .map(bill => {
-        const d30 = Number(bill.debit_30 || 0);
-        const d30_60 = Number(bill.debit_30_60 || 0);
-        const d60 = Number(bill.debit_60 || 0);
-        const outstanding = bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60);
-        const current = getMonthlyBillAmt(bill);
-        const penalty = Number(bill.PENALTYAMT || 0);
-        const totalPayable = outstanding + current + penalty;
-
-        return {
-          name: bill.CUSTOMERNAME || 'Unknown Account',
-          balance: totalPayable,
-          type: bill.CUSTOMERKEY ? 'Bulk' : 'Individual'
-        };
-      })
-      .filter(a => a.balance > 0)
-      .sort((a, b) => b.balance - a.balance)
-      .slice(0, 5);
-
+    const paidPercentageValue = metrics?.revenue?.efficiency;
+    const paidPercentage = typeof paidPercentageValue === 'number' ? `${paidPercentageValue.toFixed(0)}%` : "0%";
 
     return {
       totalBulkMeters: branchBMs.length,
@@ -515,7 +456,7 @@ export default function StaffDashboardPage() {
       paidPercentage,
       pendingApprovals: totalPendingApprovals,
     };
-  }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches]);
+  }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches, dashboardMetrics]);
 
 
   const currentUserRole = React.useMemo(() => {

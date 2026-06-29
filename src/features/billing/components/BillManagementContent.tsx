@@ -19,13 +19,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
     getAllBillsAction,
+    getBillsByMonthAction,
+    getDistinctBillingMonthsAction,
+    getUnsettledBillsAction,
+    getPaidBillsAction,
     deleteBillAction,
     submitBillAction,
     approveBillAction,
     postBillAction,
     getBranchesLookupAction
 } from '@/lib/actions';
-import { getBulkMeters, getCustomers, initializeBulkMeters, initializeCustomers, initializeTariffs, getTariff } from '@/lib/data-store';
+import { initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
 import { format, subDays, isBefore } from 'date-fns';
@@ -70,7 +74,7 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
-import { BillingCycleDialog } from '@/app/(dashboard)/staff/bill-management/billing-cycle-dialog';
+import { BillingCycleDialog } from '@/features/billing/components/billing-cycle-dialog';
 import { TablePagination } from '@/components/ui/table-pagination';
 import { DatePicker } from '@/components/ui/date-picker';
 import { parse } from 'date-fns';
@@ -92,7 +96,19 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
     // Filter states
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState('all');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery);
+        }, 300);
+
+        return () => {
+            clearTimeout(handler);
+        };
+    }, [searchQuery]);
+
+    const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'unpaid'>('all');
     const [branchFilter, setBranchFilter] = useState('all');
     const [monthFilter, setMonthFilter] = useState('all');
 
@@ -101,6 +117,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [paidCurrentPage, setPaidCurrentPage] = useState(0);
     const [itemsPerPage, setItemsPerPage] = useState(10);
     const [paidItemsPerPage, setPaidItemsPerPage] = useState(10);
+    const [outstandingBills, setOutstandingBills] = useState<any[]>([]);
+    const [outstandingTotal, setOutstandingTotal] = useState(0);
+    const [paidBills, setPaidBills] = useState<any[]>([]);
+    const [paidTotal, setPaidTotal] = useState(0);
+    const [outstandingLoading, setOutstandingLoading] = useState(false);
+    const [paidLoading, setPaidLoading] = useState(false);
 
 
     // Bulk Action Confirmation states
@@ -119,29 +141,42 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         return months[0] as string;
     }, [bills]);
 
-    const loadData = async () => {
+    const loadData = async (overrides?: { branchFilter?: string; monthFilter?: string }) => {
         setLoading(true);
+        const effectiveBranch = overrides?.branchFilter ?? branchFilter;
+        let effectiveMonth = overrides?.monthFilter ?? monthFilter;
+
         try {
             await Promise.allSettled([
-                initializeBulkMeters(true),
-                initializeCustomers(true),
                 initializeTariffs(true)
             ]);
 
-            const res = await getAllBillsAction();
-            if (res.data) {
-                setBills(res.data);
-
-                // Default to most recent month if no filter is active
-                if (monthFilter === 'all' && res.data.length > 0) {
-                    const months = Array.from(new Set(res.data.map((b: any) => b.month_year)))
+            if (effectiveMonth === 'all') {
+                const distinctRes = await getDistinctBillingMonthsAction();
+                if (distinctRes.data) {
+                    const months = Array.from(new Set(distinctRes.data as string[]))
                         .filter(Boolean)
                         .sort()
                         .reverse();
                     if (months.length > 0) {
-                        setMonthFilter(months[0] as string);
+                        effectiveMonth = months[0];
+                        setMonthFilter(months[0]);
                     }
                 }
+            }
+
+            let billsRes: any;
+            if (effectiveMonth !== 'all') {
+                billsRes = await getBillsByMonthAction(
+                    effectiveMonth,
+                    effectiveBranch === 'all' ? undefined : effectiveBranch
+                );
+            } else {
+                billsRes = await getAllBillsAction(effectiveBranch === 'all' ? undefined : { branchId: effectiveBranch });
+            }
+
+            if (billsRes?.data) {
+                setBills(billsRes.data);
             }
 
             const branchRes = await (async () => {
@@ -199,9 +234,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
     // Filtered data for stats & dashboard (respects Search, Branch, Month)
     const filteredForStats = bills.filter(b => {
-        const matchesSearch = (b.CUSTOMERKEY || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (b.individual_customer_id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-            b.id.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesSearch = (b.CUSTOMERKEY || '').toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+            (b.individual_customer_id || '').toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+            b.id.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
         const matchesBranch = branchFilter === 'all' || b.branch_id === branchFilter;
         const matchesMonth = monthFilter === 'all' || b.month_year === monthFilter;
         return matchesSearch && matchesBranch && matchesMonth;
@@ -236,21 +271,15 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             }
         }
 
-        let globalMeters: any[] = [];
-        let globalCustomers: any[] = [];
-        try {
-            globalMeters = getBulkMeters() || [];
-            globalCustomers = getCustomers() || [];
-        } catch (e) {
-            console.error(e);
-        }
-
-        const findCustomerType = (key: string) => {
-            const meter = globalMeters.find((m: any) => m.customerKeyNumber === key);
-            if (meter) return meter.chargeGroup || meter.charge_group || "Non-domestic";
-            const cust = globalCustomers.find((c: any) => c.customerKeyNumber === key);
-            if (cust) return cust.customerType || cust.customer_type || "Domestic";
-            return "Non-domestic";
+        const findCustomerType = (billsList: any[]) => {
+            const firstBill = billsList[0];
+            if (!firstBill) return "Non-domestic";
+            const isBulk = !!firstBill.CUSTOMERKEY;
+            if (isBulk) {
+                return firstBill.charge_group || firstBill.chargeGroup || "Non-domestic";
+            } else {
+                return firstBill.customer_type || firstBill.customerType || "Domestic";
+            }
         };
 
         const findActiveTariff = (customerType: string, dateStr: string) => {
@@ -272,7 +301,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 return cA - cB;
             });
 
-            const customerType = findCustomerType(key);
+            const customerType = findCustomerType(customerBills);
 
             let carriedForwardUnpaid = 0;
             let d30_bucket = 0;
@@ -411,11 +440,65 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         });
     };
 
+    const effectiveMonthYear = monthFilter === 'all' ? latestMonth : monthFilter;
+    const effectiveBranchId = branchFilter === 'all' ? undefined : branchFilter;
+    const normalizedSearchTerm = debouncedSearchQuery.trim() || undefined;
+
+    React.useEffect(() => {
+        if (!canAccessPage) return;
+        if (!effectiveMonthYear && monthFilter !== 'all') return;
+
+        const fetchOutstanding = async () => {
+            setOutstandingLoading(true);
+            try {
+                const res = await getUnsettledBillsAction({
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    searchTerm: normalizedSearchTerm,
+                    branchId: effectiveBranchId,
+                    monthYear: effectiveMonthYear,
+                    statusFilter,
+                });
+                if (res.success) {
+                    setOutstandingBills(res.bills || []);
+                    setOutstandingTotal(res.total ?? 0);
+                }
+            } catch (err) {
+                console.error('Failed to load outstanding bills', err);
+            } finally {
+                setOutstandingLoading(false);
+            }
+        };
+
+        const fetchPaid = async () => {
+            setPaidLoading(true);
+            try {
+                const res = await getPaidBillsAction({
+                    page: paidCurrentPage,
+                    limit: paidItemsPerPage,
+                    searchTerm: normalizedSearchTerm,
+                    branchId: effectiveBranchId,
+                    monthYear: effectiveMonthYear,
+                });
+                if (res.success) {
+                    setPaidBills(res.bills || []);
+                    setPaidTotal(res.total ?? 0);
+                }
+            } catch (err) {
+                console.error('Failed to load paid bills', err);
+            } finally {
+                setPaidLoading(false);
+            }
+        };
+
+        fetchOutstanding();
+        fetchPaid();
+    }, [effectiveMonthYear, effectiveBranchId, normalizedSearchTerm, statusFilter, currentPage, itemsPerPage, paidCurrentPage, paidItemsPerPage, monthFilter, canAccessPage]);
+
     if (loading && bills.length === 0) return <div className="p-8 flex items-center gap-2"><Loader2 className="animate-spin h-5 w-5" /> Loading dashboard...</div>;
 
     if (!canAccessPage) {
-
-    return (
+        return (
             <div className="p-6">
                 <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
@@ -521,16 +604,6 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const filteredPaid = filteredForStats
         .filter(b => b.status === 'Posted' && b.payment_status === 'Paid')
         .filter(b => monthFilter !== 'all' || b.month_year === latestMonth);
-
-    const paginatedOutstanding = filteredOutstanding.slice(
-        currentPage * itemsPerPage,
-        (currentPage + 1) * itemsPerPage
-    );
-
-    const paginatedPaid = filteredPaid.slice(
-        paidCurrentPage * paidItemsPerPage,
-        (paidCurrentPage + 1) * paidItemsPerPage
-    );
 
 
 
@@ -666,10 +739,14 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                 placeholder="Search by ID or Meter Key..."
                                 className="pl-10 h-10"
                                 value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onChange={(e) => {
+                                    setSearchQuery(e.target.value);
+                                    setCurrentPage(0);
+                                    setPaidCurrentPage(0);
+                                }}
                             />
                         </div>
-                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <Select value={statusFilter} onValueChange={(value: string) => setStatusFilter(value as 'all' | 'overdue' | 'unpaid')}>
                             <SelectTrigger className="h-10">
                                 <SelectValue placeholder="Status" />
                             </SelectTrigger>
@@ -679,7 +756,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                 <SelectItem value="overdue">Overdue</SelectItem>
                             </SelectContent>
                         </Select>
-                        <Select value={branchFilter} onValueChange={setBranchFilter}>
+                        <Select value={branchFilter} onValueChange={(value) => {
+                            setBranchFilter(value);
+                            setCurrentPage(0);
+                            setPaidCurrentPage(0);
+                            loadData({ branchFilter: value, monthFilter });
+                        }}>
                             <SelectTrigger className="h-10">
                                 <SelectValue placeholder="Branch" />
                             </SelectTrigger>
@@ -697,9 +779,14 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                     date={monthFilter === 'all' ? undefined : parse(monthFilter, 'yyyy-MM', new Date())}
                                     onSelect={(date) => {
                                         if (date) {
-                                            setMonthFilter(format(date, 'yyyy-MM'));
+                                            const value = format(date, 'yyyy-MM');
+                                            setMonthFilter(value);
+                                            setCurrentPage(0);
+                                            loadData({ branchFilter, monthFilter: value });
                                         } else {
                                             setMonthFilter('all');
+                                            setCurrentPage(0);
+                                            loadData({ branchFilter, monthFilter: 'all' });
                                         }
                                     }}
                                     placeholder="Select Month"
@@ -709,7 +796,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                         variant="ghost"
                                         size="sm"
                                         className="h-10 px-2 text-gray-400 hover:text-gray-600"
-                                        onClick={() => setMonthFilter('all')}
+                                        onClick={() => {
+                                            setMonthFilter('all');
+                                            setCurrentPage(0);
+                                            setPaidCurrentPage(0);
+                                            loadData({ branchFilter, monthFilter: 'all' });
+                                        }}
                                     >
                                         <RotateCcw className="h-4 w-4" />
                                     </Button>
@@ -725,13 +817,13 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 <CardHeader className="bg-gray-50/50 flex flex-row items-center justify-between border-b border-gray-100 py-3 px-5">
                     <CardTitle className="text-base font-bold text-gray-700">Outstanding Bills Table</CardTitle>
                     <div className="text-xs text-muted-foreground font-medium">
-                        Showing {filteredOutstanding.length === 0 ? 0 : (currentPage * itemsPerPage + 1)}-{Math.min(filteredOutstanding.length, (currentPage + 1) * itemsPerPage)} of {filteredOutstanding.length} records
+                        Showing {outstandingTotal === 0 ? 0 : (currentPage * itemsPerPage + 1)}-{Math.min(outstandingTotal, (currentPage + 1) * itemsPerPage)} of {outstandingTotal} records
                     </div>
 
                 </CardHeader>
                 <CardContent className="p-0">
                     <BillTable
-                        bills={paginatedOutstanding}
+                        bills={outstandingBills}
                         onDelete={handleDelete}
                         router={router}
                         basePath={basePath}
@@ -741,7 +833,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
                     {/* Pagination Controls */}
                     <TablePagination
-                        count={filteredOutstanding.length}
+                        count={outstandingTotal}
                         page={currentPage}
                         rowsPerPage={itemsPerPage}
                         onPageChange={setCurrentPage}
@@ -771,13 +863,13 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         <CheckCircle2 className="h-4 w-4" /> Paid Bills Table
                     </CardTitle>
                     <div className="text-xs text-blue-600 font-medium">
-                        Showing {filteredPaid.length === 0 ? 0 : (paidCurrentPage * paidItemsPerPage + 1)}-{Math.min(filteredPaid.length, (paidCurrentPage + 1) * paidItemsPerPage)} of {filteredPaid.length} records
+                        Showing {paidTotal === 0 ? 0 : (paidCurrentPage * paidItemsPerPage + 1)}-{Math.min(paidTotal, (paidCurrentPage + 1) * paidItemsPerPage)} of {paidTotal} records
                     </div>
 
                 </CardHeader>
                 <CardContent className="p-0">
                     <BillTable
-                        bills={paginatedPaid}
+                        bills={paidBills}
                         onDelete={handleDelete}
                         router={router}
                         basePath={basePath}
@@ -787,7 +879,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
                     {/* Pagination Controls for Paid */}
                     <TablePagination
-                        count={filteredPaid.length}
+                        count={paidTotal}
                         page={paidCurrentPage}
                         rowsPerPage={paidItemsPerPage}
                         onPageChange={setPaidCurrentPage}

@@ -2717,7 +2717,7 @@ export async function getDistinctBillingMonthsAction() {
   }
 }
 
-export async function getBillsByMonthAction(monthYear: string) {
+export async function getBillsByMonthAction(monthYear: string, branchId?: string) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
@@ -2729,9 +2729,9 @@ export async function getBillsByMonthAction(monthYear: string) {
       throw new Error('Forbidden: Missing reports view permissions');
     }
     const hasManageAll = session.permissions?.includes('bill:manage_all');
-    const branchId = !hasManageAll ? session.branchId : undefined;
+    const effectiveBranchId = !hasManageAll ? session.branchId : branchId;
 
-    return await dbGetBillsWithBulkMeterInfoByMonth(monthYear, branchId);
+    return await dbGetBillsWithBulkMeterInfoByMonth(monthYear, effectiveBranchId);
   });
 }
 
@@ -2793,7 +2793,7 @@ export async function startBillingJobAction(payload: {
   return await wrap(async () => {
     await checkPermission('billing:close_cycle');
 
-    // 1. Check for active jobs to avoid duplicates
+    // 1. Check for active jobs to avoid duplicates or resume them
     const activeJobs = await dbGetActiveBillingJobs(payload.monthYear, payload.type);
     if (activeJobs.length > 0) {
       const job = activeJobs[0];
@@ -2810,7 +2810,9 @@ export async function startBillingJobAction(payload: {
         });
         console.log(`Auto-reset stale billing job ${job.id} for ${payload.monthYear}`);
       } else {
-        throw new Error(`A billing job for ${payload.monthYear} is already ${job.status}.`);
+        // Return the existing active job so the client resumes it
+        console.log(`Resuming active billing job ${job.id} for ${payload.monthYear} at processed count: ${job.processed_items}`);
+        return job;
       }
     }
 
@@ -3044,35 +3046,35 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
       }
     }
 
-    // 4. Batch Insert Bills
-    if (billsToInsert.length > 0) {
-      await dbBatchInsertBills(billsToInsert);
+    // 4. Batch Insert Bills & Update Job Progress (wrapped in transaction)
+    const updatedJob = await withTransaction(async (client) => {
+      if (billsToInsert.length > 0) {
+        await dbBatchInsertBills(billsToInsert, client);
 
-      // Rollover meter readings for successfully billed items
-      if (job.type === 'bulk_meters') {
-        const successes = billsToInsert.map(b => b.CUSTOMERKEY).filter(Boolean);
-        await dbBatchRolloverBulkMeters(successes);
-        await dbBatchRolloverIndividualCustomersOfBulkMeters(successes);
-      } else {
-        const successes = billsToInsert.map(b => b.individual_customer_id).filter(Boolean);
-        await dbBatchRolloverIndividualCustomers(successes);
+        // Rollover meter readings for successfully billed items
+        if (job.type === 'bulk_meters') {
+          const successes = billsToInsert.map(b => b.CUSTOMERKEY).filter(Boolean);
+          await dbBatchRolloverBulkMeters(successes, client);
+          await dbBatchRolloverIndividualCustomersOfBulkMeters(successes, client);
+        } else {
+          const successes = billsToInsert.map(b => b.individual_customer_id).filter(Boolean);
+          await dbBatchRolloverIndividualCustomers(successes, client);
+        }
       }
-    }
 
-
-    // 5. Update Job Progress — count only successfully billed items, log any failures
-    const successCount = billsToInsert.length;
-    const jobUpdate: any = {
-      processed_items: job.processed_items + items.length,
-      last_processed_id: lastId,
-      updated_at: new Date()
-    };
-    if (failedItems.length > 0) {
-      // Append to existing error_log so failures accumulate across chunks
-      const existingLog = job.error_log ? job.error_log + '\n' : '';
-      jobUpdate.error_log = existingLog + failedItems.join('\n');
-    }
-    const updatedJob = await dbUpdateBillingJob(jobId, jobUpdate);
+      // 5. Update Job Progress — count only successfully billed items, log any failures
+      const jobUpdate: any = {
+        processed_items: job.processed_items + items.length,
+        last_processed_id: lastId,
+        updated_at: new Date()
+      };
+      if (failedItems.length > 0) {
+        // Append to existing error_log so failures accumulate across chunks
+        const existingLog = job.error_log ? job.error_log + '\n' : '';
+        jobUpdate.error_log = existingLog + failedItems.join('\n');
+      }
+      return await dbUpdateBillingJob(jobId, jobUpdate, client);
+    });
 
     // If we processed fewer items than chunk size, the job is complete
     if (items.length < chunkSize) {
@@ -3128,6 +3130,8 @@ export async function getUnsettledBillsAction(params: {
   limit: number;
   searchTerm?: string;
   branchId?: string;
+  monthYear?: string;
+  statusFilter?: 'all' | 'overdue' | 'unpaid';
   excludeUnfinalized?: boolean;
 }) {
   return await wrap(async () => {
@@ -3155,6 +3159,7 @@ export async function getPaidBillsAction(params: {
   limit: number;
   searchTerm?: string;
   branchId?: string;
+  monthYear?: string;
   excludeUnfinalized?: boolean;
 }) {
   return await wrap(async () => {

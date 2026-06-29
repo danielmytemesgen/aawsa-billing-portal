@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { Droplets, Edit, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, AlertTriangle, ListCollapse, Eye, MapPin } from "lucide-react";
+import { Droplets, Edit, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, AlertTriangle, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
 import { calculateDebtAging, getMonthlyBillAmt } from "@/lib/billing-utils";
+import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 
 // Safely format a date value that may be a string (ISO), a Date object, a timestamp, or null/undefined.
 function formatDateForDisplay(value?: string | Date | number | null) {
@@ -664,6 +665,71 @@ export default function BulkMeterDetailsPage() {
     }
     setCustomerToDelete(null);
     setIsCustomerDeleteDialogOpen(false);
+  };
+
+  const handleExportToXlsx = () => {
+    if (!associatedCustomers || associatedCustomers.length === 0) return;
+
+    const headers = [
+      "Customer Name",
+      "Customer Key Number",
+      "INST KEY",
+      "Contract Number",
+      "Customer Type",
+      "Book Number",
+      "Ordinal",
+      "Meter Number",
+      "Meter Size (inch)",
+      "Number of Dials",
+      "Previous Reading",
+      "Current Reading",
+      "Usage (m³)",
+      "Calculated Bill (ETB)",
+      "Month",
+      "Specific Area",
+      "Sub-City",
+      "Woreda",
+      "Sewerage Connection",
+      "Payment Status",
+      "Status",
+      "Assigned Bulk Meter Name",
+      "Assigned Bulk Meter Key Number",
+      "Assigned Bulk Meter Number"
+    ];
+
+    const data = associatedCustomers.map(customer => {
+      const usage = (customer.currentReading ?? 0) - (customer.previousReading ?? 0);
+      return {
+        "Customer Name": customer.name,
+        "Customer Key Number": customer.customerKeyNumber,
+        "INST KEY": customer.instKey || "",
+        "Contract Number": customer.contractNumber || "",
+        "Customer Type": customer.customerType || "",
+        "Book Number": customer.bookNumber || "",
+        "Ordinal": customer.ordinal || "",
+        "Meter Number": customer.meterNumber || "",
+        "Meter Size (inch)": customer.meterSize || "",
+        "Number of Dials": customer.NUMBER_OF_DIALS || "",
+        "Previous Reading": customer.previousReading ?? 0,
+        "Current Reading": customer.currentReading ?? 0,
+        "Usage (m³)": usage,
+        "Calculated Bill (ETB)": customer.calculatedBill ?? 0,
+        "Month": customer.month || "",
+        "Specific Area": customer.specificArea || "",
+        "Sub-City": customer.subCity || "",
+        "Woreda": customer.woreda || "",
+        "Sewerage Connection": customer.sewerageConnection || "",
+        "Payment Status": customer.paymentStatus || "",
+        "Status": customer.status || "",
+        "Assigned Bulk Meter Name": bulkMeter?.name || "",
+        "Assigned Bulk Meter Key Number": bulkMeter?.customerKeyNumber || "",
+        "Assigned Bulk Meter Number": bulkMeter?.meterNumber || ""
+      };
+    });
+
+    const xlsxBlob = arrayToXlsxBlob(data, headers);
+    const fileName = `Associated_Customers_${bulkMeter?.customerKeyNumber || 'export'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    downloadFile(xlsxBlob, fileName);
   };
 
   const handleSubmitCustomerForm = async (data: IndividualCustomerFormValues) => {
@@ -1383,7 +1449,28 @@ export default function BulkMeterDetailsPage() {
           </Card>
 
           <Card className="shadow-lg non-printable">
-            <CardHeader><CardTitle className="flex items-center gap-2"><UsersIcon className="h-5 w-5 text-primary" />Associated Individual Customers</CardTitle><CardDescription>List of individual customers connected to this bulk meter ({associatedCustomers.length} found).</CardDescription></CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+              <div className="space-y-1.5">
+                <CardTitle className="flex items-center gap-2">
+                  <UsersIcon className="h-5 w-5 text-primary" />
+                  Associated Individual Customers
+                </CardTitle>
+                <CardDescription>
+                  List of individual customers connected to this bulk meter ({associatedCustomers.length} found).
+                </CardDescription>
+              </div>
+              {associatedCustomers.length > 0 && (
+                <Button
+                  onClick={handleExportToXlsx}
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center gap-2 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/20"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                  <span>Export to XLSX</span>
+                </Button>
+              )}
+            </CardHeader>
             <CardContent>
               {associatedCustomers.length === 0 ? (
                 <div className="text-center text-muted-foreground py-4 italic">No individual customers are currently associated with this bulk meter.</div>

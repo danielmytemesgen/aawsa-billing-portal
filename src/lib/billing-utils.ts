@@ -196,6 +196,13 @@ export function calculateDebtAging(
             }
         }
 
+        // Fix: Ensure any remaining outstanding balance older than the fetched history
+        // is not lost and is properly accounted for in the debit60 (60+ days) bucket.
+        if (remainingOutstanding > 0.01) {
+            debit60 += remainingOutstanding;
+            remainingOutstanding = 0;
+        }
+
         // Add the sum of all historical unpaid penalties to the debit60 bucket
         debit60 += totalUnpaidPenaltyFromHistory;
 

@@ -70,7 +70,7 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
-import { BillingCycleDialog } from '@/app/(dashboard)/staff/bill-management/billing-cycle-dialog';
+import { BillingCycleDialog } from '@/features/billing/components/billing-cycle-dialog';
 import { TablePagination } from '@/components/ui/table-pagination';
 import { DatePicker } from '@/components/ui/date-picker';
 import { parse } from 'date-fns';

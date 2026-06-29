@@ -298,7 +298,12 @@ export const dbGetBillsByBulkMeterIds = async (customerKeys: string[]): Promise<
     if (customerKeys.length === 0) return new Map();
     const placeholders = customerKeys.map((_, i) => `$${i + 1}`).join(',');
     const rows: any[] = await query(
-        `SELECT * FROM bills WHERE "CUSTOMERKEY" IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`,
+        `SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY "CUSTOMERKEY" ORDER BY created_at DESC) as rn
+            FROM bills
+            WHERE "CUSTOMERKEY" IN (${placeholders}) AND deleted_at IS NULL
+        ) t
+        WHERE rn <= 12`,
         customerKeys
     );
     const map = new Map<string, any[]>();
@@ -318,7 +323,12 @@ export const dbGetBillsByIndividualCustomerIds = async (customerKeys: string[]):
     if (customerKeys.length === 0) return new Map();
     const placeholders = customerKeys.map((_, i) => `$${i + 1}`).join(',');
     const rows: any[] = await query(
-        `SELECT * FROM bills WHERE individual_customer_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`,
+        `SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY individual_customer_id ORDER BY created_at DESC) as rn
+            FROM bills
+            WHERE individual_customer_id IN (${placeholders}) AND deleted_at IS NULL
+        ) t
+        WHERE rn <= 12`,
         customerKeys
     );
     const map = new Map<string, any[]>();
@@ -740,28 +750,32 @@ export const dbGetMostRecentBillsForBulkMeters = async (customerKeys: string[], 
     return await query(queryStr, params);
 };
 
+
+
 export const dbGetAllBills = async (options?: { branchId?: string; readerId?: string; excludeUnfinalized?: boolean }) => {
-    let sql = 'SELECT b.* FROM bills b';
+    let sql = `
+        SELECT b.*,
+               ic."customerType" as customer_type,
+               bm.charge_group as charge_group
+        FROM bills b
+        LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+    `;
     const params: any[] = [];
     let paramIndex = 1;
 
     const whereClauses = ['b.deleted_at IS NULL'];
 
-    if (options?.branchId || options?.readerId) {
-        sql += ' LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"';
-        sql += ' LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"';
+    if (options?.readerId) {
+        sql += ' LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key';
+        whereClauses.push(`r.reader_id = $${paramIndex}`);
+        params.push(options.readerId);
+        paramIndex++;
     }
 
     if (options?.branchId) {
         whereClauses.push(`(bm.branch_id = $${paramIndex} OR ic.branch_id = $${paramIndex})`);
         params.push(options.branchId);
-        paramIndex++;
-    }
-
-    if (options?.readerId) {
-        sql += ' LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key';
-        whereClauses.push(`r.reader_id = $${paramIndex}`);
-        params.push(options.readerId);
         paramIndex++;
     }
 
@@ -2005,12 +2019,14 @@ export const dbCreateBillingJob = async (job: { type: string; month_year: string
     return rows[0];
 };
 
-export const dbUpdateBillingJob = async (id: string, updates: any) => {
+export const dbUpdateBillingJob = async (id: string, updates: any, client?: any) => {
     const keys = Object.keys(updates);
     const setClause = keys.map((k, i) => `"${k}" = $${i + 2}`).join(', ');
     const sql = `UPDATE billing_jobs SET ${setClause} WHERE id = $1 RETURNING *`;
-    const rows: any = await query(sql, [id, ...keys.map(k => updates[k])]);
-    return rows[0];
+    const qFunc = client ? client.query.bind(client) : query;
+    const res = await qFunc(sql, [id, ...keys.map(k => updates[k])]);
+    const rows = client ? res.rows : res;
+    return rows[0] || null;
 };
 
 export const dbGetBillingJob = async (id: string) => {
@@ -2080,7 +2096,7 @@ export const dbGetUnprocessedIndividualCustomersForJob = async (job: any, limit:
  * High-performance batch insertion for bills.
  * Uses UNNEST with arrays for much faster insertion than individual INSERTs.
  */
-export const dbBatchInsertBills = async (bills: any[]) => {
+export const dbBatchInsertBills = async (bills: any[], client?: any) => {
     if (bills.length === 0) return [];
 
     // Map all fields in the bills table with their PostgreSQL types.
@@ -2144,7 +2160,9 @@ export const dbBatchInsertBills = async (bills: any[]) => {
         return val === undefined ? null : val;
     }));
 
-    const rows = await query(sql, columnData);
+    const qFunc = client ? client.query.bind(client) : query;
+    const res = await qFunc(sql, columnData);
+    const rows = client ? res.rows : res;
     return rows;
 };
 
@@ -2156,10 +2174,17 @@ export const dbGetUnsettledBillsPaginated = async (params: {
     offset: number;
     searchTerm?: string;
     branchId?: string;
+    monthYear?: string;
+    statusFilter?: 'all' | 'overdue' | 'unpaid';
     excludeUnfinalized?: boolean;
 }) => {
     let sql = `
-        SELECT b.* FROM bills b
+        SELECT b.*,
+               c."customerType" as customer_type,
+               bm.charge_group as charge_group
+        FROM bills b
+        LEFT JOIN individual_customers c ON b.individual_customer_id = c."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
         WHERE b.payment_status = 'Unpaid'
     `;
     const queryParams: any[] = [];
@@ -2172,6 +2197,17 @@ export const dbGetUnsettledBillsPaginated = async (params: {
     if (params.branchId && params.branchId !== 'all') {
         sql += ` AND b.branch_id = $${paramIndex++}`;
         queryParams.push(params.branchId);
+    }
+
+    if (params.monthYear) {
+        sql += ` AND b.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    if (params.statusFilter === 'overdue') {
+        sql += ` AND b.due_date < NOW()`;
+    } else if (params.statusFilter === 'unpaid') {
+        sql += ` AND (b.due_date IS NULL OR b.due_date >= NOW())`;
     }
 
     if (params.searchTerm) {
@@ -2189,6 +2225,8 @@ export const dbGetUnsettledBillsPaginated = async (params: {
 export const dbGetUnsettledBillsCount = async (params: {
     searchTerm?: string;
     branchId?: string;
+    monthYear?: string;
+    statusFilter?: 'all' | 'overdue' | 'unpaid';
     excludeUnfinalized?: boolean;
 }) => {
     let sql = `SELECT COUNT(*) FROM bills WHERE payment_status = 'Unpaid'`;
@@ -2201,6 +2239,17 @@ export const dbGetUnsettledBillsCount = async (params: {
     if (params.branchId && params.branchId !== 'all') {
         sql += ` AND branch_id = $${paramIndex++}`;
         queryParams.push(params.branchId);
+    }
+
+    if (params.monthYear) {
+        sql += ` AND month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    if (params.statusFilter === 'overdue') {
+        sql += ` AND due_date < NOW()`;
+    } else if (params.statusFilter === 'unpaid') {
+        sql += ` AND (due_date IS NULL OR due_date >= NOW())`;
     }
 
     if (params.searchTerm) {
@@ -2217,10 +2266,16 @@ export const dbGetPaidBillsPaginated = async (params: {
     offset: number;
     searchTerm?: string;
     branchId?: string;
+    monthYear?: string;
     excludeUnfinalized?: boolean;
 }) => {
     let sql = `
-        SELECT b.* FROM bills b
+        SELECT b.*,
+               c."customerType" as customer_type,
+               bm.charge_group as charge_group
+        FROM bills b
+        LEFT JOIN individual_customers c ON b.individual_customer_id = c."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
         WHERE b.payment_status = 'Paid'
     `;
     const queryParams: any[] = [];
@@ -2233,6 +2288,11 @@ export const dbGetPaidBillsPaginated = async (params: {
     if (params.branchId && params.branchId !== 'all') {
         sql += ` AND b.branch_id = $${paramIndex++}`;
         queryParams.push(params.branchId);
+    }
+
+    if (params.monthYear) {
+        sql += ` AND b.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
     }
 
     if (params.searchTerm) {
@@ -2250,6 +2310,7 @@ export const dbGetPaidBillsPaginated = async (params: {
 export const dbGetPaidBillsCount = async (params: {
     searchTerm?: string;
     branchId?: string;
+    monthYear?: string;
     excludeUnfinalized?: boolean;
 }) => {
     let sql = `SELECT COUNT(*) FROM bills WHERE payment_status = 'Paid'`;
@@ -2262,6 +2323,11 @@ export const dbGetPaidBillsCount = async (params: {
     if (params.branchId && params.branchId !== 'all') {
         sql += ` AND branch_id = $${paramIndex++}`;
         queryParams.push(params.branchId);
+    }
+
+    if (params.monthYear) {
+        sql += ` AND month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
     }
 
     if (params.searchTerm) {

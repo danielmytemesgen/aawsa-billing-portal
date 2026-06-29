@@ -28,7 +28,6 @@ import {
     getAllBulkMetersAction, 
     runBillingCycleAction, 
     startBillingJobAction, 
-    processBillingJobChunkAction, 
     getBranchesLookupAction,
     getSystemSettingsAction,
     resetStuckBillingJobsAction
@@ -68,10 +67,18 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     const [totalCount, setTotalCount] = React.useState(0);
     const [currentJobId, setCurrentJobId] = React.useState<string | null>(null);
 
+    // Polling interval ref — cleared when job completes or dialog closes
+    const pollingRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
     const [branches, setBranches] = React.useState<any[]>([]);
     const [selectedBranch, setSelectedBranch] = React.useState<string>("all");
     const [isStuck, setIsStuck] = React.useState(false);
     const [isResetting, setIsResetting] = React.useState(false);
+
+    // Cleanup polling on unmount
+    React.useEffect(() => {
+        return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    }, []);
 
     React.useEffect(() => {
         if (open) {
@@ -206,7 +213,27 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 const job = startRes.data;
                 setCurrentJobId(job.id);
                 setTotalCount(job.total_items);
-                await runChunkedProcessing(job.id);
+                setProcessedCount(job.processed_items || 0);
+
+                // ── Fire server-side processing (non-blocking fetch) ──────────────────
+                // The server loop runs entirely on the Node.js side.
+                // We do NOT await — the request runs in the background.
+                fetch('/api/billing/process-job', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobId: job.id }),
+                }).then(async (res) => {
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        console.error('[billing] process-job API error:', err);
+                    }
+                }).catch((err) => {
+                    console.error('[billing] process-job fetch error:', err);
+                });
+
+                // ── Poll job status every 4 seconds ──────────────────────────────────
+                startPolling(job.id, job.total_items);
+
             } else {
                 const res = await runBillingCycleAction({
                     bulkMeterId: selectedMeterId,
@@ -241,47 +268,55 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     };
 
     /**
-     * Recursive chunk processor to handle 700k records in batches
+     * Polls /api/billing/job-status every 4 seconds.
+     * Updates the progress bar and fires completion/failure toasts.
+     * The server runs the actual processing loop — the browser only watches.
      */
-    const runChunkedProcessing = async (jobId: string) => {
-        try {
-            const chunkRes = await processBillingJobChunkAction(jobId, 1000); // 1000 at a time (bulk-fetch optimized)
-            
-            if (chunkRes.data) {
-                const updatedJob = chunkRes.data;
-                setProcessedCount(updatedJob.processed_items);
-                
-                if (updatedJob.status === 'completed') {
-                    const failedCount = updatedJob.error_log
-                        ? updatedJob.error_log.split('\n').filter(Boolean).length
+    const startPolling = (jobId: string, total: number) => {
+        // Clear any existing poll
+        if (pollingRef.current) clearInterval(pollingRef.current);
+
+        pollingRef.current = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/billing/job-status?jobId=${jobId}`);
+                if (!res.ok) return;
+                const { job } = await res.json();
+                if (!job) return;
+
+                setProcessedCount(job.processed_items || 0);
+                setTotalCount(job.total_items || total);
+
+                if (job.status === 'completed') {
+                    clearInterval(pollingRef.current!);
+                    pollingRef.current = null;
+                    const failedCount = job.error_log
+                        ? job.error_log.split('\n').filter(Boolean).length
                         : 0;
                     toast({
-                        title: "Bulk Cycle Complete",
+                        title: "✅ Bulk Cycle Complete",
                         description: failedCount > 0
-                            ? `Processed ${updatedJob.processed_items} meters. ${failedCount} meter(s) had errors — check the job log.`
-                            : `Successfully processed ${updatedJob.processed_items} meters.`,
+                            ? `Processed ${job.processed_items} meters. ${failedCount} meter(s) had errors — check the job log.`
+                            : `Successfully processed ${job.processed_items} meters.`,
                         variant: failedCount > 0 ? "destructive" : "default"
                     });
                     onComplete?.();
                     setIsProcessing(false);
                     setTimeout(() => onOpenChange(false), 2000);
-                } else if (updatedJob.status === 'failed') {
-                    toast({ variant: "destructive", title: "Job Failed", description: updatedJob.error_log || "Unknown error during processing." });
+
+                } else if (job.status === 'failed') {
+                    clearInterval(pollingRef.current!);
+                    pollingRef.current = null;
+                    toast({ variant: "destructive", title: "Job Failed", description: job.error_log || "Unknown error during processing." });
                     setIsProcessing(false);
-                } else {
-                    // Continue to next chunk
-                    await runChunkedProcessing(jobId);
                 }
-            } else {
-                const errorMsg = typeof chunkRes.error === 'string' ? chunkRes.error : (chunkRes.error?.message || "Unknown error");
-                toast({ variant: "destructive", title: "Processing Error", description: errorMsg });
-                setIsProcessing(false);
+                // If still 'processing' or 'pending' — continue polling
+            } catch (err) {
+                console.error('[billing] polling error:', err);
+                // Don't stop polling on transient network errors
             }
-        } catch (err) {
-            console.error("Chunk error:", err);
-            setIsProcessing(false);
-        }
+        }, 4000); // poll every 4 seconds
     };
+
 
     const handleResetJob = async () => {
         setIsResetting(true);
@@ -496,12 +531,15 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     {isProcessing && currentJobId && (
                         <div className="space-y-3 pt-4 border-t">
                             <div className="flex justify-between text-xs font-medium">
-                                <span>Processing Batch...</span>
-                                <span>{processedCount} / {totalCount}</span>
+                                <span className="flex items-center gap-1.5">
+                                    <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                                    Processing on server...
+                                </span>
+                                <span>{processedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
                             </div>
                             <Progress value={totalCount > 0 ? (processedCount / totalCount) * 100 : 0} className="h-2" />
                             <p className="text-[10px] text-muted-foreground text-center italic">
-                                Do not close this dialog until processing is complete.
+                                ✅ Safe to close this dialog — processing continues on the server.
                             </p>
                         </div>
                     )}
