@@ -14,9 +14,9 @@ import { withTransaction } from '@/lib/db';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE = 1000;
-const MAX_RUNTIME_MS = 25 * 60 * 1000; // 25-minute safety ceiling per request
+const MAX_RUNTIME_MS = 4.5 * 60 * 1000; // 4.5-minute safety ceiling per request (for 300s maxDuration on Hobby plan)
 
-export const maxDuration = 1800; // 30 minutes — self-hosted Next.js only
+export const maxDuration = 300; // 5 minutes max limit for Vercel Hobby plan
 
 export async function POST(request: Request) {
   // ── 1. Auth check ──────────────────────────────────────────────────────────
