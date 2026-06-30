@@ -61,8 +61,8 @@ export default function AdminDataEntryPage() {
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
 
   React.useEffect(() => {
-    initializeBulkMeters(true);
-    initializeCustomers(true);
+    initializeBulkMeters();
+    initializeCustomers();
     const userJson = localStorage.getItem('user');
     if (userJson) {
       setCurrentUser(JSON.parse(userJson));

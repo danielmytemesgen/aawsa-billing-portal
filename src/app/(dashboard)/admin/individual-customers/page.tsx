@@ -94,11 +94,11 @@ export default function IndividualCustomersPage() {
       setCurrentUser(JSON.parse(userJson));
     }
 
-    // Initialize secondary data
+    // Initialize secondary data (use cache when available)
     Promise.all([
-      initializeBulkMeters(true),
-      initializeBranches(true),
-      initializeTariffs(true)
+      initializeBulkMeters(),
+      initializeBranches(),
+      initializeTariffs()
     ]).then(() => {
       setBulkMetersList(getBulkMeters().filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
       setBranches(getBranches());

@@ -66,7 +66,7 @@ export default function StaffNotificationsPage() {
         const storedUser = localStorage.getItem("user");
         if (storedUser) setUser(JSON.parse(storedUser));
 
-        Promise.all([initializeNotifications(true), initializeBranches(true)]).then(() => {
+        Promise.all([initializeNotifications(), initializeBranches()]).then(() => {
             setSentNotifications(getNotifications());
             setBranches(getBranches());
             setIsLoading(false);

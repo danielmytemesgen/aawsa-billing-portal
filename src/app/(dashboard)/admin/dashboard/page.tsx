@@ -216,20 +216,27 @@ export default function AdminDashboardPage() {
       try {
         // Fetch aggregated metrics first for immediate display
         await processDashboardData();
+        
+        // Metrics loaded, we can now display the dashboard layout & charts immediately!
+        if (isMounted) setIsLoading(false);
 
-        // Background initialization of data-store for detailed views (charts)
-        await Promise.all([
-          initializeBranches(true),
-          initializeBulkMeters(true),
-          initializeCustomers(true),
-          initializeBills(true)
-        ]);
+        // Pre-warm/initialize data-store for detailed views in the background (non-blocking)
+        Promise.all([
+          initializeBranches(),
+          initializeBulkMeters(),
+          initializeCustomers(),
+          initializeBills()
+        ]).then(async () => {
+          if (isMounted) {
+            await processDashboardData();
+          }
+        }).catch((err) => {
+          console.error("Background data-store initialization failed:", err);
+        });
 
-        if (isMounted) await processDashboardData();
       } catch (err) {
         console.error("Error initializing dashboard data:", err);
         if (isMounted) setError("Failed to load dashboard data. Please try again later.");
-      } finally {
         if (isMounted) setIsLoading(false);
       }
     };

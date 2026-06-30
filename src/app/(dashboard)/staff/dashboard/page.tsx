@@ -245,10 +245,36 @@ export default function StaffDashboardPage() {
     if (authStatus !== 'authorized') return;
     setIsLoading(true);
     try {
-      // Map of initializations to required permissions
+      // 1. Fetch dashboard metrics first for instant display
+      await fetchDashboardMetrics();
+      setIsLoading(false);
+
+      // 2. Fetch reading period status (non-blocking)
+      const fetchPeriodStatus = async () => {
+        const isOfflineStatus = typeof window !== 'undefined' && !window.navigator.onLine;
+        if (isOfflineStatus) {
+          const cached = localStorage.getItem('cached_period_status');
+          setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+        } else {
+          try {
+            const status = await getReadingPeriodStatusAction();
+            setReadingPeriodStatus(status as 'Open' | 'Closed');
+            if (status) {
+              localStorage.setItem('cached_period_status', status);
+            }
+          } catch (err) {
+            console.warn("Offline: failed to fetch reading period status, assuming Open", err);
+            const cached = localStorage.getItem('cached_period_status');
+            setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+          }
+        }
+      };
+      fetchPeriodStatus();
+
+      // 3. Background pre-warming of cache
       const initTasks: Promise<any>[] = [
-        initializeBulkMeters(true),
-        initializeCustomers(true),
+        initializeBulkMeters(),
+        initializeCustomers(),
       ];
 
       // Guard bills data
@@ -262,24 +288,22 @@ export default function StaffDashboardPage() {
       if (hasPermission('meter_readings_view_all') || 
           hasPermission('meter_readings_view_branch') || 
           hasPermission('meter_readings_create')) {
-        initTasks.push(initializeIndividualCustomerReadings(true));
-        initTasks.push(initializeBulkMeterReadings(true));
+        initTasks.push(initializeIndividualCustomerReadings());
+        initTasks.push(initializeBulkMeterReadings());
       }
 
       // Guard route data
       if (hasPermission('routes_view_all') || 
           hasPermission('routes_view_assigned') || 
           hasPermission('meter_readings_analytics_view')) {
-        initTasks.push(fetchRoutes(true));
+        initTasks.push(fetchRoutes());
       }
 
       // Only fetch staff members if user has permission
       if (hasPermission('staff_view')) {
-        initTasks.push(initializeStaffMembers(true));
+        initTasks.push(initializeStaffMembers());
       }
 
-      // Fetch branches via the permission-lite lookup (works for all authenticated users)
-      const initTasksPromise = Promise.all(initTasks);
       const branchResultPromise = (async () => {
         const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
         if (isOffline) {
@@ -311,42 +335,25 @@ export default function StaffDashboardPage() {
         }
       })();
 
-      const [, branchResult] = await Promise.all([
-        initTasksPromise,
+      Promise.all([
+        Promise.all(initTasks),
         branchResultPromise,
-      ]);
-
-      if (branchResult && branchResult.data) {
-        setAllBranches(branchResult.data as any[]);
-      }
-      setAllBulkMeters(getBulkMeters());
-      setAllCustomers(getCustomers());
-      setAllIndividualReadings(getIndividualCustomerReadings());
-      setAllBulkReadings(getBulkMeterReadings());
-      setAllRoutes(getRoutes());
-      setAllStaff(getStaffMembers());
-      await fetchDashboardMetrics();
-    } catch (err) {
-      console.error("Failed to fetch live dashboard data:", err);
-    } finally {
-      // Fetch reading period status
-      const isOfflineStatus = typeof window !== 'undefined' && !window.navigator.onLine;
-      if (isOfflineStatus) {
-        const cached = localStorage.getItem('cached_period_status');
-        setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
-      } else {
-        try {
-          const status = await getReadingPeriodStatusAction();
-          setReadingPeriodStatus(status as 'Open' | 'Closed');
-          if (status) {
-            localStorage.setItem('cached_period_status', status);
-          }
-        } catch (err) {
-          console.warn("Offline: failed to fetch reading period status, assuming Open", err);
-          const cached = localStorage.getItem('cached_period_status');
-          setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+      ]).then(([, branchResult]) => {
+        if (branchResult && branchResult.data) {
+          setAllBranches(branchResult.data as any[]);
         }
-      }
+        setAllBulkMeters(getBulkMeters());
+        setAllCustomers(getCustomers());
+        setAllIndividualReadings(getIndividualCustomerReadings());
+        setAllBulkReadings(getBulkMeterReadings());
+        setAllRoutes(getRoutes());
+        setAllStaff(getStaffMembers());
+      }).catch((err) => {
+        console.error("Background data-store pre-warming failed:", err);
+      });
+
+    } catch (err) {
+      console.error("Failed to fetch live dashboard metrics:", err);
       setIsLoading(false);
     }
   };
@@ -444,8 +451,8 @@ export default function StaffDashboardPage() {
     const paidPercentage = typeof paidPercentageValue === 'number' ? `${paidPercentageValue.toFixed(0)}%` : "0%";
 
     return {
-      totalBulkMeters: branchBMs.length,
-      totalCustomers: activeCustomersInBranch.length,
+      totalBulkMeters: metrics?.counts ? (metrics.counts.bulkMeters ?? 0) : branchBMs.length,
+      totalCustomers: metrics?.counts ? (metrics.counts.individualCustomers ?? 0) : activeCustomersInBranch.length,
       totalBills: totalBillsCount,
       paidBills: paidCount,
       unpaidBills: unpaidCount,

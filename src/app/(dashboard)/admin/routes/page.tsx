@@ -57,8 +57,8 @@ export default function RoutesPage() {
         setIsLoading(true);
         Promise.all([
             fetchRoutes(),
-            import("@/lib/data-store").then(mod => mod.initializeBulkMeters(true)),
-            import("@/lib/data-store").then(mod => mod.initializeStaffMembers(true))
+            import("@/lib/data-store").then(mod => mod.initializeBulkMeters()),
+            import("@/lib/data-store").then(mod => mod.initializeStaffMembers())
         ]).then(() => {
             setIsLoading(false);
         });

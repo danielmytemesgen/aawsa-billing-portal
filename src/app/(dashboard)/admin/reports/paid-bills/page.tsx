@@ -64,9 +64,9 @@ export default function PaidBillsReportPage() {
 
     const fetchStaticData = async () => {
       await Promise.all([
-        initializeCustomers(true),
-        initializeBulkMeters(true),
-        initializeBranches(true),
+        initializeCustomers(),
+        initializeBulkMeters(),
+        initializeBranches(),
       ]);
       setCustomers(getCustomers());
       setBulkMeters(getBulkMeters());

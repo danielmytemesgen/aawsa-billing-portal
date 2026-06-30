@@ -25,8 +25,8 @@ export default function MyRoutesPage() {
         const load = async () => {
             setIsLoading(true);
             await Promise.all([
-                fetchRoutes(true),
-                initializeBulkMeters(true)
+                fetchRoutes(),
+                initializeBulkMeters()
             ]);
             setIsLoading(false);
         };

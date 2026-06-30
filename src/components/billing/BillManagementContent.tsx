@@ -123,9 +123,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         setLoading(true);
         try {
             await Promise.allSettled([
-                initializeBulkMeters(true),
-                initializeCustomers(true),
-                initializeTariffs(true)
+                initializeBulkMeters(),
+                initializeCustomers(),
+                initializeTariffs()
             ]);
 
             const res = await getAllBillsAction();

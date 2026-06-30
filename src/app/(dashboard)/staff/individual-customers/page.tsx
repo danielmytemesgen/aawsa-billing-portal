@@ -67,7 +67,7 @@ export default function StaffIndividualCustomersPage() {
 
     const initializeData = async () => {
       try {
-        await Promise.all([initializeBranches(true), initializeBulkMeters(true), initializeCustomers(true)]);
+        await Promise.all([initializeBranches(), initializeBulkMeters(), initializeCustomers()]);
         if (isMounted) {
           setAllBranches(getBranches());
           setAllBulkMeters(getBulkMeters());

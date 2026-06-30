@@ -59,7 +59,7 @@ export default function StaffManagementPage() {
     }
 
     setIsLoading(true);
-    initializeStaffMembers(true).then(() => {
+    initializeStaffMembers().then(() => {
       setStaffMembers(getStaffMembers());
       setIsLoading(false);
     });

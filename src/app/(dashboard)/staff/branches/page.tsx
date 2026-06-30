@@ -39,7 +39,7 @@ export default function StaffBranchesPage() {
 
     React.useEffect(() => {
         setIsLoading(true);
-        initializeBranches(true).then(() => {
+        initializeBranches().then(() => {
             setBranches(getBranches());
             setIsLoading(false);
         });

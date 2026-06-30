@@ -33,7 +33,8 @@ export async function calculateBill(
     meterSize: number,
     billingMonth: string, // e.g., "2024-05"
     sewerageCONS?: number,
-    baseWaterChargeCONS?: number
+    baseWaterChargeCONS?: number,
+    preFetchedTariff?: any
 ): Promise<BillCalculationResult> {
     const emptyResult: BillCalculationResult = {
         totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0,
@@ -60,7 +61,7 @@ export async function calculateBill(
     // Use the actual last day of the month to find the applicable tariff.
     // This replaces the previous '-28' hard-code which could miss tariffs starting on the 29th-31st.
     const lookupDate = getEndDayOfMonth(billingMonth);
-    const tariffConfig = await getLiveTariffFromDB(customerType, lookupDate);
+    const tariffConfig = preFetchedTariff || await getLiveTariffFromDB(customerType, lookupDate);
 
     if (!tariffConfig) {
         console.warn(`Tariff information for customer type "${customerType}" for date ${lookupDate} not found. Bill will be 0.`);

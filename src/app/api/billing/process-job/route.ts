@@ -77,7 +77,7 @@ export async function POST(request: Request) {
   } = await import('@/lib/db-queries');
 
   const { calculateBill } = await import('@/lib/billing');
-  const { calculateDebtAging } = await import('@/lib/billing-utils');
+  const { calculateDebtAging, normalizeTariff } = await import('@/lib/billing-utils');
   const { buildBillingPeriod } = await import('@/lib/billing-config');
   const { randomUUID } = await import('crypto');
 
@@ -129,8 +129,8 @@ export async function POST(request: Request) {
       : new Map<string, any[]>();
 
     const historicalBillsMap = currentJob.type === 'bulk_meters'
-      ? await dbGetBillsByBulkMeterIds(customerKeys)
-      : await dbGetBillsByIndividualCustomerIds(customerKeys);
+      ? await dbGetBillsByBulkMeterIds(customerKeys, currentJob.month_year)
+      : await dbGetBillsByIndividualCustomerIds(customerKeys, currentJob.month_year);
 
     // Pre-fetch readings for this chunk
     let currentMonthReadingsMap = new Map<string, any>();
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     const uniqueChargeGroups = [...new Set(items.map((i: any) => i.charge_group || i.customerType || 'Non-domestic'))];
     await Promise.all(uniqueChargeGroups.map(async (cg) => {
       const tariff = await dbGetLatestApplicableTariff(cg as string, currentJob.month_year);
-      tariffCache.set(cg as string, tariff);
+      tariffCache.set(cg as string, tariff ? normalizeTariff(tariff) : null);
     }));
 
     // ── Process each item in memory ───────────────────────────────────────
@@ -179,12 +179,16 @@ export async function POST(request: Request) {
           diffUsage = usage - totalIndivUsage;
         }
 
+        const cachedTariff = tariffCache.get(chargeGroup as string);
         const billBreakdown = await calculateBill(
           diffUsage,
           chargeGroup as any,
           sewerageConn as any,
           item.meterSize || item.meter_size || 0.5,
-          currentJob.month_year
+          currentJob.month_year,
+          undefined,
+          undefined,
+          cachedTariff
         );
         diffUsage = billBreakdown.effectiveUsage;
 

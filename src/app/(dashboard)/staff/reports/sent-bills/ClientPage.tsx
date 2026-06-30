@@ -58,7 +58,7 @@ export default function StaffSentBillsReportPage() {
 
     const fetchStaticData = async () => {
       setIsLoading(true);
-      await Promise.all([initializeCustomers(true), initializeBulkMeters(true)]);
+      await Promise.all([initializeCustomers(), initializeBulkMeters()]);
       setCustomers(getCustomers());
       setBulkMeters(getBulkMeters());
       setIsLoading(false);

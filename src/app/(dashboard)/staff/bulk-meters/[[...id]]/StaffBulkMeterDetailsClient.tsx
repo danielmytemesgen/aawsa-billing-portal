@@ -18,14 +18,15 @@ import {
   updateCustomer as updateCustomerInStore, deleteCustomer as deleteCustomerFromStore, subscribeToBulkMeters, subscribeToCustomers,
   initializeBulkMeters, initializeCustomers, getBulkMeterReadings, initializeBulkMeterReadings, subscribeToBulkMeterReadings,
   addBill, addBulkMeterReading, removeBill,
-  getBranches, initializeBranches, subscribeToBranches
+  getBranches, initializeBranches, subscribeToBranches, getTariff
 } from "@/lib/data-store";
 import { getBills, initializeBills, subscribeToBills } from "@/lib/data-store";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { IndividualCustomer, IndividualCustomerStatus } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { DomainBulkMeterReading, DomainBill } from "@/lib/data-store";
-import { type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult } from "@/lib/billing-calculations";
-import { calculateBillAction, closeBillingCycleAction } from "@/lib/actions";
+import { type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult, calculateBillFromTariff } from "@/lib/billing-calculations";
+// calculateBillAction removed — replaced with synchronous calculateBillFromTariff + local tariff cache
+import { closeBillingCycleAction } from "@/lib/actions";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
@@ -130,7 +131,7 @@ export default function StaffBulkMeterDetailsPage() {
   const [memoizedDetails, setMemoizedDetails] = React.useState(initialMemoizedDetails);
   const lastCalculationInputs = React.useRef<string>("");
 
-  const calculateMemoizedDetails = useCallback(async (
+  const calculateMemoizedDetails = useCallback((
     currentBulkMeter: BulkMeter | null,
     currentAssociatedCustomers: IndividualCustomer[],
     currentBranches: Branch[],
@@ -166,8 +167,14 @@ export default function StaffBulkMeterDetailsPage() {
     }
     lastCalculationInputs.current = currentInputs;
 
-    const { data: billResult1 } = await calculateBillAction(Math.max(0, bulkUsage), effectiveBulkMeterCustomerType, effectiveBulkMeterSewerageConnection, currentBulkMeter.meterSize, billingMonth);
-    const { totalBill: totalBulkBillForPeriod } = billResult1 || { totalBill: 0 };
+    // Use cached local tariff — synchronous, zero network calls
+    const activeTariff = getTariff(effectiveBulkMeterCustomerType, billingMonth);
+    const emptyBillResult: BillCalculationResult = { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0, effectiveUsage: 0 };
+
+    // Calculate bulk meter bill synchronously from cached tariff
+    const totalBulkBillForPeriod = activeTariff
+      ? calculateBillFromTariff(activeTariff, Math.max(0, bulkUsage), currentBulkMeter.meterSize, effectiveBulkMeterSewerageConnection).totalBill
+      : 0;
 
     const outStandingBillValue = currentBulkMeter.outStandingbill ?? 0;
 
@@ -194,8 +201,10 @@ export default function StaffBulkMeterDetailsPage() {
       sewerageUsage = bulkUsage;
     }
 
-    const { data: differenceFullOrNull } = await calculateBillAction(differenceUsage, effectiveBulkMeterCustomerType, effectiveBulkMeterSewerageConnection, currentBulkMeter.meterSize, billingMonth, sewerageUsage);
-    const differenceFull = differenceFullOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0 } as BillCalculationResult;
+    // Calculate difference bill synchronously from cached tariff
+    const differenceFull: BillCalculationResult = activeTariff
+      ? calculateBillFromTariff(activeTariff, differenceUsage, currentBulkMeter.meterSize, effectiveBulkMeterSewerageConnection, sewerageUsage)
+      : { ...emptyBillResult, effectiveUsage: differenceUsage };
     const differenceBill = differenceFull.totalBill;
     const differenceBillBreakdown = differenceFull;
 
@@ -233,8 +242,11 @@ export default function StaffBulkMeterDetailsPage() {
         reconstructedOutstanding += currentBillingHistory[oldestIndex].balanceCarriedForward ?? 0;
       }
 
-      const { data: historicalBillDetailsOrNull } = await calculateBillAction(billToRender.differenceUsage ?? 0, currentBulkMeter.chargeGroup as CustomerType || "Non-domestic", currentBulkMeter.sewerageConnection || "No", currentBulkMeter.meterSize, billToRender.monthYear);
-      const historicalBillDetails = historicalBillDetailsOrNull || { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0 } as BillCalculationResult;
+      // Calculate historical bill synchronously from cached tariff (per-bill month)
+      const historicalTariff = getTariff(currentBulkMeter.chargeGroup as CustomerType || "Non-domestic", billToRender.monthYear);
+      const historicalBillDetails: BillCalculationResult = historicalTariff
+        ? calculateBillFromTariff(historicalTariff, billToRender.differenceUsage ?? 0, currentBulkMeter.meterSize, currentBulkMeter.sewerageConnection || "No")
+        : { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0, effectiveUsage: billToRender.differenceUsage ?? 0 };
 
       finalBillCardDetails = {
         prevReading: billToRender.PREVREAD,
@@ -273,8 +285,7 @@ export default function StaffBulkMeterDetailsPage() {
       }
 
       // Calculate potential live penalty using the shared utility (same logic as server)
-      const { getTariff } = await import('@/lib/data-store');
-      const activeTariff = await getTariff(effectiveBulkMeterCustomerType, billingMonth);
+      // Use cached tariff synchronously — no dynamic import or server action needed
 
       const { penaltyAmt: livePenaltyAmt } = calculateDebtAging(
         currentReconstructedOutstanding,

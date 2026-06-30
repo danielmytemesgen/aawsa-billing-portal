@@ -28,8 +28,8 @@ export default function OverallDifferenceUsageTrendPage() {
     const fetchData = async () => {
       setIsLoading(true);
       await Promise.all([
-        initializeBulkMeters(true),
-        initializeBranches(true),
+        initializeBulkMeters(),
+        initializeBranches(),
       ]);
       setBulkMeters(getBulkMeters());
       setBranches(getBranches());

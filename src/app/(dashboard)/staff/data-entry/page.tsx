@@ -45,8 +45,8 @@ export default function StaffDataEntryPage() {
   const [isBranchDetermined, setIsBranchDetermined] = React.useState(false);
 
   React.useEffect(() => {
-    initializeBulkMeters(true);
-    initializeCustomers(true);
+    initializeBulkMeters();
+    initializeCustomers();
 
     const storedUser = localStorage.getItem("user");
     if (storedUser) {

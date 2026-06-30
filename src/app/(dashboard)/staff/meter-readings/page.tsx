@@ -176,14 +176,14 @@ export default function StaffMeterReadingsPage() {
 
     setIsLoading(true);
     Promise.all([
-      initializeCustomers(true),
-      initializeBulkMeters(true),
-      initializeIndividualCustomerReadings(true),
-      initializeBulkMeterReadings(true),
-      initializeFaultCodes(true),
-      initializeBranches(true),
-      fetchRoutes(true),
-      hasPermission('staff_view') ? initializeStaffMembers(true) : Promise.resolve(),
+      initializeCustomers(),
+      initializeBulkMeters(),
+      initializeIndividualCustomerReadings(),
+      initializeBulkMeterReadings(),
+      initializeFaultCodes(),
+      initializeBranches(),
+      fetchRoutes(),
+      hasPermission('staff_view') ? initializeStaffMembers() : Promise.resolve(),
     ]).then(() => {
       if (!isMounted) return;
       setAllCustomers(getCustomers());

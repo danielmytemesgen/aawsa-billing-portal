@@ -93,7 +93,7 @@ export default function BulkMetersPage() {
       setCurrentUser(JSON.parse(userJson));
     }
     fetchSummaryStats();
-    initializeBranches(true).then(() => {
+    initializeBranches().then(() => {
       setBranches(getBranches());
     });
 

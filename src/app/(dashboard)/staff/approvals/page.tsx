@@ -69,9 +69,9 @@ export default function StaffApprovalsPage() {
 
         setIsLoading(true);
         Promise.all([
-            initializeCustomers(true),
-            initializeBulkMeters(true),
-            initializeBranches(true)
+            initializeCustomers(),
+            initializeBulkMeters(),
+            initializeBranches()
         ]).then(() => {
             setCustomers(getCustomers());
             setBulkMeters(getBulkMeters());

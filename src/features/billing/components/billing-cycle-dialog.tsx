@@ -215,24 +215,36 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 setTotalCount(job.total_items);
                 setProcessedCount(job.processed_items || 0);
 
-                // ── Fire server-side processing (non-blocking fetch) ──────────────────
-                // The server loop runs entirely on the Node.js side.
-                // We do NOT await — the request runs in the background.
-                fetch('/api/billing/process-job', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId: job.id }),
-                }).then(async (res) => {
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        console.error('[billing] process-job API error:', err);
-                    }
-                }).catch((err) => {
-                    console.error('[billing] process-job fetch error:', err);
-                });
+                // ── Fire server-side processing (recursive resumption) ────────────────
+                // If the server hits its safety ceiling it returns { resumed: true }.
+                // We keep re-firing the request so the job always finishes even if the
+                // Node.js request runtime has a per-request time limit.
+                const fireProcessJob = (jobId: string) => {
+                    fetch('/api/billing/process-job', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jobId }),
+                    }).then(async (res) => {
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            console.error('[billing] process-job API error:', err);
+                            return;
+                        }
+                        const data = await res.json().catch(() => ({}));
+                        // If server returned early due to safety ceiling, resume immediately
+                        if (data?.resumed) {
+                            console.log('[billing] Job hit timeout ceiling — resuming automatically…');
+                            fireProcessJob(jobId);
+                        }
+                    }).catch((err) => {
+                        console.error('[billing] process-job fetch error:', err);
+                    });
+                };
+                fireProcessJob(job.id);
 
                 // ── Poll job status every 4 seconds ──────────────────────────────────
                 startPolling(job.id, job.total_items);
+
 
             } else {
                 const res = await runBillingCycleAction({

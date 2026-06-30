@@ -148,15 +148,15 @@ export default function AdminMeterReadingsPage() {
 
     setIsLoading(true);
     Promise.all([
-      initializeCustomers(true),
-      initializeBulkMeters(true),
-      initializeIndividualCustomerReadings(true),
-      initializeBulkMeterReadings(true),
-      initializeFaultCodes(true),
-      initializeBranches(true),
-      fetchRoutes(true),
-      initializeStaffMembers(true),
-      initializeBills(true),
+      initializeCustomers(),
+      initializeBulkMeters(),
+      initializeIndividualCustomerReadings(),
+      initializeBulkMeterReadings(),
+      initializeFaultCodes(),
+      initializeBranches(),
+      fetchRoutes(),
+      initializeStaffMembers(),
+      initializeBills(),
     ]).then(() => {
       if (!isMounted) return;
       setAllCustomers(getCustomers());

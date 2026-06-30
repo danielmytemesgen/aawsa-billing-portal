@@ -93,8 +93,8 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
   React.useEffect(() => {
     setIsLoadingBulkMeters(true);
     Promise.all([
-      initializeBulkMeters(true),
-      initializeCustomers(true),
+      initializeBulkMeters(),
+      initializeCustomers(),
       initializeAdminBranches()
     ]).then(() => {
       const allBranches = getBranches();

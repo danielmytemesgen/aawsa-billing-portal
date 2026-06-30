@@ -82,7 +82,7 @@ export default function StaffBulkMetersPage() {
 
     const initializeAndSubscribe = async () => {
       try {
-        await Promise.all([initializeBranches(true), initializeBulkMeters(true)]);
+        await Promise.all([initializeBranches(), initializeBulkMeters()]);
         if (isMounted) {
           setAllBranches(getBranches());
           setAllBulkMeters(getBulkMeters());

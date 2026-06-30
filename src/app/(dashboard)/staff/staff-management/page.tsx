@@ -41,7 +41,7 @@ export default function StaffStaffManagementPage() {
 
         setIsLoading(true);
         if (hasPermission('staff_view')) {
-            initializeStaffMembers(true).then(() => {
+            initializeStaffMembers().then(() => {
                 setStaffMembers(getStaffMembers());
                 setIsLoading(false);
             });

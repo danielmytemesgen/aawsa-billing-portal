@@ -148,7 +148,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
         try {
             await Promise.allSettled([
-                initializeTariffs(true)
+                initializeTariffs()
             ]);
 
             if (effectiveMonth === 'all') {

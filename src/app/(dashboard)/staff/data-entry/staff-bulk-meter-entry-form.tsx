@@ -66,7 +66,7 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
   // Initialize staff branch and generate bulk meter keys for staff entry
   React.useEffect(() => {
     // Initialize branch based on provided branchName
-    initializeBranches(true).then(() => {
+    initializeBranches().then(() => {
       const allBranches = getBranches();
       const normalizedStaffBranchName = branchName.trim().toLowerCase();
       const staffBranch = allBranches.find(b => {
@@ -79,7 +79,7 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
     });
 
     // Initialize bulk meters and generate unique keys
-    initializeBulkMeters(true).then(() => {
+    initializeBulkMeters().then(() => {
       const existing = getBulkMeters();
       const { customerKey, instKey } = generateBulkMeterKeys(existing);
       form.setValue("customerKeyNumber", customerKey);

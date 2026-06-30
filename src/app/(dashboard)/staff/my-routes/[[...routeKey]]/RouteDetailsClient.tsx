@@ -229,7 +229,7 @@ export default function RouteDetailsClient() {
                 fetchPeriodStatus(),
                 fetchRoutes(),
                 initializeBulkMeters(true, { routeKey }),
-                initializeFaultCodes(true)
+                initializeFaultCodes()
             ]);
 
             // Then fetch customers (Targeted)

@@ -293,18 +293,37 @@ export const dbGetCustomersByBulkMeterIds = async (bulkMeterIds: string[]): Prom
 /**
  * Batch version: fetch the most recent bills for multiple bulk meters in one query.
  * Returns a Map<customerKeyNumber, bill[]> for O(1) lookups.
+ * Pass baseMonthYear (e.g. "2026-06") to enable PostgreSQL partition pruning;
+ * the query will only scan the last 13 monthly partitions instead of all of them.
  */
-export const dbGetBillsByBulkMeterIds = async (customerKeys: string[]): Promise<Map<string, any[]>> => {
+export const dbGetBillsByBulkMeterIds = async (customerKeys: string[], baseMonthYear?: string): Promise<Map<string, any[]>> => {
     if (customerKeys.length === 0) return new Map();
     const placeholders = customerKeys.map((_, i) => `$${i + 1}`).join(',');
+
+    // Build a list of the 13 most recent month_year values (current + 12 prior months)
+    // so PostgreSQL can prune irrelevant partitions. Falls back to no filter if not provided.
+    let monthFilter = '';
+    const queryParams: any[] = [...customerKeys];
+    if (baseMonthYear) {
+        const [year, month] = baseMonthYear.split('-').map(Number);
+        const monthValues: string[] = [];
+        for (let i = 0; i < 13; i++) {
+            const d = new Date(year, month - 1 - i, 1);
+            monthValues.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        }
+        const monthPlaceholders = monthValues.map((_, i) => `$${customerKeys.length + i + 1}`).join(',');
+        monthFilter = ` AND month_year IN (${monthPlaceholders})`;
+        queryParams.push(...monthValues);
+    }
+
     const rows: any[] = await query(
         `SELECT * FROM (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY "CUSTOMERKEY" ORDER BY created_at DESC) as rn
             FROM bills
-            WHERE "CUSTOMERKEY" IN (${placeholders}) AND deleted_at IS NULL
+            WHERE "CUSTOMERKEY" IN (${placeholders})${monthFilter} AND deleted_at IS NULL
         ) t
         WHERE rn <= 12`,
-        customerKeys
+        queryParams
     );
     const map = new Map<string, any[]>();
     for (const row of rows) {
@@ -318,18 +337,36 @@ export const dbGetBillsByBulkMeterIds = async (customerKeys: string[]): Promise<
 /**
  * Batch version: fetch all bills for multiple individual customers in one query.
  * Returns a Map<individual_customer_id, bill[]> for O(1) lookups.
+ * Pass baseMonthYear (e.g. "2026-06") to enable PostgreSQL partition pruning;
+ * the query will only scan the last 13 monthly partitions instead of all of them.
  */
-export const dbGetBillsByIndividualCustomerIds = async (customerKeys: string[]): Promise<Map<string, any[]>> => {
+export const dbGetBillsByIndividualCustomerIds = async (customerKeys: string[], baseMonthYear?: string): Promise<Map<string, any[]>> => {
     if (customerKeys.length === 0) return new Map();
     const placeholders = customerKeys.map((_, i) => `$${i + 1}`).join(',');
+
+    // Build a list of the 13 most recent month_year values for partition pruning.
+    let monthFilter = '';
+    const queryParams: any[] = [...customerKeys];
+    if (baseMonthYear) {
+        const [year, month] = baseMonthYear.split('-').map(Number);
+        const monthValues: string[] = [];
+        for (let i = 0; i < 13; i++) {
+            const d = new Date(year, month - 1 - i, 1);
+            monthValues.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        }
+        const monthPlaceholders = monthValues.map((_, i) => `$${customerKeys.length + i + 1}`).join(',');
+        monthFilter = ` AND month_year IN (${monthPlaceholders})`;
+        queryParams.push(...monthValues);
+    }
+
     const rows: any[] = await query(
         `SELECT * FROM (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY individual_customer_id ORDER BY created_at DESC) as rn
             FROM bills
-            WHERE individual_customer_id IN (${placeholders}) AND deleted_at IS NULL
+            WHERE individual_customer_id IN (${placeholders})${monthFilter} AND deleted_at IS NULL
         ) t
         WHERE rn <= 12`,
-        customerKeys
+        queryParams
     );
     const map = new Map<string, any[]>();
     for (const row of rows) {
@@ -1747,7 +1784,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         SELECT COUNT(DISTINCT bmr."CUST_KEY") as count 
         FROM bulk_meter_readings bmr
         JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber"
-        WHERE TO_CHAR(bmr."READING_DATE", 'YYYY-MM') = $1
+        WHERE bmr."READING_DATE" >= CAST($1 || '-01' AS DATE) AND bmr."READING_DATE" < CAST($1 || '-01' AS DATE) + INTERVAL '1 month'
     `;
     if (branchId) {
         currentReadingsSql += ' AND bm.branch_id = $2';
@@ -1802,15 +1839,15 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         LEFT JOIN (
             SELECT 
                 COALESCE(
-                    "CUSTOMERBRANCH", 
-                    (SELECT br.name FROM branches br JOIN bulk_meters bm ON br.id = bm.branch_id WHERE bm."customerKeyNumber" = bills."CUSTOMERKEY" LIMIT 1),
-                    (SELECT br.name FROM branches br JOIN individual_customers ic ON br.id = ic.branch_id WHERE ic."customerKeyNumber" = bills.individual_customer_id LIMIT 1)
-                ) as inferred_branch,
-                payment_status,
-                month_year
+                    branch_id,
+                    (SELECT branch_id FROM bulk_meters bm WHERE bm."customerKeyNumber" = bills."CUSTOMERKEY" LIMIT 1),
+                    (SELECT branch_id FROM individual_customers ic WHERE ic."customerKeyNumber" = bills.individual_customer_id LIMIT 1),
+                    (SELECT id FROM branches br WHERE TRIM(BOTH '\t' FROM TRIM(br.name)) = TRIM(BOTH '\t' FROM TRIM(bills."CUSTOMERBRANCH")) LIMIT 1)
+                ) as effective_branch_id,
+                payment_status
             FROM bills
-            WHERE month_year = $1 AND status = 'Posted'
-        ) bi ON TRIM(BOTH '\t' FROM TRIM(bi.inferred_branch)) = TRIM(BOTH '\t' FROM TRIM(b.name))
+            WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL
+        ) bi ON bi.effective_branch_id = b.id
         ${perfBranchFilter}
         GROUP BY b.name
     `;
@@ -2686,26 +2723,31 @@ export const dbRunDataAudit = async (branchId?: string) => {
 export const dbGetReadingsForMonth = async (type: string, customerKeys: string[], monthYear: string) => {
     if (customerKeys.length === 0) return [];
     
-    // Extract YYYY-MM if reading_date is a timestamp, but month_year comes in as 'YYYY-MM' format.
-    // e.g. TO_CHAR("READING_DATE", 'YYYY-MM') = $1
-    const placeholders = customerKeys.map((_, i) => `$${i + 2}`).join(',');
+    // Use a date-range predicate instead of TO_CHAR() so PostgreSQL can use the
+    // B-tree index on "READING_DATE" (idx_readings_date / idx_bulk_readings_date)
+    // rather than performing a full sequential scan.
+    const [year, month] = monthYear.split('-').map(Number);
+    const startDate = new Date(year, month - 1, 1).toISOString();          // first day 00:00:00
+    const endDate   = new Date(year, month,     1).toISOString();          // first day of NEXT month
+
+    const placeholders = customerKeys.map((_, i) => `$${i + 3}`).join(',');
     
     let sql = '';
     if (type === 'bulk_meters') {
         sql = `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
                FROM bulk_meter_readings 
-               WHERE TO_CHAR("READING_DATE", 'YYYY-MM') = $1 
+               WHERE "READING_DATE" >= $1 AND "READING_DATE" < $2
                AND "CUST_KEY" IN (${placeholders}) 
                AND deleted_at IS NULL`;
     } else {
         sql = `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
                FROM individual_customer_readings 
-               WHERE TO_CHAR("READING_DATE", 'YYYY-MM') = $1 
+               WHERE "READING_DATE" >= $1 AND "READING_DATE" < $2
                AND "CUST_KEY" IN (${placeholders}) 
                AND deleted_at IS NULL`;
     }
     
-    const params = [monthYear, ...customerKeys];
+    const params = [startDate, endDate, ...customerKeys];
     const rows = await query(sql, params);
     return rows;
 };

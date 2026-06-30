@@ -223,7 +223,7 @@ export default function StaffManagementDashboardPage() {
 
     const initializeAndSubscribe = async () => {
       try {
-        await Promise.all([initializeBranches(true), initializeBulkMeters(true), initializeCustomers(true)]);
+        await Promise.all([initializeBranches(), initializeBulkMeters(), initializeCustomers()]);
         if (isMounted) {
           setAllBranches(getBranches());
           setAllBulkMeters(getBulkMeters());

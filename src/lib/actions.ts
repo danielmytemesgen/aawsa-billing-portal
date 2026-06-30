@@ -2877,7 +2877,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     }
 
     // 2. Prepare Batch Constants (Tariffs, Dates, etc.)
-    const { calculateDebtAging } = await import('./billing-utils');
+    const { calculateDebtAging, normalizeTariff } = await import('./billing-utils');
     const {
       dbGetLatestApplicableTariff,
       dbGetCustomersByBulkMeterIds,
@@ -2917,15 +2917,15 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
 
     // Pre-fetch 2: all historical bills for every meter in this chunk (1 query)
     const historicalBillsMap = job.type === 'bulk_meters'
-      ? await dbGetBillsByBulkMeterIds(customerKeys)
-      : await dbGetBillsByIndividualCustomerIds(customerKeys);
+      ? await dbGetBillsByBulkMeterIds(customerKeys, job.month_year)
+      : await dbGetBillsByIndividualCustomerIds(customerKeys, job.month_year);
 
     // Pre-fetch 3: cache tariffs by charge group (avoids repeated DB hits per unique type)
     const tariffCache = new Map<string, any>();
     const uniqueChargeGroups = [...new Set(items.map((i: any) => i.charge_group || i.customerType || 'Non-domestic'))];
     await Promise.all(uniqueChargeGroups.map(async (cg) => {
       const tariff = await dbGetLatestApplicableTariff(cg, lookupDate);
-      tariffCache.set(cg, tariff);
+      tariffCache.set(cg, tariff ? normalizeTariff(tariff) : null);
     }));
 
     // Pre-fetch 4: all current month readings for this chunk
@@ -2969,12 +2969,16 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           diffUsage = usage - totalIndivUsage;
         }
 
+        const cachedTariff = tariffCache.get(chargeGroup as string);
         const billBreakdown = await calculateBill(
           diffUsage,
           chargeGroup,
           sewerageConn,
           item.meterSize || item.meter_size || 0.5,
-          job.month_year
+          job.month_year,
+          undefined,
+          undefined,
+          cachedTariff
         );
 
         diffUsage = billBreakdown.effectiveUsage;
