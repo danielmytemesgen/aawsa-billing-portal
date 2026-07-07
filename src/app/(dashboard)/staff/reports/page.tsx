@@ -74,6 +74,35 @@ const isIndividualReading = (r: any): r is { meterType: string; individualCustom
   r && typeof r === 'object' && 'meterType' in r && r.meterType === 'individual_customer_meter';
 
 
+const mapCustomer = (c: any) => {
+  if (!c) return c;
+  return {
+    ...c,
+    branchId: c.branch_id || c.branchId,
+    customerType: c.customerType || c.customer_type,
+    meterNumber: c.METER_KEY || c.meterNumber,
+    createdAt: c.created_at || c.createdAt,
+    updatedAt: c.updated_at || c.updatedAt,
+  };
+};
+
+const mapBulkMeter = (bm: any) => {
+  if (!bm) return bm;
+  return {
+    ...bm,
+    branchId: bm.branch_id || bm.branchId,
+    chargeGroup: bm.charge_group || bm.chargeGroup,
+    sewerageConnection: bm.sewerage_connection || bm.sewerageConnection,
+    meterNumber: bm.METER_KEY || bm.meterNumber,
+    createdAt: bm.created_at || bm.createdAt,
+    updatedAt: bm.updated_at || bm.updatedAt,
+    bulkUsage: bm.bulk_usage !== undefined ? bm.bulk_usage : bm.bulkUsage,
+    differenceUsage: bm.difference_usage !== undefined ? bm.difference_usage : bm.differenceUsage,
+    differenceBill: bm.difference_bill !== undefined ? bm.difference_bill : bm.differenceBill,
+    totalBulkBill: bm.total_bulk_bill !== undefined ? bm.total_bulk_bill : bm.totalBulkBill,
+  };
+};
+
 const availableStaffReports: ReportType[] = [
   {
     id: "customer-data-branch-export",
@@ -85,25 +114,32 @@ const availableStaffReports: ReportType[] = [
       "SubCity", "Woreda", "Sewerage Connection", "Assigned Bulk Meter ID", "Status", "Payment Status", "Calculated Bill"
     ],
     getData: async (filters) => {
-      const { branchId, startDate, endDate } = filters;
+      const { branchId, startDate, endDate, chargeGroup } = filters;
       if (!branchId) return [];
-      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
-      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const rawBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
 
-      const branchCUSTOMERKEYs = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
+      const customers = rawCustomers.map(mapCustomer);
+      const bulkMeters = rawBulkMeters.map(mapBulkMeter);
 
-      let filteredData = allCustomers.filter(c =>
+      const branchCUSTOMERKEYs = new Set(bulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
+
+      let filteredData = customers.filter(c =>
         c.branchId === branchId ||
         (c.assignedBulkMeterId && branchCUSTOMERKEYs.has(c.assignedBulkMeterId))
       );
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        filteredData = filteredData.filter(c => c.customerType === chargeGroup);
+      }
 
       if (startDate && endDate) {
         const start = startDate.getTime();
         const end = endDate.getTime();
         filteredData = filteredData.filter(c => {
-          if (!c.created_at) return false;
+          if (!c.createdAt) return false;
           try {
-            const customerDate = new Date(c.created_at).getTime();
+            const customerDate = new Date(c.createdAt).getTime();
             return customerDate >= start && customerDate <= end;
           } catch { return false; }
         });
@@ -140,9 +176,16 @@ const availableStaffReports: ReportType[] = [
       "Previous Reading", "Current Reading", "Month", "Specific Area", "SubCity", "Woreda", "Status", "Payment Status"
     ],
     getData: async (filters) => {
-      const { branchId } = filters;
+      const { branchId, chargeGroup, startDate, endDate } = filters;
       if (!branchId) return [];
-      const filteredData = ((await getAllBulkMetersAction())?.data as any[] ?? []).filter(bm => bm.branchId === branchId);
+      const rawBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const bulkMeters = rawBulkMeters.map(mapBulkMeter);
+
+      let filteredData = bulkMeters.filter(bm => bm.branchId === branchId);
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        filteredData = filteredData.filter(bm => bm.chargeGroup === chargeGroup);
+      }
       return filteredData.map(bm => ({
         "Customer Key":     bm.customerKeyNumber,
         "Name":             bm.name,
@@ -178,8 +221,8 @@ const availableStaffReports: ReportType[] = [
       // allBills: the FULL, unfiltered bill store — used as the history pool for
       // outstanding reconstruction (matches the Admin billing-summary report exactly).
       const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
-      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
-      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []).map(mapCustomer);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []).map(mapBulkMeter);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
       let filteredBills = allBills.filter(bill => {
@@ -200,6 +243,20 @@ const availableStaffReports: ReportType[] = [
             const billDate = new Date(b.billPeriodEndDate).getTime();
             return billDate >= start && billDate <= end;
           } catch { return false; }
+        });
+      }
+
+      if (filters.chargeGroup && filters.chargeGroup !== 'all') {
+        filteredBills = filteredBills.filter(b => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = allBulkMeters.find(m => m.customerKeyNumber === b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individualCustomerId) {
+            const cust = allCustomers.find(c => c.customerKeyNumber === b.individualCustomerId);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === filters.chargeGroup;
         });
       }
 
@@ -283,8 +340,8 @@ const availableStaffReports: ReportType[] = [
       if (!branchId) return [];
       
       const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
-      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
-      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []).map(mapCustomer);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []).map(mapBulkMeter);
       const branches = ((await getAllBranchesAction())?.data as any[] ?? []);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
@@ -306,6 +363,20 @@ const availableStaffReports: ReportType[] = [
             const billDate = new Date(b.billPeriodEndDate).getTime();
             return billDate >= start && billDate <= end;
           } catch { return false; }
+        });
+      }
+
+      if (filters.chargeGroup && filters.chargeGroup !== 'all') {
+        filteredBills = filteredBills.filter(b => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = allBulkMeters.find(m => m.customerKeyNumber === b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individualCustomerId) {
+            const cust = allCustomers.find(c => c.customerKeyNumber === b.individualCustomerId);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === filters.chargeGroup;
         });
       }
 
@@ -441,8 +512,8 @@ const availableStaffReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
       const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
-      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
-      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []).map(mapCustomer);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []).map(mapBulkMeter);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
@@ -592,8 +663,8 @@ const availableStaffReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
       const allBills = ((await getAllBillsAction())?.data as any[] ?? []);
-      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
-      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const allCustomers = ((await getAllCustomersAction())?.data as any[] ?? []).map(mapCustomer);
+      const allBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []).map(mapBulkMeter);
 
       const branchBulkMeterKeys = new Set(allBulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
 
@@ -743,15 +814,15 @@ const availableStaffReports: ReportType[] = [
       "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
     getData: async (filters) => {
-      const { branchId, startDate, endDate } = filters;
+      const { branchId, startDate, endDate, chargeGroup } = filters;
       if (!branchId) return [];
       const [billsRes, bulkMetersRes, customersRes] = await Promise.all([
         getAllBillsAction(),
         getAllBulkMetersAction(),
         getAllCustomersAction(),
       ]);
-      const bulkMeters = (bulkMetersRes?.data as any[] ?? []);
-      const customers = (customersRes?.data as any[] ?? []);
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
       const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
       const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
       let bills = (billsRes?.data as any[] ?? []).filter((b: any) => b.payment_status === 'Paid');
@@ -759,6 +830,20 @@ const availableStaffReports: ReportType[] = [
         (b.CUSTOMERKEY && bulkMetersInBranch.has(b.CUSTOMERKEY)) ||
         (b.individual_customer_id && customersInBranch.has(b.individual_customer_id))
       );
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        bills = bills.filter((b: any) => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = bulkMeters.find((m: any) => m.customerKeyNumber === b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individual_customer_id) {
+            const cust = customers.find((c: any) => c.customerKeyNumber === b.individual_customer_id);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === chargeGroup;
+        });
+      }
 
       if (startDate && endDate) {
         const start = startDate.getTime();
@@ -807,15 +892,15 @@ const availableStaffReports: ReportType[] = [
       "Status", "Bill Number", "Notes", "Created At", "Updated At"
     ],
     getData: async (filters) => {
-      const { branchId, startDate, endDate } = filters;
+      const { branchId, startDate, endDate, chargeGroup } = filters;
       if (!branchId) return [];
       const [billsRes, bulkMetersRes, customersRes] = await Promise.all([
         getAllBillsAction(),
         getAllBulkMetersAction(),
         getAllCustomersAction(),
       ]);
-      const bulkMeters = (bulkMetersRes?.data as any[] ?? []);
-      const customers = (customersRes?.data as any[] ?? []);
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
       const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
       const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
       let bills = (billsRes?.data as any[] ?? []);
@@ -823,6 +908,20 @@ const availableStaffReports: ReportType[] = [
         (b.CUSTOMERKEY && bulkMetersInBranch.has(b.CUSTOMERKEY)) ||
         (b.individual_customer_id && customersInBranch.has(b.individual_customer_id))
       );
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        bills = bills.filter((b: any) => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = bulkMeters.find((m: any) => m.customerKeyNumber === b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individual_customer_id) {
+            const cust = customers.find((c: any) => c.customerKeyNumber === b.individual_customer_id);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === chargeGroup;
+        });
+      }
 
       if (startDate && endDate) {
         const start = startDate.getTime();
@@ -869,7 +968,7 @@ const availableStaffReports: ReportType[] = [
       "Created At", "Updated At"
     ],
     getData: async (filters) => {
-      const { branchId, startDate, endDate } = filters;
+      const { branchId, startDate, endDate, chargeGroup } = filters;
       if (!branchId) return [];
       const [indReadingsRes, bulkReadingsRes, bulkMetersRes, customersRes] = await Promise.all([
         getAllIndividualCustomerReadingsAction(),
@@ -879,8 +978,8 @@ const availableStaffReports: ReportType[] = [
       ]);
       const indReadings = ((indReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'individual' }));
       const bulkReadings = ((bulkReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'bulk' }));
-      const bulkMeters = (bulkMetersRes?.data as any[] ?? []);
-      const customers = (customersRes?.data as any[] ?? []);
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
       const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
       const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
       let readings: any[] = [...indReadings, ...bulkReadings];
@@ -888,6 +987,20 @@ const availableStaffReports: ReportType[] = [
         (r._readingType === 'bulk' && r.CUST_KEY && bulkMetersInBranch.has(r.CUST_KEY)) ||
         (r._readingType === 'individual' && r.CUST_KEY && customersInBranch.has(r.CUST_KEY))
       );
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        readings = readings.filter((r: any) => {
+          let readingChargeGroup = "";
+          if (r._readingType === 'bulk' && r.CUST_KEY) {
+            const bm = bulkMeters.find((m: any) => m.customerKeyNumber === r.CUST_KEY);
+            readingChargeGroup = bm?.chargeGroup || "";
+          } else if (r._readingType === 'individual' && r.CUST_KEY) {
+            const cust = customers.find((c: any) => c.customerKeyNumber === r.CUST_KEY);
+            readingChargeGroup = cust?.customerType || "";
+          }
+          return readingChargeGroup === chargeGroup;
+        });
+      }
 
       if (startDate && endDate) {
         const start = startDate.getTime();
@@ -926,12 +1039,21 @@ const availableStaffReports: ReportType[] = [
       "Created At", "Updated At"
     ],
     getData: async (filters) => {
-      const { branchId, startDate, endDate } = filters;
+      const { branchId, startDate, endDate, chargeGroup } = filters;
       if (!branchId) return [];
       let payments = ((await getAllPaymentsAction())?.data as any[] ?? []);
+      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const customers = rawCustomers.map(mapCustomer);
 
-      const customersInBranch = ((await getAllCustomersAction())?.data as any[] ?? []).filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
+      const customersInBranch = customers.filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
       payments = payments.filter(p => p.individualCustomerId && customersInBranch.includes(p.individualCustomerId));
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        payments = payments.filter(p => {
+          const cust = customers.find(c => c.customerKeyNumber === p.individualCustomerId);
+          return cust?.customerType === chargeGroup;
+        });
+      }
 
       if (startDate && endDate) {
         const start = startDate.getTime();
@@ -967,7 +1089,7 @@ const availableStaffReports: ReportType[] = [
       "Reading Value", "Is Estimate", "Reader Name", "Reader Staff ID", "Notes"
     ],
     getData: async (filters) => {
-      const { branchId, startDate, endDate } = filters;
+      const { branchId, startDate, endDate, chargeGroup } = filters;
       if (!branchId) return [];
       const [indReadingsRes, bulkReadingsRes, bulkMetersRes, customersRes, staffRes] = await Promise.all([
         getAllIndividualCustomerReadingsAction(),
@@ -978,8 +1100,8 @@ const availableStaffReports: ReportType[] = [
       ]);
       const indReadings = ((indReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'individual' }));
       const bulkReadings = ((bulkReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'bulk' }));
-      const bulkMeters = (bulkMetersRes?.data as any[] ?? []);
-      const customers = (customersRes?.data as any[] ?? []);
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
       const staffList = (staffRes?.data as any[] ?? []);
       const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
       const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
@@ -992,6 +1114,20 @@ const availableStaffReports: ReportType[] = [
         (r._readingType === 'bulk' && r.CUST_KEY && bulkMetersInBranch.has(r.CUST_KEY)) ||
         (r._readingType === 'individual' && r.CUST_KEY && customersInBranch.has(r.CUST_KEY))
       );
+
+      if (chargeGroup && chargeGroup !== 'all') {
+        readings = readings.filter((r: any) => {
+          let readingChargeGroup = "";
+          if (r._readingType === 'bulk' && r.CUST_KEY) {
+            const bm = bulkMeters.find((m: any) => m.customerKeyNumber === r.CUST_KEY);
+            readingChargeGroup = bm?.chargeGroup || "";
+          } else if (r._readingType === 'individual' && r.CUST_KEY) {
+            const cust = customers.find((c: any) => c.customerKeyNumber === r.CUST_KEY);
+            readingChargeGroup = cust?.customerType || "";
+          }
+          return readingChargeGroup === chargeGroup;
+        });
+      }
 
       if (startDate && endDate) {
         const start = startDate.getTime();
@@ -1090,7 +1226,8 @@ export default function StaffReportsPage() {
     const fetchData = async () => {
       setIsLoading(true);
       // Only load bulk meters for the usage chart widget (not for reports)
-      setBulkMeters(((await getAllBulkMetersAction())?.data as any[] ?? []));
+      const rawBms = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      setBulkMeters(rawBms.map(mapBulkMeter));
       setIsLoading(false);
     };
     fetchData();

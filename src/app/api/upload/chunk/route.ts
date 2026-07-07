@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { getSession } from '@/lib/auth';
 
 const TMP_DIR = path.join(process.cwd(), 'uploads_tmp');
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
@@ -9,6 +10,12 @@ export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   try {
+    // Authentication check - user must be authenticated
+    const session = await getSession();
+    if (!session || !session.id) {
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
     const url = new URL(request.url);
     const uploadId = url.searchParams.get('uploadId');
     const index = url.searchParams.get('index');

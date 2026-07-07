@@ -5,12 +5,25 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 
-// This page now acts only as a redirector to the staff dashboard.
+// This page acts as a role-aware redirector to the correct staff dashboard.
 export default function StaffRedirectPage() { 
   const router = useRouter();
 
   useEffect(() => {
-    // Immediately redirect to the actual dashboard page.
+    // Check user role and redirect to the appropriate dashboard.
+    try {
+      const userString = localStorage.getItem("user");
+      if (userString) {
+        const user = JSON.parse(userString);
+        const role = (user.role || '').toLowerCase();
+        if (role === 'staff management') {
+          router.replace('/staff/staff-management-dashboard');
+          return;
+        }
+      }
+    } catch (e) {
+      // ignore parse errors
+    }
     router.replace('/staff/dashboard');
   }, [router]);
 

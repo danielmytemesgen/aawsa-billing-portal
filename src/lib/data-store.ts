@@ -534,6 +534,7 @@ const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<Do
     branchId: dbCustomer.branch_id || undefined,
     status: dbCustomer.status,
     paymentStatus: dbCustomer.paymentStatus,
+    routeKey: dbCustomer.ROUTE_KEY || (dbCustomer as any).routeKey || undefined,
     calculatedBill: bill,
     isMinOfThreeApplied: effectiveUsage !== rawUsage,
     effectiveUsage,

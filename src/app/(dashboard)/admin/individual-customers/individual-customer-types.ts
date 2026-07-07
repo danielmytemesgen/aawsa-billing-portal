@@ -15,6 +15,7 @@ export type IndividualCustomer = z.infer<typeof baseIndividualCustomerDataSchema
   paymentStatus: PaymentStatus;
   calculatedBill: number;
   branchId?: string; // New field for branch association
+  routeKey?: string; // The route key assigned to this customer
   created_at?: string | null;
   updated_at?: string | null;
   approved_by?: string | null;

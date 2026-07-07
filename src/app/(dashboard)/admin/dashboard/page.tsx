@@ -10,11 +10,37 @@ import {
   Table as TableIcon,
   FileText,
   Activity,
-  BarChart3 as BarChartIcon
+  BarChart3 as BarChartIcon,
+  Clock,
+  Bell,
+  Zap,
+  ClipboardList,
+  TrendingUp,
+  UserPlus,
+  Download,
+  CheckCircle2,
+  XCircle,
+  Target,
+  CalendarDays,
+  DatabaseZap,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  AlertTriangle,
+  Building2,
+  ChevronRight,
 } from 'lucide-react';
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import {
   ResponsiveContainer,
@@ -37,14 +63,17 @@ import {
   getBulkMeters, subscribeToBulkMeters, initializeBulkMeters,
   getCustomers, subscribeToCustomers, initializeCustomers,
   getBranches, subscribeToBranches, initializeBranches,
-  initializeBills, subscribeToBills
+  initializeBills, subscribeToBills,
+  getStaffMembers, getBills,
 } from "@/lib/data-store";
 import type { BulkMeter } from '../bulk-meters/bulk-meter-types';
 import type { IndividualCustomer } from '../individual-customers/individual-customer-types';
 import type { Branch } from '../branches/branch-types';
 import { getDashboardMetricsAction } from "@/lib/actions";
+import { checkActualConnectivity } from "@/lib/offline-db";
 import { format } from 'date-fns';
 import { usePermissions } from "@/hooks/use-permissions";
+import { useCurrentUser } from "@/hooks/use-current-user";
 
 const chartConfig = {
   Paid: { label: "Paid", color: "hsl(var(--chart-1))" },
@@ -55,11 +84,261 @@ const chartConfig = {
 } satisfies import("@/components/ui/chart").ChartConfig;
 
 
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good Morning";
+  if (hour < 17) return "Good Afternoon";
+  return "Good Evening";
+}
+
+function getGreetingEmoji(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "🌅";
+  if (hour < 17) return "☀️";
+  return "🌙";
+}
+
+const startDayOfEthiopian = function (year: number): number {
+  const newYearDay = Math.floor(year / 100) - Math.floor(year / 400) - 4;
+  // if the prev ethiopian year is a leap year, new-year occurs on 12th
+  return ((year - 1) % 4 === 3) ? newYearDay + 1 : newYearDay;
+};
+
+const toEthiopian = function (year: number, month: number, date: number): [number, number, number] {
+  // prevent incorrect input
+  if (year === 0 || month < 1 || month > 12 || date < 1 || date > 31) {
+    throw new Error("Malformed input can't be converted.");
+  }
+
+  // date between 5 and 14 of May 1582 are invalid
+  if (month === 10 && date >= 5 && date <= 14 && year === 1582) {
+    throw new Error('Invalid Date between 5-14 May 1582.');
+  }
+
+  // Number of days in gregorian months starting with January (index 1)
+  const gregorianMonths = [0.0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  // Number of days in ethiopian months starting with Meskerem (index 1)
+  const ethiopianMonths = [0.0, 30, 30, 30, 30, 30, 30, 30, 30, 30, 5, 30, 30, 30, 30];
+
+  // if gregorian leap year, February has 29 days.
+  if ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) {
+    gregorianMonths[2] = 29;
+  }
+
+  // September sees 8y difference
+  let ethiopianYear = year - 8;
+
+  // if ethiopian leap year pagumain has 6 days
+  if (ethiopianYear % 4 === 3) {
+    ethiopianMonths[10] = 6;
+  }
+
+  // Ethiopian new year in Gregorian calendar
+  const newYearDay = startDayOfEthiopian(year - 8);
+
+  // calculate number of days up to that date
+  let until = 0;
+  for (let i = 1; i < month; i++) {
+    until += gregorianMonths[i];
+  }
+  until += date;
+
+  // update tahissas (december) to match january 1st
+  let tahissas = (ethiopianYear % 4) === 0 ? 26 : 25;
+
+  // take into account the 1582 change
+  if (year < 1582) {
+    ethiopianMonths[1] = 0;
+    ethiopianMonths[2] = tahissas;
+  } else if (until <= 277 && year === 1582) {
+    ethiopianMonths[1] = 0;
+    ethiopianMonths[2] = tahissas;
+  } else {
+    tahissas = newYearDay - 3;
+    ethiopianMonths[1] = tahissas;
+  }
+
+  // calculate month and date incrementally
+  let m;
+  let ethiopianDate = 0;
+  for (m = 1; m < ethiopianMonths.length; m++) {
+    if (until <= ethiopianMonths[m]) {
+      ethiopianDate = (m === 1 || ethiopianMonths[m] === 0) ? until + (30 - tahissas) : until;
+      break;
+    } else {
+      until -= ethiopianMonths[m];
+    }
+  }
+
+  // if m > 10, we're already on next Ethiopian year
+  if (m > 10) {
+    ethiopianYear += 1;
+  }
+
+  // Ethiopian months ordered according to Gregorian
+  const order = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1, 2, 3, 4];
+  const ethiopianMonth = order[m];
+  return [ethiopianYear, ethiopianMonth, ethiopianDate];
+};
+
+const ETHIOPIAN_MONTHS = [
+  "",
+  "Meskerem", // 1
+  "Tekemt",    // 2
+  "Hedar",     // 3
+  "Tahsas",    // 4
+  "Ter",       // 5
+  "Yekatit",   // 6
+  "Megabit",   // 7
+  "Miyazia",   // 8
+  "Ginbot",    // 9
+  "Sene",      // 10
+  "Hamle",     // 11
+  "Nehase",    // 12
+  "Pagume"     // 13
+];
+
+const ETHIOPIAN_MONTHS_AM = [
+  "",
+  "መስከረም",
+  "ጥቅምት",
+  "ኅዳር",
+  "ታኅሣሥ",
+  "ጥር",
+  "የካቲት",
+  "መጋቢት",
+  "ሚያዝያ",
+  "ግንቦት",
+  "ሰኔ",
+  "ሐምሌ",
+  "ነሐሴ",
+  "ጳጉሜ"
+];
+
+function getEthiopianDateString(date: Date): string {
+  const gy = date.getFullYear();
+  const gm = date.getMonth() + 1; // 1-based
+  const gd = date.getDate();
+  try {
+    const [ey, em, ed] = toEthiopian(gy, gm, gd);
+    const monthAm = ETHIOPIAN_MONTHS_AM[em];
+    const monthEn = ETHIOPIAN_MONTHS[em];
+    return `${monthAm} ${ed}, ${ey} ዓ.ም. (${monthEn} ${ed}, ${ey} E.C.)`;
+  } catch (e) {
+    return "";
+  }
+}
+
+function getBranchTrafficLight(paid: number, unpaid: number): { color: string; label: string; bg: string } {
+  const total = paid + unpaid;
+  if (total === 0) return { color: 'text-slate-400', label: 'No Data', bg: 'bg-slate-100' };
+  const ratio = paid / total;
+  if (ratio >= 0.7) return { color: 'text-emerald-600', label: 'On Track', bg: 'bg-emerald-50' };
+  if (ratio >= 0.3) return { color: 'text-amber-600', label: 'Moderate', bg: 'bg-amber-50' };
+  return { color: 'text-red-600', label: 'Needs Attention', bg: 'bg-red-50' };
+}
+
+interface AnomalyRecord {
+  key: string;
+  name: string;
+  type: 'Bulk' | 'Individual';
+  reason: string;
+  severity: 'high' | 'medium';
+  usage: number;
+}
+
+function detectAnomalies(): AnomalyRecord[] {
+  const anomalies: AnomalyRecord[] = [];
+  const bulkMeters = getBulkMeters();
+  const customers = getCustomers();
+
+  // Check bulk meters
+  for (const m of bulkMeters) {
+    if (m.status !== 'Active') continue;
+    const usage = (m.currentReading ?? 0) - (m.previousReading ?? 0);
+    if (usage === 0 && m.previousReading != null && m.currentReading != null) {
+      anomalies.push({
+        key: m.customerKeyNumber,
+        name: m.name || m.customerKeyNumber,
+        type: 'Bulk',
+        reason: 'Zero consumption — possible stuck/broken meter',
+        severity: 'medium',
+        usage: 0,
+      });
+    } else if (usage > 2000) {
+      anomalies.push({
+        key: m.customerKeyNumber,
+        name: m.name || m.customerKeyNumber,
+        type: 'Bulk',
+        reason: `Extreme spike: ${usage.toFixed(0)} m³`,
+        severity: 'high',
+        usage,
+      });
+    }
+  }
+
+  // Check individual customers
+  for (const c of customers) {
+    if (c.status !== 'Active') continue;
+    const usage = (c.currentReading ?? 0) - (c.previousReading ?? 0);
+    if (usage === 0 && c.previousReading != null && c.currentReading != null) {
+      anomalies.push({
+        key: c.customerKeyNumber,
+        name: c.name || c.customerKeyNumber,
+        type: 'Individual',
+        reason: 'Zero consumption — possible stuck/broken meter',
+        severity: 'medium',
+        usage: 0,
+      });
+    } else if (usage > 200) {
+      anomalies.push({
+        key: c.customerKeyNumber,
+        name: c.name || c.customerKeyNumber,
+        type: 'Individual',
+        reason: `Extreme spike: ${usage.toFixed(0)} m³`,
+        severity: 'high',
+        usage,
+      });
+    }
+  }
+
+  // Sort: high severity first, limit to 5
+  return anomalies.sort((a, b) => (a.severity === 'high' ? -1 : 1)).slice(0, 5);
+}
+
 export default function AdminDashboardPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
   const { hasPermission } = usePermissions();
+  const { currentUser } = useCurrentUser();
+
+  // Live clock state
+  const [liveTime, setLiveTime] = React.useState<string>('');
+  const [liveDate, setLiveDate] = React.useState<string>('');
+  const [liveEthiopianDate, setLiveEthiopianDate] = React.useState<string>('');
+
+  // Today's activity
+  const [todayBills, setTodayBills] = React.useState(0);
+  const [todayReadings, setTodayReadings] = React.useState(0);
+  const [todayCustomers, setTodayCustomers] = React.useState(0);
+
+  // Pending approvals
+  const [pendingApprovalsCount, setPendingApprovalsCount] = React.useState(0);
+
+  // Connection & Sync status
+  const [isOnline, setIsOnline] = React.useState(true);
+  const [isSyncing, setIsSyncing] = React.useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = React.useState(0);
+  const [lastSyncTime, setLastSyncTime] = React.useState<string>('');
+
+  // Branch drawer state
+  const [selectedBranchKey, setSelectedBranchKey] = React.useState<string | null>(null);
+
+  // Anomalies state
+  const [anomalies, setAnomalies] = React.useState<AnomalyRecord[]>([]);
+
 
   // State for dynamic data
   const [dynamicTotalBills, setDynamicTotalBills] = React.useState(0);
@@ -90,6 +369,70 @@ export default function AdminDashboardPage() {
 
   React.useEffect(() => {
     setIsClient(true);
+
+    // Live clock
+    const updateClock = () => {
+      const now = new Date();
+      setLiveTime(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setLiveDate(now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+      setLiveEthiopianDate(getEthiopianDateString(now));
+    };
+    updateClock();
+    const clockInterval = setInterval(updateClock, 1000);
+
+    // Pending approvals from localStorage
+    try {
+      const stored = localStorage.getItem('approvals');
+      if (stored) {
+        const approvals = JSON.parse(stored);
+        const pending = Array.isArray(approvals) ? approvals.filter((a: any) => a.status === 'Pending' || !a.status).length : 0;
+        setPendingApprovalsCount(pending);
+      }
+    } catch (e) { /* ignore */ }
+
+    // ── Connection & Sync monitoring ──
+    // Initial connectivity check
+    checkActualConnectivity().then(online => setIsOnline(online));
+
+    // Native online/offline events
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Periodic active ping every 15s
+    const pingInterval = setInterval(() => {
+      checkActualConnectivity().then(online => setIsOnline(online));
+    }, 15000);
+
+    // Listen for sync events from SyncHub
+    const handleSyncProgress = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) {
+        setIsSyncing(detail.syncing ?? false);
+        if (!detail.syncing) {
+          setLastSyncTime(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }));
+        }
+      }
+    };
+    const handleQueueUpdate = () => {
+      // Try to read pending from Dexie-driven custom events or localStorage fallback
+      try {
+        const q = localStorage.getItem('_syncQueueCount');
+        setPendingSyncCount(q ? parseInt(q, 10) : 0);
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('sync-progress', handleSyncProgress);
+    window.addEventListener('offline-queue-updated', handleQueueUpdate);
+
+    return () => {
+      clearInterval(clockInterval);
+      clearInterval(pingInterval);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('sync-progress', handleSyncProgress);
+      window.removeEventListener('offline-queue-updated', handleQueueUpdate);
+    };
   }, []);
 
   const processDashboardData = React.useCallback(async () => {
@@ -229,6 +572,19 @@ export default function AdminDashboardPage() {
         ]).then(async () => {
           if (isMounted) {
             await processDashboardData();
+
+            // Today's activity — compute after store is warm
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const meters = getBulkMeters();
+            const customers = getCustomers();
+            const todayBillsCount = meters.filter((m: any) => m.billDate && String(m.billDate).startsWith(todayStr)).length;
+            const todayReadingsCount = [...meters, ...customers].filter((m: any) => m.readingDate && String(m.readingDate).startsWith(todayStr)).length;
+            const todayCustomersCount = customers.filter((c: any) => c.createdAt && String(c.createdAt).startsWith(todayStr)).length;
+            if (isMounted) {
+              setTodayBills(todayBillsCount);
+              setTodayReadings(todayReadingsCount);
+              setTodayCustomers(todayCustomersCount);
+            }
           }
         }).catch((err) => {
           console.error("Background data-store initialization failed:", err);
@@ -259,6 +615,13 @@ export default function AdminDashboardPage() {
     };
   }, [processDashboardData]);
 
+  // Detect anomalies after data loaded
+  React.useEffect(() => {
+    if (!isLoading) {
+      setAnomalies(detectAnomalies());
+    }
+  }, [isLoading, dynamicTotalBulkMeterCount, dynamicTotalCustomerCount]);
+
   if (isLoading) {
     return <div className="p-4 text-center">Loading dashboard data...</div>;
   }
@@ -277,7 +640,115 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl md:text-3xl font-bold">Admin Dashboard</h1>
+
+      {/* ── Header: Greeting + Live Clock ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl md:text-3xl font-bold">Admin Dashboard</h1>
+            {/* ── Connection Status Pill ── */}
+            {isOnline ? (
+              <span className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {isSyncing ? (
+                  <><RefreshCw className="h-2.5 w-2.5 animate-spin" /> Syncing…</>
+                ) : (
+                  <><Wifi className="h-2.5 w-2.5" /> Online{lastSyncTime ? ` · ${lastSyncTime}` : ''}</>
+                )}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                <WifiOff className="h-2.5 w-2.5" /> Offline
+              </span>
+            )}
+          </div>
+          <p className="text-base md:text-lg text-muted-foreground">
+            {getGreetingEmoji()} {getGreeting()},{" "}
+            <span className="font-semibold text-foreground">
+              {currentUser?.name ? currentUser.name.split(" ")[0] : "Admin"}
+            </span>{" "}
+            👋
+          </p>
+        </div>
+        {/* Live Clock */}
+        <div className="flex flex-col items-start sm:items-end gap-0.5 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 shadow-sm min-w-[200px]">
+          <div className="flex items-center gap-2 text-slate-800">
+            <Clock className="h-4 w-4 text-blue-500" />
+            <span className="text-xl font-black tracking-tight tabular-nums">
+              {liveTime || '--:--:--'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 font-medium">{liveDate || '...'}</p>
+          {liveEthiopianDate && (
+            <span className="text-[11px] font-bold text-blue-600/90 mt-0.5 select-none">
+              {liveEthiopianDate}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Pending Approvals Banner ── */}
+      {pendingApprovalsCount > 0 && (
+        <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3.5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+              <Bell className="h-5 w-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-amber-900">
+                {pendingApprovalsCount} Approval{pendingApprovalsCount !== 1 ? 's' : ''} Pending
+              </p>
+              <p className="text-xs text-amber-700">Items are waiting for your review and approval.</p>
+            </div>
+          </div>
+          <Link href="/admin/approvals" passHref>
+            <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-sm flex-shrink-0">
+              Review <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
+          </Link>
+        </div>
+      )}
+
+      {/* ── Quick Actions Bar ── */}
+      <div className="flex flex-wrap gap-2.5">
+        {[
+          { label: 'Data Entry', icon: DatabaseZap, href: '/admin/data-entry', color: 'bg-blue-500 hover:bg-blue-600' },
+          { label: 'Bill Management', icon: FileText, href: '/admin/bill-management', color: 'bg-violet-500 hover:bg-violet-600' },
+          { label: 'Reports', icon: BarChartIcon, href: '/admin/reports', color: 'bg-emerald-500 hover:bg-emerald-600' },
+          { label: 'Staff', icon: Users, href: '/admin/staff-management', color: 'bg-rose-500 hover:bg-rose-600' },
+          { label: 'Meter Readings', icon: Gauge, href: '/admin/meter-readings', color: 'bg-amber-500 hover:bg-amber-600' },
+        ].map(({ label, icon: Icon, href, color }) => (
+          <Link key={label} href={href} passHref>
+            <Button
+              size="sm"
+              className={`${color} text-white font-semibold rounded-full px-4 py-2 h-auto shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 flex items-center gap-1.5`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </Button>
+          </Link>
+        ))}
+      </div>
+
+      {/* ── Today's Activity Summary ── */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Bills Today", value: todayBills, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
+          { label: "Readings Today", value: todayReadings, icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+          { label: "Customers Added", value: todayCustomers, icon: UserPlus, color: 'text-violet-600', bg: 'bg-violet-50', border: 'border-violet-100' },
+        ].map(({ label, value, icon: Icon, color, bg, border }) => (
+          <div key={label} className={`flex items-center gap-3 ${bg} border ${border} rounded-2xl px-4 py-3 shadow-sm`}>
+            <div className={`h-8 w-8 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-sm`}>
+              <Icon className={`h-4 w-4 ${color}`} />
+            </div>
+            <div>
+              <p className={`text-xl font-black ${color}`}>{value}</p>
+              <p className="text-[11px] text-slate-500 font-semibold leading-tight">{label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {/* Bills Status Card */}
@@ -340,12 +811,29 @@ export default function AdminDashboardPage() {
             </div>
           </CardHeader>
           <CardContent className="px-6 pb-6 relative z-10">
-            <div className="mt-2 text-4xl lg:text-5xl font-black tracking-tight text-slate-800 mb-1 group-hover:text-amber-900 transition-colors">
-              {revenueEfficiency.efficiency.toFixed(1)}<span className="text-3xl text-amber-500/50">%</span>
+            <div className="flex items-start justify-between mt-2 mb-1">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">
+                {revenueEfficiency.efficiency.toFixed(1)}<span className="text-3xl text-amber-500/50">%</span>
+              </div>
+              {/* KPI Target Badge */}
+              {revenueEfficiency.billed > 0 && (
+                <div className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
+                  revenueEfficiency.efficiency >= 80
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : revenueEfficiency.efficiency >= 50
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  <Target className="h-3 w-3" />
+                  {revenueEfficiency.efficiency >= 80 ? '✅ On Target'
+                    : revenueEfficiency.efficiency >= 50 ? '⚠️ Below Target'
+                    : '🚨 Critical'}
+                </div>
+              )}
             </div>
-            <p className="text-sm text-slate-600 font-semibold mb-8">Collection Efficiency</p>
+            <p className="text-sm text-slate-600 font-semibold mb-4">Collection Efficiency <span className="text-xs text-slate-400 font-normal">(target: 80%)</span></p>
 
-            <div className="flex justify-between items-center mb-6 pt-2">
+            <div className="flex justify-between items-center mb-4 pt-1">
               <div>
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Total Billed</p>
                 <p className="text-base font-black text-slate-800"><span className="text-xs text-slate-400 mr-1">ETB</span>{revenueEfficiency.billed.toLocaleString()}</p>
@@ -356,15 +844,21 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
-            <div className="h-[30px] flex items-center">
-              {isClient && revenueEfficiency.billed > 0 ? (
-                <div className="w-full bg-amber-900/5 rounded-full h-3 overflow-hidden flex shadow-inner">
-                  <div className="bg-amber-400 h-full transition-all duration-1000 ease-out" style={{ width: `${revenueEfficiency.efficiency}%` }} />
+            {/* Sparkline mini-chart */}
+            {isClient && revenueEfficiency.billed > 0 ? (
+              <div className="space-y-1.5">
+                <div className="w-full bg-amber-900/5 rounded-full h-2.5 overflow-hidden flex shadow-inner">
+                  <div className="bg-gradient-to-r from-amber-300 to-amber-500 h-full transition-all duration-1000 ease-out rounded-full" style={{ width: `${revenueEfficiency.efficiency}%` }} />
                 </div>
-              ) : (
-                <div className="text-sm font-semibold text-amber-600/60 italic w-full text-center mt-2">No revenue data.</div>
-              )}
-            </div>
+                <div className="flex justify-between text-[10px] text-slate-400 font-semibold">
+                  <span>0%</span>
+                  <span className="text-amber-600 font-bold">{revenueEfficiency.efficiency.toFixed(1)}% collected</span>
+                  <span>100%</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm font-semibold text-amber-600/60 italic w-full text-center mt-2">No revenue data.</div>
+            )}
           </CardContent>
         </Card>
 
@@ -448,6 +942,40 @@ export default function AdminDashboardPage() {
         </Card>
       </div>
 
+      {/* ── Overdue Bills Alert Card ── */}
+      {topDelinquentCustomers.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl px-5 py-4 shadow-sm">
+            <div className="h-12 w-12 rounded-2xl bg-red-100 flex items-center justify-center flex-shrink-0">
+              <XCircle className="h-6 w-6 text-red-600" />
+            </div>
+            <div className="flex-1">
+              <p className="text-xs uppercase font-bold text-red-400 tracking-wider">Overdue Accounts</p>
+              <p className="text-3xl font-black text-red-700">{topDelinquentCustomers.length}</p>
+              <p className="text-xs text-red-500 font-semibold">With outstanding balances</p>
+            </div>
+            <Link href="/admin/bill-management" passHref>
+              <Button size="sm" variant="outline" className="border-red-300 text-red-600 hover:bg-red-100 rounded-xl font-bold">
+                View <ArrowRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+            </Link>
+          </div>
+          <div className="flex items-center gap-4 bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 shadow-sm">
+            <div className="h-12 w-12 rounded-2xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+            </div>
+            <div className="flex-1">
+              <p className="text-xs uppercase font-bold text-emerald-400 tracking-wider">Highest Outstanding</p>
+              <p className="text-xl font-black text-emerald-800">
+                ETB {topDelinquentCustomers[0]?.balance.toLocaleString()}
+              </p>
+              <p className="text-xs text-emerald-600 font-semibold truncate max-w-[160px]">{topDelinquentCustomers[0]?.name}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Navigation Cards ── */}
       <Card className="bg-slate-50 border-slate-100 shadow-sm">
         <CardHeader>
           <CardTitle className="text-slate-900 font-bold">Quick Access</CardTitle>
@@ -489,7 +1017,141 @@ export default function AdminDashboardPage() {
               View {branchPerformanceView === 'chart' ? 'Table' : 'Chart'}
             </Button>
           </CardHeader>
-          <CardContent className="pt-6">
+          <CardContent className="pt-4">
+            {/* Branch Traffic Lights – clickable Sheet triggers */}
+            {dynamicBranchPerformanceData.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-gray-100">
+                {dynamicBranchPerformanceData.map((item) => {
+                  const light = getBranchTrafficLight(item.paid, item.unpaid);
+                  const dot = item.paid + item.unpaid === 0 ? '⚪' : (item.paid / (item.paid + item.unpaid)) >= 0.7 ? '🟢' : (item.paid / (item.paid + item.unpaid)) >= 0.3 ? '🟡' : '🔴';
+                  const total = item.paid + item.unpaid;
+                  const paidRatio = total > 0 ? Math.round((item.paid / total) * 100) : 0;
+
+                  // Gather branch-level staff & meters for the drawer
+                  const allBranches = getBranches();
+                  const branchObj = allBranches.find(b => b.name.replace(/ Branch$/i, '') === item.branch || b.name === item.branch);
+                  const branchId = branchObj?.id;
+
+                  const allStaff = getStaffMembers();
+                  const branchStaff = branchId ? allStaff.filter(s => s.branchId === branchId) : [];
+
+                  const allCustomers = getCustomers();
+                  const branchCustomers = branchId ? allCustomers.filter(c => (c as any).branchId === branchId) : [];
+
+                  const allBulk = getBulkMeters();
+                  const branchBulk = branchId ? allBulk.filter(m => (m as any).branchId === branchId) : [];
+
+                  const allBillsList = getBills();
+                  const branchBills = branchId
+                    ? allBillsList.filter(b => b.CUSTOMERBRANCH && branchObj && b.CUSTOMERBRANCH.toLowerCase().includes(branchObj.name.toLowerCase()))
+                    : [];
+                  const outstanding = branchBills
+                    .filter(b => b.paymentStatus === 'Unpaid')
+                    .reduce((sum, b) => sum + (b.OUTSTANDINGAMT ?? 0), 0);
+
+                  return (
+                    <Sheet key={item.branch}>
+                      <SheetTrigger asChild>
+                        <button
+                          className={`flex items-center gap-1.5 ${light.bg} border rounded-full px-3 py-1 cursor-pointer hover:shadow-md hover:scale-105 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-400`}
+                        >
+                          <span className="text-sm">{dot}</span>
+                          <span className={`text-xs font-bold ${light.color}`}>{item.branch}</span>
+                          <span className="text-[10px] text-slate-400">({item.paid}/{total})</span>
+                          <ChevronRight className="h-3 w-3 text-slate-400" />
+                        </button>
+                      </SheetTrigger>
+                      <SheetContent side="right" className="w-[380px] sm:w-[460px] overflow-y-auto">
+                        <SheetHeader className="pb-4 border-b">
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-xl bg-blue-100 flex items-center justify-center">
+                              <Building2 className="h-5 w-5 text-blue-600" />
+                            </div>
+                            <div>
+                              <SheetTitle className="text-lg font-black text-slate-900">{item.branch} Branch</SheetTitle>
+                              <SheetDescription className="text-xs">{light.label} · {paidRatio}% collection rate</SheetDescription>
+                            </div>
+                          </div>
+                        </SheetHeader>
+
+                        <div className="mt-6 space-y-5">
+                          {/* Collection Progress */}
+                          <div>
+                            <p className="text-xs font-bold uppercase text-slate-500 tracking-widest mb-2">Billing Collection</p>
+                            <div className="flex items-center justify-between text-sm mb-1">
+                              <span className="text-emerald-700 font-bold">{item.paid} Paid</span>
+                              <span className="text-rose-600 font-bold">{item.unpaid} Unpaid</span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-700 ${
+                                  paidRatio >= 70 ? 'bg-emerald-500' : paidRatio >= 30 ? 'bg-amber-400' : 'bg-red-500'
+                                }`}
+                                style={{ width: `${paidRatio}%` }}
+                              />
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1 text-right">{paidRatio}% of {total} meters collected</p>
+                          </div>
+
+                          {/* Outstanding Balance */}
+                          {outstanding > 0 && (
+                            <div className="flex items-center gap-3 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3">
+                              <XCircle className="h-5 w-5 text-rose-500 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs text-rose-400 font-bold uppercase tracking-wide">Outstanding Balance</p>
+                                <p className="text-xl font-black text-rose-700">ETB {outstanding.toLocaleString()}</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Connections */}
+                          <div>
+                            <p className="text-xs font-bold uppercase text-slate-500 tracking-widest mb-2">Connections</p>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
+                                <p className="text-2xl font-black text-emerald-700">{branchCustomers.length}</p>
+                                <p className="text-[10px] font-bold text-emerald-500 uppercase">Individual</p>
+                              </div>
+                              <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-center">
+                                <p className="text-2xl font-black text-purple-700">{branchBulk.length}</p>
+                                <p className="text-[10px] font-bold text-purple-500 uppercase">Bulk Meters</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Staff */}
+                          <div>
+                            <p className="text-xs font-bold uppercase text-slate-500 tracking-widest mb-2">Assigned Staff ({branchStaff.length})</p>
+                            {branchStaff.length === 0 ? (
+                              <p className="text-xs text-slate-400 italic">No staff assigned to this branch.</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {branchStaff.slice(0, 8).map(s => (
+                                  <div key={s.id} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2">
+                                    <div className="flex items-center gap-2">
+                                      <div className="h-7 w-7 rounded-full bg-blue-100 flex items-center justify-center">
+                                        <span className="text-[10px] font-black text-blue-600">{s.name.charAt(0)}</span>
+                                      </div>
+                                      <p className="text-xs font-bold text-slate-800">{s.name}</p>
+                                    </div>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                      s.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
+                                    }`}>{s.role}</span>
+                                  </div>
+                                ))}
+                                {branchStaff.length > 8 && (
+                                  <p className="text-[10px] text-slate-400 text-center">+ {branchStaff.length - 8} more staff members</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </SheetContent>
+                    </Sheet>
+                  );
+                })}
+              </div>
+            )}
             {branchPerformanceView === 'chart' ? (
               <div className="h-[300px]">
                 {isClient && dynamicBranchPerformanceData.length > 0 ? (
@@ -593,6 +1255,60 @@ export default function AdminDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Water Consumption Anomaly Alert Box ── */}
+      {anomalies.length > 0 && (
+        <div
+          className="relative overflow-hidden rounded-3xl border border-rose-200/70 shadow-lg"
+          style={{
+            background: 'linear-gradient(135deg, rgba(255,248,248,0.97) 0%, rgba(255,241,241,0.95) 100%)',
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          {/* Decorative glass blur orbs */}
+          <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-rose-200/30 blur-2xl pointer-events-none" />
+          <div className="absolute -bottom-6 -left-6 h-28 w-28 rounded-full bg-amber-200/20 blur-2xl pointer-events-none" />
+
+          <div className="relative z-10 px-5 pt-5 pb-4">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="h-4.5 w-4.5 text-rose-600 h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected</p>
+                <p className="text-xs text-rose-500">{anomalies.length} meter{anomalies.length > 1 ? 's require' : ' requires'} attention</p>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {anomalies.map((a) => (
+                <div
+                  key={a.key}
+                  className={`flex items-start gap-3 rounded-2xl px-3.5 py-3 border ${
+                    a.severity === 'high'
+                      ? 'bg-rose-50 border-rose-200'
+                      : 'bg-amber-50 border-amber-200'
+                  }`}
+                >
+                  <div className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    a.severity === 'high' ? 'bg-rose-100' : 'bg-amber-100'
+                  }`}>
+                    {a.severity === 'high'
+                      ? <XCircle className="h-3.5 w-3.5 text-rose-600" />
+                      : <AlertCircle className="h-3.5 w-3.5 text-amber-600" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-slate-800 truncate">{a.name}</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wide ${
+                      a.severity === 'high' ? 'text-rose-500' : 'text-amber-500'
+                    }`}>{a.type} Meter</p>
+                    <p className="text-[11px] text-slate-600 mt-0.5 leading-tight">{a.reason}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <Card className="shadow-md border-gray-100 overflow-hidden">
         <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gray-50/50 border-b pb-4">

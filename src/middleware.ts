@@ -90,11 +90,25 @@ export async function middleware(request: NextRequest) {
   const hasAdminAccess = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
   if (isAdminRoute && !hasAdminAccess) {
+    console.warn('middleware: permission denied', {
+      path,
+      reason: 'Admin route access without dashboard view permission',
+      permissions,
+      email: session?.email || 'Anonymous',
+      branch: session?.branchName || session?.branch || 'N/A',
+    });
     const redirect = NextResponse.redirect(new URL('/staff/dashboard', request.url));
     return setSecurityHeaders(redirect);
   }
 
   if (isStaffRoute && !role) {
+    console.warn('middleware: permission denied', {
+      path,
+      reason: 'Staff route access without role assignment',
+      permissions,
+      email: session?.email || 'Anonymous',
+      branch: session?.branchName || session?.branch || 'N/A',
+    });
     const redirect = NextResponse.redirect(new URL('/', request.url));
     return setSecurityHeaders(redirect);
   }

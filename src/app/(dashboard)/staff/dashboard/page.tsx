@@ -4,8 +4,9 @@
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
-import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity, Lock as LockIcon, BarChart3 } from 'lucide-react';
+import { BarChart as BarChartIcon, PieChart as PieChartIcon, Gauge, Users, ArrowRight, FileText, TrendingUp, AlertCircle, Table as TableIcon, UserCheck, Calendar, RotateCcw, LayoutDashboard, CreditCard, Activity, Lock as LockIcon, BarChart3, AlertTriangle, XCircle } from 'lucide-react';
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   ResponsiveContainer,
@@ -65,8 +66,18 @@ const chartConfig = {
   waterUsage: { label: "Water Usage (m³)", color: "hsl(var(--chart-1))" },
 } satisfies import("@/components/ui/chart").ChartConfig;
 
+interface AnomalyRecord {
+  key: string;
+  name: string;
+  type: 'Bulk' | 'Individual';
+  reason: string;
+  severity: 'high' | 'medium';
+  usage: number;
+}
+
 export default function StaffDashboardPage() {
   const { hasPermission } = usePermissions();
+  const router = useRouter();
   const [authStatus, setAuthStatus] = React.useState<'loading' | 'unauthorized' | 'authorized'>('loading');
   const [staffBranchName, setStaffBranchName] = React.useState<string | null>(null);
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
@@ -85,7 +96,6 @@ export default function StaffDashboardPage() {
   const [branchPerformanceView, setBranchPerformanceView] = React.useState<'chart' | 'table'>('chart');
   const [waterUsageView, setWaterUsageView] = React.useState<'chart' | 'table'>('chart');
 
-
   React.useEffect(() => {
     setIsClient(true);
   }, []);
@@ -96,6 +106,11 @@ export default function StaffDashboardPage() {
     if (userString) {
       try {
         const parsedUser: User = JSON.parse(userString);
+        // Redirect Staff Management role to their dedicated dashboard
+        if (parsedUser.role && parsedUser.role.toLowerCase() === 'staff management') {
+          router.replace('/staff/staff-management-dashboard');
+          return;
+        }
         // Accept staff role and attempt to resolve missing branchId from branchName if necessary.
         if (parsedUser.role && ["staff", "reader"].includes(parsedUser.role.toLowerCase())) {
           const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
@@ -478,6 +493,86 @@ export default function StaffDashboardPage() {
     return null;
   }, []);
 
+  const currentUserId = React.useMemo(() => {
+    const userString = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
+    if (userString) {
+      try {
+        return JSON.parse(userString).id?.toLowerCase();
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }, []);
+
+  const myRouteKeys = React.useMemo(() => {
+    if (!currentUserId || currentUserRole !== 'reader') return new Set<string>();
+    const myRoutes = allRoutes.filter(r => r.readerId?.toLowerCase() === currentUserId);
+    return new Set(myRoutes.map(r => r.routeKey));
+  }, [allRoutes, currentUserId, currentUserRole]);
+
+  const readerAnomalies = React.useMemo(() => {
+    if (currentUserRole !== 'reader' || myRouteKeys.size === 0) return [];
+    
+    const anomalies: AnomalyRecord[] = [];
+    
+    // Check bulk meters
+    for (const m of allBulkMeters) {
+      if (m.status !== 'Active') continue;
+      if (!m.routeKey || !myRouteKeys.has(m.routeKey)) continue;
+
+      const usage = (m.currentReading ?? 0) - (m.previousReading ?? 0);
+      if (usage === 0 && m.previousReading != null && m.currentReading != null) {
+        anomalies.push({
+          key: m.customerKeyNumber,
+          name: m.name || m.customerKeyNumber,
+          type: 'Bulk',
+          reason: 'Zero consumption — possible stuck/broken meter',
+          severity: 'medium',
+          usage: 0,
+        });
+      } else if (usage > 2000) {
+        anomalies.push({
+          key: m.customerKeyNumber,
+          name: m.name || m.customerKeyNumber,
+          type: 'Bulk',
+          reason: `Extreme spike: ${usage.toFixed(0)} m³`,
+          severity: 'high',
+          usage,
+        });
+      }
+    }
+
+    // Check individual customers
+    for (const c of allCustomers) {
+      if (c.status !== 'Active') continue;
+      if (!c.routeKey || !myRouteKeys.has(c.routeKey)) continue;
+
+      const usage = (c.currentReading ?? 0) - (c.previousReading ?? 0);
+      if (usage === 0 && c.previousReading != null && c.currentReading != null) {
+        anomalies.push({
+          key: c.customerKeyNumber,
+          name: c.name || c.customerKeyNumber,
+          type: 'Individual',
+          reason: 'Zero consumption — possible stuck/broken meter',
+          severity: 'medium',
+          usage: 0,
+        });
+      } else if (usage > 200) {
+        anomalies.push({
+          key: c.customerKeyNumber,
+          name: c.name || c.customerKeyNumber,
+          type: 'Individual',
+          reason: `Extreme spike: ${usage.toFixed(0)} m³`,
+          severity: 'high',
+          usage,
+        });
+      }
+    }
+
+    return anomalies.sort((a, b) => (a.severity === 'high' ? -1 : 1)).slice(0, 5);
+  }, [allBulkMeters, allCustomers, myRouteKeys, currentUserRole]);
+
   if (isLoading || authStatus === 'loading') {
     return <div className="p-4 text-center">Loading dashboard data...</div>;
   }
@@ -533,6 +628,60 @@ export default function StaffDashboardPage() {
             </Button>
           </div>
         </div>
+
+        {/* ── Water Consumption Anomaly Alert Box (Assigned Routes) ── */}
+        {readerAnomalies.length > 0 && (
+          <div
+            className="relative overflow-hidden rounded-3xl border border-rose-200/70 shadow-lg"
+            style={{
+              background: 'linear-gradient(135deg, rgba(255,248,248,0.97) 0%, rgba(255,241,241,0.95) 100%)',
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            {/* Decorative glass blur orbs */}
+            <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-rose-200/30 blur-2xl pointer-events-none" />
+            <div className="absolute -bottom-6 -left-6 h-28 w-28 rounded-full bg-amber-200/20 blur-2xl pointer-events-none" />
+
+            <div className="relative z-10 px-5 pt-5 pb-4">
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle className="h-5 w-5 text-rose-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected (My Assigned Routes)</p>
+                  <p className="text-xs text-rose-500">{readerAnomalies.length} meter{readerAnomalies.length > 1 ? 's require' : ' requires'} attention</p>
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {readerAnomalies.map((a) => (
+                  <div
+                    key={a.key}
+                    className={`flex items-start gap-3 rounded-2xl px-3.5 py-3 border ${
+                      a.severity === 'high'
+                        ? 'bg-rose-50 border-rose-200'
+                        : 'bg-amber-50 border-amber-200'
+                    }`}
+                  >
+                    <div className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                      a.severity === 'high' ? 'bg-rose-100' : 'bg-amber-100'
+                    }`}>
+                      {a.severity === 'high'
+                        ? <XCircle className="h-3.5 w-3.5 text-rose-600" />
+                        : <AlertCircle className="h-3.5 w-3.5 text-amber-600" />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-slate-800 truncate">{a.name}</p>
+                      <p className={`text-[10px] font-bold uppercase tracking-wide ${
+                        a.severity === 'high' ? 'text-rose-500' : 'text-amber-500'
+                      }`}>{a.type} Meter</p>
+                      <p className="text-[11px] text-slate-600 mt-0.5 leading-tight">{a.reason}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <ReaderReport
           branches={allBranches}

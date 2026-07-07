@@ -8,8 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { useRouter } from 'next/navigation';
 import { getLatestPermissionsAction } from "@/lib/actions";
-import { PERMISSIONS } from '@/lib/constants/auth';
-
+import { PERMISSIONS } from '@/lib/constants/auth';import { subscribePermissionsSync } from '@/lib/permissions-sync';
 
 interface UserProfile {
     id: string;
@@ -26,12 +25,18 @@ const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => 
 
     const permissions = new Set(user.permissions || []);
     const hasPermission = (p: string) => permissions.has(p);
+    const userRoleLower = (user.role || '').toLowerCase();
 
     const navItems: NavItemGroup[] = [];
 
+    // Route Staff Management to their dedicated dashboard
+    const dashboardHref = userRoleLower === 'staff management'
+        ? '/staff/staff-management-dashboard'
+        : '/staff/dashboard';
+
     // Always show dashboard
     navItems.push({
-        items: [{ title: "Dashboard", href: "/staff/dashboard", iconName: "LayoutDashboard" }]
+        items: [{ title: "Dashboard", href: dashboardHref, iconName: "LayoutDashboard" }]
     });
 
     // For users with assigned routes, show My Routes
@@ -131,8 +136,12 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
             }
         };
 
+        const unsubscribeSync = subscribePermissionsSync(handlePermissionsUpdate);
         window.addEventListener('user-permissions-updated', handlePermissionsUpdate);
-        return () => window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
+        return () => {
+            unsubscribeSync();
+            window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
+        };
     }, [router]);
 
     const refreshPermissions = React.useCallback(async () => {

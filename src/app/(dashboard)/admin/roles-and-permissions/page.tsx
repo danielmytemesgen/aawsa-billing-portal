@@ -26,6 +26,7 @@ import { Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateRoleDialog } from "@/features/admin/components/create-role-dialog";
 import { CreateEditPermissionDialog } from "@/features/admin/components/create-edit-permission-dialog";
+import { broadcastPermissionsUpdated } from '@/lib/permissions-sync';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   AlertDialog,
@@ -169,6 +170,7 @@ export default function RolesAndPermissionsPage() {
 
       // Dispatch event to notify layout (and other components) to refresh permissions
       window.dispatchEvent(new CustomEvent('user-permissions-updated'));
+      broadcastPermissionsUpdated();
     } else {
       toast({ variant: "destructive", title: "Update Failed", description: result.message || "An unexpected error occurred." });
     }

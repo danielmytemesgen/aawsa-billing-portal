@@ -77,72 +77,101 @@ export default function StaffManagementDashboardPage() {
 
   // Auth check
   React.useEffect(() => {
-    const userString = localStorage.getItem("user");
-    if (userString) {
-      try {
-        const parsedUser: User = JSON.parse(userString);
-        const roleLower = parsedUser.role?.toLowerCase();
-        if (roleLower === "staff management") {
-          const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
-          if (parsedUser.branchId && hasValidBranchName) {
-            setStaffBranchName(parsedUser.branchName ?? null);
-            setStaffBranchId(parsedUser.branchId ?? null);
-            setAuthStatus('authorized');
-          } else if (hasValidBranchName) {
-            // Try to resolve branchId from known branches
-            (async () => {
+    let isMounted = true;
+    let timeoutId: NodeJS.Timeout;
+
+    const performAuthCheck = async () => {
+      const userString = localStorage.getItem("user");
+      if (userString) {
+        try {
+          const parsedUser: User = JSON.parse(userString);
+          const roleLower = parsedUser.role?.toLowerCase();
+          if (roleLower === "staff management") {
+            const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
+            if (parsedUser.branchId && hasValidBranchName) {
+              if (isMounted) {
+                setStaffBranchName(parsedUser.branchName ?? null);
+                setStaffBranchId(parsedUser.branchId ?? null);
+                setAuthStatus('authorized');
+              }
+            } else if (hasValidBranchName) {
+              // Try to resolve branchId from known branches
               try {
                 const res = await getBranchesLookupAction();
                 const branches = res.data || [];
                 const target = parsedUser.branchName || '';
                 let branch = branches.find((b: any) => b.name === target);
                 if (!branch) branch = branches.find((b: any) => (b.name || '').toLowerCase() === target.toLowerCase());
-                if (branch) {
+                if (branch && isMounted) {
                   parsedUser.branchId = branch.id;
                   try { localStorage.setItem('user', JSON.stringify(parsedUser)); } catch (e) { /* ignore */ }
                   setStaffBranchName(parsedUser.branchName ?? null);
                   setStaffBranchId(branch.id ?? null);
                   setAuthStatus('authorized');
-                } else {
+                } else if (isMounted) {
                   setAuthStatus('unauthorized');
                 }
               } catch (e) {
-                setAuthStatus('unauthorized');
+                if (isMounted) setAuthStatus('unauthorized');
               }
-            })();
-          } else if (parsedUser.branchId) {
-            // branchId present but branchName missing — resolve from API
-            (async () => {
+            } else if (parsedUser.branchId) {
+              // branchId present but branchName missing — resolve from API
               try {
                 const res = await getBranchesLookupAction();
                 const branches = res.data || [];
                 const branch = branches.find((b: any) => String(b.id) === String(parsedUser.branchId));
-                if (branch) {
+                if (branch && isMounted) {
                   parsedUser.branchName = branch.name;
                   try { localStorage.setItem('user', JSON.stringify(parsedUser)); } catch (e) { /* ignore */ }
                   setStaffBranchName(parsedUser.branchName ?? null);
                   setStaffBranchId(parsedUser.branchId ?? null);
                   setAuthStatus('authorized');
-                } else {
+                } else if (isMounted) {
                   setAuthStatus('unauthorized');
                 }
               } catch (e) {
-                setAuthStatus('unauthorized');
+                if (isMounted) setAuthStatus('unauthorized');
               }
-            })();
+            } else {
+              if (isMounted) setAuthStatus('unauthorized');
+            }
           } else {
-            setAuthStatus('unauthorized');
+            if (isMounted) setAuthStatus('unauthorized');
           }
-        } else {
-          setAuthStatus('unauthorized');
+        } catch (e) {
+          if (isMounted) setAuthStatus('unauthorized');
         }
-      } catch (e) {
+      } else {
+        if (isMounted) setAuthStatus('unauthorized');
+      }
+    };
+
+    // Start auth check with 8 second timeout
+    performAuthCheck();
+    timeoutId = setTimeout(() => {
+      if (isMounted && authStatus === 'loading') {
+        console.warn("Auth check timed out, setting to authorized with current user data");
+        const userString = localStorage.getItem("user");
+        if (userString) {
+          try {
+            const parsedUser: User = JSON.parse(userString);
+            if (parsedUser.branchId) {
+              setStaffBranchName(parsedUser.branchName ?? 'Offline Branch');
+              setStaffBranchId(parsedUser.branchId);
+              setAuthStatus('authorized');
+              return;
+            }
+          } catch (e) { /* ignore */ }
+        }
         setAuthStatus('unauthorized');
       }
-    } else {
-      setAuthStatus('unauthorized');
-    }
-  }, []);
+    }, 8000);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [authStatus]);
 
   // Data loading, dependent on auth
   React.useEffect(() => {

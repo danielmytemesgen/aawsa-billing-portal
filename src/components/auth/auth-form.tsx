@@ -132,9 +132,14 @@ export function AuthForm() {
 
               const permissions = user.permissions || [];
               const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+              const offlineRole = (user.role || '').toLowerCase().trim();
               
               setTimeout(() => {
-                if (isManagement) router.push("/admin/dashboard");
+                if (isManagement) {
+                  if (offlineRole === 'head office management') router.push("/admin/head-office-dashboard");
+                  else if (offlineRole === 'staff management') router.push("/admin/staff-management-dashboard");
+                  else router.push("/admin/dashboard");
+                } else if (offlineRole === 'staff management') router.push("/staff/staff-management-dashboard");
                 else router.push("/staff/dashboard");
               }, 500);
               
@@ -227,7 +232,14 @@ export function AuthForm() {
             console.error("Background sync failed on login:", err);
           });
 
-          router.push("/admin/dashboard");
+          // Route to role-specific dashboard
+          if (role === 'head office management') {
+            router.push("/admin/head-office-dashboard");
+          } else if (role === 'staff management') {
+            router.push("/admin/staff-management-dashboard");
+          } else {
+            router.push("/admin/dashboard");
+          }
         } else {
           if (role === 'reader') {
             try {
@@ -276,7 +288,11 @@ export function AuthForm() {
               });
             }
           }
-          router.push("/staff/dashboard");
+          if (role === 'staff management') {
+            router.push("/staff/staff-management-dashboard");
+          } else {
+            router.push("/staff/dashboard");
+          }
         }
 
       } else {

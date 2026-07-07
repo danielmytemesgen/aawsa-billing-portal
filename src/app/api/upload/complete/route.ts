@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { getSession } from '@/lib/auth';
 
 const TMP_DIR = path.join(process.cwd(), 'uploads_tmp');
 const OUT_DIR = path.join(process.cwd(), 'public', 'uploads');
@@ -8,6 +9,12 @@ if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
 
 export async function POST(request: Request) {
   try {
+    // Authentication check - user must be authenticated
+    const session = await getSession();
+    if (!session || !session.id) {
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const uploadId = body.uploadId;
     if (!uploadId) return NextResponse.json({ success: false, message: 'uploadId required' }, { status: 400 });

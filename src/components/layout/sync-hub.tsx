@@ -170,6 +170,11 @@ export function SyncHub() {
             const uploadEntry = await db.uploads.where('readingLocalId').equals(reading.localId).first();
             if (uploadEntry && uploadEntry.id) {
               await db.uploads.update(uploadEntry.id, { readingId: serverId });
+            } else {
+              console.warn('SyncHub: no upload record found for readingLocalId', reading.localId, {
+                readingId: reading.id,
+                readingType: reading.type,
+              });
             }
           }
           await removeSyncedReading(reading.id);
@@ -199,7 +204,12 @@ export function SyncHub() {
     fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'C',location:'sync-hub.tsx:phase2-start',message:'Photo upload queue state',data:{pendingUploadCount:uploadsToSync.length,skippedNoReadingId:uploadsToSync.filter((u: UploadEntry) => !u.readingId).length,skippedNoPhoto:uploadsToSync.filter((u: UploadEntry) => !u.photoData).length},timestamp:Date.now()})}).catch(() => {});
     // #endregion
     for (const upload of uploadsToSync) {
-      if (!upload.id || !upload.readingId || !upload.photoData) continue;
+      if (!upload.id || !upload.readingId || !upload.photoData) {
+        if (upload.photoData && !upload.readingId) {
+          console.warn('SyncHub: pending upload missing readingId, waiting for linked reading sync', upload.id, upload.readingLocalId);
+        }
+        continue;
+      }
       await db.uploads.update(upload.id, { status: 'uploading' });
 
       try {

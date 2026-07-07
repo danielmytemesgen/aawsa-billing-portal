@@ -32,7 +32,7 @@ const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "c
 
 interface User {
   email: string;
-  role: "admin" | "staff" | "reader" | "Admin" | "Staff" | "Reader";
+  role: "admin" | "staff" | "reader" | "Admin" | "Staff" | "Reader" | "Staff Management" | "staff management";
   branchName?: string;
   branchId?: string;
 }
@@ -53,10 +53,11 @@ export default function StaffDataEntryPage() {
       try {
         const parsedUser: User = JSON.parse(storedUser);
         setCurrentUser(parsedUser as StaffMember);
-        if (["staff", "reader"].includes(parsedUser.role.toLowerCase()) && parsedUser.branchId && parsedUser.branchName) {
+        const roleLower = parsedUser.role.toLowerCase();
+        if (["staff", "reader", "staff management"].includes(roleLower) && parsedUser.branchId && parsedUser.branchName) {
           setStaffBranchName(parsedUser.branchName);
           setStaffBranchId(parsedUser.branchId);
-        } else if (["staff", "reader"].includes(parsedUser.role.toLowerCase()) && !parsedUser.branchId) {
+        } else if (["staff", "reader", "staff management"].includes(roleLower) && !parsedUser.branchId) {
           setStaffBranchName("Unassigned Branch");
         }
       } catch (e) {

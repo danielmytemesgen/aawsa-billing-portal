@@ -87,6 +87,10 @@ export class OfflineDB extends Dexie {
     this.version(5).stores({
       cached_readings: 'id, type, lastUpdated'
     });
+    // add missing uploads index for offline photo sync lookup
+    this.version(6).stores({
+      uploads: '++id, status, readingId, readingLocalId, readingType, timestamp'
+    });
   }
 }
 

@@ -6,8 +6,7 @@ import { SidebarNav, type NavItemGroup, type NavItem } from "@/components/layout
 import { AppShell } from "@/components/layout/app-shell";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { getLatestPermissionsAction } from "@/lib/actions";
-import { PERMISSIONS } from '@/lib/constants/auth';
-
+import { PERMISSIONS } from '@/lib/constants/auth';import { subscribePermissionsSync } from '@/lib/permissions-sync';
 
 interface UserProfile {
     id: string;
@@ -148,8 +147,12 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
             refreshPermissions();
         };
 
+        const unsubscribeSync = subscribePermissionsSync(handlePermissionsUpdate);
         window.addEventListener('user-permissions-updated', handlePermissionsUpdate);
-        return () => window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
+        return () => {
+            unsubscribeSync();
+            window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
+        };
     }, [refreshPermissions]);
 
     const navItems = buildSidebarNavItems(user);

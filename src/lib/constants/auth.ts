@@ -44,7 +44,7 @@ export const PERMISSIONS = {
 
     // Roles & Permissions
     ROLES_VIEW: 'permissions_view',
-    ROLES_MANAGE: 'settings_manage',
+    ROLES_MANAGE: 'roles_manage',
 
     // Settings
     SETTINGS_VIEW: 'settings_view',
@@ -96,11 +96,11 @@ export const PERMISSIONS = {
     // Routes
     ROUTES_VIEW_ALL: 'routes_view_all',
     ROUTES_VIEW_ASSIGNED: 'routes_view_assigned',
-    ROUTES_MANAGE: 'settings_manage',
+    ROUTES_MANAGE: 'routes_manage',
 
     // Fault Codes
-    FAULT_CODES_VIEW: 'settings_view',
-    FAULT_CODES_MANAGE: 'settings_manage',
+    FAULT_CODES_VIEW: 'fault_codes_view',
+    FAULT_CODES_MANAGE: 'fault_codes_manage',
 
     // Tariffs
     TARIFFS_VIEW: 'tariffs_view',

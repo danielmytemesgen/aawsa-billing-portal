@@ -62,6 +62,7 @@ import {
   dbGetAllRolePermissions,
   dbRpcUpdateRolePermissions,
   dbGetAllTariffs,
+  dbLogSecurityEvent,
   dbGetTariffByTypeAndDate,
   dbCreateTariff,
   dbCreateBillingJob,
@@ -229,6 +230,30 @@ const wrap = async <T>(fn: () => Promise<T>) => {
     return baseResult;
   } catch (e) {
     console.error("Server Action Error in wrap:", e);
+
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    const isAccessError = errorMessage.startsWith('Forbidden:') || errorMessage.startsWith('Unauthorized');
+    if (isAccessError) {
+      try {
+        const session = await getSession();
+        await dbLogSecurityEvent(
+          errorMessage.startsWith('Unauthorized') ? 'Unauthorized Access Attempt' : 'Permission Denied',
+          session?.email || 'Anonymous',
+          session?.branchName || session?.branchId || 'N/A',
+          undefined,
+          'warning',
+          {
+            action: fn.name || 'server-action',
+            reason: errorMessage,
+            sessionId: session?.id,
+            permissions: session?.permissions,
+          }
+        );
+      } catch (logError) {
+        console.warn('Failed to log permission denial event:', logError);
+      }
+    }
+
     // Write to file for immediate visibility
     try {
       fs.appendFileSync('server-error.log', new Date().toISOString() + ' : ' + (e instanceof Error ? e.stack : String(e)) + '\n');
@@ -244,9 +269,30 @@ const wrap = async <T>(fn: () => Promise<T>) => {
   }
 };
 
+async function logPermissionDenial(reason: string, permission?: string, session?: any) {
+  try {
+    await dbLogSecurityEvent(
+      'Permission Denied',
+      session?.email || 'Anonymous',
+      session?.branchName || session?.branchId || session?.branch || 'N/A',
+      undefined,
+      'warning',
+      {
+        reason,
+        requiredPermission: permission,
+        permissions: session?.permissions,
+        sessionId: session?.id,
+      }
+    );
+  } catch (logError) {
+    console.warn('Failed to log permission denial:', logError);
+  }
+}
+
 export async function checkPermission(permission?: string) {
   const session = await getSession();
   if (!session || !session.id) {
+    await logPermissionDenial('Unauthorized access attempt to checkPermission', permission, session);
     throw new Error('User not authenticated');
   }
 
@@ -260,6 +306,7 @@ export async function checkPermission(permission?: string) {
   }
 
   if (permission && !perms.includes(permission)) {
+    await logPermissionDenial(`Missing permission ${permission}`, permission, { ...session, permissions: perms });
     throw new Error(`Forbidden: Missing permission ${permission}`);
   }
 
@@ -2169,8 +2216,6 @@ export async function calculateBillAction(
   });
 }
 
-import { dbLogSecurityEvent } from './db-queries';
-
 // LogOptions is defined and exported from action-types.ts — imported at the top.
 
 export async function logSecurityEventAction(options: LogOptions | string) {
@@ -2473,6 +2518,19 @@ export async function createCustomerSessionAction(session: {
   location?: string;
 }) {
   return await wrap(async () => {
+    // Permission check: Verify caller has authority to create customer sessions
+    // Staff with settings_manage can create sessions for any customer in their branch
+    // Customers can only create their own sessions (handled by customer portal)
+    const staffSession = await getSession();
+    if (staffSession && staffSession.id) {
+      // Caller is staff - verify they have permission
+      await checkPermission(PERMISSIONS.SETTINGS_MANAGE);
+    } else {
+      // No staff session - only customers can proceed
+      // This is typically called from customer portal auth flow
+      // But we still need to rate-limit or track - for now just log
+    }
+
     // Verify the customer actually exists and is Active before issuing a session.
     let customer: any = null;
     if (session.customer_type === 'bulk') {
@@ -2590,7 +2648,7 @@ export async function getFaultCodeByIdAction(id: string) {
 
 export async function createFaultCodeAction(faultCode: FaultCodeInsert) {
   return await wrap(async () => {
-    await checkPermission('settings_manage');
+    await checkPermission(PERMISSIONS.FAULT_CODES_MANAGE);
     const result = await dbCreateFaultCode(faultCode);
     await logSecurityEventAction({
       event: 'Create Fault Code',
@@ -2602,7 +2660,7 @@ export async function createFaultCodeAction(faultCode: FaultCodeInsert) {
 
 export async function updateFaultCodeAction(id: string, faultCode: FaultCodeUpdate) {
   return await wrap(async () => {
-    await checkPermission('settings_manage');
+    await checkPermission(PERMISSIONS.FAULT_CODES_MANAGE);
     const result = await dbUpdateFaultCode(id, faultCode);
     await logSecurityEventAction({
       event: 'Update Fault Code',
@@ -2614,7 +2672,7 @@ export async function updateFaultCodeAction(id: string, faultCode: FaultCodeUpda
 
 export async function deleteFaultCodeAction(id: string) {
   return await wrap(async () => {
-    const session = await checkPermission('settings_manage');
+    const session = await checkPermission(PERMISSIONS.FAULT_CODES_MANAGE);
     await dbDeleteFaultCode(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Fault Code',
@@ -3284,18 +3342,10 @@ export async function updateBillingSettingsAction(payload: {
   dueDateOffset: string;
 }) {
   return await wrap(async () => {
-    // Assuming settings_update or similar perms, for now use generic check if needed, or allow admin
+    // Check if user has settings management permission
+    await checkPermission(PERMISSIONS.SETTINGS_MANAGE);
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
-
-    // Check if user is admin or has specific permission
-    const isGlobalAdmin = session.role === 'Admin' && (!session.branchId || session.branchId === 'all');
-    if (!isGlobalAdmin && !(session.permissions || []).includes('settings_update')) {
-      // Allow if they are Admin role for now, or just generic admin check
-      if (session.role?.toLowerCase() !== 'admin') {
-        throw new Error('Unauthorized to update settings');
-      }
-    }
 
     const { dbUpdateSystemSetting } = await import('./db-queries');
     await dbUpdateSystemSetting('billing_cycle_mode', payload.cycleMode);

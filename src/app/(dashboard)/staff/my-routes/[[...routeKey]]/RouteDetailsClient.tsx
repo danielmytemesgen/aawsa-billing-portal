@@ -437,7 +437,7 @@ export default function RouteDetailsClient() {
                     const fromStore = getIndividualCustomerReadings();
                     const merged = [...fromStore];
                     prev.forEach(p => {
-                        if (!merged.some(s => s.individualCustomerId === p.individualCustomerId && s.monthYear === p.monthYear)) {
+                        if (!merged.some(s => s.individualCustomerId === p.individual_customer_id && s.monthYear === p.monthYear)) {
                             merged.push(p);
                         }
                     });

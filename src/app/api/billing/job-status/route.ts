@@ -24,5 +24,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
+  // Permission check: User must have either BILL_VIEW_ALL or BILL_CLOSE_CYCLE permission
+  // or must have created the job themselves
+  if (session.permissions) {
+    const hasViewAllPerm = session.permissions.some((p: string) => 
+      p === 'bill_view_all' || p === 'bill_close_cycle'
+    );
+    const createdByThisUser = rows[0].created_by === session.user.id;
+    
+    if (!hasViewAllPerm && !createdByThisUser) {
+      return NextResponse.json({ error: 'Forbidden: insufficient permissions' }, { status: 403 });
+    }
+  }
+
   return NextResponse.json({ job: rows[0] });
 }
