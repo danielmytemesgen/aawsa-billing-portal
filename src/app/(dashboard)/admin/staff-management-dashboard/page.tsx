@@ -42,12 +42,14 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 interface User {
   email: string;
   role: "admin" | "staff" | "Admin" | "Staff" | "Head Office Management" | "Staff Management";
   branchName?: string;
   branchId?: string;
+  permissions?: string[];
 }
 
 const chartConfig = {
@@ -86,7 +88,10 @@ export default function StaffManagementDashboardPage() {
         try {
           const parsedUser: User = JSON.parse(userString);
           const roleLower = parsedUser.role?.toLowerCase();
-          if (roleLower === "staff management") {
+          const assignedPermissions = Array.isArray(parsedUser.permissions) ? parsedUser.permissions : [];
+          const hasDashboardAccess = assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
+
+          if (roleLower === "staff management" || hasDashboardAccess) {
             const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
             if (parsedUser.branchId && hasValidBranchName) {
               if (isMounted) {

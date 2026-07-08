@@ -29,7 +29,12 @@ interface CsvReadingUploadDialogProps {
   meters: IndividualCustomer[] | BulkMeter[];
   currentUser: User | null | undefined;
 }
-
+const readingCsvRequiredHeaders = [
+  "CUST_KEY",
+  "PREVIOUS_READING",
+  "METER_READING",
+  "READING_DATE",
+];
 const readingCsvHeaders = [
   "READ_PROC_ID", "ROUND_KEY", "WALK_ORDER", "INST_KEY", "INST_TYPE_CODE", "CUST_KEY", "CUST_NAME",
   "DISPLAY_ADDRESS", "BRANCH_NAME", "METER_KEY", "PREVIOUS_READING", "LAST_READING_DATE",
@@ -138,24 +143,30 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
       }
 
       const firstLineValues = lines[0].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
-      const requiredHeadersLower = readingCsvHeaders.map((h: string) => h.toLowerCase());
-      
-      // Check if first line is a header by comparing with expected set (case-insensitive)
-      const isHeaderRow = firstLineValues.every(v => requiredHeadersLower.includes(v.toLowerCase())) && firstLineValues.length >= readingCsvHeaders.length - 10;
-      
+      const requiredHeadersLower = readingCsvRequiredHeaders.map((h: string) => h.toLowerCase());
+      const headerLower = firstLineValues.map(h => h.toLowerCase());
+
+      const missingRequiredHeaders = readingCsvRequiredHeaders.filter(req => !headerLower.includes(req.toLowerCase()));
+      if (missingRequiredHeaders.length > 0) {
+        localErrors.push(`Missing required CSV headers: ${missingRequiredHeaders.join(', ')}`);
+        finalizeProcessing();
+        return;
+      }
+
+      const isHeaderRow = firstLineValues.some(v => requiredHeadersLower.includes(v.toLowerCase()));
+
       let dataRows = lines;
       const headerMapping: Record<string, number> = {};
 
       if (isHeaderRow) {
-        // Map required headers to the index they appear at in the CSV
-        readingCsvHeaders.forEach((req: string) => {
-          const index = firstLineValues.findIndex(val => val.toLowerCase() === req.toLowerCase());
-          if (index !== -1) headerMapping[req] = index;
+        // Map headers to the index they appear at in the CSV
+        firstLineValues.forEach((val, index) => {
+          headerMapping[val.toUpperCase()] = index;
         });
         dataRows = lines.slice(1);
       } else {
-        // If no header, assume standard order
-        readingCsvHeaders.forEach((req: string, idx: number) => { headerMapping[req] = idx; });
+        // If no header, assume standard order for required columns only
+        readingCsvRequiredHeaders.forEach((req: string, idx: number) => { headerMapping[req] = idx; });
       }
 
       for (let i = 0; i < dataRows.length; i++) {
@@ -313,8 +324,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
   };
 
   const downloadCsvTemplate = () => {
-    // Both types now use the rich header set
-    const csvString = readingCsvHeaders.join(',') + '\n';
+    const csvString = readingCsvRequiredHeaders.join(',') + '\n';
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -332,11 +342,19 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
         <DialogHeader>
           <UIDialogTitle>Upload {meterType === 'individual' ? 'Individual Customer' : 'Bulk Meter'} Readings</UIDialogTitle>
           <UIDialogDescription>
-            Select a CSV file with the comprehensive list of columns matching the standard template.
+            Upload a CSV file containing only the required fields below. Extra columns are not needed.
             Date format: dd/MM/yyyy (e.g., 16/12/2025).
           </UIDialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <div className="font-semibold">Required CSV columns</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {readingCsvRequiredHeaders.map((header) => (
+                <span key={header} className="rounded-full bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">{header}</span>
+              ))}
+            </div>
+          </div>
           <div className="flex flex-col sm:flex-row gap-2 items-center">
             <Input
               ref={fileInputRef}

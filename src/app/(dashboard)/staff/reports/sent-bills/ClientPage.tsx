@@ -53,8 +53,20 @@ export default function StaffSentBillsReportPage() {
 
   // Load initial static data
   React.useEffect(() => {
-    const user = localStorage.getItem("user");
-    if (user) setCurrentUser(JSON.parse(user));
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        // Basic validation
+        if (parsed && typeof parsed === 'object' && parsed.id && parsed.email) {
+          setCurrentUser(parsed as UserProfile);
+        } else {
+          console.warn('StaffSentBillsReportPage: cached user is malformed', parsed);
+        }
+      } catch (err) {
+        console.warn('StaffSentBillsReportPage: failed to parse cached user', err);
+      }
+    }
 
     const fetchStaticData = async () => {
       setIsLoading(true);

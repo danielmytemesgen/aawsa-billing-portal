@@ -40,7 +40,12 @@ export default function RoutesPage() {
     React.useEffect(() => {
         const storedUser = localStorage.getItem("user");
         if (storedUser) {
-            setUser(JSON.parse(storedUser));
+            try {
+                const parsed = JSON.parse(storedUser);
+                setUser(parsed);
+            } catch (err) {
+                console.warn('RoutesPage: failed to parse cached user', err);
+            }
         }
     }, []);
 
