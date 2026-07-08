@@ -50,6 +50,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { format } from 'date-fns';
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { ReaderReport } from "./reader-report";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
 
@@ -58,6 +59,7 @@ interface User {
   role: "admin" | "staff" | "reader" | "Admin" | "Staff" | "Reader" | "Head Office Management" | "Staff Management";
   branchName?: string;
   branchId?: string;
+  permissions?: string[];
 }
 
 const chartConfig = {
@@ -106,26 +108,35 @@ export default function StaffDashboardPage() {
     if (userString) {
       try {
         const parsedUser: User = JSON.parse(userString);
+        const role = (parsedUser.role || '').toLowerCase();
+        const assignedPermissions = Array.isArray(parsedUser.permissions) ? parsedUser.permissions : [];
+        const hasDashboardAccess = assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
+
         // Redirect Staff Management role to their dedicated dashboard
-        if (parsedUser.role && parsedUser.role.toLowerCase() === 'staff management') {
+        if (role === 'staff management') {
           router.replace('/staff/staff-management-dashboard');
           return;
         }
-        // Accept staff role and attempt to resolve missing branchId from branchName if necessary.
-        if (parsedUser.role && ["staff", "reader"].includes(parsedUser.role.toLowerCase())) {
+
+        if (role === 'head office management') {
+          router.replace('/admin/head-office-dashboard');
+          return;
+        }
+
+        // Allow legacy staff/reader roles and custom roles that have dashboard access.
+        if (role === 'staff' || role === 'reader' || hasDashboardAccess) {
           const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
-          // If branchId is present and branchName looks valid, authorize immediately
+
           if (parsedUser.branchId && hasValidBranchName) {
             setStaffBranchName(parsedUser.branchName ?? null);
             setStaffBranchId(parsedUser.branchId ?? null);
             setAuthStatus('authorized');
           } else if (hasValidBranchName) {
-            // Try to resolve branchId from known branches
             (async () => {
               try {
                 let branches: any[] = [];
                 const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
-                
+
                 if (isOffline) {
                   try {
                     const cached = localStorage.getItem('cached_branches_lookup');
@@ -156,10 +167,9 @@ export default function StaffDashboardPage() {
                 if (!branch) {
                   branch = branches.find((b: any) => String(b.id) === String(target));
                 }
-                
+
                 if (branch) {
                   parsedUser.branchId = branch.id;
-                  // persist resolved branchId so subsequent loads won't need to re-resolve
                   try { localStorage.setItem('user', JSON.stringify(parsedUser)); } catch (e) { /* ignore */ }
                   setStaffBranchName(parsedUser.branchName ?? null);
                   setStaffBranchId(parsedUser.branchId ?? null);
@@ -185,12 +195,11 @@ export default function StaffDashboardPage() {
               }
             })();
           } else if (parsedUser.branchId) {
-            // branchId present but branchName missing - try to fill branchName for display
             (async () => {
               try {
                 let branches: any[] = [];
                 const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
-                
+
                 if (isOffline) {
                   try {
                     const cached = localStorage.getItem('cached_branches_lookup');
@@ -240,7 +249,9 @@ export default function StaffDashboardPage() {
               }
             })();
           } else {
-            setAuthStatus('unauthorized');
+            setStaffBranchName(parsedUser.branchName ?? null);
+            setStaffBranchId(parsedUser.branchId ?? null);
+            setAuthStatus('authorized');
           }
         } else {
           setAuthStatus('unauthorized');
@@ -257,7 +268,10 @@ export default function StaffDashboardPage() {
   const [allStaff, setAllStaff] = React.useState<any[]>([]);
 
   const initializeData = async () => {
-    if (authStatus !== 'authorized') return;
+    if (authStatus !== 'authorized') {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
       // 1. Fetch dashboard metrics first for instant display
@@ -394,7 +408,7 @@ export default function StaffDashboardPage() {
 
   // Derived state with useMemo
   const processedStats = React.useMemo(() => {
-    if (authStatus !== 'authorized' || !staffBranchId) {
+    if (authStatus !== 'authorized') {
       return { 
         totalBulkMeters: 0, 
         totalCustomers: 0, 
@@ -412,12 +426,16 @@ export default function StaffDashboardPage() {
 
     const currentMonthYear = format(new Date(), 'yyyy-MM');
 
-    const branchBMs = allBulkMeters.filter(bm => bm.branchId === staffBranchId);
+    const branchBMs = staffBranchId
+      ? allBulkMeters.filter(bm => bm.branchId === staffBranchId)
+      : allBulkMeters;
     const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
-    const branchCustomers = allCustomers.filter(customer =>
-      customer.branchId === staffBranchId ||
-      (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
-    );
+    const branchCustomers = staffBranchId
+      ? allCustomers.filter(customer =>
+          customer.branchId === staffBranchId ||
+          (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
+        )
+      : allCustomers;
 
     // Get total active customers in the branch
     const activeCustomersInBranch = branchCustomers.filter(c => c.status === 'Active');
