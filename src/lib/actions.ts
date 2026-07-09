@@ -1602,15 +1602,12 @@ export async function createIndividualCustomerReadingAction(
       // Sync the main customer record
       const rDate = (reading as any).READING_DATE || (reading as any).reading_date || reading.reading_date;
       const rValue = (reading as any).METER_READING !== undefined ? (reading as any).METER_READING : ((reading as any).reading_value !== undefined ? (reading as any).reading_value : reading.reading_value);
-      const prevValue = (reading as any).PREVIOUS_READING !== undefined
-        ? (reading as any).PREVIOUS_READING
-        : ((reading as any).previousReading !== undefined ? (reading as any).previousReading : (customer.currentReading ?? 0));
       
       const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
       const monthYear = format(readingDate, 'yyyy-MM');
 
       await dbUpdateCustomer(custId, { 
-        previousReading: prevValue,
+        previousReading: customer.currentReading ?? 0,
         currentReading: rValue,
         month: monthYear
       }, client);
@@ -1705,15 +1702,12 @@ export async function createBulkMeterReadingAction(
       // Sync the main bulk meter record
       const rDate = (reading as any).READING_DATE || (reading as any).reading_date || reading.reading_date;
       const rValue = (reading as any).METER_READING !== undefined ? (reading as any).METER_READING : ((reading as any).reading_value !== undefined ? (reading as any).reading_value : reading.reading_value);
-      const prevValue = (reading as any).PREVIOUS_READING !== undefined
-        ? (reading as any).PREVIOUS_READING
-        : ((reading as any).previousReading !== undefined ? (reading as any).previousReading : (meter.currentReading ?? 0));
 
       const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
       const monthYear = format(readingDate, 'yyyy-MM');
 
       await dbUpdateBulkMeter(custKey, { 
-        previousReading: prevValue,
+        previousReading: meter.currentReading ?? 0,
         currentReading: rValue,
         month: monthYear
       }, client);

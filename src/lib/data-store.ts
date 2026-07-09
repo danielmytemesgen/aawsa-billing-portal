@@ -2515,9 +2515,8 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     
     // Optimistic update
     const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
-    const currentReadingToUse = readingData.readingValue;
     customer.previousReading = prevReadingToUse;
-    customer.currentReading = currentReadingToUse;
+    customer.currentReading = readingData.readingValue;
     
     // Create an optimistic domain reading
     const newReading: DomainIndividualCustomerReading = {
@@ -2559,13 +2558,16 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
   }
 
   const newReading = mapDbIndividualReadingToDomain(newDbReading);
+
   const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
-  const currentReadingToUse = readingData.readingValue;
-  if (customer) {
-    customer.previousReading = prevReadingToUse;
-    customer.currentReading = currentReadingToUse;
-    notifyCustomerListeners();
-  }
+  const updatedCustomer = {
+    ...customer,
+    previousReading: prevReadingToUse,
+    currentReading: readingData.readingValue
+  };
+  customers = customers.map(c => c.customerKeyNumber === customer.customerKeyNumber ? updatedCustomer : c);
+  notifyCustomerListeners();
+
   individualCustomerReadings = [newReading, ...individualCustomerReadings];
   notifyIndividualCustomerReadingListeners();
 
@@ -2585,10 +2587,9 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
     
     // Optimistic update
-    const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (bulkMeter.currentReading ?? 0);
-    const currentReadingToUse = readingData.readingValue;
+    const prevReadingToUse = bulkMeter.currentReading ?? 0;
     bulkMeter.previousReading = prevReadingToUse;
-    bulkMeter.currentReading = currentReadingToUse;
+    bulkMeter.currentReading = readingData.readingValue;
     
     // Create an optimistic domain reading
     const newReading: DomainBulkMeterReading = {
@@ -2631,13 +2632,16 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
   }
 
   const newReading = mapDbBulkReadingToDomain(newDbReading);
+
   const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (bulkMeter.currentReading ?? 0);
-  const currentReadingToUse = readingData.readingValue;
-  if (bulkMeter) {
-    bulkMeter.previousReading = prevReadingToUse;
-    bulkMeter.currentReading = currentReadingToUse;
-    notifyBulkMeterListeners();
-  }
+  const updatedBulkMeter = {
+    ...bulkMeter,
+    previousReading: prevReadingToUse,
+    currentReading: readingData.readingValue
+  };
+  bulkMeters = bulkMeters.map(bm => bm.customerKeyNumber === bulkMeter.customerKeyNumber ? updatedBulkMeter : bm);
+  notifyBulkMeterListeners();
+
   bulkMeterReadings = [newReading, ...bulkMeterReadings];
   notifyBulkMeterReadingListeners();
 

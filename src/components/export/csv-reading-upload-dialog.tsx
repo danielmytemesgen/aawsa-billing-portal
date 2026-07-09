@@ -164,40 +164,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     const localErrors: string[] = [];
     const reader = new FileReader();
 
-    const parseDateHelper = (dateStr: string | undefined): string | undefined => {
-      if (!dateStr || !dateStr.trim()) return undefined;
-      try {
-        let d: Date;
-        if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-          d = parse(dateStr, 'dd/MM/yyyy', new Date());
-        } else if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-          d = new Date(dateStr);
-        } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
-          d = new Date(dateStr + "-01");
-        } else {
-          d = new Date(dateStr);
-        }
-        if (isValid(d)) return format(d, "yyyy-MM-dd");
-        return undefined;
-      } catch (e) {
-        return undefined;
-      }
-    };
-
-    const duplicateReadingKeySet = new Set<string>();
-    const getMeterDateKey = (meterKey: string, readingDate: string): string => {
-      const normalizedDate = normalizeReadingDate(readingDate);
-      return meterKey?.trim() && normalizedDate ? `${meterKey.trim()}|${normalizedDate}` : '';
-    };
-    const isDuplicateReading = (meterKey: string, readingDate: string): boolean => {
-      const key = getMeterDateKey(meterKey, readingDate);
-      return key ? duplicateReadingKeySet.has(key) : false;
-    };
-    const recordDuplicateReading = (meterKey: string, readingDate: string) => {
-      const key = getMeterDateKey(meterKey, readingDate);
-      if (key) duplicateReadingKeySet.add(key);
-    };
-
     reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
@@ -238,6 +204,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
         }
 
         const isHeaderRow = firstLineValues.some(v => requiredHeadersLower.includes(v.toLowerCase()));
+
         let dataRows = lines;
         const headerMapping: Record<string, number> = {};
 
@@ -273,8 +240,28 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
           return undefined;
         };
 
+        const parseDateHelper = (dateStr: string | undefined): string | undefined => {
+          if (!dateStr || !dateStr.trim()) return undefined;
+          try {
+            let d: Date;
+            if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+              d = parse(dateStr, 'dd/MM/yyyy', new Date());
+            } else if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+              d = new Date(dateStr);
+            } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
+              d = new Date(dateStr + "-01");
+            } else {
+              d = new Date(dateStr);
+            }
+            if (isValid(d)) return format(d, "yyyy-MM-dd");
+            return undefined;
+          } catch (e) {
+            return undefined;
+          }
+        };
+
         const processCsvRow = async (rowIndex: number) => {
-          const values = dataRows[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
+          const values = dataRows[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
           const rowData = Object.fromEntries(
             Object.entries(headerMapping).map(([header, index]) => [header, values[index]])
           );
@@ -389,7 +376,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
             }
           } catch (error) {
             if (error instanceof ZodError) {
-              const errorMessages = error.issues.map(issue => `Row ${rowIndex + 1}, Column '${issue.path.join('.')}' : ${issue.message}`).join('; ');
+              const errorMessages = error.issues.map(issue => `Row ${rowIndex + 1}, Column '${issue.path.join('.')}' : ${issue.message}`).join("; ");
               localErrors.push(errorMessages);
             } else {
               localErrors.push(`Row ${rowIndex + 1}: Unknown validation error. ${(error as Error).message}`);
