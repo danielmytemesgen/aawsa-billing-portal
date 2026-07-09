@@ -221,10 +221,17 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
 
         const existingReadings = meterType === 'individual' ? getIndividualCustomerReadings() : getBulkMeterReadings();
         for (const existingReading of existingReadings) {
+          const sharedReading = existingReading as Partial<{
+            individualCustomerId?: string;
+            CUSTOMERKEY?: string;
+            custKey?: string;
+            meterKey?: string;
+            readingDate?: string;
+          }>;
           const existingMeterKey = meterType === 'individual'
-            ? (existingReading.individualCustomerId || existingReading.custKey || existingReading.meterKey)
-            : (existingReading.CUSTOMERKEY || existingReading.custKey || existingReading.meterKey);
-          const existingDate = normalizeReadingDate(existingReading.readingDate);
+            ? (sharedReading.individualCustomerId || sharedReading.custKey || sharedReading.meterKey)
+            : (sharedReading.CUSTOMERKEY || sharedReading.custKey || sharedReading.meterKey);
+          const existingDate = normalizeReadingDate(sharedReading.readingDate || '');
           if (existingMeterKey && existingDate) {
             duplicateReadingKeySet.add(`${String(existingMeterKey).trim()}|${existingDate}`);
           }
