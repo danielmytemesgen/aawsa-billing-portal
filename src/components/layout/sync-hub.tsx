@@ -33,6 +33,7 @@ import {
   Upload
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,9 @@ export function SyncHub() {
   const [failedList, setFailedList] = React.useState<any[]>([]);
   const [isQueueOpen, setIsQueueOpen] = React.useState(false);
   const [lastSyncResult, setLastSyncResult] = React.useState<{ success: number; failed: number } | null>(null);
+  const [syncProgressPercent, setSyncProgressPercent] = React.useState(0);
+  const [syncCompletedCount, setSyncCompletedCount] = React.useState(0);
+  const [syncTotalCount, setSyncTotalCount] = React.useState(0);
   const { toast } = useToast();
   const { currentUser, isManagement } = useCurrentUser();
   const syncInProgress = React.useRef(false);
@@ -136,17 +140,13 @@ export function SyncHub() {
     let hasNetworkError = false;
 
     const totalToSync = pending.length + pendingUploads.length;
-
-    // #region agent log
-    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'B',location:'sync-hub.tsx:runSync-start',message:'Sync run started',data:{pendingReadings:pending.length,pendingUploads:pendingUploads.length,samplePayloadKeys:pending[0]?.payload?Object.keys(pending[0].payload).slice(0,8):[]},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-
-    // Dispatch starting progress event
+    setSyncTotalCount(totalToSync);
+    setSyncCompletedCount(0);
+    setSyncProgressPercent(0);
     window.dispatchEvent(new CustomEvent('sync-progress', {
-      detail: { syncing: true, success: 0, failed: 0, total: totalToSync }
+      detail: { syncing: true, success: 0, failed: 0, total: totalToSync, progress: 0 }
     }));
 
-    // --- PHASE 1: Sync readings metadata (small payloads, high priority) ---
     for (const reading of pending) {
       if (!reading.id) continue;
       await markAsSyncing(reading.id);
@@ -193,8 +193,11 @@ export function SyncHub() {
       }
 
       window.dispatchEvent(new Event('offline-queue-updated'));
+      const progressPercent = totalToSync > 0 ? Math.round(((success + failed) / totalToSync) * 100) : 100;
+      setSyncCompletedCount(success + failed);
+      setSyncProgressPercent(progressPercent);
       window.dispatchEvent(new CustomEvent('sync-progress', {
-        detail: { syncing: true, success, failed, total: totalToSync }
+        detail: { syncing: true, success, failed, total: totalToSync, progress: progressPercent }
       }));
     }
 
@@ -237,8 +240,11 @@ export function SyncHub() {
       }
 
       window.dispatchEvent(new Event('offline-queue-updated'));
+      const progressPercent = totalToSync > 0 ? Math.round(((success + failed) / totalToSync) * 100) : 100;
+      setSyncCompletedCount(success + failed);
+      setSyncProgressPercent(progressPercent);
       window.dispatchEvent(new CustomEvent('sync-progress', {
-        detail: { syncing: true, success, failed, total: totalToSync }
+        detail: { syncing: true, success, failed, total: totalToSync, progress: progressPercent }
       }));
     }
 
@@ -249,7 +255,7 @@ export function SyncHub() {
 
     // Dispatch completed event
     window.dispatchEvent(new CustomEvent('sync-progress', {
-      detail: { syncing: false, success, failed, total: totalToSync }
+      detail: { syncing: false, success, failed, total: totalToSync, progress: 100 }
     }));
 
     // Notify service worker that sync completed
@@ -453,11 +459,24 @@ export function SyncHub() {
       }
       if (event.data?.type === 'BACKGROUND_SYNC_STARTED') {
         setIsSyncing(true);
+        setSyncProgressPercent(0);
+        setSyncCompletedCount(0);
+        setSyncTotalCount(0);
+        return;
+      }
+      if (event.data?.type === 'BACKGROUND_SYNC_PROGRESS') {
+        const { completed = 0, total = 0, percent = 0 } = event.data;
+        setSyncCompletedCount(completed);
+        setSyncTotalCount(total);
+        setSyncProgressPercent(percent);
+        setIsSyncing(true);
         return;
       }
       if (event.data?.type === 'BACKGROUND_SYNC_COMPLETE') {
         const { success = 0, failed = 0 } = event.data;
         setIsSyncing(false);
+        setSyncProgressPercent(100);
+        setSyncCompletedCount(syncTotalCount || 0);
         setLastSyncResult({ success, failed });
         checkPending();
         if (success > 0) {
@@ -489,7 +508,8 @@ export function SyncHub() {
               r.reader_staff_id === currentUser.id
             );
           });
-          if (pending.length > 0) {
+          const pendingUploads = await db.uploads.where('status').equals('pending').toArray();
+          if (pending.length > 0 || pendingUploads.length > 0) {
             const reg = await navigator.serviceWorker.ready;
             if ('sync' in reg) {
               await (reg as any).sync.register('offline-readings-sync');
@@ -611,6 +631,14 @@ export function SyncHub() {
                 • {failedCount} sync issue(s)
               </span>
             )}
+            {isSyncing && syncTotalCount > 0 && (
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] text-slate-500">{syncProgressPercent}%</span>
+                <div className="flex-1">
+                  <Progress value={syncProgressPercent} className="h-1.5 bg-slate-100" />
+                </div>
+              </div>
+            )}
           </div>
 
           {!isSyncing && (pendingCount > 0 || failedCount > 0) && (
@@ -651,6 +679,18 @@ export function SyncHub() {
                 <DialogDescription className="text-slate-500 text-sm mt-0.5">
                   Decoupled queue sync: metadata synced first, photos uploaded in background.
                 </DialogDescription>
+                {isSyncing && syncTotalCount > 0 && (
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 mb-2">
+                      <span>Sync Progress</span>
+                      <span>{syncProgressPercent}%</span>
+                    </div>
+                    <Progress value={syncProgressPercent} className="h-2" />
+                    <div className="text-[10px] text-slate-500 mt-2">
+                      {syncCompletedCount}/{syncTotalCount} items completed
+                    </div>
+                  </div>
+                )}
               </div>
               {/* Export/Import Action Buttons in Header */}
               <div className="flex items-center gap-2">

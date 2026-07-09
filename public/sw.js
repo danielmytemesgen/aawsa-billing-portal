@@ -191,11 +191,41 @@ self.addEventListener('sync', (event) => {
           } catch (e) { reject(e); }
         });
 
-        const pending = await readAllPending();
+        const readAllUploads = () => new Promise((resolve, reject) => {
+          try {
+            const tx = db.transaction('uploads', 'readonly');
+            const store = tx.objectStore('uploads');
+            const req = store.getAll();
+            req.onsuccess = () => {
+              const all = req.result || [];
+              const pendingUploads = all.filter(u => u.status === 'pending');
+              resolve(pendingUploads);
+            };
+            req.onerror = () => reject(req.error);
+          } catch (e) { reject(e); }
+        });
 
-        // Notify clients that background sync started
+        const pending = await readAllPending();
+        const pendingUploads = await readAllUploads();
         const clients = await self.clients.matchAll();
+        const totalUploadChunks = pendingUploads.reduce((sum, up) => {
+          if (!up || !up.blob || !up.blob.size) return sum + 1;
+          return sum + (up.blob.size > 1024 * 1024 ? Math.ceil(up.blob.size / (1024 * 1024)) : 1);
+        }, 0);
+        const totalActions = pending.length + totalUploadChunks;
+        let completedActions = 0;
+        const broadcastProgress = () => {
+          const percent = totalActions > 0 ? Math.round((completedActions / totalActions) * 100) : 100;
+          clients.forEach((client) => client.postMessage({
+            type: 'BACKGROUND_SYNC_PROGRESS',
+            completed: completedActions,
+            total: totalActions,
+            percent
+          }));
+        };
+
         clients.forEach((client) => client.postMessage({ type: 'BACKGROUND_SYNC_STARTED' }));
+        broadcastProgress();
 
         if (pending.length > 0) {
           try {
@@ -233,6 +263,8 @@ self.addEventListener('sync', (event) => {
                     }
                   };
                 }
+                completedActions++;
+                broadcastProgress();
               }
             }
           } catch (err) {
@@ -363,6 +395,8 @@ self.addEventListener('sync', (event) => {
                         }
                       }
                       if (!ok) throw new Error('chunk upload failed after retries ' + i);
+                      completedActions++;
+                      broadcastProgress();
                     }
 
                     // complete
@@ -403,6 +437,8 @@ self.addEventListener('sync', (event) => {
                           try { store.delete(up.id); } catch (e) { }
                           try { fetch('/api/offline/metrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'upload_success', details: { filename, size: blob ? blob.size : 0 } }) }); } catch (e) {}
                           success = true;
+                          completedActions++;
+                          broadcastProgress();
                         } else {
                           attempt++;
                           const backoff = Math.min(20000, Math.pow(2, attempt) * 300 + Math.random() * 200);

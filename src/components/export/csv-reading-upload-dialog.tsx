@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, Dial
 import { UploadCloud, FileSpreadsheet, FileWarning, CheckCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { addIndividualCustomerReading, addBulkMeterReading } from "@/lib/data-store";
+import { addIndividualCustomerReading, addBulkMeterReading, getIndividualCustomerReadings, getBulkMeterReadings } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { format, parse, isValid, lastDayOfMonth } from "date-fns";
@@ -101,6 +101,37 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     }
   };
 
+  const normalizeReadingDate = (dateValue: string): string => {
+    let parsedDate: Date;
+    if (dateValue.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+      parsedDate = parse(dateValue, 'dd/MM/yyyy', new Date());
+    } else if (dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      parsedDate = new Date(dateValue);
+    } else if (dateValue.match(/^\d{4}-\d{2}$/)) {
+      parsedDate = parse(dateValue, 'yyyy-MM', new Date());
+      parsedDate = lastDayOfMonth(parsedDate);
+    } else {
+      parsedDate = new Date(dateValue);
+    }
+
+    return isValid(parsedDate) ? format(parsedDate, 'yyyy-MM-dd') : '';
+  };
+
+  const getMeterDateKey = (meterKey: string, readingDate: string): string => {
+    const normalizedDate = normalizeReadingDate(readingDate);
+    return meterKey?.trim() && normalizedDate ? `${meterKey.trim()}|${normalizedDate}` : '';
+  };
+
+  const duplicateReadingKeySet = new Set<string>();
+  const isDuplicateReading = (meterKey: string, readingDate: string): boolean => {
+    const key = getMeterDateKey(meterKey, readingDate);
+    return key ? duplicateReadingKeySet.has(key) : false;
+  };
+  const recordDuplicateReading = (meterKey: string, readingDate: string) => {
+    const key = getMeterDateKey(meterKey, readingDate);
+    if (key) duplicateReadingKeySet.add(key);
+  };
+
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
       resetState();
@@ -133,177 +164,248 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     const localErrors: string[] = [];
     const reader = new FileReader();
 
+    const parseDateHelper = (dateStr: string | undefined): string | undefined => {
+      if (!dateStr || !dateStr.trim()) return undefined;
+      try {
+        let d: Date;
+        if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+          d = parse(dateStr, 'dd/MM/yyyy', new Date());
+        } else if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          d = new Date(dateStr);
+        } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
+          d = new Date(dateStr + "-01");
+        } else {
+          d = new Date(dateStr);
+        }
+        if (isValid(d)) return format(d, "yyyy-MM-dd");
+        return undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+
+    const duplicateReadingKeySet = new Set<string>();
+    const getMeterDateKey = (meterKey: string, readingDate: string): string => {
+      const normalizedDate = normalizeReadingDate(readingDate);
+      return meterKey?.trim() && normalizedDate ? `${meterKey.trim()}|${normalizedDate}` : '';
+    };
+    const isDuplicateReading = (meterKey: string, readingDate: string): boolean => {
+      const key = getMeterDateKey(meterKey, readingDate);
+      return key ? duplicateReadingKeySet.has(key) : false;
+    };
+    const recordDuplicateReading = (meterKey: string, readingDate: string) => {
+      const key = getMeterDateKey(meterKey, readingDate);
+      if (key) duplicateReadingKeySet.add(key);
+    };
+
     reader.onload = async (e) => {
-      const text = e.target?.result as string;
-      const lines = text.split(/\r\n|\n/).filter(line => line.trim() !== "");
-      if (lines.length === 0) {
-        localErrors.push("File is empty.");
-        finalizeProcessing();
-        return;
-      }
+      try {
+        const text = e.target?.result as string;
+        const lines = text.split(/\r\n|\n/).filter(line => line.trim() !== "");
+        if (lines.length === 0) {
+          localErrors.push("File is empty.");
+          finalizeProcessing();
+          return;
+        }
 
-      const firstLineValues = lines[0].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
-      const requiredHeadersLower = readingCsvRequiredHeaders.map((h: string) => h.toLowerCase());
-      const headerLower = firstLineValues.map(h => h.toLowerCase());
+        const firstLineValues = lines[0].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
+        const requiredHeadersLower = readingCsvRequiredHeaders.map((h: string) => h.toLowerCase());
+        const headerLower = firstLineValues.map(h => h.toLowerCase());
 
-      const missingRequiredHeaders = readingCsvRequiredHeaders.filter(req => !headerLower.includes(req.toLowerCase()));
-      if (missingRequiredHeaders.length > 0) {
-        localErrors.push(`Missing required CSV headers: ${missingRequiredHeaders.join(', ')}`);
-        finalizeProcessing();
-        return;
-      }
+        const missingRequiredHeaders = readingCsvRequiredHeaders.filter(req => !headerLower.includes(req.toLowerCase()));
+        if (missingRequiredHeaders.length > 0) {
+          localErrors.push(`Missing required CSV headers: ${missingRequiredHeaders.join(', ')}`);
+          finalizeProcessing();
+          return;
+        }
 
-      const isHeaderRow = firstLineValues.some(v => requiredHeadersLower.includes(v.toLowerCase()));
-
-      let dataRows = lines;
-      const headerMapping: Record<string, number> = {};
-
-      if (isHeaderRow) {
-        // Map headers to the index they appear at in the CSV
-        firstLineValues.forEach((val, index) => {
-          headerMapping[val.toUpperCase()] = index;
-        });
-        dataRows = lines.slice(1);
-      } else {
-        // If no header, assume standard order for required columns only
-        readingCsvRequiredHeaders.forEach((req: string, idx: number) => { headerMapping[req] = idx; });
-      }
-
-      for (let i = 0; i < dataRows.length; i++) {
-        const values = dataRows[i].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
-        const rowData = Object.fromEntries(
-          Object.entries(headerMapping).map(([header, index]) => [header, values[index]])
-        );
-
-
-        try {
-          const validatedRow = readingCsvRowSchema.parse(rowData);
-          const customerKeyVal = validatedRow.CUST_KEY;
-          const meterReadingVal = validatedRow.METER_READING;
-          let parsedDate = new Date();
-          let monthYearStr = "";
-
-          const dateStr = validatedRow.READING_DATE;
-          if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-            parsedDate = parse(dateStr, 'dd/MM/yyyy', new Date());
-            if (!isValid(parsedDate)) throw new Error("Invalid date format. Expected dd/MM/yyyy");
-            monthYearStr = format(parsedDate, 'yyyy-MM');
-          } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
-            parsedDate = parse(dateStr, 'yyyy-MM', new Date());
-            parsedDate = lastDayOfMonth(parsedDate);
-            monthYearStr = dateStr;
-          } else {
-            parsedDate = new Date(dateStr);
-            if (!isValid(parsedDate)) throw new Error("Invalid date");
-            monthYearStr = format(parsedDate, 'yyyy-MM');
-          }
-
-          const meterPool = meters as any[];
-          let meter = undefined;
-          if (meterType === 'individual') {
-            meter = meterPool.find((m: any) => m.customerKeyNumber === customerKeyVal);
-            if (!meter && (validatedRow as any).METER_KEY) {
-              meter = meterPool.find((m: any) => m.meterNumber === (validatedRow as any).METER_KEY);
-            }
-          } else {
-            meter = meterPool.find((m: any) => m.customerKeyNumber === customerKeyVal);
-            if (!meter && (validatedRow as any).METER_KEY) {
-              meter = meterPool.find((m: any) => m.meterNumber === (validatedRow as any).METER_KEY);
-            }
-          }
-
-          if (!meter) {
-            localErrors.push(`Row ${i + 1}: Meter '${customerKeyVal}' not found.`);
-            continue;
-          }
-
-          const parseDateHelper = (dateStr: string | undefined): string | undefined => {
-            if (!dateStr || !dateStr.trim()) return undefined;
-            try {
-              let d: Date;
-              if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-                d = parse(dateStr, 'dd/MM/yyyy', new Date());
-              } else if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                d = new Date(dateStr);
-              } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
-                d = new Date(dateStr + "-01");
-              } else {
-                d = new Date(dateStr);
-              }
-              if (isValid(d)) return format(d, "yyyy-MM-dd");
-              return undefined;
-            } catch (e) {
-              return undefined;
-            }
-          };
-
-          const commonPayload = {
-            readerStaffId: currentUser.id,
-            readingDate: format(parsedDate, "yyyy-MM-dd"),
-            monthYear: monthYearStr,
-            readingValue: meterReadingVal,
-            roundKey: validatedRow.ROUND_KEY,
-            walkOrder: validatedRow.WALK_ORDER,
-            instKey: validatedRow.INST_KEY,
-            instTypeCode: validatedRow.INST_TYPE_CODE,
-            custName: validatedRow.CUST_NAME,
-            displayAddress: validatedRow.DISPLAY_ADDRESS,
-            branchName: validatedRow.BRANCH_NAME,
-            meterKey: validatedRow.METER_KEY,
-            previousReading: validatedRow.PREVIOUS_READING,
-            lastReadingDate: parseDateHelper(validatedRow.LAST_READING_DATE),
-            NUMBER_OF_DIALS: validatedRow.NUMBER_OF_DIALS,
-            meterDiameter: validatedRow.METER_DIAMETER,
-            shadowPcnt: validatedRow.SHADOW_PCNT,
-            minUsageQty: validatedRow.MIN_USAGE_QTY,
-            minUsageAmount: validatedRow.MIN_USAGE_AMOUNT,
-            chargeGroup: validatedRow.CHARGE_GROUP,
-            usageCode: validatedRow.USAGE_CODE,
-            sellCode: validatedRow.SELL_CODE,
-            frequency: validatedRow.FREQUENCY,
-            serviceCode: validatedRow.SERVICE_CODE,
-            estimatedReading: validatedRow.ESTIMATED_READING,
-            estimatedReadingLow: validatedRow.ESTIMATED_READING_LOW,
-            estimatedReadingHigh: validatedRow.ESTIMATED_READING_HIGH,
-            estimatedReadingInd: validatedRow.ESTIMATED_READING_IND,
-            meterReaderCode: validatedRow.METER_READER_CODE,
-            faultCode: validatedRow.FAULT_CODE,
-            serviceBilledUpToDate: parseDateHelper(validatedRow.SERVICE_BILLED_UP_TO_DATE),
-            meterMultiplyFactor: validatedRow.METER_MULTIPLY_FACTOR
-          };
-
-          let result;
-          if (meterType === 'individual') {
-            const calculatedUsage = (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0);
-            result = await addIndividualCustomerReading({
-              individualCustomerId: meter.customerKeyNumber,
-              custKey: validatedRow.CUST_KEY,
-              shadowUsage: calculatedUsage,
-              ...commonPayload
-            });
-          } else {
-            result = await addBulkMeterReading({
-              CUSTOMERKEY: meter.customerKeyNumber,
-              custKey: validatedRow.CUST_KEY,
-              shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
-              ...commonPayload
-            });
-          }
-
-          if (result && result.success) {
-            localSuccessCount++;
-          } else {
-            localErrors.push(`Row ${i + 1} (${customerKeyVal}): ${result?.message || 'Unknown error.'}`);
-          }
-        } catch (error) {
-          if (error instanceof ZodError) {
-            const errorMessages = error.issues.map(issue => `Row ${i + 1}, Column '${issue.path.join('.')}' : ${issue.message}`).join("; ");
-            localErrors.push(errorMessages);
-          } else {
-            localErrors.push(`Row ${i + 1}: Unknown validation error. ${(error as Error).message}`);
+        const existingReadings = meterType === 'individual' ? getIndividualCustomerReadings() : getBulkMeterReadings();
+        for (const existingReading of existingReadings) {
+          const existingMeterKey = meterType === 'individual'
+            ? (existingReading.individualCustomerId || existingReading.custKey || existingReading.meterKey)
+            : (existingReading.CUSTOMERKEY || existingReading.custKey || existingReading.meterKey);
+          const existingDate = normalizeReadingDate(existingReading.readingDate);
+          if (existingMeterKey && existingDate) {
+            duplicateReadingKeySet.add(`${String(existingMeterKey).trim()}|${existingDate}`);
           }
         }
+
+        const isHeaderRow = firstLineValues.some(v => requiredHeadersLower.includes(v.toLowerCase()));
+        let dataRows = lines;
+        const headerMapping: Record<string, number> = {};
+
+        if (isHeaderRow) {
+          firstLineValues.forEach((val, index) => {
+            headerMapping[val.toUpperCase()] = index;
+          });
+          dataRows = lines.slice(1);
+        } else {
+          readingCsvRequiredHeaders.forEach((req: string, idx: number) => { headerMapping[req] = idx; });
+        }
+
+        const meterPool = meters as any[];
+        const meterByCustomerKey = new Map<string, any>();
+        const meterByMeterNumber = new Map<string, any>();
+
+        for (const meter of meterPool) {
+          if (meter?.customerKeyNumber) meterByCustomerKey.set(String(meter.customerKeyNumber).trim(), meter);
+          if (meter?.meterNumber) meterByMeterNumber.set(String(meter.meterNumber).trim(), meter);
+        }
+
+        const getMeterFromLookup = (customerKey: string | undefined, meterKey: string | undefined) => {
+          const customerKeyTrimmed = String(customerKey ?? '').trim();
+          if (customerKeyTrimmed && meterByCustomerKey.has(customerKeyTrimmed)) {
+            return meterByCustomerKey.get(customerKeyTrimmed);
+          }
+
+          const meterKeyTrimmed = String(meterKey ?? '').trim();
+          if (meterKeyTrimmed && meterByMeterNumber.has(meterKeyTrimmed)) {
+            return meterByMeterNumber.get(meterKeyTrimmed);
+          }
+
+          return undefined;
+        };
+
+        const processCsvRow = async (rowIndex: number) => {
+          const values = dataRows[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^\"|\"$/g, ''));
+          const rowData = Object.fromEntries(
+            Object.entries(headerMapping).map(([header, index]) => [header, values[index]])
+          );
+
+          try {
+            const validatedRow = readingCsvRowSchema.parse(rowData);
+            const customerKeyVal = validatedRow.CUST_KEY;
+            const meterKeyVal = (validatedRow as any).METER_KEY;
+            const meter = getMeterFromLookup(customerKeyVal, meterKeyVal);
+
+            if (!meter) {
+              localErrors.push(`Row ${rowIndex + 1}: Meter '${customerKeyVal || meterKeyVal || 'unknown'}' not found.`);
+              return;
+            }
+
+            const normalizedReadingDate = normalizeReadingDate(validatedRow.READING_DATE);
+            if (!normalizedReadingDate) {
+              localErrors.push(`Row ${rowIndex + 1}: Invalid reading date format '${validatedRow.READING_DATE}'.`);
+              return;
+            }
+
+            const rowMeterKey = String(meter.customerKeyNumber ?? meter.meterNumber ?? '').trim();
+            if (!rowMeterKey) {
+              localErrors.push(`Row ${rowIndex + 1}: Unable to determine meter key for duplicate detection.`);
+              return;
+            }
+
+            if (isDuplicateReading(rowMeterKey, normalizedReadingDate)) {
+              localErrors.push(`Row ${rowIndex + 1}: Duplicate reading skipped for meter '${rowMeterKey}' on ${normalizedReadingDate}.`);
+              return;
+            }
+
+            let parsedDate = new Date(validatedRow.READING_DATE);
+            let monthYearStr = "";
+            const dateStr = validatedRow.READING_DATE;
+
+            if (dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+              parsedDate = parse(dateStr, 'dd/MM/yyyy', new Date());
+              if (!isValid(parsedDate)) throw new Error("Invalid date format. Expected dd/MM/yyyy");
+              monthYearStr = format(parsedDate, 'yyyy-MM');
+            } else if (dateStr.match(/^\d{4}-\d{2}$/)) {
+              parsedDate = parse(dateStr, 'yyyy-MM', new Date());
+              parsedDate = lastDayOfMonth(parsedDate);
+              monthYearStr = dateStr;
+            } else if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+              parsedDate = new Date(dateStr);
+              if (!isValid(parsedDate)) throw new Error("Invalid date");
+              monthYearStr = format(parsedDate, 'yyyy-MM');
+            } else {
+              parsedDate = new Date(dateStr);
+              if (!isValid(parsedDate)) throw new Error("Invalid date");
+              monthYearStr = format(parsedDate, 'yyyy-MM');
+            }
+
+            const commonPayload = {
+              readerStaffId: currentUser.id,
+              readingDate: format(parsedDate, "yyyy-MM-dd"),
+              monthYear: monthYearStr,
+              readingValue: validatedRow.METER_READING,
+              roundKey: validatedRow.ROUND_KEY,
+              walkOrder: validatedRow.WALK_ORDER,
+              instKey: validatedRow.INST_KEY,
+              instTypeCode: validatedRow.INST_TYPE_CODE,
+              custName: validatedRow.CUST_NAME,
+              displayAddress: validatedRow.DISPLAY_ADDRESS,
+              branchName: validatedRow.BRANCH_NAME,
+              meterKey: validatedRow.METER_KEY,
+              previousReading: validatedRow.PREVIOUS_READING,
+              lastReadingDate: parseDateHelper(validatedRow.LAST_READING_DATE),
+              NUMBER_OF_DIALS: validatedRow.NUMBER_OF_DIALS,
+              meterDiameter: validatedRow.METER_DIAMETER,
+              shadowPcnt: validatedRow.SHADOW_PCNT,
+              minUsageQty: validatedRow.MIN_USAGE_QTY,
+              minUsageAmount: validatedRow.MIN_USAGE_AMOUNT,
+              chargeGroup: validatedRow.CHARGE_GROUP,
+              usageCode: validatedRow.USAGE_CODE,
+              sellCode: validatedRow.SELL_CODE,
+              frequency: validatedRow.FREQUENCY,
+              serviceCode: validatedRow.SERVICE_CODE,
+              estimatedReading: validatedRow.ESTIMATED_READING,
+              estimatedReadingLow: validatedRow.ESTIMATED_READING_LOW,
+              estimatedReadingHigh: validatedRow.ESTIMATED_READING_HIGH,
+              estimatedReadingInd: validatedRow.ESTIMATED_READING_IND,
+              meterReaderCode: validatedRow.METER_READER_CODE,
+              faultCode: validatedRow.FAULT_CODE,
+              serviceBilledUpToDate: parseDateHelper(validatedRow.SERVICE_BILLED_UP_TO_DATE),
+              meterMultiplyFactor: validatedRow.METER_MULTIPLY_FACTOR
+            };
+
+            let result;
+            if (meterType === 'individual') {
+              result = await addIndividualCustomerReading({
+                individualCustomerId: meter.customerKeyNumber,
+                custKey: validatedRow.CUST_KEY,
+                shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
+                ...commonPayload
+              });
+            } else {
+              result = await addBulkMeterReading({
+                CUSTOMERKEY: meter.customerKeyNumber,
+                custKey: validatedRow.CUST_KEY,
+                shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
+                ...commonPayload
+              });
+            }
+
+            if (result && result.success) {
+              localSuccessCount++;
+              recordDuplicateReading(rowMeterKey, normalizedReadingDate);
+            } else {
+              localErrors.push(`Row ${rowIndex + 1} (${customerKeyVal}): ${result?.message || 'Unknown error.'}`);
+            }
+          } catch (error) {
+            if (error instanceof ZodError) {
+              const errorMessages = error.issues.map(issue => `Row ${rowIndex + 1}, Column '${issue.path.join('.')}' : ${issue.message}`).join('; ');
+              localErrors.push(errorMessages);
+            } else {
+              localErrors.push(`Row ${rowIndex + 1}: Unknown validation error. ${(error as Error).message}`);
+            }
+          }
+        };
+
+        const rowTasks: Promise<void>[] = [];
+        const batchSize = 20;
+        for (let i = 0; i < dataRows.length; i++) {
+          rowTasks.push(processCsvRow(i));
+          if (rowTasks.length >= batchSize) {
+            await Promise.allSettled(rowTasks);
+            rowTasks.length = 0;
+          }
+        }
+        if (rowTasks.length > 0) {
+          await Promise.allSettled(rowTasks);
+        }
+      } catch (error) {
+        localErrors.push(`CSV processing failed: ${(error as Error).message}`);
       }
+
       finalizeProcessing();
     };
 
