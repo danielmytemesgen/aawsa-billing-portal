@@ -14,10 +14,28 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   const rightMargin = 195;
   const contentWidth = 180;
   const col2 = 140; // Value column
+
+  // Cache variables to prevent redundant jsPDF font calculations
+  let currentFontStyle = "";
+  let currentFontSize = 0;
+
+  const setFontStyle = (style: string) => {
+    if (currentFontStyle !== style) {
+      doc.setFont("helvetica", style);
+      currentFontStyle = style;
+    }
+  };
+
+  const setFontSize = (size: number) => {
+    if (currentFontSize !== size) {
+      doc.setFontSize(size);
+      currentFontSize = size;
+    }
+  };
   
   // Header Style
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
+  setFontStyle("bold");
+  setFontSize(16);
   doc.setTextColor(0);
   doc.text("ADDIS ABABA WATER AND SEWERAGE AUTHORITY", 105, yOffset, { align: 'center' });
   
@@ -26,7 +44,7 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   doc.line(leftMargin, yOffset, rightMargin, yOffset);
   
   yOffset += 10;
-  doc.setFontSize(12);
+  setFontSize(12);
   doc.text("AAWSA INVOICE", leftMargin + 10, yOffset);
   
   // --- Section: BULK INFORMATION ---
@@ -34,14 +52,14 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   doc.setFillColor(34, 60, 137); // Deep Blue
   doc.rect(leftMargin, yOffset, contentWidth, 8, 'F');
   doc.setTextColor(255);
-  doc.setFontSize(10);
+  setFontSize(10);
   doc.text("BULK INFORMATION", leftMargin + 5, yOffset + 5.5);
   doc.setTextColor(0);
   
   const drawRow = (label: string, value: string, y: number) => {
-    doc.setFont("helvetica", "bold");
+    setFontStyle("bold");
     doc.text(label, leftMargin + 2, y);
-    doc.setFont("helvetica", "normal");
+    setFontStyle("normal");
     doc.text(value, rightMargin - 2, y, { align: 'right' });
     doc.setDrawColor(245);
     doc.line(leftMargin, y + 2, rightMargin, y + 2);
@@ -70,9 +88,9 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   yOffset = drawRow("Previous and current reading:", `${bill.PREVREAD} / ${bill.CURRREAD} m3`, yOffset);
   yOffset = drawRow("Bulk usage:", `${bill.CONS} m3`, yOffset);
   yOffset = drawRow("Total Individual Usage:", `${bill.snapshot_data?.total_individual_usage || 0} m3`, yOffset);
-  doc.setFont("helvetica", "bold");
+  setFontStyle("bold");
   yOffset = drawRow("Difference usage:", `${bill.difference_usage || 0} m3`, yOffset);
-  doc.setFont("helvetica", "normal");
+  setFontStyle("normal");
 
   // --- Section: CHARGES BREAKDOWN ---
   yOffset += 5;
@@ -111,17 +129,17 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   yOffset += 2;
   doc.setFillColor(245, 247, 250);
   doc.rect(leftMargin, yOffset, contentWidth, 10, 'F');
-  doc.setFontSize(12);
-  doc.setFont("helvetica", "bold");
+  setFontSize(12);
+  setFontStyle("bold");
   doc.setTextColor(34, 60, 137);
   doc.text("TOTAL AMOUNT PAYABLE (ETB):", leftMargin + 5, yOffset + 6.5);
   doc.text(`ETB ${totalPayableVal.toFixed(2)}`, rightMargin - 5, yOffset + 6.5, { align: 'right' });
 
   // Footer / Status
   yOffset += 15;
-  doc.setFontSize(10);
+  setFontSize(10);
   doc.setTextColor(100);
-  doc.setFont("helvetica", "normal");
+  setFontStyle("normal");
   doc.text(`Billing Cycle: ${bill.month_year}`, leftMargin, yOffset);
   doc.text(`Status: ${bill.payment_status}`, rightMargin, yOffset, { align: 'right' });
   
@@ -134,33 +152,36 @@ export const processBatchPdfGeneration = async (
   jobDir: string,
   batchSize: number = 500
 ) => {
-  const filePaths: string[] = [];
   const totalCount = bills.length;
   
   if (!fs.existsSync(jobDir)) {
     fs.mkdirSync(jobDir, { recursive: true });
   }
 
+  const chunks: any[][] = [];
   for (let i = 0; i < totalCount; i += batchSize) {
-    const chunk = bills.slice(i, i + batchSize);
+    chunks.push(bills.slice(i, i + batchSize));
+  }
+
+  // Render chunks concurrently in parallel asynchronous promises, yielding execution to the event loop
+  const filePaths = await Promise.all(chunks.map(async (chunk, index) => {
     const doc = new jsPDF();
     
-    chunk.forEach((bill, index) => {
-      if (index > 0) doc.addPage();
+    chunk.forEach((bill, idx) => {
+      if (idx > 0) doc.addPage();
       drawBillOnPdf(doc, bill);
     });
 
-    const fileName = `batch_${Math.floor(i / batchSize) + 1}.pdf`;
+    const fileName = `batch_${index + 1}.pdf`;
     const filePath = path.join(jobDir, fileName);
     
-    // In Node.js environment, jspdf output can be converted to Buffer
+    // In Node.js environment, jsPDF output can be written directly to file system
     const pdfOutput = doc.output('arraybuffer');
-    fs.writeFileSync(filePath, Buffer.from(pdfOutput));
+    await fs.promises.writeFile(filePath, Buffer.from(pdfOutput));
     
     // Store relative path for download
-    const relativePath = filePath.split('public')[1].replace(/\\/g, '/');
-    filePaths.push(relativePath);
-  }
+    return filePath.split('public')[1].replace(/\\/g, '/');
+  }));
 
   return filePaths;
 };

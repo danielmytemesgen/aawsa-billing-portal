@@ -7,6 +7,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { format, parseISO } from 'date-fns';
 import { cn, formatDate } from "@/lib/utils";
+import { formatNumber } from '@/lib/format';
 
 interface ReportDataViewProps {
   data: any[];
@@ -43,12 +44,12 @@ export function ReportDataView({ data, headers }: ReportDataViewProps) {
     // Numbers (Currency, Readings, etc.)
     if (typeof value === 'number') {
       if (lowerHeader.includes('amount') || lowerHeader.includes('debit') || lowerHeader.includes('etb') || lowerHeader.includes('penalty')) {
-        return <span className="font-mono font-bold text-indigo-700">{value.toFixed(2)}</span>;
+        return <span className="font-mono font-bold text-indigo-700">{formatNumber(value)}</span>;
       }
       if (lowerHeader.includes('reading') || lowerHeader.includes('cons') || lowerHeader.includes('usage')) {
-        return <span className="font-mono font-medium text-slate-900">{value.toFixed(2)}</span>;
+        return <span className="font-mono font-medium text-slate-900">{formatNumber(value)}</span>;
       }
-      return <span className="font-mono text-slate-600">{value}</span>;
+      return <span className="font-mono text-slate-600">{String(value)}</span>;
     }
 
     if (typeof value === 'object') {

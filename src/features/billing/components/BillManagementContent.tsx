@@ -27,7 +27,10 @@ import {
     submitBillAction,
     approveBillAction,
     postBillAction,
-    getBranchesLookupAction
+    getBranchesLookupAction,
+    submitBillsBulkAction,
+    approveBillsBulkAction,
+    postBillsBulkAction
 } from '@/lib/actions';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -403,7 +406,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             title: 'Submit All for Approval',
             description: `Are you sure you want to submit ${drafts.length} bills for approval?`,
             action: async () => {
-                await Promise.allSettled(drafts.map(b => submitBillAction(b.id)));
+                const ids = drafts.map(b => b.id);
+                await submitBillsBulkAction(ids);
                 toast({ title: 'All Submitted', description: `${drafts.length} bill(s) submitted for approval.` });
                 await loadData();
             }
@@ -418,7 +422,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             title: 'Approve All Invoices',
             description: `Are you sure you want to approve ${pendingApprovals.length} invoices? This action cannot be easily undone.`,
             action: async () => {
-                await Promise.allSettled(pendingApprovals.map(b => approveBillAction(b.id)));
+                const ids = pendingApprovals.map(b => b.id);
+                await approveBillsBulkAction(ids);
                 toast({ title: 'All Approved', description: `${pendingApprovals.length} invoice(s) approved.` });
                 await loadData();
             }
@@ -433,7 +438,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             title: 'Post & Finalize All Bills',
             description: `Are you sure you want to post and finalize ${approvedBills.length} bills? This will officially record them and make them active for collection.`,
             action: async () => {
-                await Promise.allSettled(approvedBills.map(b => postBillAction(b.id)));
+                const ids = approvedBills.map(b => b.id);
+                await postBillsBulkAction(ids);
                 toast({ title: 'All Posted', description: `${approvedBills.length} bill(s) posted and finalized.` });
                 await loadData();
             }

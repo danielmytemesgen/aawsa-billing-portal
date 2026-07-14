@@ -4,7 +4,9 @@ import * as React from "react";
 import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, UploadCloud, Info, FileSpreadsheet, AlertCircle } from "lucide-react";
+import { FileText, UploadCloud, Info, FileSpreadsheet, AlertCircle, ChevronDown } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { BulkMeterDataEntryForm } from "./bulk-meter-data-entry-form";
 import { IndividualCustomerDataEntryForm } from "./individual-customer-data-entry-form";
@@ -17,7 +19,9 @@ import {
   type BulkMeterDataEntryFormValues,
   type IndividualCustomerDataEntryFormValues
 } from "./customer-data-entry-types";
-import { addBulkMeter, addCustomer, initializeBulkMeters, initializeCustomers, getBulkMeters, getCustomers } from "@/lib/data-store";
+import { addBulkMeter, addCustomer, initializeBulkMeters, initializeCustomers, getBulkMeters, getCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
+import type { Branch } from "../branches/branch-types";
+import { batchImportBulkMetersAction, batchImportIndividualCustomersAction } from "@/lib/actions";
 import { generateBulkMeterKeys, generateCustomerKeys } from "@/lib/utils";
 import type { BulkMeter, BulkMeterStatus } from "../bulk-meters/bulk-meter-types";
 import type { IndividualCustomer, IndividualCustomerStatus } from "../individual-customers/individual-customer-types";
@@ -59,6 +63,12 @@ const individualCustomerCsvSchema = baseIndividualCustomerDataSchema.extend({
 export default function AdminDataEntryPage() {
   const { hasPermission } = usePermissions();
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
+  const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
+
+  // Dialog state for branch picker
+  const [templateDialogOpen, setTemplateDialogOpen] = React.useState(false);
+  const [pendingTemplate, setPendingTemplate] = React.useState<{ headers: string[]; fileName: string } | null>(null);
+  const [selectedBranchId, setSelectedBranchId] = React.useState<string>("");
 
   React.useEffect(() => {
     initializeBulkMeters();
@@ -67,6 +77,10 @@ export default function AdminDataEntryPage() {
     if (userJson) {
       setCurrentUser(JSON.parse(userJson));
     }
+    // Load branches
+    initializeBranches().then(() => setAllBranches(getBranches()));
+    const unsubBranches = subscribeToBranches((updated) => setAllBranches(updated));
+    return () => { unsubBranches(); };
   }, []);
 
   const handleBulkMeterCsvUpload = async (data: BulkMeterDataEntryFormValues) => {
@@ -109,8 +123,26 @@ export default function AdminDataEntryPage() {
     return await addCustomer(customerDataForStore);
   };
 
-  const downloadCsvTemplate = (headers: string[], fileName: string) => {
-    const csvString = headers.join(',') + '\n';
+  const openTemplateDialog = (headers: string[], fileName: string) => {
+    setPendingTemplate({ headers, fileName });
+    setSelectedBranchId("");
+    setTemplateDialogOpen(true);
+  };
+
+  const downloadCsvTemplate = () => {
+    if (!pendingTemplate) return;
+    const { headers, fileName } = pendingTemplate;
+    // Build a sample row with the selected branchId pre-filled
+    const sampleRow = headers.map(h => {
+      if (h.toLowerCase() === 'branchid') return selectedBranchId;
+      return '';
+    });
+    // Build comment rows listing all valid branch IDs
+    const branchComments = allBranches.map(b => `# Branch: ${b.name} | ID: ${b.id}`).join('\n');
+    const csvString =
+      (branchComments ? branchComments + '\n' : '') +
+      headers.join(',') + '\n' +
+      sampleRow.join(',') + '\n';
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     if (link.download !== undefined) {
@@ -123,6 +155,7 @@ export default function AdminDataEntryPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     }
+    setTemplateDialogOpen(false);
   };
 
   if (!hasPermission('data_entry_access')) {
@@ -235,7 +268,7 @@ export default function AdminDataEntryPage() {
                     variant="outline"
                     size="sm"
                     className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
-                    onClick={() => downloadCsvTemplate(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
+                    onClick={() => openTemplateDialog(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
                   >
                     <FileSpreadsheet className="mr-2 h-4 w-4" />
                     Template
@@ -251,6 +284,7 @@ export default function AdminDataEntryPage() {
                     schema={bulkMeterCsvSchema}
                     addRecordFunction={handleBulkMeterCsvUpload}
                     expectedHeaders={bulkMeterCsvHeaders}
+                    batchUploadFunction={batchImportBulkMetersAction}
                   />
               </CardContent>
             </Card>
@@ -268,7 +302,7 @@ export default function AdminDataEntryPage() {
                     variant="outline"
                     size="sm"
                     className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
-                    onClick={() => downloadCsvTemplate(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
+                    onClick={() => openTemplateDialog(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
                   >
                     <FileSpreadsheet className="mr-2 h-4 w-4" />
                     Template
@@ -284,12 +318,61 @@ export default function AdminDataEntryPage() {
                   schema={individualCustomerCsvSchema}
                   addRecordFunction={handleIndividualCustomerCsvUpload}
                   expectedHeaders={individualCustomerCsvHeaders}
+                  batchUploadFunction={batchImportIndividualCustomersAction}
                 />
               </CardContent>
             </Card>
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Branch Picker Dialog for CSV Template Download */}
+      <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">Select Branch for Template</DialogTitle>
+            <DialogDescription>
+              Choose a branch to pre-fill the <code className="bg-primary/10 px-1 rounded text-primary text-xs">branchId</code> column.
+              The template will also include all branch IDs as reference comments.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2">
+            <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
+              <SelectTrigger className="w-full rounded-xl">
+                <SelectValue placeholder="Select a branch..." />
+              </SelectTrigger>
+              <SelectContent>
+                {allBranches.map(branch => (
+                  <SelectItem key={branch.id} value={branch.id}>
+                    <span className="font-medium">{branch.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground font-mono">{branch.id.slice(0, 8)}…</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedBranchId && (
+              <p className="mt-2 text-xs text-muted-foreground font-mono break-all">
+                Full ID: {selectedBranchId}
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="rounded-xl" onClick={() => setTemplateDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="rounded-xl"
+              onClick={downloadCsvTemplate}
+              disabled={!selectedBranchId}
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Download Template
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

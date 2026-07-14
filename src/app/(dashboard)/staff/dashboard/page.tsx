@@ -9,7 +9,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
-  ResponsiveContainer,
   BarChart,
   PieChart,
   XAxis,
@@ -390,6 +389,17 @@ export default function StaffDashboardPage() {
   const fetchDashboardMetrics = async () => {
     try {
       const { data: metrics, error } = await getDashboardMetricsAction();
+
+      // Detect expired server session: localStorage still has user but cookie is gone.
+      const isAuthErr = (e: any) => /user not authenticated|unauthorized|forbidden/i.test(
+        e?.message || e?.name || String(e)
+      );
+      if (error && isAuthErr(error)) {
+        localStorage.removeItem('user');
+        router.push('/');
+        return;
+      }
+
       if (metrics) {
         setDashboardMetrics(metrics);
       } else if (error) {
@@ -757,7 +767,6 @@ export default function StaffDashboardPage() {
             <div className="h-[100px] mt-6 relative flex items-center justify-center">
               {isClient && processedStats.billsPaymentStatusData.some(d => d.value > 0) ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
                     <PieChart>
                       <Pie
                         data={processedStats.billsPaymentStatusData}
@@ -776,7 +785,6 @@ export default function StaffDashboardPage() {
                       </Pie>
                       <Tooltip content={<ChartTooltipContent hideLabel />} />
                     </PieChart>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="text-sm font-semibold text-blue-600/80 italic w-full text-center mt-6">No bill data for this month</div>
@@ -922,7 +930,6 @@ export default function StaffDashboardPage() {
               <div className="h-[320px]">
                 {isClient && processedStats.branchPerformanceData.length > 0 ? (
                   <ChartContainer config={chartConfig} className="w-full h-full">
-                    <ResponsiveContainer>
                       <BarChart data={processedStats.branchPerformanceData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                         <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="branch" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 600 }} />
@@ -931,7 +938,6 @@ export default function StaffDashboardPage() {
                         <Bar dataKey="paid" fill="#10b981" radius={[6, 6, 0, 0]} barSize={25} />
                         <Bar dataKey="unpaid" fill="#ef4444" radius={[6, 6, 0, 0]} barSize={25} />
                       </BarChart>
-                    </ResponsiveContainer>
                   </ChartContainer>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm font-medium text-muted-foreground">
@@ -989,7 +995,6 @@ export default function StaffDashboardPage() {
               <div className="h-[320px]">
                 {isClient && processedStats.waterUsageTrendData.length > 0 ? (
                   <ChartContainer config={chartConfig} className="w-full h-full">
-                    <ResponsiveContainer>
                       <LineChart data={processedStats.waterUsageTrendData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="month" tick={{ fontSize: 11, fontWeight: 600 }} />
@@ -997,7 +1002,6 @@ export default function StaffDashboardPage() {
                         <Tooltip content={<ChartTooltipContent />} />
                         <Line type="monotone" dataKey="usage" name="Consumption" stroke="#4f46e5" strokeWidth={4} dot={{ r: 4, strokeWidth: 2, fill: '#fff' }} activeDot={{ r: 6, strokeWidth: 0 }} />
                       </LineChart>
-                    </ResponsiveContainer>
                   </ChartContainer>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm font-medium text-muted-foreground">

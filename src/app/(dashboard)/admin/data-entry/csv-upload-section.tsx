@@ -12,18 +12,21 @@ import { CheckCircle, FileWarning, UploadCloud } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 
+
 interface CsvUploadSectionProps {
   entryType: "bulk" | "individual";
   // Accept ZodObject or ZodEffects wrapping a ZodObject to handle refined schemas
   schema: z.ZodTypeAny;
   addRecordFunction: (data: any) => Promise<{ success: boolean; message?: string; error?: any; data?: any; } | void>;
   expectedHeaders: string[];
+  /** Optional: if provided, all validated rows are sent in one call instead of N individual calls. Dramatically faster for large CSVs. */
+  batchUploadFunction?: (rows: any[]) => Promise<{ success: boolean; inserted?: number; errors?: string[] }>;
 }
 
 // Regex to handle commas inside quoted fields
 const CSV_SPLIT_REGEX = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
 
-export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }: CsvUploadSectionProps) {
+export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, batchUploadFunction }: CsvUploadSectionProps) {
   const { toast } = useToast();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [file, setFile] = React.useState<File | null>(null);
@@ -84,73 +87,103 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders }:
       }
 
       const headerLine = lines[0].split(CSV_SPLIT_REGEX).map(h => h.trim().replace(/^"|"$/g, ''));
-      
-      // Flexible Header Check: 
-      // Ensure all REQUIRED headers in 'expectedHeaders' are present (case-insensitive)
+
       const normalizedCSVHeaders = headerLine.map(h => h.toLowerCase());
-      const normalizedExpectedHeaders = expectedHeaders.map(h => h.toLowerCase());
 
       const missingHeaders = expectedHeaders.filter(h => !normalizedCSVHeaders.includes(h.toLowerCase()));
-      
-      // If any of the expected headers are missing, we check if they are optional in the schema.
-      // For now, we'll keep it simple: warn if major headers are missing, but allow proceeding 
-      // if the schema validation (zod) passes later.
       if (missingHeaders.length > 0) {
         console.warn("Some expected headers are missing from CSV:", missingHeaders);
-        // We could fail here, but let's be more flexible and only fail if the actual
-        // data processing fails validation.
       }
 
       const totalRows = lines.length - 1;
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
-        
-        // Map the CSV values to the expected header keys by matching them case-insensitively
+
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 1: Validate all rows client-side (no server calls)
+      // ─────────────────────────────────────────────────────────────────
+      const validatedRows: any[] = [];
+      for (let rowIndex = 1; rowIndex < lines.length; rowIndex++) {
+        const values = lines[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
         const rowData: Record<string, any> = {};
-        
-        // Use the original expectedHeaders as keys for our data object
         expectedHeaders.forEach((expectedHeader) => {
           const indexInCSV = normalizedCSVHeaders.indexOf(expectedHeader.toLowerCase());
-          if (indexInCSV !== -1) {
-            rowData[expectedHeader] = values[indexInCSV] || undefined;
-          } else {
-            rowData[expectedHeader] = undefined;
-          }
+          rowData[expectedHeader] = indexInCSV !== -1 ? (values[indexInCSV] || undefined) : undefined;
         });
 
         try {
-          // Validate using the passed schema
           const validatedData = schema.parse(rowData);
-          const result = await addRecordFunction(validatedData);
-          if (result && result.success) {
-            localSuccessCount++;
-          } else {
-            localErrors.push(`Row ${i + 1}: ${result?.message || 'An unknown error occurred.'}`);
-          }
+          validatedRows.push(validatedData);
         } catch (error) {
           if (error instanceof z.ZodError) {
-            const errorMessages = error.issues.map(issue => `Row ${i + 1}, Column '${issue.path.join('.')}': ${issue.message}`).join("; ");
+            const errorMessages = error.issues.map(issue => `Row ${rowIndex + 1}, Column '${issue.path.join('.')}': ${issue.message}`).join("; ");
             localErrors.push(errorMessages);
           } else {
-            localErrors.push(`Row ${i + 1}: An unexpected error occurred during processing. ${(error as Error).message}`);
+            localErrors.push(`Row ${rowIndex + 1}: Validation failed. ${(error as Error).message}`);
           }
         }
-        setProcessingProgress(((i) / totalRows) * 100);      }
+        // Update progress during validation phase (0–30%)
+        setProcessingProgress(Math.round((rowIndex / totalRows) * 30));
+      }
+
+      setProcessingProgress(35);
+
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 2: Send to server — batch (1 call) or sequential fallback
+      // ─────────────────────────────────────────────────────────────────
+      if (validatedRows.length > 0) {
+        if (batchUploadFunction) {
+          // Fast path: send ALL rows in a single Server Action call
+          try {
+            const result = await batchUploadFunction(validatedRows);
+            if (result?.success) {
+              localSuccessCount = result.inserted ?? validatedRows.length;
+              if (result.errors && result.errors.length > 0) {
+                localErrors.push(...result.errors);
+              }
+            } else {
+              localErrors.push("Batch upload failed. Please try again.");
+            }
+          } catch (err: any) {
+            localErrors.push(`Batch upload error: ${err?.message || String(err)}`);
+          }
+          setProcessingProgress(100);
+        } else {
+          // Fallback: legacy row-by-row with concurrency limit of 15
+          const concurrencyLimit = 15;
+          for (let i = 0; i < validatedRows.length; i += concurrencyLimit) {
+            const chunk = validatedRows.slice(i, i + concurrencyLimit);
+            await Promise.all(chunk.map(async (validatedData, chunkIdx) => {
+              const rowIndex = i + chunkIdx;
+              try {
+                const result = await addRecordFunction(validatedData);
+                if (result && result.success) {
+                  localSuccessCount++;
+                } else {
+                  localErrors.push(`Row ${rowIndex + 2}: ${result?.message || 'An unknown error occurred.'}`);
+                }
+              } catch (error) {
+                localErrors.push(`Row ${rowIndex + 2}: An unexpected error occurred. ${(error as Error).message}`);
+              }
+            }));
+            setProcessingProgress(35 + Math.round(((i + chunk.length) / validatedRows.length) * 65));
+          }
+        }
+      }
 
       setSuccessCount(localSuccessCount);
       setProcessingErrors(localErrors);
       setIsProcessing(false);
 
       if (localErrors.length === 0 && localSuccessCount > 0) {
-        toast({ title: "Upload Successful", description: `${localSuccessCount} records were successfully imported and are pending approval.` });
+        toast({ title: "Upload Successful", description: `${localSuccessCount} records were successfully imported.` });
       } else if (localErrors.length > 0 && localSuccessCount > 0) {
-        toast({ title: "Partial Success", description: `Imported ${localSuccessCount} records (pending approval), but ${localErrors.length} rows had errors.` });
+        toast({ title: "Partial Success", description: `Imported ${localSuccessCount} records, but ${localErrors.length} rows had errors.` });
       } else if (localErrors.length > 0) {
         toast({ variant: "destructive", title: "Upload Failed", description: "The CSV file contained errors and no records were imported." });
       }
     };
     reader.readAsText(file);
   };
+
 
   return (
     <div className="space-y-6">

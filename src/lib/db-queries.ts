@@ -959,15 +959,25 @@ export const dbGetBillsByBulkMeterId = async (customerKeyNumber: string, branchI
     return await query(sql, params);
 };
 
-export const dbUpdateBillStatus = async (id: string, status: string, approvalDate: Date | null = null, approvedBy: string | null = null, client?: any) => {
-    let sql = 'UPDATE bills SET status = $1';
+export const dbUpdateBillStatus = async (id: string, status: string, approvalDate: Date | null = null, approvedBy: string | null = null, client?: any, monthYear?: string) => {
+    let sql = '';
     const params: any[] = [status, id];
 
     if (approvalDate) {
-        sql = 'UPDATE bills SET status = $1, approval_date = $3, approved_by = $4 WHERE id = $2 RETURNING *';
         params.push(approvalDate, approvedBy);
+        if (monthYear) {
+            params.push(monthYear);
+            sql = 'UPDATE bills SET status = $1, approval_date = $3, approved_by = $4 WHERE id = $2 AND month_year = $5 RETURNING *';
+        } else {
+            sql = 'UPDATE bills SET status = $1, approval_date = $3, approved_by = $4 WHERE id = $2 RETURNING *';
+        }
     } else {
-        sql = 'UPDATE bills SET status = $1 WHERE id = $2 RETURNING *';
+        if (monthYear) {
+            params.push(monthYear);
+            sql = 'UPDATE bills SET status = $1 WHERE id = $2 AND month_year = $3 RETURNING *';
+        } else {
+            sql = 'UPDATE bills SET status = $1 WHERE id = $2 RETURNING *';
+        }
     }
 
     if (client) {
@@ -2071,12 +2081,18 @@ export const dbGetBillingJob = async (id: string) => {
     return rows[0];
 };
 
-export const dbGetActiveBillingJobs = async (monthYear: string, type: string) => {
-    return await query(`
+export const dbGetActiveBillingJobs = async (monthYear: string, type: string, branchId?: string) => {
+    let sql = `
         SELECT * FROM billing_jobs 
         WHERE month_year = $1 AND type = $2 AND status IN ('pending', 'processing')
-        ORDER BY created_at DESC
-    `, [monthYear, type]);
+    `;
+    const params: any[] = [monthYear, type];
+    if (branchId) {
+        sql += ` AND (branch_id = $3 OR branch_id IS NULL)`;
+        params.push(branchId);
+    }
+    sql += ` ORDER BY created_at DESC`;
+    return await query(sql, params);
 };
 
 export const dbGetUnprocessedMetersForJob = async (job: any, limit: number) => {
@@ -2179,6 +2195,8 @@ export const dbBatchInsertBills = async (bills: any[], client?: any) => {
         { name: 'debit_30',                pgType: 'numeric' },
         { name: 'debit_30_60',             pgType: 'numeric' },
         { name: 'debit_60',                pgType: 'numeric' },
+        { name: 'branch_id',               pgType: 'uuid' },
+        { name: 'snapshot_data',           pgType: 'jsonb' },
     ];
 
     const colNames = columnDefs.map(c => `"${c.name}"`).join(', ');
@@ -2191,10 +2209,16 @@ export const dbBatchInsertBills = async (bills: any[], client?: any) => {
         RETURNING *
     `;
 
-    // Build one array per column
+    // Build one array per column.
+    // JSONB fields must be serialized to strings so PostgreSQL's unnest(::jsonb[])
+    // can parse them correctly — pg driver does not auto-stringify object array elements.
     const columnData = columnDefs.map(c => bills.map(b => {
         const val = (b as any)[c.name];
-        return val === undefined ? null : val;
+        if (val === undefined || val === null) return null;
+        if (c.pgType === 'jsonb') {
+            return typeof val === 'string' ? val : JSON.stringify(val);
+        }
+        return val;
     }));
 
     const qFunc = client ? client.query.bind(client) : query;

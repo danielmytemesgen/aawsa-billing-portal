@@ -188,7 +188,7 @@ export default function UnsettledBillsReportPage() {
                 description="There are currently no unsettled bills matching your filters or search criteria." 
               />
             ) : (
-              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
+              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} showDebitColumns={true} />
             )}
           </div>
         </CardContent>

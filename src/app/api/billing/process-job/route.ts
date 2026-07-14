@@ -21,7 +21,7 @@ export const maxDuration = 300; // 5 minutes max limit for Vercel Hobby plan
 export async function POST(request: Request) {
   // ── 1. Auth check ──────────────────────────────────────────────────────────
   const session = await getSession();
-  if (!session || !session.user) {
+  if (!session || !session.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
      JOIN role_permissions rp ON r.id = rp.role_id
      JOIN permissions p ON rp.permission_id = p.id
      WHERE sm.id = $1 AND p.name = 'billing:close_cycle'`,
-    [session.user.id]
+    [session.id]
   );
   if (permRows.length === 0) {
     return NextResponse.json({ error: 'Forbidden: billing:close_cycle permission required' }, { status: 403 });
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     dbBatchRolloverIndividualCustomers,
   } = await import('@/lib/db-queries');
 
-  const { calculateBill } = await import('@/lib/billing');
+  const { calculateBill, calculateBillFromTariff } = await import('@/lib/billing');
   const { calculateDebtAging, normalizeTariff } = await import('@/lib/billing-utils');
   const { buildBillingPeriod } = await import('@/lib/billing-config');
   const { randomUUID } = await import('crypto');
@@ -100,6 +100,13 @@ export async function POST(request: Request) {
     const idNumeric = parseInt(idHex, 16);
     return isNaN(idNumeric) ? 'BBPT-0000000000' : `BBPT-${String(idNumeric).padStart(10, '0')}`;
   };
+
+  // Pre-fetch branch id→name map once (avoids N+1 per item in the loop)
+  const branchRows: any[] = await query('SELECT id, name FROM branches');
+  const branchNameMap = new Map<string, string>();
+  for (const br of branchRows) {
+    branchNameMap.set(br.id, br.name);
+  }
 
   // ── 7. Main processing loop (server-side, no browser involvement) ──────────
   let currentJob = job;
@@ -180,16 +187,32 @@ export async function POST(request: Request) {
         }
 
         const cachedTariff = tariffCache.get(chargeGroup as string);
-        const billBreakdown = await calculateBill(
-          diffUsage,
-          chargeGroup as any,
-          sewerageConn as any,
-          item.meterSize || item.meter_size || 0.5,
-          currentJob.month_year,
-          undefined,
-          undefined,
-          cachedTariff
-        );
+        if (diffUsage < 0) {
+          const useRuleOfThree = cachedTariff ? (cachedTariff.use_rule_of_three !== undefined && cachedTariff.use_rule_of_three !== null ? Boolean(cachedTariff.use_rule_of_three) : true) : true;
+          if (!useRuleOfThree) {
+            throw new Error(
+              `Negative consumption detected (${diffUsage} m³) for ${chargeGroup} in ${currentJob.month_year}. ` +
+              `Individual sub-meter usage exceeds bulk meter reading. ` +
+              `Please verify meter readings before generating a bill.`
+            );
+          } else {
+            failedItems.push(`${customerKey}: Negative consumption detected (${diffUsage} m³). Billed at 3 m³ (Rule of 3 active), but readings need attention.`);
+          }
+        }
+        const billBreakdown = cachedTariff
+          ? calculateBillFromTariff(
+              cachedTariff,
+              diffUsage,
+              item.meterSize || item.meter_size || 0.5,
+              sewerageConn as any
+            )
+          : await calculateBill(
+              diffUsage,
+              chargeGroup as any,
+              sewerageConn as any,
+              item.meterSize || item.meter_size || 0.5,
+              currentJob.month_year
+            );
         diffUsage = billBreakdown.effectiveUsage;
 
         const historicalBills = historicalBillsMap.get(customerKey) || [];
@@ -203,6 +226,7 @@ export async function POST(request: Request) {
         });
 
         if (hasOverlap && !currentJob.allow_overlap) {
+          failedItems.push(`${customerKey}: Billing period overlaps with an existing bill.`);
           lastId = customerKey;
           continue;
         }
@@ -214,15 +238,31 @@ export async function POST(request: Request) {
 
         const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
         const totalPayable = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
+        const carryBalance = Boolean(currentJob.carry_balance);
 
         const billId = randomUUID();
+        const branchId: string | null = item.branch_id || null;
+        const branchName: string | null = branchId ? (branchNameMap.get(branchId) || null) : null;
+
+        // Snapshot captures usage breakdown for PDF generation
+        const snapshotData = currentJob.type === 'bulk_meters' ? {
+          chargeGroup: item.charge_group || item.customerType,
+          sewerageConnection: sewerageConn,
+          individualCustomerCount: (subCustomersMap.get(customerKey) || []).length,
+          totalIndividualUsage: currentJob.type === 'bulk_meters'
+            ? (subCustomersMap.get(customerKey) || []).reduce((s: number, c: any) =>
+                s + ((Number(c.currentReading) || 0) - (Number(c.previousReading) || 0)), 0)
+            : 0,
+        } : null;
+
         billsToInsert.push({
           id: billId,
           BILLKEY: generateBillKey(billId),
           CUSTOMERKEY: currentJob.type === 'bulk_meters' ? customerKey : null,
           individual_customer_id: currentJob.type === 'individual_customers' ? customerKey : null,
           CUSTOMERNAME: item.name,
-          CUSTOMERBRANCH: item.branch_id,
+          CUSTOMERBRANCH: branchName,
+          branch_id: branchId,
           month_year: currentJob.month_year,
           bill_period_start_date: periodStartDate,
           bill_period_end_date: periodEndDate,
@@ -241,13 +281,16 @@ export async function POST(request: Request) {
           sewerage_charge: billBreakdown.sewerageCharge,
           meter_rent: billBreakdown.meterRent,
           vat_amount: billBreakdown.vatAmount,
+          additional_fees_breakdown: billBreakdown.additionalFeesBreakdown,
           balance_carried_forward: outstandingAmt,
+          amount_paid: carryBalance ? 0 : totalPayable,
+          payment_status: carryBalance ? 'Unpaid' : 'Paid',
           debit_30: debit30,
           debit_30_60: debit30_60,
           debit_60: debit60,
-          payment_status: 'Unpaid',
           status: 'Draft',
-          created_at: new Date(),
+          bill_number: `BILL-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+          snapshot_data: snapshotData,
         });
 
         lastId = customerKey;
@@ -278,9 +321,46 @@ export async function POST(request: Request) {
           const successes = billsToInsert.map(b => b.CUSTOMERKEY).filter(Boolean);
           await dbBatchRolloverBulkMeters(successes, client);
           await dbBatchRolloverIndividualCustomersOfBulkMeters(successes, client);
+          const bulkMetersToUpdate = billsToInsert
+            .filter(b => b.CUSTOMERKEY)
+            .map(b => [
+              b.CUSTOMERKEY,
+              String(currentJob.carry_balance ? b.TOTALBILLAMOUNT : 0),
+              currentJob.carry_balance ? 'Unpaid' : 'Paid'
+            ]);
+
+          if (bulkMetersToUpdate.length > 0) {
+            const placeholders = bulkMetersToUpdate.map((_, idx) => `($${idx * 3 + 1}, $${idx * 3 + 2}::numeric, $${idx * 3 + 3})`).join(', ');
+            const flatValues = bulkMetersToUpdate.flat();
+            await client.query(`
+              UPDATE bulk_meters AS m 
+              SET "outStandingbill" = v.balance, "paymentStatus" = v.status
+              FROM (VALUES ${placeholders}) AS v(key, balance, status)
+              WHERE m."customerKeyNumber" = v.key
+            `, flatValues);
+          }
         } else {
           const successes = billsToInsert.map(b => b.individual_customer_id).filter(Boolean);
           await dbBatchRolloverIndividualCustomers(successes, client);
+
+          const individualCustomersToUpdate = billsToInsert
+            .filter(b => b.individual_customer_id)
+            .map(b => [
+              b.individual_customer_id,
+              String(currentJob.carry_balance ? b.TOTALBILLAMOUNT : 0),
+              currentJob.carry_balance ? 'Unpaid' : 'Paid'
+            ]);
+
+          if (individualCustomersToUpdate.length > 0) {
+            const placeholders = individualCustomersToUpdate.map((_, idx) => `($${idx * 3 + 1}, $${idx * 3 + 2}::numeric, $${idx * 3 + 3})`).join(', ');
+            const flatValues = individualCustomersToUpdate.flat();
+            await client.query(`
+              UPDATE individual_customers AS m 
+              SET "outStandingbill" = v.balance, "paymentStatus" = v.status
+              FROM (VALUES ${placeholders}) AS v(key, balance, status)
+              WHERE m."customerKeyNumber" = v.key
+            `, flatValues);
+          }
         }
       }
 

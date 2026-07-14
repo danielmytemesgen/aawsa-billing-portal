@@ -10,42 +10,23 @@ import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Fi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import {
-  getCustomers,
-  getBulkMeters,
-  initializeCustomers,
-  initializeBulkMeters,
-  getBills,
-  initializeBills,
-  getMeterReadings,
-  initializeIndividualCustomerReadings,
-  initializeBulkMeterReadings,
-  getPayments,
-  initializePayments,
-  getStaffMembers,
-  initializeStaffMembers,
-  getBranches,
-  initializeBranches,
-  removeBill,
-  getTariffs,
-} from "@/lib/data-store";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import type { IndividualCustomer } from "../individual-customers/individual-customer-types";
 import type { BulkMeter } from "../bulk-meters/bulk-meter-types";
-import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import type { StaffMember } from "../staff-management/staff-types";
 import type { Branch } from "../branches/branch-types";
 import type { DateRange } from "react-day-picker";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { DatePicker } from "@/components/ui/date-picker";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import type { DomainBill, DomainPayment } from "@/lib/data-store";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { ReportDataView } from './report-data-view';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { calculateBillAction, getAllBranchesAction , getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllTariffsAction } from "@/lib/actions";
+import { calculateBillAction, deleteBillAction, getAllBranchesAction , getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllTariffsAction } from "@/lib/actions";
 import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
 import { RefreshCw } from "lucide-react";
 import { format as formatDate, parse } from "date-fns";
@@ -76,6 +57,7 @@ interface ReportType {
   description: string;
   headers?: string[];
   getData?: (filters: ReportFilters) => any[] | Promise<any[]>;
+  requiredPermission?: typeof PERMISSIONS[keyof typeof PERMISSIONS];
 }
 
 
@@ -115,6 +97,7 @@ const availableReports: ReportType[] = [
     id: "customer-data-export",
     name: "Customer Data Export (XLSX)",
     description: "Download a comprehensive list of all individual customers with their details.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Customer Key", "Name", "Contract Number", "Customer Type", "Book Number", "Ordinal",
       "Meter Size", "Meter Number", "Previous Reading", "Current Reading", "Month", "Specific Area",
@@ -182,6 +165,7 @@ const availableReports: ReportType[] = [
     id: "bulk-meter-data-export",
     name: "Bulk Meter Data Export (XLSX)",
     description: "Download a comprehensive list of all bulk meters, including their details and readings.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Customer Key", "Name", "Contract Number", "Meter Size", "Meter Number",
       "Previous Reading", "Current Reading", "Month", "Specific Area", "SubCity", "Woreda", "Status",
@@ -217,7 +201,7 @@ const availableReports: ReportType[] = [
         });
       }
 
-      const dataWithBranchName = await Promise.all(filteredData.map(async (bm) => {
+      const dataWithBranchName = filteredData.map((bm) => {
         const branch = bm.branchId ? branches.find(b => b.id === bm.branchId) : null;
 
         const associatedCustomers = customers.filter(c => c.assignedBulkMeterId === bm.customerKeyNumber);
@@ -227,22 +211,9 @@ const availableReports: ReportType[] = [
         }, 0);
 
         const bulkUsage = bm.bulkUsage ?? 0;
-        const differenceUsage = bulkUsage < totalIndividualUsage ? 3 : bulkUsage - totalIndividualUsage;
-
-        const billingMonth = new Date().toISOString().slice(0, 7);
-        let differenceBill = 0;
-        if (bm.chargeGroup) {
-          const { data: differenceBillResult } = await calculateBillAction(
-            differenceUsage,
-            bm.chargeGroup as CustomerType,
-            bm.sewerageConnection as SewerageConnection,
-            bm.meterSize,
-            billingMonth
-          );
-          differenceBill = differenceBillResult?.totalBill ?? 0;
-        } else {
-          console.warn(`Bulk meter ${bm.customerKeyNumber} is missing a chargeGroup. Bill calculation skipped.`);
-        }
+        // Use pre-calculated difference usage and bill fields directly from DB record!
+        const differenceUsage = bm.differenceUsage ?? (bulkUsage < totalIndividualUsage ? 3 : bulkUsage - totalIndividualUsage);
+        const differenceBill = bm.differenceBill ?? 0;
 
         return {
           "Customer Key": bm.customerKeyNumber,
@@ -267,7 +238,7 @@ const availableReports: ReportType[] = [
           "Difference Usage": differenceUsage,
           "Difference Bill": differenceBill,
         };
-      }));
+      });
 
       return dataWithBranchName;
     },
@@ -276,6 +247,7 @@ const availableReports: ReportType[] = [
     id: "billing-summary",
     name: "Billing Summary Report (XLSX)",
     description: "Summary of all generated bills, including amounts and payment statuses.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Bill ID", "Bill Key", "Customer Key", "Customer Name", "Customer TIN", "Branch", "Period Start", "Period End",
       "Month/Year", "Previous Reading", "Current Reading", "Consumption", "Reason",
@@ -428,6 +400,7 @@ const availableReports: ReportType[] = [
     id: "list-of-paid-bills",
     name: "List Of Paid Bills (XLSX)",
     description: "A filtered list showing only the bills that have been marked as 'Paid'.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Bill ID", "Individual Customer ID", "Customer Key", "Period Start", "Period End",
       "Month/Year", "Previous Reading", "Current Reading", "Consumption",
@@ -508,6 +481,7 @@ const availableReports: ReportType[] = [
     id: "list-of-sent-bills",
     name: "List Of Sent Bills (XLSX)",
     description: "A comprehensive list of all bills that have been generated, regardless of payment status.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Bill ID", "Individual Customer ID", "Customer Key", "Period Start", "Period End",
       "Month/Year", "Previous Reading", "Current Reading", "Consumption",
@@ -588,6 +562,7 @@ const availableReports: ReportType[] = [
     id: "water-usage",
     name: "Water Usage Report (XLSX)",
     description: "Detailed water consumption report from all meter readings.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Reading ID", "Meter Type", "Customer ID", "Bulk Meter ID", "Staff ID",
       "Reading Date", "Month/Year", "Reading Value", "Is Estimate", "Notes",
@@ -660,6 +635,7 @@ const availableReports: ReportType[] = [
     id: "payment-history",
     name: "Payment History Report (XLSX)",
     description: "Detailed log of all payments received.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Payment ID", "Bill ID", "Customer ID", "Payment Date", "Amount Paid",
       "Payment Method", "Reference", "Processed By", "Notes",
@@ -711,6 +687,7 @@ const availableReports: ReportType[] = [
     id: "meter-reading-accuracy",
     name: "Meter Reading Accuracy Report (XLSX)",
     description: "Detailed export of meter readings with reader information for accuracy analysis.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Reading ID", "Meter Identifier", "Meter Type", "Reading Date", "Month/Year",
       "Reading Value", "Is Estimate", "Reader Name", "Reader Staff ID", "Notes"
@@ -792,6 +769,7 @@ const availableReports: ReportType[] = [
     id: "tariffs-data-export",
     name: "Tariffs Data Export (XLSX)",
     description: "Download a comprehensive list of all tariffs.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Customer Type", "Year", "Tiers", "Maintenance %", "Sanitation %",
       "Sewerage Tiers", "Meter Rent Prices", "VAT Rate", "Domestic VAT Threshold"
@@ -819,6 +797,7 @@ const availableReports: ReportType[] = [
     id: "staff-data-export",
     name: "Staff Data Export (XLSX)",
     description: "Download a comprehensive list of all staff members.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Staff ID", "Name", "Email", "Branch Name", "Status", "Phone", "Hire Date", "Role"
     ],
@@ -855,6 +834,7 @@ const availableReports: ReportType[] = [
     id: "gl-finance-monthly",
     name: "GL Finance Monthly Report (XLSX)",
     description: "Monthly summary of billing components. Includes outstanding previous bills. Bulk meters are listed individually.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
       "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
@@ -994,6 +974,7 @@ const availableReports: ReportType[] = [
     id: "gl-finance-yearly",
     name: "GL Finance Yearly Report (XLSX)",
     description: "Yearly summary of billing components. Includes outstanding previous bills. Bulk meters are listed individually.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
       "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
@@ -1133,6 +1114,7 @@ const availableReports: ReportType[] = [
     id: "monthly-bill-export-csv",
     name: "Monthly Bill Export (CSV)",
     description: "Export monthly bills in CSV format for external payment system integration.",
+    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
     headers: [
       "BILLKEY", "CUSTOMERKEY", "CUSTOMERNAME", "CUSTOMERTIN", "CUSTOMERBRANCH", "REASON",
       "CURRREAD", "PREVREAD", "CONS", "TOTALBILLAMOUNT", "THISMONTHBILLAMT",
@@ -1265,7 +1247,7 @@ const availableReports: ReportType[] = [
           "THISMONTHBILLAMT":parseFloat(thisMonthBillAmt.toFixed(2)),
           "OUTSTANDINGAMT":  parseFloat(outstandingAmt.toFixed(2)),
           "PENALTYAMT":      parseFloat(penaltyAmt.toFixed(2)),
-          "VAT_AMOUNT":      parseFloat(Number(bill.vatAmount || 0).toFixed(2)),
+          "VAT_AMOUNT":      parseFloat(Number(bill.vat_amount ?? bill.vatAmount ?? 0).toFixed(2)),
           "DRACCTNO":        bill.DRACCTNO || "",
           "CRACCTNO":        bill.CRACCTNO || "",
         };
@@ -1294,7 +1276,7 @@ export default function AdminReportsPage() {
   const [selectedPdfBranch, setSelectedPdfBranch] = React.useState("all");
 
   const [archiveCutoffDate, setArchiveCutoffDate] = React.useState<Date | undefined>();
-  const [archivableBills, setArchivableBills] = React.useState<DomainBill[]>([]);
+  const [archivableBills, setArchivableBills] = React.useState<any[]>([]);
   const [isArchiveDeleteConfirmationOpen, setIsArchiveDeleteConfirmationOpen] = React.useState(false);
 
   const [reportData, setReportData] = React.useState<any[] | null>(null);
@@ -1303,10 +1285,18 @@ export default function AdminReportsPage() {
   const [isColumnSelectorOpen, setIsColumnSelectorOpen] = React.useState(false);
 
 
-  const canSelectAllBranches = hasPermission('reports_generate_all');
-  const isLockedToBranch = !canSelectAllBranches && hasPermission('reports_generate_branch');
-  const canGenerateAll = hasPermission('reports_generate_all');
-  const selectedReport = availableReports.find(report => report.id === selectedReportId);
+  const canSelectAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL);
+  const isLockedToBranch = !canSelectAllBranches && hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH);
+  const canGenerateAll = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL);
+  const canAccessReport = React.useCallback((report: ReportType) => {
+    const requiredPermission = report.requiredPermission ?? PERMISSIONS.REPORTS_GENERATE_BRANCH;
+    return hasPermission(requiredPermission) || canGenerateAll;
+  }, [hasPermission, canGenerateAll]);
+  const accessibleReports = React.useMemo(
+    () => availableReports.filter(canAccessReport),
+    [canAccessReport],
+  );
+  const selectedReport = accessibleReports.find(report => report.id === selectedReportId);
 
   React.useEffect(() => {
     const initializeData = async () => {
@@ -1471,8 +1461,8 @@ export default function AdminReportsPage() {
     let successCount = 0;
 
     for (const billId of billIdsToDelete) {
-      const result = await removeBill(billId);
-      if (result.success) {
+      const result = await deleteBillAction(billId);
+      if (result?.success) {
         successCount++;
       } else {
         toast({ variant: "destructive", title: "Deletion Error", description: `Could not delete bill ID ${billId}. Aborting.` });
@@ -1489,7 +1479,7 @@ export default function AdminReportsPage() {
   };
 
 
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+  if (!hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) && !hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl md:text-3xl font-bold">Generate Reports</h1>
@@ -1520,7 +1510,7 @@ export default function AdminReportsPage() {
           </div>
           <div className="flex flex-wrap gap-3 shrink-0">
             <div className="bg-white/15 backdrop-blur rounded-xl px-5 py-4 text-center min-w-[100px]">
-              <div className="text-2xl font-bold">{availableReports.length}</div>
+              <div className="text-2xl font-bold">{accessibleReports.length}</div>
               <div className="text-xs text-blue-100 mt-0.5">Report Types</div>
             </div>
           </div>
@@ -1669,7 +1659,7 @@ export default function AdminReportsPage() {
                 <SelectValue placeholder="Choose a report..." />
               </SelectTrigger>
               <SelectContent>
-                {availableReports.map((report, idx) => {
+                {accessibleReports.map((report, idx) => {
                   const safeId = report.id && String(report.id).trim() !== '' ? String(report.id) : `report-fallback-${idx}`;
                   return (
                     <SelectItem key={safeId} value={safeId} disabled={!report.getData}>
@@ -1696,7 +1686,7 @@ export default function AdminReportsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                     <div className="space-y-1.5">
                       <Label htmlFor="branch-filter" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Branch</Label>
-                      <Select value={selectedBranch || undefined} onValueChange={setSelectedBranch} disabled={isLoading || !canSelectAllBranches}>
+                      <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={isLoading || !canSelectAllBranches}>
                         <SelectTrigger id="branch-filter" className={cn('rounded-xl border-slate-200 bg-white', !canSelectAllBranches && 'cursor-not-allowed opacity-70')}>
                           {isLockedToBranch && <Lock className="mr-2 h-3.5 w-3.5 text-slate-400" />}<SelectValue placeholder="Select branch" />
                         </SelectTrigger>

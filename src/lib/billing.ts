@@ -47,21 +47,25 @@ export async function calculateBill(
         return emptyResult;
     }
 
-    // Negative consumption means individual sub-meter readings exceed bulk meter reading.
-    // This is a data integrity problem (bad reading, meter rollover, or data entry error).
-    // We must NOT silently return a zero bill — throw so the caller can surface the issue.
-    if (CONS < 0) {
-        throw new Error(
-            `Negative consumption detected (${CONS} m³) for ${customerType} in ${billingMonth}. ` +
-            `Individual sub-meter usage exceeds bulk meter reading. ` +
-            `Please verify meter readings before generating a bill.`
-        );
-    }
-
     // Use the actual last day of the month to find the applicable tariff.
     // This replaces the previous '-28' hard-code which could miss tariffs starting on the 29th-31st.
     const lookupDate = getEndDayOfMonth(billingMonth);
     const tariffConfig = preFetchedTariff || await getLiveTariffFromDB(customerType, lookupDate);
+
+    // Negative consumption means individual sub-meter readings exceed bulk meter reading.
+    // This is a data integrity problem (bad reading, meter rollover, or data entry error).
+    // We must NOT silently return a zero bill — throw so the caller can surface the issue,
+    // UNLESS the "Rule of 3" (minimum 3m³ usage) is active, in which case it is billed at 3m³.
+    if (CONS < 0) {
+        const useRuleOfThree = tariffConfig ? (tariffConfig.use_rule_of_three !== undefined && tariffConfig.use_rule_of_three !== null ? Boolean(tariffConfig.use_rule_of_three) : true) : true;
+        if (!useRuleOfThree) {
+            throw new Error(
+                `Negative consumption detected (${CONS} m³) for ${customerType} in ${billingMonth}. ` +
+                `Individual sub-meter usage exceeds bulk meter reading. ` +
+                `Please verify meter readings before generating a bill.`
+            );
+        }
+    }
 
     if (!tariffConfig) {
         console.warn(`Tariff information for customer type "${customerType}" for date ${lookupDate} not found. Bill will be 0.`);

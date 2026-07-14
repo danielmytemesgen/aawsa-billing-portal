@@ -60,7 +60,7 @@ export interface BillCalculationResult {
 export const safeParseJsonField = <T>(field: any, fieldName: string, expectedType: 'array' | 'object'): T => {
     const fallback: any = expectedType === 'array' ? [] : {};
     if (field === null || field === undefined) {
-        console.warn(`Tariff field '${fieldName}' is null or undefined. Using fallback.`);
+        // Silently return fallback — optional tariff fields (e.g. additional_fees) are legitimately null
         return fallback as T;
     }
     if (typeof field === 'object') {

@@ -184,7 +184,7 @@ export default function SentBillsReportPage() {
                 description="There are currently no sent bills matching your filters or search criteria." 
               />
             ) : (
-              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
+              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} showDebitColumns={true} />
             )}
           </div>
         </CardContent>

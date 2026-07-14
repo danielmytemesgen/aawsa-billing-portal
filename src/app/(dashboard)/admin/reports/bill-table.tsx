@@ -9,6 +9,7 @@ import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-cust
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { format, parseISO } from "date-fns";
 import { cn, formatDate } from "@/lib/utils";
+import { formatNumber } from '@/lib/format';
 import type { Branch } from "../branches/branch-types";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
 
@@ -18,9 +19,10 @@ interface BillTableProps {
   bulkMeters: BulkMeter[];
   branches: Branch[];
   allBills?: DomainBill[];
+  showDebitColumns?: boolean;
 }
 
-export function BillTable({ bills, customers, bulkMeters, branches, allBills }: BillTableProps) {
+export function BillTable({ bills, customers, bulkMeters, branches, allBills, showDebitColumns = true }: BillTableProps) {
   const getIdentifier = (bill: DomainBill): string => {
     if (bill.individualCustomerId) {
       const customer = customers.find(c => c.customerKeyNumber === bill.individualCustomerId);
@@ -89,9 +91,13 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
             <TableHead className="text-right font-bold text-slate-700 py-5">Curr Reading</TableHead>
             <TableHead className="text-right font-bold text-slate-700 py-5">Usage (m³)</TableHead>
             <TableHead className="text-right font-bold text-slate-700 py-5">Diff. Usage</TableHead>
-            <TableHead className="text-right font-bold text-slate-700 py-5 px-4 bg-muted/20">DEBIT_30</TableHead>
-            <TableHead className="text-right font-bold text-slate-700 py-5 px-4 bg-muted/20">DEBIT_30_60</TableHead>
-            <TableHead className="text-right font-bold text-slate-700 py-5 px-4 bg-muted/20">DEBIT_60</TableHead>
+            {showDebitColumns && (
+              <>
+                <TableHead className="text-right font-bold text-slate-700 py-5 px-4 bg-muted/20">DEBIT_30</TableHead>
+                <TableHead className="text-right font-bold text-slate-700 py-5 px-4 bg-muted/20">DEBIT_30_60</TableHead>
+                <TableHead className="text-right font-bold text-slate-700 py-5 px-4 bg-muted/20">DEBIT_60</TableHead>
+              </>
+            )}
             <TableHead className="text-right font-bold text-slate-700 py-5">Outstanding (ETB)</TableHead>
             <TableHead className="text-right font-bold text-slate-700 py-5">Current Bill (ETB)</TableHead>
             <TableHead className="text-right font-bold text-red-600 py-5">Penalty (ETB)</TableHead>
@@ -122,32 +128,32 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                   return (
                     <>
                       <TableCell className="text-slate-600 py-4 italic">{monthValue || '-'}</TableCell>
-                      <TableCell className="text-right text-slate-600 py-4">{prevReadValue !== undefined ? prevReadValue.toFixed(2) : '-'}</TableCell>
-                      <TableCell className="text-right text-slate-900 font-medium py-4">{currReadValue !== undefined ? currReadValue.toFixed(2) : '-'}</TableCell>
+                      <TableCell className="text-right text-slate-600 py-4">{prevReadValue !== undefined ? formatNumber(prevReadValue) : '-'}</TableCell>
+                      <TableCell className="text-right text-slate-900 font-medium py-4">{currReadValue !== undefined ? formatNumber(currReadValue) : '-'}</TableCell>
                       <TableCell className="text-right py-4">
                         <div className={cn(
                           "font-bold",
                           (usageValue ?? 0) > 0 ? "text-emerald-600" : "text-slate-400"
                         )}>
-                          {usageValue !== undefined ? usageValue.toFixed(2) : '-'}
+                          {usageValue !== undefined ? formatNumber(usageValue) : '-'}
                         </div>
                       </TableCell>
                       <TableCell className="text-right py-4 font-bold text-amber-600">
-                        {diffUsageValue !== undefined ? diffUsageValue.toFixed(2) : '-'}
+                        {diffUsageValue !== undefined ? formatNumber(diffUsageValue) : '-'}
                       </TableCell>
                     </>
                   );
                 })()}
-                {(() => {
+                {showDebitColumns && (() => {
                   const debit30 = normalizeNumber(bill.debit30 ?? (bill as any).debit_30) ?? 0;
                   const debit30_60 = normalizeNumber(bill.debit30_60 ?? (bill as any).debit_30_60) ?? 0;
                   const debit60 = normalizeNumber(bill.debit60 ?? (bill as any).debit_60) ?? 0;
 
                   return (
                     <>
-                      <TableCell className="text-right py-4 px-4 bg-muted/10 font-mono text-xs">{debit30 > 0 ? debit30.toFixed(2) : '-'}</TableCell>
-                      <TableCell className="text-right py-4 px-4 bg-muted/10 font-mono text-xs">{debit30_60 > 0 ? debit30_60.toFixed(2) : '-'}</TableCell>
-                      <TableCell className="text-right py-4 px-4 bg-muted/10 font-mono text-xs">{debit60 > 0 ? debit60.toFixed(2) : '-'}</TableCell>
+                      <TableCell className="text-right py-4 px-4 bg-muted/10 font-mono text-xs">{debit30 > 0 ? formatNumber(debit30, { dashForZero: true }) : '-'}</TableCell>
+                      <TableCell className="text-right py-4 px-4 bg-muted/10 font-mono text-xs">{debit30_60 > 0 ? formatNumber(debit30_60, { dashForZero: true }) : '-'}</TableCell>
+                      <TableCell className="text-right py-4 px-4 bg-muted/10 font-mono text-xs">{debit60 > 0 ? formatNumber(debit60, { dashForZero: true }) : '-'}</TableCell>
                     </>
                   );
                 })()}
@@ -157,10 +163,10 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                     (normalizeNumber((bill as any).debit_30_60 ?? bill.debit30_60) ?? 0) + 
                     (normalizeNumber((bill as any).debit_60 ?? bill.debit60) ?? 0)
                   );
-                  return outstanding.toFixed(2);
+                  return formatNumber(outstanding);
                 })()}</TableCell>
-                <TableCell className="text-right text-slate-600 py-4">{getMonthlyBillAmt(bill).toFixed(2)}</TableCell>
-                <TableCell className="text-right text-red-500 font-bold py-4">{normalizeNumber(bill.PENALTYAMT)?.toFixed(2) ?? '-'}</TableCell>
+                <TableCell className="text-right text-slate-600 py-4">{formatNumber(getMonthlyBillAmt(bill))}</TableCell>
+                <TableCell className="text-right text-red-500 font-bold py-4">{formatNumber(normalizeNumber(bill.PENALTYAMT))}</TableCell>
                 <TableCell className="text-right font-black font-mono text-indigo-700 bg-indigo-50/30 py-4 pr-6">{(() => {
                   const outstanding = normalizeNumber(bill.OUTSTANDINGAMT) ?? (
                     (normalizeNumber((bill as any).debit_30 ?? bill.debit30) ?? 0) + 
@@ -171,7 +177,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills }: 
                   const penalty = normalizeNumber(bill.PENALTYAMT) ?? 0;
                   const totalDue = normalizeNumber((bill as any).totalAmountDue ?? bill.TOTALBILLAMOUNT) ?? (outstanding + current + penalty);
 
-                  return totalDue.toFixed(2);
+                  return formatNumber(totalDue);
                 })()}</TableCell>
                 <TableCell className="text-slate-600 py-4 whitespace-nowrap">{formatDate(bill.dueDate)}</TableCell>
                 <TableCell className="py-4">

@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from "react";
-import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle } from "lucide-react";
+import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -74,6 +74,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     const [selectedBranch, setSelectedBranch] = React.useState<string>("all");
     const [isStuck, setIsStuck] = React.useState(false);
     const [isResetting, setIsResetting] = React.useState(false);
+    const [jobErrors, setJobErrors] = React.useState<string[]>([]);
 
     // Cleanup polling on unmount
     React.useEffect(() => {
@@ -92,6 +93,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             setSearchTerm("");
             setIsBulk(false);
             setAllowOverlap(false);
+            setJobErrors([]);
 
             // Read cycle config from database
             getSystemSettingsAction().then(res => {
@@ -180,6 +182,7 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         setIsProcessing(true);
         setProcessedCount(0);
         setNegativeConsumptionWarning(null);
+        setJobErrors([]);
 
         // Build period override for custom/unlimited mode
         const periodOverride = (cycleMode === 'custom' || cycleMode === 'unlimited')
@@ -257,9 +260,13 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 });
 
                 if (res.data?.success) {
-                    toast({ title: "Cycle Closed", description: "Billing cycle for selected meter closed successfully." });
-                    onComplete?.();
-                    onOpenChange(false);
+                    if (res.data.warning) {
+                        setNegativeConsumptionWarning(res.data.warning);
+                    } else {
+                        toast({ title: "Cycle Closed", description: "Billing cycle for selected meter closed successfully." });
+                        onComplete?.();
+                        onOpenChange(false);
+                    }
                     setIsProcessing(false);
                 } else {
                     const errMsg: string = res.error?.message || "Unknown error";
@@ -298,22 +305,50 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 setProcessedCount(job.processed_items || 0);
                 setTotalCount(job.total_items || total);
 
+                if (job.error_log) {
+                    const lines = job.error_log.split('\n').filter(Boolean);
+                    setJobErrors(lines);
+                }
+
                 if (job.status === 'completed') {
                     clearInterval(pollingRef.current!);
                     pollingRef.current = null;
-                    const failedCount = job.error_log
-                        ? job.error_log.split('\n').filter(Boolean).length
-                        : 0;
+
+                    const errorLines: string[] = job.error_log
+                        ? job.error_log.split('\n').filter(Boolean)
+                        : [];
+
+                    // Separate overlap-skipped meters from other errors
+                    const overlapSkipped = errorLines.filter((l: string) =>
+                        l.toLowerCase().includes('overlap') || l.toLowerCase().includes('overlaps with an existing bill')
+                    );
+                    const otherErrors = errorLines.filter((l: string) =>
+                        !l.toLowerCase().includes('overlap') && !l.toLowerCase().includes('overlaps with an existing bill')
+                    );
+
+                    let description = `Successfully billed ${job.processed_items} meter(s).`;
+                    const hasIssues = overlapSkipped.length > 0 || otherErrors.length > 0;
+
+                    if (overlapSkipped.length > 0 && otherErrors.length > 0) {
+                        description = `Billed ${job.processed_items} meter(s). ${overlapSkipped.length} skipped (bills already exist for this period). ${otherErrors.length} other error(s) — check the job log.`;
+                    } else if (overlapSkipped.length > 0) {
+                        description = `Billed ${job.processed_items} meter(s). ${overlapSkipped.length} meter(s) were skipped because bills already exist for ${monthYear}. Enable "Allow Overlap" to re-create those bills.`;
+                    } else if (otherErrors.length > 0) {
+                        description = `Billed ${job.processed_items} meter(s). ${otherErrors.length} meter(s) had errors — check the job log.`;
+                    }
+
                     toast({
                         title: "✅ Bulk Cycle Complete",
-                        description: failedCount > 0
-                            ? `Processed ${job.processed_items} meters. ${failedCount} meter(s) had errors — check the job log.`
-                            : `Successfully processed ${job.processed_items} meters.`,
-                        variant: failedCount > 0 ? "destructive" : "default"
+                        description,
+                        variant: hasIssues ? "destructive" : "default"
                     });
                     onComplete?.();
                     setIsProcessing(false);
-                    setTimeout(() => onOpenChange(false), 2000);
+
+                    // Only auto-close if there were no skipped meters or errors!
+                    if (!hasIssues) {
+                        setTimeout(() => onOpenChange(false), 2000);
+                    }
 
                 } else if (job.status === 'failed') {
                     clearInterval(pollingRef.current!);
@@ -326,9 +361,24 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 console.error('[billing] polling error:', err);
                 // Don't stop polling on transient network errors
             }
-        }, 4000); // poll every 4 seconds
+        }, 1000); // poll every 1 second for live progress updates
     };
 
+
+    const handleExportIssues = () => {
+        if (jobErrors.length === 0) return;
+        const textContent = `AAWSA Billing Portal - Billing Job Issues Log\nJob ID: ${currentJobId || 'N/A'}\nDate: ${format(new Date(), "yyyy-MM-dd HH:mm:ss")}\nBilling Month: ${monthYear}\n\nIssues & Skips:\n` + jobErrors.map((err, i) => `${i + 1}. ${err}`).join('\n');
+        
+        const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `billing_job_issues_${monthYear}.txt`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
 
     const handleResetJob = async () => {
         setIsResetting(true);
@@ -414,6 +464,19 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                                 <li>Meters with negative consumption will be skipped and logged.</li>
                                 <li>This action cannot be undone without manually deleting each bill.</li>
                             </ul>
+                            {/* ❌ Overlap skip warning — only shown when Allow Overlap is NOT checked */}
+                            {!allowOverlap && (
+                                <div className="mt-2 flex items-start gap-2 p-2 bg-red-50 border border-red-300 rounded">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-red-600 mt-0.5 shrink-0" />
+                                    <p className="text-[11px] text-red-700 leading-relaxed">
+                                        <span className="font-bold">Overlap protection is ON.</span>{" "}
+                                        Any meter that already has a bill for the selected period ({monthYear}) will be{" "}
+                                        <span className="font-bold">skipped automatically</span> and logged as an error.
+                                        To re-create bills for meters with existing records, enable{" "}
+                                        <span className="font-semibold text-amber-700">Allow Overlap</span>.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -540,19 +603,67 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     )}
 
                     {/* Progress bar */}
-                    {isProcessing && currentJobId && (
+                    {currentJobId && (
                         <div className="space-y-3 pt-4 border-t">
                             <div className="flex justify-between text-xs font-medium">
                                 <span className="flex items-center gap-1.5">
-                                    <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
-                                    Processing on server...
+                                    {isProcessing ? (
+                                        <>
+                                            <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                                            Processing on server...
+                                        </>
+                                    ) : (
+                                        <>
+                                            {jobErrors.length > 0 ? (
+                                                <AlertTriangle className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
+                                            ) : (
+                                                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+                                            )}
+                                            {jobErrors.length > 0 ? "Completed with issues" : "Completed successfully"}
+                                        </>
+                                    )}
                                 </span>
                                 <span>{processedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
                             </div>
                             <Progress value={totalCount > 0 ? (processedCount / totalCount) * 100 : 0} className="h-2" />
-                            <p className="text-[10px] text-muted-foreground text-center italic">
-                                ✅ Safe to close this dialog — processing continues on the server.
-                            </p>
+                            {isProcessing ? (
+                                <p className="text-[10px] text-muted-foreground text-center italic">
+                                    ✅ Safe to close this dialog — processing continues on the server.
+                                </p>
+                            ) : (
+                                <p className="text-[10px] text-center font-medium text-green-600">
+                                    Job execution completed.
+                                </p>
+                            )}
+
+                            {/* Live Issues/Skips Panel */}
+                            {jobErrors.length > 0 && (
+                                <div className="mt-4 border border-red-200 rounded-lg overflow-hidden animate-fadeIn">
+                                    <div className="bg-red-50 px-3 py-2 border-b border-red-200 flex items-center justify-between text-xs text-red-800 font-semibold">
+                                        <div className="flex items-center gap-1.5">
+                                            <AlertTriangle className="h-3.5 w-3.5 text-red-700" />
+                                            <span>Skipped Meters & Issues ({jobErrors.length})</span>
+                                        </div>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={handleExportIssues}
+                                            className="h-7 px-2 text-[10px] text-red-700 hover:text-red-900 hover:bg-red-100/50 border border-red-200 flex items-center gap-1 font-semibold"
+                                        >
+                                            <Download className="h-3 w-3" />
+                                            Export Issues
+                                        </Button>
+                                    </div>
+                                    <div className="p-2 max-h-[140px] overflow-y-auto bg-white font-mono text-[10px] text-red-700 divide-y divide-red-50/50">
+                                        {jobErrors.map((err, idx) => (
+                                            <div key={idx} className="py-1 px-1 flex items-start gap-2">
+                                                <span className="font-bold text-red-800 shrink-0">⚠️</span>
+                                                <span className="break-all leading-normal">{err}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -599,7 +710,9 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 </div>
 
                 <DialogFooter className="flex flex-col sm:flex-row gap-2">
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isProcessing}>Cancel</Button>
+                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isProcessing && !currentJobId}>
+                        {processedCount > 0 && processedCount === totalCount && !isProcessing ? "Close" : "Cancel"}
+                    </Button>
                     <div className="flex gap-2 w-full sm:w-auto">
                         <Button
                             variant="destructive"

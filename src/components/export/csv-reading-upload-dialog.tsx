@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, Dial
 import { UploadCloud, FileSpreadsheet, FileWarning, CheckCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { addIndividualCustomerReading, addBulkMeterReading, getIndividualCustomerReadings, getBulkMeterReadings } from "@/lib/data-store";
+import { addIndividualCustomerReading, addBulkMeterReading, getIndividualCustomerReadings, getBulkMeterReadings, getCustomers, getBulkMeters, initializeCustomers, initializeBulkMeters, initializeIndividualCustomerReadings, initializeBulkMeterReadings } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { format, parse, isValid, lastDayOfMonth } from "date-fns";
@@ -122,14 +122,31 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     return meterKey?.trim() && normalizedDate ? `${meterKey.trim()}|${normalizedDate}` : '';
   };
 
-  const duplicateReadingKeySet = new Set<string>();
+  const duplicateReadingDateKeySet = new Set<string>();
+  const duplicateReadingMonthKeySet = new Set<string>();
+
+  const getMeterMonthKey = (meterKey: string, readingDate: string): string => {
+    const normalizedDate = normalizeReadingDate(readingDate);
+    const normalizedMonth = normalizedDate ? normalizedDate.slice(0, 7) : '';
+    return meterKey?.trim() && normalizedMonth ? `${meterKey.trim()}|${normalizedMonth}` : '';
+  };
+
   const isDuplicateReading = (meterKey: string, readingDate: string): boolean => {
     const key = getMeterDateKey(meterKey, readingDate);
-    return key ? duplicateReadingKeySet.has(key) : false;
+    return key ? duplicateReadingDateKeySet.has(key) : false;
   };
+
+  const isDuplicateReadingMonth = (meterKey: string, readingDate: string): boolean => {
+    const key = getMeterMonthKey(meterKey, readingDate);
+    return key ? duplicateReadingMonthKeySet.has(key) : false;
+  };
+
   const recordDuplicateReading = (meterKey: string, readingDate: string) => {
-    const key = getMeterDateKey(meterKey, readingDate);
-    if (key) duplicateReadingKeySet.add(key);
+    const dateKey = getMeterDateKey(meterKey, readingDate);
+    if (dateKey) duplicateReadingDateKeySet.add(dateKey);
+
+    const monthKey = getMeterMonthKey(meterKey, readingDate);
+    if (monthKey) duplicateReadingMonthKeySet.add(monthKey);
   };
 
   const handleOpenChange = (isOpen: boolean) => {
@@ -162,6 +179,15 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     setIsCsvProcessing(true);
     let localSuccessCount = 0;
     const localErrors: string[] = [];
+
+    if (meterType === 'individual') {
+      await initializeCustomers(true);
+      await initializeIndividualCustomerReadings(true);
+    } else {
+      await initializeBulkMeters(true);
+      await initializeBulkMeterReadings(true);
+    }
+
     const reader = new FileReader();
 
     reader.onload = async (e) => {
@@ -199,7 +225,9 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
             : (sharedReading.CUSTOMERKEY || sharedReading.custKey || sharedReading.meterKey);
           const existingDate = normalizeReadingDate(sharedReading.readingDate || '');
           if (existingMeterKey && existingDate) {
-            duplicateReadingKeySet.add(`${String(existingMeterKey).trim()}|${existingDate}`);
+            duplicateReadingDateKeySet.add(`${String(existingMeterKey).trim()}|${existingDate}`);
+            const monthKey = `${String(existingMeterKey).trim()}|${existingDate.slice(0, 7)}`;
+            duplicateReadingMonthKeySet.add(monthKey);
           }
         }
 
@@ -217,7 +245,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
           readingCsvRequiredHeaders.forEach((req: string, idx: number) => { headerMapping[req] = idx; });
         }
 
-        const meterPool = meters as any[];
+        const meterPool = (meterType === 'individual' ? getCustomers() : getBulkMeters()) as any[];
         const meterByCustomerKey = new Map<string, any>();
         const meterByMeterNumber = new Map<string, any>();
 
@@ -291,6 +319,11 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
 
             if (isDuplicateReading(rowMeterKey, normalizedReadingDate)) {
               localErrors.push(`Row ${rowIndex + 1}: Duplicate reading skipped for meter '${rowMeterKey}' on ${normalizedReadingDate}.`);
+              return;
+            }
+
+            if (isDuplicateReadingMonth(rowMeterKey, normalizedReadingDate)) {
+              localErrors.push(`Row ${rowIndex + 1}: Another reading already exists for meter '${rowMeterKey}' in ${normalizedReadingDate.slice(0, 7)}.`);
               return;
             }
 

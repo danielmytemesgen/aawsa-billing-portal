@@ -31,6 +31,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import {
@@ -43,7 +44,6 @@ import {
 } from "@/components/ui/sheet";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import {
-  ResponsiveContainer,
   Tooltip,
   Legend,
   PieChart as PieChartRecharts,
@@ -313,6 +313,7 @@ export default function AdminDashboardPage() {
   const [isClient, setIsClient] = React.useState(false);
   const { hasPermission } = usePermissions();
   const { currentUser } = useCurrentUser();
+  const router = useRouter();
 
   // Live clock state
   const [liveTime, setLiveTime] = React.useState<string>('');
@@ -437,6 +438,16 @@ export default function AdminDashboardPage() {
 
   const processDashboardData = React.useCallback(async () => {
     const { data: metrics, error: metricsError } = await getDashboardMetricsAction();
+
+    // Detect expired server session: localStorage still has user but cookie is gone.
+    const isAuthErr = (e: any) => /user not authenticated|unauthorized|forbidden/i.test(
+      e?.message || e?.name || String(e)
+    );
+    if (metricsError && isAuthErr(metricsError)) {
+      localStorage.removeItem('user');
+      router.push('/');
+      return;
+    }
 
     if (metricsError) {
       console.error("Dashboard: Failed to fetch live metrics:", metricsError);
@@ -773,7 +784,6 @@ export default function AdminDashboardPage() {
             <div className="h-[100px] mt-6 relative flex items-center justify-center">
               {isClient && billsPaymentStatusData.some(d => d.value > 0) ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
                     <PieChartRecharts>
                       <Pie
                         data={billsPaymentStatusData}
@@ -790,7 +800,6 @@ export default function AdminDashboardPage() {
                       </Pie>
                       <Tooltip content={<ChartTooltipContent hideLabel />} />
                     </PieChartRecharts>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="text-sm font-semibold text-blue-600/80 italic w-full text-center mt-6">No bill data for this month</div>
@@ -1156,7 +1165,6 @@ export default function AdminDashboardPage() {
               <div className="h-[300px]">
                 {isClient && dynamicBranchPerformanceData.length > 0 ? (
                   <ChartContainer config={chartConfig} className="w-full h-full">
-                    <ResponsiveContainer>
                       <BarChart data={dynamicBranchPerformanceData}>
                         <CartesianGrid vertical={false} strokeDasharray="3 3" />
                         <XAxis dataKey="branch" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 500 }} />
@@ -1166,7 +1174,6 @@ export default function AdminDashboardPage() {
                         <Bar dataKey="paid" fill="#10b981" radius={[4, 4, 0, 0]} name="Paid" />
                         <Bar dataKey="unpaid" fill="#ef4444" radius={[4, 4, 0, 0]} name="Unpaid" />
                       </BarChart>
-                    </ResponsiveContainer>
                   </ChartContainer>
                 ) : (
                   <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">
@@ -1326,7 +1333,6 @@ export default function AdminDashboardPage() {
             <div className="h-[300px]">
               {isClient && dynamicWaterUsageTrendData.length > 0 ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
                     <LineChart data={dynamicWaterUsageTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="month" tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
@@ -1335,7 +1341,6 @@ export default function AdminDashboardPage() {
                       <Legend />
                       <Line type="monotone" dataKey="usage" name="Water Usage (m³)" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', r: 4 }} activeDot={{ r: 6, strokeWidth: 0 }} />
                     </LineChart>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">

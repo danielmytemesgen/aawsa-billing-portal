@@ -132,9 +132,9 @@ import {
   dbGetPhotosByReadingId,
   dbSyncAgingForCustomer,
 } from './db-queries';
-import { withTransaction } from './db';
+import { withTransaction, query } from './db';
 
-import { calculateBill, type CustomerType, type SewerageConnection } from './billing';
+import { calculateBill, calculateBillFromTariff, type CustomerType, type SewerageConnection } from './billing';
 import { encrypt, getSession } from './auth';
 // Removed unused redirect import
 import { revalidatePath } from 'next/cache';
@@ -1063,11 +1063,14 @@ export async function runBillingCycleAction(payload: {
     // This indicates a data integrity problem and must not silently produce a zero bill.
     const rawDifferenceUsage = bmUsage - totalIndivUsage;
     if (rawDifferenceUsage < 0) {
-      throw new Error(
-        `Negative difference usage (${rawDifferenceUsage} m³) for bulk meter ${payload.bulkMeterId} in ${payload.monthYear}. ` +
-        `Total individual sub-meter usage (${totalIndivUsage} m³) exceeds bulk meter consumption (${bmUsage} m³). ` +
-        `Please verify all meter readings before running the billing cycle.`
-      );
+      const useRuleOfThree = activeTariffRow ? (activeTariffRow.use_rule_of_three !== undefined && activeTariffRow.use_rule_of_three !== null ? Boolean(activeTariffRow.use_rule_of_three) : true) : true;
+      if (!useRuleOfThree) {
+        throw new Error(
+          `Negative difference usage (${rawDifferenceUsage} m³) for bulk meter ${payload.bulkMeterId} in ${payload.monthYear}. ` +
+          `Total individual sub-meter usage (${totalIndivUsage} m³) exceeds bulk meter consumption (${bmUsage} m³). ` +
+          `Please verify all meter readings before running the billing cycle.`
+        );
+      }
     }
     const billingResult = await calculateBill(
       rawDifferenceUsage,
@@ -1212,7 +1215,12 @@ export async function runBillingCycleAction(payload: {
       }
     });
 
-    return { billId: billResult.id, success: true };
+    let warningMsg: string | undefined = undefined;
+    if (rawDifferenceUsage < 0) {
+      warningMsg = `Negative difference usage (${rawDifferenceUsage} m³) detected for bulk meter ${payload.bulkMeterId}. Billed at 3 m³ (Rule of 3 active), but readings need attention.`;
+    }
+
+    return { billId: billResult.id, success: true, warning: warningMsg };
   });
 }
 export async function updateBillAction(id: string, bill: BillUpdate) {
@@ -1318,8 +1326,9 @@ export async function submitBillAction(id: string) {
     return await withTransaction(async (client) => {
       const billRes = await dbGetBillByIdQuery(id);
       const currentStatus = billRes?.status || 'Draft';
+      const monthYear = billRes?.month_year;
 
-      const updatedBill = await dbUpdateBillStatus(id, 'Pending', null, null, client);
+      const updatedBill = await dbUpdateBillStatus(id, 'Pending', null, null, client, monthYear);
       await dbCreateBillWorkflowLog({
         bill_id: id,
         from_status: currentStatus,
@@ -1344,9 +1353,10 @@ export async function approveBillAction(id: string) {
     return await withTransaction(async (client) => {
       const billRes = await dbGetBillByIdQuery(id);
       const currentStatus = billRes?.status || 'Pending';
+      const monthYear = billRes?.month_year;
 
       const approvalDate = new Date();
-      const bill = await dbUpdateBillStatus(id, 'Approved', approvalDate, session.id, client);
+      const bill = await dbUpdateBillStatus(id, 'Approved', approvalDate, session.id, client, monthYear);
       await dbCreateBillWorkflowLog({
         bill_id: id,
         from_status: currentStatus,
@@ -1371,8 +1381,9 @@ export async function rejectBillAction(id: string, reason: string) {
     return await withTransaction(async (client) => {
       const billRes = await dbGetBillByIdQuery(id);
       const currentStatus = billRes?.status || 'Pending';
+      const monthYear = billRes?.month_year;
 
-      const bill = await dbUpdateBillStatus(id, 'Rework', null, null, client);
+      const bill = await dbUpdateBillStatus(id, 'Rework', null, null, client, monthYear);
       await dbCreateBillWorkflowLog({
         bill_id: id,
         from_status: currentStatus,
@@ -1405,8 +1416,9 @@ export async function postBillAction(id: string) {
     return await withTransaction(async (client) => {
       const billRes = await dbGetBillByIdQuery(id);
       const currentStatus = billRes?.status || 'Approved';
+      const monthYear = billRes?.month_year;
 
-      const bill = await dbUpdateBillStatus(id, 'Posted', null, null, client);
+      const bill = await dbUpdateBillStatus(id, 'Posted', null, null, client, monthYear);
       await dbCreateBillWorkflowLog({
         bill_id: id,
         from_status: currentStatus,
@@ -1444,7 +1456,7 @@ export async function correctBillAction(id: string, reason: string) {
       if (originalBill.status !== 'Posted') throw new Error("Only posted bills can be corrected");
 
       // 1. Mark original bill as reversed
-      await dbUpdateBillStatus(id, 'Reversed', null, null, client);
+      await dbUpdateBillStatus(id, 'Reversed', null, null, client, originalBill.month_year);
 
       // 2. Reconcile balance by recalculating aging debt for the customer
       const customerKey = originalBill.CUSTOMERKEY || originalBill.individual_customer_id;
@@ -1606,8 +1618,15 @@ export async function createIndividualCustomerReadingAction(
       const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
       const monthYear = format(readingDate, 'yyyy-MM');
 
+      const readingWithPrevious = reading as any;
+      const previousReadingValue = readingWithPrevious.PREVIOUS_READING !== undefined
+        ? readingWithPrevious.PREVIOUS_READING
+        : readingWithPrevious.previousReading !== undefined
+          ? readingWithPrevious.previousReading
+          : customer.currentReading ?? 0;
+
       await dbUpdateCustomer(custId, { 
-        previousReading: customer.currentReading ?? 0,
+        previousReading: previousReadingValue,
         currentReading: rValue,
         month: monthYear
       }, client);
@@ -1706,8 +1725,15 @@ export async function createBulkMeterReadingAction(
       const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
       const monthYear = format(readingDate, 'yyyy-MM');
 
+      const readingWithPrevious = reading as any;
+      const previousReadingValue = readingWithPrevious.PREVIOUS_READING !== undefined
+        ? readingWithPrevious.PREVIOUS_READING
+        : readingWithPrevious.previousReading !== undefined
+          ? readingWithPrevious.previousReading
+          : meter.currentReading ?? 0;
+
       await dbUpdateBulkMeter(custKey, { 
-        previousReading: meter.currentReading ?? 0,
+        previousReading: previousReadingValue,
         currentReading: rValue,
         month: monthYear
       }, client);
@@ -2851,8 +2877,52 @@ export async function startBillingJobAction(payload: {
   return await wrap(async () => {
     await checkPermission('billing:close_cycle');
 
-    // 1. Check for active jobs to avoid duplicates or resume them
-    const activeJobs = await dbGetActiveBillingJobs(payload.monthYear, payload.type);
+    // 1. Count total items to process
+    let totalItems = 0;
+    if (payload.type === 'bulk_meters') {
+      totalItems = await dbCountBulkMeters({ branchId: payload.branchId });
+    } else {
+      totalItems = await dbCountCustomers({ branchId: payload.branchId });
+    }
+
+    if (totalItems === 0) {
+      throw new Error("No active meters/customers found for processing.");
+    }
+
+    // 2. Pre-check for overlapping bills if allowOverlap is false
+    if (!payload.allowOverlap) {
+      let overlapQuery = `
+        SELECT COUNT(*)::int as count 
+        FROM bills 
+        WHERE month_year = $1 
+          AND deleted_at IS NULL
+      `;
+      const queryParams: any[] = [payload.monthYear];
+
+      if (payload.branchId) {
+        overlapQuery += ` AND branch_id = $2`;
+        queryParams.push(payload.branchId);
+      }
+
+      if (payload.type === 'bulk_meters') {
+        overlapQuery += ` AND "CUSTOMERKEY" IS NOT NULL`;
+      } else {
+        overlapQuery += ` AND individual_customer_id IS NOT NULL`;
+      }
+
+      const overlapCountRes = await query(overlapQuery, queryParams);
+      const overlapCount = overlapCountRes[0]?.count || 0;
+      if (overlapCount > 0 && overlapCount >= totalItems) {
+        throw new Error(
+          `Cannot start processing: All active meters/customers for the selected period (${payload.monthYear}) already have bills. ` +
+          `To overwrite or append new bills, please enable "Allow Overlap".`
+        );
+      }
+    }
+
+    // 1. Check for active jobs to avoid duplicates or resume them.
+    // Branch-specific jobs may run concurrently only when they target different branches.
+    const activeJobs = await dbGetActiveBillingJobs(payload.monthYear, payload.type, payload.branchId);
     if (activeJobs.length > 0) {
       const job = activeJobs[0];
       const updatedAt = new Date(job.updated_at || job.created_at).getTime();
@@ -2872,18 +2942,6 @@ export async function startBillingJobAction(payload: {
         console.log(`Resuming active billing job ${job.id} for ${payload.monthYear} at processed count: ${job.processed_items}`);
         return job;
       }
-    }
-
-    // 2. Count total items to process
-    let totalItems = 0;
-    if (payload.type === 'bulk_meters') {
-      totalItems = await dbCountBulkMeters({ branchId: payload.branchId });
-    } else {
-      totalItems = await dbCountCustomers({ branchId: payload.branchId });
-    }
-
-    if (totalItems === 0) {
-      throw new Error("No active meters/customers found for processing.");
     }
 
     // 3. Create the job record
@@ -2995,6 +3053,13 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
       }
     }
 
+    // Pre-fetch 5: branch id→name map (avoids N+1 per item in the loop)
+    const branchRowsForJob: any[] = await query('SELECT id, name FROM branches');
+    const branchNameMapForJob = new Map<string, string>();
+    for (const br of branchRowsForJob) {
+      branchNameMapForJob.set(br.id, br.name);
+    }
+
     const billsToInsert: any[] = [];
     let lastId = job.last_processed_id;
     const failedItems: string[] = [];
@@ -3028,16 +3093,32 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         }
 
         const cachedTariff = tariffCache.get(chargeGroup as string);
-        const billBreakdown = await calculateBill(
-          diffUsage,
-          chargeGroup,
-          sewerageConn,
-          item.meterSize || item.meter_size || 0.5,
-          job.month_year,
-          undefined,
-          undefined,
-          cachedTariff
-        );
+        if (diffUsage < 0) {
+          const useRuleOfThree = cachedTariff ? (cachedTariff.use_rule_of_three !== undefined && cachedTariff.use_rule_of_three !== null ? Boolean(cachedTariff.use_rule_of_three) : true) : true;
+          if (!useRuleOfThree) {
+            throw new Error(
+              `Negative consumption detected (${diffUsage} m³) for ${chargeGroup} in ${job.month_year}. ` +
+              `Individual sub-meter usage exceeds bulk meter reading. ` +
+              `Please verify meter readings before generating a bill.`
+            );
+          } else {
+            failedItems.push(`${customerKey}: Negative consumption detected (${diffUsage} m³). Billed at 3 m³ (Rule of 3 active), but readings need attention.`);
+          }
+        }
+        const billBreakdown = cachedTariff
+          ? calculateBillFromTariff(
+              cachedTariff,
+              diffUsage,
+              item.meterSize || item.meter_size || 0.5,
+              sewerageConn
+            )
+          : await calculateBill(
+              diffUsage,
+              chargeGroup,
+              sewerageConn,
+              item.meterSize || item.meter_size || 0.5,
+              job.month_year
+            );
 
         diffUsage = billBreakdown.effectiveUsage;
 
@@ -3054,6 +3135,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
 
         if (hasOverlap && !(job as any).allow_overlap) {
           console.log(`Skipping meter ${customerKey}: billing period overlaps an existing bill.`);
+          failedItems.push(`${customerKey}: Billing period overlaps with an existing bill.`);
           lastId = customerKey; // still advance cursor
           continue;
         }
@@ -3066,13 +3148,27 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         const totalPayable = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
 
         const billId = crypto.randomUUID();
+        const carryBalance = Boolean((job as any).carry_balance);
+        const branchId: string | null = item.branch_id || null;
+        const branchName: string | null = branchId ? (branchNameMapForJob.get(branchId) || null) : null;
+
+        // Snapshot captures usage breakdown for PDF generation
+        const snapshotData = job.type === 'bulk_meters' ? {
+          chargeGroup: item.charge_group || item.customerType,
+          sewerageConnection: sewerageConn,
+          individualCustomerCount: (subCustomersMap.get(customerKey) || []).length,
+          totalIndividualUsage: (subCustomersMap.get(customerKey) || []).reduce((s: number, c: any) =>
+            s + ((Number(c.currentReading) || 0) - (Number(c.previousReading) || 0)), 0),
+        } : null;
+
         const bill: any = {
           id: billId,
           BILLKEY: generateBillKey(billId),
           CUSTOMERKEY: job.type === 'bulk_meters' ? customerKey : null,
           individual_customer_id: job.type === 'individual_customers' ? customerKey : null,
           CUSTOMERNAME: item.name,
-          CUSTOMERBRANCH: item.branch_id,
+          CUSTOMERBRANCH: branchName,
+          branch_id: branchId,
           month_year: job.month_year,
           bill_period_start_date: periodStartDate,
           bill_period_end_date: periodEndDate,
@@ -3091,10 +3187,16 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           sewerage_charge: billBreakdown.sewerageCharge,
           meter_rent: billBreakdown.meterRent,
           vat_amount: billBreakdown.vatAmount,
+          additional_fees_breakdown: billBreakdown.additionalFeesBreakdown,
           balance_carried_forward: outstandingAmt,
-          payment_status: 'Unpaid',
+          amount_paid: carryBalance ? 0 : totalPayable,
+          payment_status: carryBalance ? 'Unpaid' : 'Paid',
+          debit_30: debit30,
+          debit_30_60: debit30_60,
+          debit_60: debit60,
           status: 'Draft',
-          created_at: new Date()
+          bill_number: `BILL-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+          snapshot_data: snapshotData,
         };
 
         billsToInsert.push(bill);
@@ -3118,9 +3220,46 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           const successes = billsToInsert.map(b => b.CUSTOMERKEY).filter(Boolean);
           await dbBatchRolloverBulkMeters(successes, client);
           await dbBatchRolloverIndividualCustomersOfBulkMeters(successes, client);
+          const bulkMetersToUpdate = billsToInsert
+            .filter(b => b.CUSTOMERKEY)
+            .map(b => [
+              b.CUSTOMERKEY,
+              String((job as any).carry_balance ? b.TOTALBILLAMOUNT : 0),
+              (job as any).carry_balance ? 'Unpaid' : 'Paid'
+            ]);
+
+          if (bulkMetersToUpdate.length > 0) {
+            const placeholders = bulkMetersToUpdate.map((_, idx) => `($${idx * 3 + 1}, $${idx * 3 + 2}::numeric, $${idx * 3 + 3})`).join(', ');
+            const flatValues = bulkMetersToUpdate.flat();
+            await client.query(`
+              UPDATE bulk_meters AS m 
+              SET "outStandingbill" = v.balance, "paymentStatus" = v.status
+              FROM (VALUES ${placeholders}) AS v(key, balance, status)
+              WHERE m."customerKeyNumber" = v.key
+            `, flatValues);
+          }
         } else {
           const successes = billsToInsert.map(b => b.individual_customer_id).filter(Boolean);
           await dbBatchRolloverIndividualCustomers(successes, client);
+
+          const individualCustomersToUpdate = billsToInsert
+            .filter(b => b.individual_customer_id)
+            .map(b => [
+              b.individual_customer_id,
+              String((job as any).carry_balance ? b.TOTALBILLAMOUNT : 0),
+              (job as any).carry_balance ? 'Unpaid' : 'Paid'
+            ]);
+
+          if (individualCustomersToUpdate.length > 0) {
+            const placeholders = individualCustomersToUpdate.map((_, idx) => `($${idx * 3 + 1}, $${idx * 3 + 2}::numeric, $${idx * 3 + 3})`).join(', ');
+            const flatValues = individualCustomersToUpdate.flat();
+            await client.query(`
+              UPDATE individual_customers AS m 
+              SET "outStandingbill" = v.balance, "paymentStatus" = v.status
+              FROM (VALUES ${placeholders}) AS v(key, balance, status)
+              WHERE m."customerKeyNumber" = v.key
+            `, flatValues);
+          }
         }
       }
 
@@ -3358,5 +3497,308 @@ export async function updateBillingSettingsAction(payload: {
     });
 
     return { success: true };
+  });
+}
+
+// Bulk bill workflow helpers & actions
+const verifyBillsBranchAccessBulk = async (billIds: string[], session: any) => {
+  const perms = session.permissions || [];
+  if (perms.includes('bill:manage_all')) {
+    return;
+  }
+
+  const placeholders = billIds.map((_, i) => `$${i + 2}`).join(', ');
+  const res = await query(
+    `SELECT id FROM bills WHERE id IN (${placeholders}) AND branch_id = $1 AND deleted_at IS NULL`,
+    [session.branchId, ...billIds]
+  );
+  if (res.length !== billIds.length) {
+    throw new Error('Forbidden: One or more bills are not in your branch or do not exist');
+  }
+};
+
+export async function submitBillsBulkAction(ids: string[]) {
+  if (!ids || ids.length === 0) return { success: true };
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+
+    if (!(perms.includes(PERMISSIONS.BILL_CREATE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
+      throw new Error('Forbidden: Missing permission bill_create or bill_view_all');
+    }
+
+    await verifyBillsBranchAccessBulk(ids, session);
+
+    return await withTransaction(async (client) => {
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+      const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Draft']));
+
+      // Group IDs by month_year for partition pruning updates
+      const groups = new Map<string, string[]>();
+      for (const r of currentBills.rows) {
+        if (!groups.has(r.month_year)) groups.set(r.month_year, []);
+        groups.get(r.month_year)!.push(r.id);
+      }
+
+      for (const [my, groupIds] of groups.entries()) {
+        const groupPlaceholders = groupIds.map((_, i) => `$${i + 1}`).join(', ');
+        await client.query(
+          `UPDATE bills SET status = 'Pending' WHERE month_year = $${groupIds.length + 1} AND id IN (${groupPlaceholders})`,
+          [...groupIds, my]
+        );
+      }
+
+      const logValues: any[] = [];
+      const logPlaceholders: string[] = [];
+      let index = 1;
+      for (const id of ids) {
+        const fromStatus = statusMap.get(id) || 'Draft';
+        logValues.push(id, fromStatus, 'Pending', session.id);
+        logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
+        index += 4;
+      }
+      await client.query(
+        `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
+        logValues
+      );
+
+      await logSecurityEventAction({
+        event: 'Submit Bills Bulk',
+        details: { count: ids.length, ids }
+      });
+
+      return { success: true };
+    });
+  });
+}
+
+export async function approveBillsBulkAction(ids: string[]) {
+  if (!ids || ids.length === 0) return { success: true };
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.BILL_APPROVE);
+    await verifyBillsBranchAccessBulk(ids, session);
+
+    return await withTransaction(async (client) => {
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+      const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Pending']));
+
+      const approvalDate = new Date();
+
+      // Group IDs by month_year for partition pruning updates
+      const groups = new Map<string, string[]>();
+      for (const r of currentBills.rows) {
+        if (!groups.has(r.month_year)) groups.set(r.month_year, []);
+        groups.get(r.month_year)!.push(r.id);
+      }
+
+      for (const [my, groupIds] of groups.entries()) {
+        const groupPlaceholders = groupIds.map((_, i) => `$${i + 3}`).join(', ');
+        await client.query(
+          `UPDATE bills SET status = 'Approved', approval_date = $1, approved_by = $2 WHERE month_year = $${groupIds.length + 3} AND id IN (${groupPlaceholders})`,
+          [approvalDate, session.id, ...groupIds, my]
+        );
+      }
+
+      const logValues: any[] = [];
+      const logPlaceholders: string[] = [];
+      let index = 1;
+      for (const id of ids) {
+        const fromStatus = statusMap.get(id) || 'Pending';
+        logValues.push(id, fromStatus, 'Approved', session.id);
+        logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
+        index += 4;
+      }
+      await client.query(
+        `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
+        logValues
+      );
+
+      await logSecurityEventAction({
+        event: 'Approve Bills Bulk',
+        details: { count: ids.length, ids }
+      });
+
+      return { success: true };
+    });
+  });
+}
+
+export async function postBillsBulkAction(ids: string[]) {
+  if (!ids || ids.length === 0) return { success: true };
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+
+    if (!(perms.includes(PERMISSIONS.BILL_POST) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
+      throw new Error('Forbidden: Missing permission bill_post or bill_view_all');
+    }
+
+    await verifyBillsBranchAccessBulk(ids, session);
+
+    return await withTransaction(async (client) => {
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+      const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Approved']));
+
+      // Group IDs by month_year for partition pruning updates
+      const groups = new Map<string, string[]>();
+      for (const r of currentBills.rows) {
+        if (!groups.has(r.month_year)) groups.set(r.month_year, []);
+        groups.get(r.month_year)!.push(r.id);
+      }
+
+      for (const [my, groupIds] of groups.entries()) {
+        const groupPlaceholders = groupIds.map((_, i) => `$${i + 1}`).join(', ');
+        await client.query(
+          `UPDATE bills SET status = 'Posted' WHERE month_year = $${groupIds.length + 1} AND id IN (${groupPlaceholders})`,
+          [...groupIds, my]
+        );
+      }
+
+      const logValues: any[] = [];
+      const logPlaceholders: string[] = [];
+      let index = 1;
+      for (const id of ids) {
+        const fromStatus = statusMap.get(id) || 'Approved';
+        logValues.push(id, fromStatus, 'Posted', session.id);
+        logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
+        index += 4;
+      }
+      await client.query(
+        `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
+        logValues
+      );
+
+      await logSecurityEventAction({
+        event: 'Post Bills Bulk',
+        details: { count: ids.length, ids }
+      });
+
+      return { success: true };
+    });
+  });
+}
+
+// =====================================================
+// Batch CSV Import Actions — Single-transaction bulk insert
+// =====================================================
+
+/**
+ * Batch-import bulk meters from a CSV upload.
+ * Replaces N individual createBulkMeterAction calls with a single server roundtrip.
+ */
+export async function batchImportBulkMetersAction(rows: any[]) {
+  if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
+    const isRestricted = session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED);
+
+    const preparedRows = rows.map((row: any) => {
+      const r = { ...row };
+      if (isRestricted) {
+        r.branch_id = r.branch_id || r.branchId || session.branchId;
+        r.status = 'Pending Approval';
+      } else {
+        r.branch_id = r.branch_id || r.branchId;
+        if (!r.status) r.status = 'Active';
+      }
+      if (r.meterNumber !== undefined) r.METER_KEY = r.meterNumber;
+      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
+      delete r.branchId;
+      return { row: r, spatial, key: r.customerKeyNumber };
+    });
+
+    const insertedKeys: string[] = [];
+    const errors: string[] = [];
+
+    await withTransaction(async (client) => {
+      for (const { row, spatial, key } of preparedRows) {
+        try {
+          const colNames = Object.keys(row).map((k: string) => `"${k}"`).join(', ');
+          const placeholders = Object.keys(row).map((_: any, i: number) => `$${i + 1}`).join(', ');
+          const values = Object.values(row);
+          await client.query(
+            `INSERT INTO bulk_meters (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
+            values
+          );
+          if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
+            await dbUpsertSpatialRecord(key, 'bulk_meter', spatial, client);
+          }
+          insertedKeys.push(key);
+        } catch (err: any) {
+          errors.push(`Meter ${key}: ${err?.message || String(err)}`);
+        }
+      }
+    });
+
+    await logSecurityEventAction({
+      event: 'Batch Import Bulk Meters',
+      details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
+    });
+
+    return { success: true, inserted: insertedKeys.length, errors };
+  });
+}
+
+/**
+ * Batch-import individual customers from a CSV upload.
+ * Replaces N individual createCustomerAction calls with a single server roundtrip.
+ */
+export async function batchImportIndividualCustomersAction(rows: any[]) {
+  if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
+    const isRestricted = session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED);
+
+    const preparedRows = rows.map((row: any) => {
+      const r = { ...row };
+      if (isRestricted) {
+        r.branch_id = r.branch_id || r.branchId || session.branchId;
+        r.status = 'Pending Approval';
+      } else {
+        r.branch_id = r.branch_id || r.branchId;
+        if (!r.status) r.status = 'Active';
+      }
+      if (r.meterNumber !== undefined) r.METER_KEY = r.meterNumber;
+      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
+      delete r.branchId;
+      return { row: r, spatial, key: r.customerKeyNumber };
+    });
+
+    const insertedKeys: string[] = [];
+    const errors: string[] = [];
+
+    await withTransaction(async (client) => {
+      for (const { row, spatial, key } of preparedRows) {
+        try {
+          const colNames = Object.keys(row).map((k: string) => `"${k}"`).join(', ');
+          const placeholders = Object.keys(row).map((_: any, i: number) => `$${i + 1}`).join(', ');
+          const values = Object.values(row);
+          await client.query(
+            `INSERT INTO individual_customers (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
+            values
+          );
+          if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
+            await dbUpsertSpatialRecord(key, 'individual_customer', spatial, client);
+          }
+          insertedKeys.push(key);
+        } catch (err: any) {
+          errors.push(`Customer ${key}: ${err?.message || String(err)}`);
+        }
+      }
+    });
+
+    await logSecurityEventAction({
+      event: 'Batch Import Individual Customers',
+      details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
+    });
+
+    return { success: true, inserted: insertedKeys.length, errors };
   });
 }

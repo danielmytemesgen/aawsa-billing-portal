@@ -7,8 +7,10 @@ import { TablePagination } from "@/components/ui/table-pagination";
 import { BillTable } from "../bill-table";
 import {
   getCustomers, initializeCustomers, subscribeToCustomers,
-  getBulkMeters, initializeBulkMeters, subscribeToBulkMeters
+  getBulkMeters, initializeBulkMeters, subscribeToBulkMeters,
+  getBranches, initializeBranches, subscribeToBranches
 } from "@/lib/data-store";
+import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { getAllSentBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
@@ -34,6 +36,7 @@ export default function StaffSentBillsReportClient() {
   const [totalBills, setTotalBills] = React.useState(0);
   const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
   const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
+  const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
@@ -72,19 +75,23 @@ export default function StaffSentBillsReportClient() {
       await Promise.all([
         initializeCustomers(),
         initializeBulkMeters(),
+        initializeBranches(),
       ]);
       setCustomers(getCustomers());
       setBulkMeters(getBulkMeters());
+      setBranches(getBranches());
       setIsLoading(false);
     };
     fetchStaticData();
 
     const unsubCustomers = subscribeToCustomers(setCustomers);
     const unsubBms = subscribeToBulkMeters(setBulkMeters);
+    const unsubBranches = subscribeToBranches(setBranches);
 
     return () => {
       unsubCustomers();
       unsubBms();
+      unsubBranches();
     };
   }, []);
 
@@ -152,7 +159,7 @@ export default function StaffSentBillsReportClient() {
           {isLoading ? (
             <div className="text-center p-8 text-muted-foreground">Loading all bills...</div>
           ) : (
-            <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} />
+            <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} showDebitColumns={true} />
           )}
         </CardContent>
         {totalBills > 0 && (

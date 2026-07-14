@@ -15,9 +15,9 @@ import {
   Table as TableIcon
 } from 'lucide-react';
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
-  ResponsiveContainer,
   BarChart,
   PieChart,
   XAxis,
@@ -33,7 +33,7 @@ import {
 } from 'recharts';
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getBulkMeters, subscribeToBulkMeters, initializeBulkMeters, getCustomers, subscribeToCustomers, initializeCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
-import { getBranchesLookupAction } from "@/lib/actions";
+import { getBranchesLookupAction, getDashboardMetricsAction } from "@/lib/actions";
 import { format } from 'date-fns';
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
@@ -57,6 +57,7 @@ const chartConfig = {
 } satisfies import("@/components/ui/chart").ChartConfig;
 
 export default function StaffManagementDashboardPage() {
+  const router = useRouter();
   const [authStatus, setAuthStatus] = React.useState<'loading' | 'unauthorized' | 'authorized'>('loading');
   const [staffBranchName, setStaffBranchName] = React.useState<string | null>(null);
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
@@ -66,6 +67,7 @@ export default function StaffManagementDashboardPage() {
   const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
   const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [dashboardMetrics, setDashboardMetrics] = React.useState<any>(null);
 
   // State for toggling views
   const [branchPerformanceView, setBranchPerformanceView] = React.useState<'chart' | 'table'>('chart');
@@ -260,15 +262,38 @@ export default function StaffManagementDashboardPage() {
 
     const initializeAndSubscribe = async () => {
       try {
-        await Promise.all([initializeBranches(), initializeBulkMeters(), initializeCustomers()]);
-        if (isMounted) {
-          setAllBranches(getBranches());
-          setAllBulkMeters(getBulkMeters());
-          setAllCustomers(getCustomers());
+        // 1. Fetch server-side metrics first for instant display
+        const { data: metrics, error: metricsError } = await getDashboardMetricsAction();
+
+        // Detect expired server session: localStorage still has user, but cookie is gone.
+        const isAuthErr = (e: any) => /user not authenticated|unauthorized|forbidden/i.test(
+          e?.message || e?.name || String(e)
+        );
+        if (metricsError && isAuthErr(metricsError)) {
+          if (isMounted) {
+            localStorage.removeItem('user');
+            router.push('/');
+          }
+          return;
         }
+
+        if (isMounted && metrics) {
+          setDashboardMetrics(metrics);
+        }
+        if (isMounted) setIsLoading(false);
+
+        // 2. Background data-store init for branch-scoped KPI cards
+        Promise.all([initializeBranches(), initializeBulkMeters(), initializeCustomers()])
+          .then(() => {
+            if (isMounted) {
+              setAllBranches(getBranches());
+              setAllBulkMeters(getBulkMeters());
+              setAllCustomers(getCustomers());
+            }
+          })
+          .catch((err) => console.error("Background data-store init failed:", err));
       } catch (err) {
         console.error("Failed to initialize dashboard data:", err);
-      } finally {
         if (isMounted) setIsLoading(false);
       }
     };
@@ -293,9 +318,9 @@ export default function StaffManagementDashboardPage() {
       return { totalBulkMeters: 0, totalCustomers: 0, totalBills: 0, paidBills: 0, unpaidBills: 0, billsData: [], branchPerformanceData: [], waterUsageTrendData: [], paidPercentage: "0%", currentMonthYear: format(new Date(), 'yyyy-MM') };
     }
 
-    const currentMonthYear = format(new Date(), 'yyyy-MM');
+    const currentMonthYear = dashboardMetrics?.latestMonth || format(new Date(), 'yyyy-MM');
 
-    // --- Data for top cards (filtered by staff manager's branch, current month) ---
+    // ── Branch-scoped KPI cards (local data-store, branch-filtered) ────────────
     const branchBMs = allBulkMeters.filter(bm => bm.branchId === staffBranchId);
     const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
     const branchCustomers = allCustomers.filter(customer =>
@@ -303,29 +328,43 @@ export default function StaffManagementDashboardPage() {
       (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
     );
 
-    // Filter for current month for KPI cards
+    // ── Bill counts — prefer server-side metrics (all bills, accurate) ──────────
+    const metrics = dashboardMetrics;
+    const billStatusCounts = metrics?.billStatuses ?? [];
+    const serverPaid = metrics ? (Number(billStatusCounts.find((s: any) => s.status === 'Paid')?.count) || 0) : 0;
+    const serverUnpaid = metrics ? (Number(billStatusCounts.find((s: any) => s.status === 'Unpaid')?.count) || 0) : 0;
+    const serverTotalBills = serverPaid + serverUnpaid;
+
+    // Local fallback if server metrics not yet loaded
     const currentMonthBMs = branchBMs.filter(bm => bm.month === currentMonthYear);
     const currentMonthCustomers = branchCustomers.filter(c => c.month === currentMonthYear && c.status === 'Active');
-
-    const paidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length
+    const localPaid = currentMonthBMs.filter(bm => bm.paymentStatus === 'Paid').length
       + currentMonthCustomers.filter(c => c.paymentStatus === 'Paid').length;
-    const unpaidCount = currentMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length
+    const localUnpaid = currentMonthBMs.filter(bm => bm.paymentStatus === 'Unpaid').length
       + currentMonthCustomers.filter(c => c.paymentStatus === 'Unpaid' || c.paymentStatus === 'Pending').length;
-    const totalBillsCount = paidCount + unpaidCount;
+
+    const paidCount = metrics ? serverPaid : localPaid;
+    const unpaidCount = metrics ? serverUnpaid : localUnpaid;
+    const totalBillsCount = metrics ? serverTotalBills : (localPaid + localUnpaid);
     const billsData = [
       { name: 'Paid', value: paidCount, fill: 'hsl(var(--chart-1))' },
       { name: 'Unpaid', value: unpaidCount, fill: 'hsl(var(--chart-3))' },
     ];
     const paidPercentage = totalBillsCount > 0 ? `${((paidCount / totalBillsCount) * 100).toFixed(0)}%` : "0%";
 
-    // --- Data for Branch Performance Chart (ALL branches, current month, excluding Head Office) ---
+    // ── Branch Performance — prefer server-side metrics ──────────────────────────
+    const serverBranchPerf = metrics?.branchPerformance?.map((item: any) => ({
+      branch: (item.branch_name || item.branch || '').replace(/ Branch$/i, ''),
+      paid: Number(item.paid || 0),
+      unpaid: Number(item.unpaid || 0),
+    })) ?? null;
+
+    // Local fallback for branch performance
     const performanceMap = new Map<string, { branchName: string, paid: number, unpaid: number }>();
     const displayableBranches = allBranches.filter(b => b.name.toLowerCase() !== 'head office');
-
     displayableBranches.forEach(branch => {
       performanceMap.set(branch.id, { branchName: branch.name, paid: 0, unpaid: 0 });
     });
-
     allBulkMeters.filter(bm => bm.month === currentMonthYear).forEach(bm => {
       if (bm.branchId && performanceMap.has(bm.branchId)) {
         const entry = performanceMap.get(bm.branchId)!;
@@ -334,16 +373,22 @@ export default function StaffManagementDashboardPage() {
         performanceMap.set(bm.branchId, entry);
       }
     });
-    const branchPerformanceData = Array.from(performanceMap.values()).map(p => ({ branch: p.branchName.replace(/ Branch$/i, ""), paid: p.paid, unpaid: p.unpaid }));
+    const localBranchPerf = Array.from(performanceMap.values()).map(p => ({ branch: p.branchName.replace(/ Branch$/i, ''), paid: p.paid, unpaid: p.unpaid }));
+    const branchPerformanceData = serverBranchPerf ?? localBranchPerf;
 
-    // --- Data for Water Usage Trend Chart (filtered by staff manager's branch, historical) ---
+    // ── Water Usage Trend — prefer server-side metrics ──────────────────────────
+    const serverUsageTrend = metrics?.usageTrend?.map((item: any) => ({
+      month: item.month,
+      usage: Number(item.usage || 0),
+    }))?.sort((a: any, b: any) => new Date(a.month + '-01').getTime() - new Date(b.month + '-01').getTime()) ?? null;
+
+    // Local fallback for water usage trend
     const usageMap = new Map<string, number>();
     branchBMs.forEach(bm => {
       if (bm.month) {
         const usage = bm.currentReading - bm.previousReading;
         if (typeof usage === 'number' && !isNaN(usage)) {
-          const currentMonthUsage = usageMap.get(bm.month) || 0;
-          usageMap.set(bm.month, currentMonthUsage + usage);
+          usageMap.set(bm.month, (usageMap.get(bm.month) || 0) + usage);
         }
       }
     });
@@ -351,15 +396,14 @@ export default function StaffManagementDashboardPage() {
       if (c.month) {
         const usage = c.currentReading - c.previousReading;
         if (typeof usage === 'number' && !isNaN(usage)) {
-          const currentMonthUsage = usageMap.get(c.month) || 0;
-          usageMap.set(c.month, currentMonthUsage + usage);
+          usageMap.set(c.month, (usageMap.get(c.month) || 0) + usage);
         }
       }
     });
-    const waterUsageTrendData = Array.from(usageMap.entries())
+    const localUsageTrend = Array.from(usageMap.entries())
       .map(([month, usage]) => ({ month, usage }))
-      .sort((a, b) => new Date(a.month + "-01").getTime() - new Date(b.month + "-01").getTime());
-
+      .sort((a, b) => new Date(a.month + '-01').getTime() - new Date(b.month + '-01').getTime());
+    const waterUsageTrendData = serverUsageTrend ?? localUsageTrend;
 
     return {
       totalBulkMeters: branchBMs.length,
@@ -373,7 +417,7 @@ export default function StaffManagementDashboardPage() {
       paidPercentage,
       currentMonthYear,
     };
-  }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches]);
+  }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches, dashboardMetrics]);
 
 
   if (isLoading || authStatus === 'loading') {
@@ -422,7 +466,6 @@ export default function StaffManagementDashboardPage() {
             <div className="h-[100px] mt-6 relative flex items-center justify-center">
               {isClient && processedStats.totalBills > 0 ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={processedStats.billsData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={30} outerRadius={45} paddingAngle={4} stroke="none">
                         {processedStats.billsData.map((entry, index) => (
@@ -431,7 +474,6 @@ export default function StaffManagementDashboardPage() {
                       </Pie>
                       <Tooltip content={<ChartTooltipContent hideLabel />} />
                     </PieChart>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="text-sm font-semibold text-blue-600/80 italic w-full text-center mt-6">No bill data for this cycle</div>
@@ -525,7 +567,6 @@ export default function StaffManagementDashboardPage() {
               <div className="h-[300px]">
                 {isClient && processedStats.branchPerformanceData.length > 0 ? (
                   <ChartContainer config={chartConfig} className="w-full h-full">
-                    <ResponsiveContainer>
                       <BarChart data={processedStats.branchPerformanceData}>
                         <CartesianGrid vertical={false} />
                         <XAxis dataKey="branch" tickLine={false} axisLine={false} tick={{ fontSize: 12 }} />
@@ -535,7 +576,6 @@ export default function StaffManagementDashboardPage() {
                         <Bar dataKey="paid" stackId="a" fill="var(--color-paid)" radius={[4, 4, 0, 0]} />
                         <Bar dataKey="unpaid" stackId="a" fill="var(--color-unpaid)" radius={[4, 4, 0, 0]} />
                       </BarChart>
-                    </ResponsiveContainer>
                   </ChartContainer>
                 ) : (
                   <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground">
@@ -555,7 +595,7 @@ export default function StaffManagementDashboardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {processedStats.branchPerformanceData.map((item) => (
+                      {processedStats.branchPerformanceData.map((item: { branch: string; paid: number; unpaid: number }) => (
                         <TableRow key={item.branch}>
                           <TableCell className="font-medium">{item.branch}</TableCell>
                           <TableCell className="text-right text-green-600 dark:text-green-400">{item.paid}</TableCell>
@@ -590,7 +630,6 @@ export default function StaffManagementDashboardPage() {
               <div className="h-[300px]">
                 {isClient && processedStats.waterUsageTrendData.length > 0 ? (
                   <ChartContainer config={chartConfig} className="w-full h-full">
-                    <ResponsiveContainer>
                       <LineChart data={processedStats.waterUsageTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
@@ -599,7 +638,6 @@ export default function StaffManagementDashboardPage() {
                         <Legend />
                         <Line type="monotone" dataKey="usage" name="Water Usage" stroke="var(--color-waterUsage)" />
                       </LineChart>
-                    </ResponsiveContainer>
                   </ChartContainer>
                 ) : (
                   <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground">
@@ -618,7 +656,7 @@ export default function StaffManagementDashboardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {processedStats.waterUsageTrendData.map((item) => (
+                      {processedStats.waterUsageTrendData.map((item: { month: string; usage: number }) => (
                         <TableRow key={item.month}>
                           <TableCell className="font-medium">{item.month}</TableCell>
                           <TableCell className="text-right">{item.usage.toFixed(2)}</TableCell>

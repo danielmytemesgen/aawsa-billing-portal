@@ -9,7 +9,7 @@ import { query } from '@/lib/db';
 
 export async function GET(request: Request) {
   const session = await getSession();
-  if (!session || !session.user) {
+  if (!session || !session.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -24,17 +24,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  // Permission check: User must have either BILL_VIEW_ALL or BILL_CLOSE_CYCLE permission
-  // or must have created the job themselves
-  if (session.permissions) {
-    const hasViewAllPerm = session.permissions.some((p: string) => 
-      p === 'bill_view_all' || p === 'bill_close_cycle'
-    );
-    const createdByThisUser = rows[0].created_by === session.user.id;
-    
-    if (!hasViewAllPerm && !createdByThisUser) {
-      return NextResponse.json({ error: 'Forbidden: insufficient permissions' }, { status: 403 });
-    }
+  // Permission check: User must have either bill:manage_all or billing:close_cycle permission
+  // or must have created the job themselves.
+  const hasViewAllPerm = session.permissions?.some((p: string) => 
+    p === 'bill:manage_all' || p === 'billing:close_cycle'
+  );
+  const createdByThisUser = rows[0].created_by === session.id;
+  
+  if (!hasViewAllPerm && !createdByThisUser) {
+    return NextResponse.json({ error: 'Forbidden: insufficient permissions' }, { status: 403 });
   }
 
   return NextResponse.json({ job: rows[0] });

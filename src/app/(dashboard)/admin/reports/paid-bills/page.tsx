@@ -183,7 +183,7 @@ export default function PaidBillsReportPage() {
                 description="There are currently no paid bills matching your filters or search criteria." 
               />
             ) : (
-              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
+              <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} showDebitColumns={true} />
             )}
           </div>
         </CardContent>

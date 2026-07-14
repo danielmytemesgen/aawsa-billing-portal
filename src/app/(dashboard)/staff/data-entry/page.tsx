@@ -22,6 +22,7 @@ import {
   getCustomers
 } from "@/lib/data-store";
 import { generateCustomerKeys } from "@/lib/utils";
+import { batchImportBulkMetersAction, batchImportIndividualCustomersAction } from "@/lib/actions";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
@@ -89,7 +90,12 @@ export default function StaffDataEntryPage() {
   };
 
   const downloadCsvTemplate = (headers: string[], fileName: string) => {
-    const csvString = headers.join(',') + '\n';
+    // Build a sample data row with branchId pre-filled for this staff member
+    const sampleRow = headers.map(h => {
+      if (h.toLowerCase() === 'branchid') return staffBranchId ?? '';
+      return '';
+    });
+    const csvString = headers.join(',') + '\n' + sampleRow.join(',') + '\n';
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     if (link.download !== undefined) {
@@ -225,6 +231,7 @@ export default function StaffDataEntryPage() {
                     schema={bulkMeterDataEntrySchema}
                     addRecordFunction={handleBulkMeterCsvUpload}
                     expectedHeaders={bulkMeterCsvHeaders}
+                    batchUploadFunction={batchImportBulkMetersAction}
                   />
                 </CardContent>
               </Card>
@@ -252,6 +259,7 @@ export default function StaffDataEntryPage() {
                     schema={individualCustomerDataEntrySchema}
                     addRecordFunction={handleIndividualCustomerCsvUpload}
                     expectedHeaders={individualCustomerCsvHeaders}
+                    batchUploadFunction={batchImportIndividualCustomersAction}
                   />
                 </CardContent>
               </Card>

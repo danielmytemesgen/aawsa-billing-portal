@@ -1,9 +1,8 @@
-import { defineConfig } from 'drizzle-kit';
 import * as dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 import { env } from './src/lib/env';
 
-export default defineConfig({
+const config = {
   schema: './src/lib/schema.ts',
   out: './drizzle',
   dialect: 'postgresql',
@@ -15,4 +14,6 @@ export default defineConfig({
     port: env.POSTGRES_PORT,
     ssl: env.POSTGRES_HOST !== '127.0.0.1' && env.POSTGRES_HOST !== 'localhost' ? { rejectUnauthorized: false } : false,
   },
-});
+};
+
+export default config;

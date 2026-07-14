@@ -568,7 +568,8 @@ async function computeBillLocal(usage: number, customerType: CustomerType, sewer
     const tariffRow = applicableTariffs[0];
 
     if (!tariffRow) {
-      console.warn(`computeBillLocal: No applicable tariff for ${customerType} on ${readingDate} found in local store. Returning zero bill.`);
+      // No applicable tariff found in local store for this date/type — return zeros silently.
+      // This is expected for historical bills that predate any configured tariff.
       return { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, vatAmount: 0, meterRent: 0, sewerageCharge: 0, additionalFeesCharge: 0, effectiveUsage: usage };
     }
 
@@ -2587,7 +2588,7 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
     
     // Optimistic update
-    const prevReadingToUse = bulkMeter.currentReading ?? 0;
+    const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (bulkMeter.currentReading ?? 0);
     bulkMeter.previousReading = prevReadingToUse;
     bulkMeter.currentReading = readingData.readingValue;
     

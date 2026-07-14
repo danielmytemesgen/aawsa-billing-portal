@@ -15,11 +15,11 @@ import {
   TrendingUp
 } from 'lucide-react';
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import {
-  ResponsiveContainer,
   Tooltip,
   Legend,
   PieChart as PieChartRecharts,
@@ -53,6 +53,7 @@ export default function HeadOfficeDashboardPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
   const { hasPermission } = usePermissions();
+  const router = useRouter();
 
   // State for dynamic data
   const [selectedMonth, setSelectedMonth] = React.useState<string>(format(new Date(), 'yyyy-MM'));
@@ -82,6 +83,16 @@ export default function HeadOfficeDashboardPage() {
 
   const processDashboardData = React.useCallback(async () => {
     const { data: metrics, error: metricsError } = await getDashboardMetricsAction();
+
+    // Detect expired server session: localStorage still has user but cookie is gone.
+    const isAuthErr = (e: any) => /user not authenticated|unauthorized|forbidden/i.test(
+      e?.message || e?.name || String(e)
+    );
+    if (metricsError && isAuthErr(metricsError)) {
+      localStorage.removeItem('user');
+      router.push('/');
+      return;
+    }
 
     if (metricsError) {
       console.error("Head Office Dashboard: Failed to fetch live metrics:", metricsError);
@@ -216,7 +227,6 @@ export default function HeadOfficeDashboardPage() {
             <div className="h-[150px] mt-4">
               {isClient && billsPaymentStatusData.some(d => d.value > 0) ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
                     <PieChartRecharts>
                       <Pie
                         data={billsPaymentStatusData}
@@ -237,7 +247,6 @@ export default function HeadOfficeDashboardPage() {
                         height={40}
                       />
                     </PieChartRecharts>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="flex h-full items-center justify-center text-xs text-blue-600/50 italic bg-white/40 rounded-lg">No bill data for this month.</div>
@@ -270,7 +279,6 @@ export default function HeadOfficeDashboardPage() {
             <div className="h-[80px]">
               {isClient && revenueEfficiency.billed > 0 ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
                     <BarChart data={[
                       { name: 'Billed', value: revenueEfficiency.billed, fill: 'hsl(var(--chart-2))' },
                       { name: 'Collected', value: revenueEfficiency.collected, fill: 'hsl(var(--chart-1))' }
@@ -280,7 +288,6 @@ export default function HeadOfficeDashboardPage() {
                       <Tooltip content={<ChartTooltipContent />} cursor={{ fill: 'transparent' }} />
                       <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={22} label={{ position: 'right', fontSize: 10, fill: '#78350f', formatter: (val: number) => val.toLocaleString() }} />
                     </BarChart>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="flex h-full items-center justify-center text-xs text-amber-600/50 italic bg-white/40 rounded-lg">No revenue data available.</div>
@@ -390,7 +397,6 @@ export default function HeadOfficeDashboardPage() {
               <div className="h-[300px]">
                 {isClient && dynamicBranchPerformanceData.length > 0 ? (
                   <ChartContainer config={chartConfig} className="w-full h-full">
-                    <ResponsiveContainer>
                       <BarChart data={dynamicBranchPerformanceData}>
                         <CartesianGrid vertical={false} strokeDasharray="3 3" />
                         <XAxis dataKey="branch" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 500 }} />
@@ -400,7 +406,6 @@ export default function HeadOfficeDashboardPage() {
                         <Bar dataKey="paid" fill="#10b981" radius={[4, 4, 0, 0]} name="Paid" />
                         <Bar dataKey="unpaid" fill="#ef4444" radius={[4, 4, 0, 0]} name="Unpaid" />
                       </BarChart>
-                    </ResponsiveContainer>
                   </ChartContainer>
                 ) : (
                   <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">
@@ -507,7 +512,6 @@ export default function HeadOfficeDashboardPage() {
             <div className="h-[300px]">
               {isClient && dynamicWaterUsageTrendData.length > 0 ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                  <ResponsiveContainer>
                     <LineChart data={dynamicWaterUsageTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="month" tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
@@ -516,7 +520,6 @@ export default function HeadOfficeDashboardPage() {
                       <Legend />
                       <Line type="monotone" dataKey="usage" name="Water Usage (m³)" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', r: 4 }} activeDot={{ r: 6, strokeWidth: 0 }} />
                     </LineChart>
-                  </ResponsiveContainer>
                 </ChartContainer>
               ) : (
                 <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">

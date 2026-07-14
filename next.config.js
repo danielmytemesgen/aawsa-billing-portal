@@ -14,7 +14,6 @@ const allowedDevOrigins = [
 const nextConfig = {
   output: process.env.NEXT_BUILD_TARGET === 'export' ? 'export' : 'standalone',
   typescript: { ignoreBuildErrors: false },
-  eslint: { ignoreDuringBuilds: true },
   experimental: {
     serverActions: {
       allowedOrigins: allowedDevOrigins,
