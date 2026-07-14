@@ -1,6 +1,4 @@
 
-"use client";
-
 import * as React from "react";
 import * as XLSX from 'xlsx';
 import { z } from "zod";

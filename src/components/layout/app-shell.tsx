@@ -39,6 +39,7 @@ import { PERMISSIONS } from '@/lib/constants/auth';
 import { SupportChatbot } from './support-chatbot';
 import { PwaRegistry } from '@/components/layout/pwa-registry';
 import { SyncHub } from './sync-hub';
+import { SessionWarningDialog } from './session-warning-dialog';
 
 import { useNetworkStatus } from '@/hooks/use-network-status';
 import { logoutAction } from '@/lib/auth-actions';
@@ -165,7 +166,13 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   const { isOnline, wasOffline, pendingCount } = useNetworkStatus();
   const [syncProgress, setSyncProgress] = React.useState<{ syncing: boolean; success: number; failed: number; total: number } | null>(null);
 
+  const [sessionWarning, setSessionWarning] = React.useState<{ open: boolean; secondsLeft: number }>({
+    open: false,
+    secondsLeft: 120,
+  });
+
   const handleLogout = React.useCallback(async () => {
+    setSessionWarning({ open: false, secondsLeft: 120 });
     // 1. Clear all client-side session data immediately
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.removeItem("user");
@@ -189,7 +196,16 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
     router.push("/");
   }, [router]);
 
-  useIdleTimeout(handleLogout);
+  const handleWarn = React.useCallback((secondsLeft: number) => {
+    setSessionWarning({ open: true, secondsLeft });
+  }, []);
+
+  const { resetTimer } = useIdleTimeout({ onIdle: handleLogout, onWarn: handleWarn });
+
+  const handleExtendSession = React.useCallback(() => {
+    resetTimer();
+    setSessionWarning({ open: false, secondsLeft: 120 });
+  }, [resetTimer]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined' || !window.localStorage) {
@@ -281,6 +297,14 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
           Design and Developed by Daniel Temesgen &copy; {currentYear} {appName}. All rights reserved.
         </footer>
         <SupportChatbot />
+
+        {/* Session Expiry Warning Dialog */}
+        <SessionWarningDialog
+          open={sessionWarning.open}
+          secondsLeft={sessionWarning.secondsLeft}
+          onExtend={handleExtendSession}
+          onLogout={handleLogout}
+        />
       </SidebarInset>
     </SidebarProvider>
   );

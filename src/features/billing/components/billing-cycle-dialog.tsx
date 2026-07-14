@@ -1,4 +1,3 @@
-'use client';
 
 import * as React from "react";
 import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle, Download } from "lucide-react";
