@@ -7,10 +7,30 @@ import { redirect } from 'next/navigation';
 import { checkRateLimit, resetRateLimit } from './rate-limiter';
 
 async function isSecureRequest() {
-    // In production, cookies should be marked secure to protect them in HTTPS.
-    // In development and non-HTTPS environments, avoid secure cookies so the
-    // browser can send the session cookie back on the login redirect.
-    return process.env.NODE_ENV === 'production';
+    const requestHeaders = await headers();
+    const forwardedProto = requestHeaders.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
+    if (forwardedProto) {
+        return forwardedProto === 'https';
+    }
+
+    const referer = requestHeaders.get('referer') || '';
+    if (referer.startsWith('https://')) {
+        return true;
+    }
+
+    const origin = requestHeaders.get('origin') || '';
+    if (origin.startsWith('https://')) {
+        return true;
+    }
+
+    const host = requestHeaders.get('x-forwarded-host') || requestHeaders.get('host') || '';
+    const isLocalHost = /^(localhost|127\.0\.0\.1|\[::1\])(\:\d+)?$/.test(host) || host.endsWith('.local');
+    if (isLocalHost) {
+        return false;
+    }
+
+    // Default to secure only when we are reasonably sure the request is HTTPS.
+    return false;
 }
 
 export async function loginAction(formData: FormData) {
