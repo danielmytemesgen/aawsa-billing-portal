@@ -3806,6 +3806,7 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
       }
       if (r.meterNumber !== undefined) r.METER_KEY = r.meterNumber;
       if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
       const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
       delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
       delete r.branchId;

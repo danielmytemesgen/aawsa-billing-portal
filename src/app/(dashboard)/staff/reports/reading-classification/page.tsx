@@ -32,6 +32,7 @@ import {
 } from "@/lib/data-store";
 import { getPhotosByReadingIdAction } from "@/lib/actions";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TablePagination } from "@/components/ui/table-pagination";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -136,6 +137,9 @@ export default function ReadingClassificationPage() {
     const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
     const [selectedBranch, setSelectedBranch] = React.useState<string>('all');
     const [selectedRoute, setSelectedRoute] = React.useState<string>('all');
+    const [selectedCustomerType, setSelectedCustomerType] = React.useState<'all' | 'Individual' | 'Bulk'>('all');
+    const [page, setPage] = React.useState(0);
+    const [rowsPerPage, setRowsPerPage] = React.useState(10);
 
     const fetchData = React.useCallback(async () => {
         setIsLoading(true);
@@ -287,12 +291,25 @@ export default function ReadingClassificationPage() {
             result = result.filter(r => r.route === selectedRoute);
         }
 
+        if (selectedCustomerType !== 'all') {
+            result = result.filter(r => r.meterType === selectedCustomerType);
+        }
+
         if (selectedFaultCode !== 'all') {
             result = result.filter(r => r.faultCode === selectedFaultCode);
         }
 
         setFilteredReadings(result);
-    }, [searchTerm, selectedCategory, selectedMonth, selectedBranch, selectedRoute, selectedFaultCode, readings]);
+    }, [searchTerm, selectedCategory, selectedMonth, selectedBranch, selectedRoute, selectedCustomerType, selectedFaultCode, readings]);
+
+    React.useEffect(() => {
+        setPage(0);
+    }, [searchTerm, selectedCategory, selectedFaultCode, selectedMonth, selectedBranch, selectedRoute, selectedCustomerType]);
+
+    const paginatedReadings = React.useMemo(
+        () => filteredReadings.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+        [filteredReadings, page, rowsPerPage]
+    );
 
     if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch') && !hasPermission('routes_view_assigned')) {
         return (
@@ -505,6 +522,17 @@ export default function ReadingClassificationPage() {
                                 </Select>
                             )}
 
+                            <Select value={selectedCustomerType} onValueChange={(v) => setSelectedCustomerType(v as 'all' | 'Individual' | 'Bulk')}>
+                                <SelectTrigger className="w-[140px] h-9">
+                                    <SelectValue placeholder="Customer Type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Customers</SelectItem>
+                                    <SelectItem value="Individual">Individual</SelectItem>
+                                    <SelectItem value="Bulk">Bulk</SelectItem>
+                                </SelectContent>
+                            </Select>
+
                             <Select value={selectedRoute} onValueChange={setSelectedRoute}>
                                 <SelectTrigger className="w-[140px] h-9">
                                     <SelectValue placeholder="Route" />
@@ -552,7 +580,7 @@ export default function ReadingClassificationPage() {
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    filteredReadings.map((r) => (
+                                    paginatedReadings.map((r) => (
                                         <TableRow key={`${r.meterType}-${r.id}`} className="group hover:bg-gray-50/80 transition-colors">
                                             <TableCell>
                                                 <div className="flex flex-col">
@@ -656,6 +684,18 @@ export default function ReadingClassificationPage() {
                             </TableBody>
                         </Table>
                     </div>
+                    {filteredReadings.length > 0 && (
+                        <TablePagination
+                            count={filteredReadings.length}
+                            page={page}
+                            rowsPerPage={rowsPerPage}
+                            onPageChange={setPage}
+                            onRowsPerPageChange={(value) => {
+                                setRowsPerPage(value);
+                                setPage(0);
+                            }}
+                        />
+                    )}
                 </CardContent>
             </Card>
         </div>

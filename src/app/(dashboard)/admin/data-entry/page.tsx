@@ -75,7 +75,11 @@ export default function AdminDataEntryPage() {
     initializeCustomers();
     const userJson = localStorage.getItem('user');
     if (userJson) {
-      setCurrentUser(JSON.parse(userJson));
+      const parsedUser = JSON.parse(userJson);
+      setCurrentUser(parsedUser);
+      if (parsedUser.branchId) {
+        setSelectedBranchId(parsedUser.branchId);
+      }
     }
     // Load branches
     initializeBranches().then(() => setAllBranches(getBranches()));
@@ -125,16 +129,16 @@ export default function AdminDataEntryPage() {
 
   const openTemplateDialog = (headers: string[], fileName: string) => {
     setPendingTemplate({ headers, fileName });
-    setSelectedBranchId("");
     setTemplateDialogOpen(true);
   };
 
   const downloadCsvTemplate = () => {
     if (!pendingTemplate) return;
     const { headers, fileName } = pendingTemplate;
+    const branchIdToUse = selectedBranchId || currentUser?.branchId || '';
     // Build a sample row with the selected branchId pre-filled
     const sampleRow = headers.map(h => {
-      if (h.toLowerCase() === 'branchid') return selectedBranchId;
+      if (h.toLowerCase() === 'branchid') return branchIdToUse;
       return '';
     });
     // Build comment rows listing all valid branch IDs
