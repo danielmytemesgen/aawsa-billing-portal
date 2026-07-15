@@ -571,9 +571,11 @@ export async function getAllBulkMetersAction(options?: { branchId?: string; limi
 
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BULK_METERS_VIEW_ALL);
     
-    // Reader isolation:
+    // Reader isolation: Use permission-based check for bulk meter view access
     const perms = session.permissions || [];
-    const readerId = !perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+    const hasBulkViewPermission = perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
+    const hasAssignedViewPermission = perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
+    const readerId = !hasBulkViewPermission && hasAssignedViewPermission
       ? session.id
       : undefined;
 
@@ -2427,10 +2429,9 @@ export async function getAllRoutesAction(options?: { branchId?: string }) {
     // Determine branch isolation:
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.ROUTES_VIEW_ALL);
     
-    // Reader isolation:
-    // If the user only has 'routes_view_assigned', lock them to their own readerId.
-    const readerId = !perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) 
-      ? session.id 
+    // Reader isolation: If user only has assigned access, lock them to their own readerId
+    const readerId = !perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
       : undefined;
 
     return await dbGetAllRoutes(branchId, readerId);

@@ -391,12 +391,21 @@ export default function StaffDashboardPage() {
       const { data: metrics, error } = await getDashboardMetricsAction();
 
       // Detect expired server session: localStorage still has user but cookie is gone.
-      const isAuthErr = (e: any) => /user not authenticated|unauthorized|forbidden/i.test(
+      const isAuthErr = (e: any) => /user not authenticated|unauthorized/i.test(
         e?.message || e?.name || String(e)
       );
+      const isForbiddenError = (e: any) => /forbidden/i.test(
+        e?.message || e?.name || String(e)
+      );
+
       if (error && isAuthErr(error)) {
         localStorage.removeItem('user');
         router.push('/');
+        return;
+      }
+
+      if (error && isForbiddenError(error)) {
+        console.warn('Dashboard metrics unavailable for this reader role; continuing without metrics.');
         return;
       }
 

@@ -79,6 +79,8 @@ export const PERMISSIONS = {
     METER_READINGS_UPDATE: 'meter_readings_update',
     METER_READINGS_DELETE: 'meter_readings_delete',
     METER_READINGS_ANALYTICS_VIEW: 'meter_readings_analytics_view',
+    METER_READINGS_VIEW_INDIVIDUAL: 'meter_readings_view_individual',
+    METER_READINGS_VIEW_BULK: 'meter_readings_view_bulk',
 
     // Data Entry
     DATA_ENTRY_ACCESS: 'data_entry_access',

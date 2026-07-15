@@ -50,6 +50,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 interface User {
   id?: string;
@@ -66,6 +67,9 @@ export default function StaffMeterReadingsPage() {
   const [isIndividualCsvModalOpen, setIsIndividualCsvModalOpen] = React.useState(false);
   const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
+  
+  const canViewIndividualReadings = hasPermission(PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL);
+  const canViewBulkReadings = hasPermission(PERMISSIONS.METER_READINGS_VIEW_BULK);
 
   const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
   const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
@@ -167,6 +171,10 @@ export default function StaffMeterReadingsPage() {
           if (prev?.id === parsedUser.id && prev?.branchId === parsedUser.branchId) return prev;
           return parsedUser;
         });
+        // Set default tab based on permissions - bulk if no individual permission
+        if (!canViewIndividualReadings) {
+          setActiveTab('bulk');
+        }
       } catch (e) { console.error("Failed to parse user from localStorage", e); }
     }
   }, []);
@@ -383,49 +391,53 @@ export default function StaffMeterReadingsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
-          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
-            <Database className="h-48 w-48 text-emerald-900" />
-          </div>
-          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
-            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Readings</CardTitle>
-            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
-              <Database className="h-4 w-4" />
+        {(canViewIndividualReadings && canViewBulkReadings) && (
+          <Card className="group shadow-sm hover:shadow-xl border border-emerald-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+            <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+              <Database className="h-48 w-48 text-emerald-900" />
             </div>
-          </CardHeader>
-          <CardContent className="px-6 pb-6 relative z-10">
-            <div className="flex items-end gap-2 mb-1 mt-2">
-              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">
-                {recentIndividualCount + recentBulkCount}
+            <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+              <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Readings</CardTitle>
+              <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+                <Database className="h-4 w-4" />
               </div>
-            </div>
-            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total recorded this month</span>
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="px-6 pb-6 relative z-10">
+              <div className="flex items-end gap-2 mb-1 mt-2">
+                <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">
+                  {recentIndividualCount + recentBulkCount}
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+                 <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total recorded this month</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-        <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
-          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
-            <Activity className="h-48 w-48 text-blue-900" />
-          </div>
-          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
-            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Individual Readings</CardTitle>
-            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-              <Activity className="h-4 w-4" />
+      {canViewIndividualReadings && (
+          <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
+            <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+              <Activity className="h-48 w-48 text-blue-900" />
             </div>
-          </CardHeader>
-          <CardContent className="px-6 pb-6 relative z-10">
-            <div className="flex items-end gap-2 mb-1 mt-2">
-              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">
-                {recentIndividualCount}
+            <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+              <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Individual Readings</CardTitle>
+              <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                <Activity className="h-4 w-4" />
               </div>
-            </div>
-            <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Individual customer meters this month</span>
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="px-6 pb-6 relative z-10">
+              <div className="flex items-end gap-2 mb-1 mt-2">
+                <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">
+                  {recentIndividualCount}
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
+                 <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Individual customer meters this month</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="group shadow-sm hover:shadow-xl border border-amber-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
           <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
@@ -451,13 +463,15 @@ export default function StaffMeterReadingsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 p-1 bg-slate-100 rounded-xl h-auto">
-          <TabsTrigger 
-            value="individual"
-            className="rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
-          >
-            Individual Readings ({filteredIndividualReadings.length})
-          </TabsTrigger>
+        <TabsList className={`grid w-full p-1 bg-slate-100 rounded-xl h-auto ${canViewIndividualReadings ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {canViewIndividualReadings && (
+            <TabsTrigger 
+              value="individual"
+              className="rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
+            >
+              Individual Readings ({filteredIndividualReadings.length})
+            </TabsTrigger>
+          )}
           <TabsTrigger 
             value="bulk"
             className="rounded-lg data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
@@ -465,42 +479,44 @@ export default function StaffMeterReadingsPage() {
             Bulk Meter Readings ({filteredBulkReadings.length})
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="individual">
-          <Card className="shadow-md border-slate-200/60 overflow-hidden">
-            <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                  <Activity className="h-4 w-4" />
+        {canViewIndividualReadings && (
+          <TabsContent value="individual">
+            <Card className="shadow-md border-slate-200/60 overflow-hidden">
+              <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                    <Activity className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg">Individual Customer Reading List</CardTitle>
+                    <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
+                  </div>
                 </div>
-                <div>
-                  <CardTitle className="text-lg">Individual Customer Reading List</CardTitle>
-                  <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0 overflow-x-auto">
-              {isLoading && paginatedIndividualReadings.length === 0 ? (
-                <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
-                  Loading meter readings...
-                </div>
-              ) : (
-                <MeterReadingsTable data={paginatedIndividualReadings} />
-              )}
-            </CardContent>
-            {filteredIndividualReadings.length > 0 && (
-              <TablePagination
+              </CardHeader>
+              <CardContent className="p-0 overflow-x-auto">
+                {isLoading && paginatedIndividualReadings.length === 0 ? (
+                  <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
+                    Loading meter readings...
+                  </div>
+                ) : (
+                  <MeterReadingsTable data={paginatedIndividualReadings} />
+                )}
+              </CardContent>
+              {filteredIndividualReadings.length > 0 && (
+                <TablePagination
                 count={filteredIndividualReadings.length}
                 page={individualPage}
                 rowsPerPage={individualRowsPerPage}
                 onPageChange={setIndividualPage}
                 onRowsPerPageChange={(value) => {
                   setIndividualRowsPerPage(value);
-                  setIndividualPage(0);
+                  setBulkPage(0);
                 }}
               />
             )}
           </Card>
         </TabsContent>
+        )}
         <TabsContent value="bulk">
           <Card className="shadow-md border-slate-200/60 overflow-hidden">
             <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
