@@ -3745,7 +3745,17 @@ export async function batchImportBulkMetersAction(rows: any[]) {
         r.branch_id = r.branch_id || r.branchId;
         if (!r.status) r.status = 'Active';
       }
-      if (r.meterNumber !== undefined) r.METER_KEY = r.meterNumber;
+      // Ensure required keys exist when importing in batch mode. Single-row flows
+      // generate keys on the client, but batch uploads must be resilient server-side.
+      if (!r.customerKeyNumber) {
+        r.customerKeyNumber = `BM-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
+      }
+      if (!r.instKey) {
+        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+      }
+      // Normalize to DB column names
+      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
+      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
       if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
       const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
       delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
@@ -3759,9 +3769,32 @@ export async function batchImportBulkMetersAction(rows: any[]) {
     await withTransaction(async (client) => {
       for (const { row, spatial, key } of preparedRows) {
         try {
-          const colNames = Object.keys(row).map((k: string) => `"${k}"`).join(', ');
-          const placeholders = Object.keys(row).map((_: any, i: number) => `$${i + 1}`).join(', ');
-          const values = Object.values(row);
+          // Normalize keys to DB column names to avoid inserting unknown columns
+          const normalizedRow: Record<string, any> = {};
+          for (const k of Object.keys(row)) {
+            const v = (row as any)[k];
+            switch (k) {
+              case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
+              case 'meter_key': normalizedRow['METER_KEY'] = v; break;
+              case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
+              case 'instKey': normalizedRow['INST_KEY'] = v; break;
+              case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
+              case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
+              case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
+              case 'branchId': normalizedRow['branch_id'] = v; break;
+              case 'branch_id': normalizedRow['branch_id'] = v; break;
+              case 'chargeGroup': normalizedRow['charge_group'] = v; break;
+              case 'charge_group': normalizedRow['charge_group'] = v; break;
+              case 'sewerageConnection': normalizedRow['sewerage_connection'] = v; break;
+              case 'sewerage_connection': normalizedRow['sewerage_connection'] = v; break;
+              case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+              case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+              default: normalizedRow[k] = v; break;
+            }
+          }
+          const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
+          const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
+          const values = Object.values(normalizedRow);
           await client.query(
             `INSERT INTO bulk_meters (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
             values
@@ -3804,7 +3837,14 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
         r.branch_id = r.branch_id || r.branchId;
         if (!r.status) r.status = 'Active';
       }
-      if (r.meterNumber !== undefined) r.METER_KEY = r.meterNumber;
+      // Ensure required keys exist for batch imports
+      if (!r.customerKeyNumber) {
+        r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
+      }
+      if (!r.instKey) {
+        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+      }
+      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
       if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
       if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
       const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
@@ -3819,9 +3859,32 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
     await withTransaction(async (client) => {
       for (const { row, spatial, key } of preparedRows) {
         try {
-          const colNames = Object.keys(row).map((k: string) => `"${k}"`).join(', ');
-          const placeholders = Object.keys(row).map((_: any, i: number) => `$${i + 1}`).join(', ');
-          const values = Object.values(row);
+          // Normalize keys to DB column names before insert
+          const normalizedRow: Record<string, any> = {};
+          for (const k of Object.keys(row)) {
+            const v = (row as any)[k];
+            switch (k) {
+              case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
+              case 'meter_key': normalizedRow['METER_KEY'] = v; break;
+              case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
+              case 'instKey': normalizedRow['INST_KEY'] = v; break;
+              case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
+              case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
+              case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
+              case 'assignedBulkMeterId': normalizedRow['assignedBulkMeterId'] = v; break;
+              case 'branchId': normalizedRow['branch_id'] = v; break;
+              case 'branch_id': normalizedRow['branch_id'] = v; break;
+              case 'chargeGroup': normalizedRow['charge_group'] = v; break;
+              case 'charge_group': normalizedRow['charge_group'] = v; break;
+              case 'sewerageConnection': normalizedRow['sewerageConnection'] = v; break;
+              case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+              case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+              default: normalizedRow[k] = v; break;
+            }
+          }
+          const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
+          const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
+          const values = Object.values(normalizedRow);
           await client.query(
             `INSERT INTO individual_customers (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
             values
