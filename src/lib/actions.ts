@@ -3489,6 +3489,15 @@ export async function getSystemSettingsAction() {
   });
 }
 
+export async function getSessionSettingsAction() {
+  return await wrap(async () => {
+    await checkPermission();
+    const { dbGetSessionSettings } = await import('./db-queries');
+    const settings = await dbGetSessionSettings();
+    return settings;
+  });
+}
+
 export async function updateBillingSettingsAction(payload: {
   cycleMode: 'once_per_month' | 'custom' | 'unlimited';
   startDay: string;
@@ -3508,6 +3517,24 @@ export async function updateBillingSettingsAction(payload: {
     await logSecurityEventAction({
       event: 'Updated Billing Settings',
       details: payload
+    });
+
+    return { success: true };
+  });
+}
+
+export async function updateSessionSettingsAction(payload: { sessionDurationSeconds: string; sessionWarningSeconds: string }) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.SETTINGS_MANAGE);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const { dbUpdateSessionSettings } = await import('./db-queries');
+    await dbUpdateSessionSettings(payload.sessionDurationSeconds, payload.sessionWarningSeconds);
+
+    await logSecurityEventAction({
+      event: 'Updated Session Settings',
+      details: payload,
     });
 
     return { success: true };

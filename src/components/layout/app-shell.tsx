@@ -221,6 +221,25 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
     const storedDarkMode = window.localStorage.getItem("aawsa-dark-mode-default");
     document.documentElement.classList.toggle('dark', storedDarkMode === "true");
 
+    // Ensure session timing settings are cached client-side for use by the idle timeout hook
+    (async () => {
+      try {
+        const { getSessionSettingsAction } = await import('@/lib/actions');
+        const res = await getSessionSettingsAction();
+        const s = (res?.data ?? res) as Record<string, string>;
+        if (s.session_duration_seconds) {
+          window.localStorage.setItem('aawsa-session-duration-seconds', s.session_duration_seconds);
+        } else if (s.session_duration_hours) {
+          window.localStorage.setItem('aawsa-session-duration-seconds', String(Number(s.session_duration_hours) * 3600));
+        }
+        if (s.session_warning_seconds) {
+          window.localStorage.setItem('aawsa-session-warning-seconds', s.session_warning_seconds);
+        }
+      } catch (_e) {
+        // ignore failures — offline or no permission
+      }
+    })();
+
   }, []);
 
   React.useEffect(() => {

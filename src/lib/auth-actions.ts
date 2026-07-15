@@ -60,8 +60,23 @@ export async function loginAction(formData: FormData) {
     // Successful login — clear the rate limit counter
     resetRateLimit(rateLimitKey);
 
-    // Create the session
-    const expires = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours from now
+        // Create the session — session duration can be configured in session settings
+        let sessionDurationSeconds = 7200;
+        try {
+            const { dbGetSessionSettings } = await import('./db-queries');
+            const settings = await dbGetSessionSettings();
+            if (settings && settings.session_duration_seconds) {
+                const s = Number(settings.session_duration_seconds);
+                if (!isNaN(s) && s > 0) sessionDurationSeconds = s;
+            } else if (settings && settings.session_duration_hours) {
+                const h = Number(settings.session_duration_hours);
+                if (!isNaN(h) && h > 0) sessionDurationSeconds = h * 3600;
+            }
+        } catch (_e) {
+            // ignore and fall back to default
+        }
+
+        const expires = new Date(Date.now() + sessionDurationSeconds * 1000);
     const sessionUser = {
         id: user.id,
         email: user.email,

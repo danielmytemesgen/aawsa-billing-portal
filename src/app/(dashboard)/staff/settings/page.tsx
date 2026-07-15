@@ -1,18 +1,21 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock } from "lucide-react";
+import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, LogOut, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { BILLING_CYCLE_MODE_KEY, BILLING_DUE_DATE_OFFSET_KEY, BILLING_CYCLE_DAY_KEY } from "@/lib/billing-config";
-import { getSystemSettingsAction, updateBillingSettingsAction } from "@/lib/actions";
+import { getSystemSettingsAction, getSessionSettingsAction, updateBillingSettingsAction } from '@/lib/actions';
+import { logoutAction } from "@/lib/auth-actions";
+import { getSessionActionDescription, getSessionActionTitle } from "@/lib/session-management";
 
 const APP_NAME_KEY = "aawsa-app-name";
 const CURRENCY_KEY = "aawsa-default-currency";
@@ -23,10 +26,13 @@ const NOTIFY_NEW_BILL_KEY = "aawsa-notify-new-bill";
 const NOTIFY_OVERDUE_KEY = "aawsa-notify-overdue";
 const EXPORT_FORMAT_KEY = "aawsa-export-format";
 const EXPORT_PREFIX_KEY = "aawsa-export-prefix";
+const SESSION_DURATION_SECONDS_KEY = 'aawsa-session-duration-seconds';
+const SESSION_WARNING_SECONDS_KEY = 'aawsa-session-warning-seconds';
 
 const billingCycleDays = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
 
 export default function StaffSettingsPage() {
+    const router = useRouter();
     const { hasPermission } = usePermissions();
     const { toast } = useToast();
 
@@ -46,8 +52,34 @@ export default function StaffSettingsPage() {
     const [notifyOnOverdue, setNotifyOnOverdue] = React.useState(true);
     const [exportFormat, setExportFormat] = React.useState("xlsx");
     const [exportPrefix, setExportPrefix] = React.useState("aawsa_export");
+    // Session timing settings
+    const [sessionDurationSeconds, setSessionDurationSeconds] = React.useState('7200');
+    const [sessionWarningSeconds, setSessionWarningSeconds] = React.useState('120');
+    const [dbSessionDurationSeconds, setDbSessionDurationSeconds] = React.useState('');
+    const [dbSessionWarningSeconds, setDbSessionWarningSeconds] = React.useState('');
+    const [isLoadingSessionSettings, setIsLoadingSessionSettings] = React.useState(false);
+
+    const loadLiveSessionSettings = React.useCallback(async () => {
+        setIsLoadingSessionSettings(true);
+        try {
+            const res = await getSessionSettingsAction();
+            const s = (res?.data ?? res) as Record<string, string> | null;
+            if (s?.session_duration_seconds) {
+                setDbSessionDurationSeconds(s.session_duration_seconds);
+            } else if (s?.session_duration_hours) {
+                setDbSessionDurationSeconds(String(Number(s.session_duration_hours) * 3600));
+            }
+            if (s?.session_warning_seconds) {
+                setDbSessionWarningSeconds(s.session_warning_seconds);
+            }
+        } finally {
+            setIsLoadingSessionSettings(false);
+        }
+    }, []);
 
     const [isMounted, setIsMounted] = React.useState(false);
+    const [isSigningOut, setIsSigningOut] = React.useState(false);
+    const [isRevokingSessions, setIsRevokingSessions] = React.useState(false);
     const canUpdateSettings = hasPermission('settings_update');
 
     React.useEffect(() => {
@@ -72,6 +104,9 @@ export default function StaffSettingsPage() {
             }
         });
 
+        // Load live session settings from the dedicated session_settings table
+        loadLiveSessionSettings();
+
         const storedNotifyNewBill = localStorage.getItem(NOTIFY_NEW_BILL_KEY);
         const storedNotifyOverdue = localStorage.getItem(NOTIFY_OVERDUE_KEY);
         const storedExportFormat = localStorage.getItem(EXPORT_FORMAT_KEY);
@@ -91,7 +126,7 @@ export default function StaffSettingsPage() {
         }
     }, []);
 
-    const handleSaveSettings = () => {
+    const handleSaveSettings = async () => {
         if (!canUpdateSettings) {
             toast({
                 variant: "destructive",
@@ -106,12 +141,23 @@ export default function StaffSettingsPage() {
         localStorage.setItem(ENABLE_OVERDUE_REMINDERS_KEY, String(enableOverdueReminders));
 
         // Billing cycle - save to database
-        updateBillingSettingsAction({ cycleMode, startDay: billingCycleDay, dueDateOffset });
+        await updateBillingSettingsAction({ cycleMode, startDay: billingCycleDay, dueDateOffset });
 
         localStorage.setItem(NOTIFY_NEW_BILL_KEY, String(notifyOnNewBill));
         localStorage.setItem(NOTIFY_OVERDUE_KEY, String(notifyOnOverdue));
         localStorage.setItem(EXPORT_FORMAT_KEY, exportFormat);
         localStorage.setItem(EXPORT_PREFIX_KEY, exportPrefix);
+
+        // Persist session settings
+        localStorage.setItem(SESSION_DURATION_SECONDS_KEY, sessionDurationSeconds);
+        localStorage.setItem(SESSION_WARNING_SECONDS_KEY, sessionWarningSeconds);
+        try {
+            const { updateSessionSettingsAction } = await import('@/lib/actions');
+            await updateSessionSettingsAction({ sessionDurationSeconds, sessionWarningSeconds });
+            await loadLiveSessionSettings();
+        } catch (e) {
+            console.error('Failed to update session settings', e);
+        }
 
         toast({
             title: "Settings Saved",
@@ -127,6 +173,68 @@ export default function StaffSettingsPage() {
             }
         }
     };
+
+    const handleSignOutCurrentSession = React.useCallback(async () => {
+        if (isSigningOut) return;
+        setIsSigningOut(true);
+
+        try {
+            if (typeof window !== 'undefined') {
+                window.localStorage.removeItem('user');
+                window.localStorage.removeItem('session_expires_at');
+                window.localStorage.removeItem('last-read-timestamp');
+            }
+
+            try {
+                const { clearSessionToken } = await import('@/lib/offline-db');
+                await clearSessionToken();
+            } catch {
+                // Ignore offline DB issues during sign-out.
+            }
+
+            await logoutAction();
+            router.push('/');
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: 'Sign out failed',
+                description: 'We could not sign you out completely. Please try again.',
+            });
+        } finally {
+            setIsSigningOut(false);
+        }
+    }, [isSigningOut, router, toast]);
+
+    const handleRevokeAllSessions = React.useCallback(async () => {
+        if (isRevokingSessions) return;
+        setIsRevokingSessions(true);
+
+        try {
+            const response = await fetch('/api/device/revoke', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ all: true }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to revoke sessions');
+            }
+
+            toast({
+                title: 'Sessions revoked',
+                description: 'All active sessions for this account have been revoked.',
+            });
+            await handleSignOutCurrentSession();
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: 'Session revoke failed',
+                description: 'We could not revoke all sessions right now. Please try again.',
+            });
+        } finally {
+            setIsRevokingSessions(false);
+        }
+    }, [handleSignOutCurrentSession, isRevokingSessions, toast]);
 
     if (!isMounted) {
         return null;
@@ -145,6 +253,77 @@ export default function StaffSettingsPage() {
     return (
         <div className="space-y-6">
             <h1 className="text-2xl md:text-3xl font-bold">Application Settings</h1>
+
+            <Card className="shadow-lg">
+                <CardHeader>
+                    <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-5 w-5 text-primary" />
+                        <CardTitle>Session Management</CardTitle>
+                    </div>
+                    <CardDescription>{getSessionActionDescription('logout')}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
+                        <div className="flex items-start gap-3">
+                            <LogOut className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                            <div className="space-y-1">
+                                <p className="text-sm font-semibold">{getSessionActionTitle('logout')}</p>
+                                <p className="text-sm text-muted-foreground">
+                                    End the current browser session and return to the sign-in page.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-3">
+                            <Button variant="outline" onClick={handleSignOutCurrentSession} disabled={isSigningOut || isRevokingSessions}>
+                                <LogOut className="mr-2 h-4 w-4" />
+                                {isSigningOut ? 'Signing out...' : 'Sign out this browser'}
+                            </Button>
+                            <Button variant="destructive" onClick={handleRevokeAllSessions} disabled={isSigningOut || isRevokingSessions}>
+                                <ShieldCheck className="mr-2 h-4 w-4" />
+                                {isRevokingSessions ? 'Revoking sessions...' : 'Revoke all active sessions'}
+                            </Button>
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                            <div className="space-y-1">
+                                <Label htmlFor="session-duration">Session Duration (seconds)</Label>
+                                <Input id="session-duration" type="number" min={60} value={sessionDurationSeconds} onChange={(e)=>setSessionDurationSeconds(e.target.value)} disabled={!canUpdateSettings} className="w-[160px]" />
+                                <p className="text-xs text-muted-foreground">How long sessions remain valid (seconds).</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label htmlFor="session-warning">Warning Before Expiry (seconds)</Label>
+                                <Input id="session-warning" type="number" min={10} value={sessionWarningSeconds} onChange={(e)=>setSessionWarningSeconds(e.target.value)} disabled={!canUpdateSettings} className="w-[160px]" />
+                                <p className="text-xs text-muted-foreground">Seconds before expiry to show warning dialog.</p>
+                            </div>
+                        </div>
+                        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                            <div className="mb-3 flex items-center justify-between">
+                                <p className="text-sm font-semibold">Live Session Timing from Database</p>
+                                <Button variant="outline" size="sm" onClick={loadLiveSessionSettings}>
+                                    {isLoadingSessionSettings ? 'Refreshing...' : 'Refresh'}
+                                </Button>
+                            </div>
+                            <table className="min-w-full text-left text-sm">
+                                <thead>
+                                    <tr className="border-b border-slate-200 text-slate-600">
+                                        <th className="px-3 py-2 font-medium">Setting</th>
+                                        <th className="px-3 py-2 font-medium">Value</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr className="border-b border-slate-100">
+                                        <td className="px-3 py-2">Session Duration (seconds)</td>
+                                        <td className="px-3 py-2">{dbSessionDurationSeconds}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="px-3 py-2">Warning Before Expiry (seconds)</td>
+                                        <td className="px-3 py-2">{dbSessionWarningSeconds}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             <Card className="shadow-lg">
                 <CardHeader>

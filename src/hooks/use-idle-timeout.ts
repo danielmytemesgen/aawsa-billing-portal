@@ -1,9 +1,9 @@
 
 import { useEffect, useCallback } from 'react';
 
-const INACTIVITY_TIMEOUT = 10 * 60 * 1000; // 10 minutes
-const WARNING_BEFORE    =  2 * 60 * 1000;  // warn 2 minutes before expiry
 const SESSION_EXPIRATION_KEY = 'session_expires_at';
+const SESSION_DURATION_SECONDS_KEY = 'aawsa-session-duration-seconds';
+const SESSION_WARNING_SECONDS_KEY = 'aawsa-session-warning-seconds';
 
 interface IdleTimeoutOptions {
   onIdle: () => void;
@@ -13,7 +13,11 @@ interface IdleTimeoutOptions {
 export function useIdleTimeout({ onIdle, onWarn }: IdleTimeoutOptions) {
   const resetTimer = useCallback(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(SESSION_EXPIRATION_KEY, String(Date.now() + INACTIVITY_TIMEOUT));
+      // Read configured duration (seconds) from localStorage, fallback to 600 seconds (10 minutes)
+      const secondsStr = window.localStorage.getItem(SESSION_DURATION_SECONDS_KEY);
+      const seconds = secondsStr ? Number(secondsStr) : undefined;
+      const timeoutMs = !isNaN(Number(seconds)) && seconds! > 0 ? seconds! * 1000 : 10 * 60 * 1000;
+      window.localStorage.setItem(SESSION_EXPIRATION_KEY, String(Date.now() + timeoutMs));
     }
   }, []);
 
@@ -38,10 +42,14 @@ export function useIdleTimeout({ onIdle, onWarn }: IdleTimeoutOptions) {
 
       const msLeft = Number(expiresAt) - Date.now();
 
+      // Determine warning window from configured setting
+      const warningSecondsStr = window.localStorage.getItem(SESSION_WARNING_SECONDS_KEY);
+      const warningMs = warningSecondsStr ? Number(warningSecondsStr) * 1000 : 2 * 60 * 1000;
+
       if (msLeft <= 0) {
         // Session expired → logout
         onIdle();
-      } else if (msLeft <= WARNING_BEFORE) {
+      } else if (msLeft <= warningMs) {
         // Within warning window → notify with seconds remaining
         onWarn?.(Math.ceil(msLeft / 1000));
       }

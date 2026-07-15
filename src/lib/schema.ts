@@ -242,6 +242,14 @@ export const systemSettings = pgTable('system_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const sessionSettings = pgTable('session_settings', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  sessionDurationSeconds: integer('session_duration_seconds'),
+  warningBeforeExpirySeconds: integer('warning_before_expiry_seconds'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // 11. Spatial Data Management
 export const spatialRecords = pgTable('spatial_records', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),

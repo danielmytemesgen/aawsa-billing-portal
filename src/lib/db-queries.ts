@@ -58,6 +58,51 @@ export const dbUpdateSystemSetting = async (key: string, value: string) => {
     return rows[0];
 };
 
+export const dbGetSessionSetting = async (key: string) => {
+    const sql = 'SELECT value FROM system_settings WHERE key = $1';
+    const rows: any = await query(sql, [key]);
+    return rows[0]?.value ?? null;
+};
+
+export const dbGetSessionSettings = async () => {
+    const sql = `
+        SELECT
+            session_duration_seconds,
+            warning_before_expiry_seconds
+        FROM session_settings
+        ORDER BY id DESC
+        LIMIT 1
+    `;
+    const rows: any = await query(sql);
+    const row = rows[0] ?? null;
+    if (!row) return {};
+    return {
+        session_duration_seconds: row.session_duration_seconds != null ? String(row.session_duration_seconds) : undefined,
+        session_warning_seconds: row.warning_before_expiry_seconds != null ? String(row.warning_before_expiry_seconds) : undefined,
+    } as Record<string, string>;
+};
+
+export const dbUpdateSessionSettings = async (durationSeconds: string, warningSeconds: string) => {
+    const duration = Number(durationSeconds);
+    const warning = Number(warningSeconds);
+    const sql = `
+        WITH updated AS (
+          UPDATE session_settings
+          SET session_duration_seconds = $1,
+              warning_before_expiry_seconds = $2,
+              updated_at = NOW()
+          WHERE id = (SELECT id FROM session_settings ORDER BY id DESC LIMIT 1)
+          RETURNING *
+        )
+        INSERT INTO session_settings (session_duration_seconds, warning_before_expiry_seconds)
+        SELECT $1, $2
+        WHERE NOT EXISTS (SELECT 1 FROM updated)
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [isNaN(duration) ? 7200 : duration, isNaN(warning) ? 120 : warning]);
+    return rows[0];
+};
+
 export const getStaffMemberForAuth = async (email: string, password?: string) => {
     let sql = `
         SELECT
@@ -2645,7 +2690,6 @@ export const dbGetSystemSettings = async () => {
     }
     return settings;
 };
-
 
 export const dbRunDataAudit = async (branchId?: string) => {
     // 1. Master-Sub Usage Mismatch
