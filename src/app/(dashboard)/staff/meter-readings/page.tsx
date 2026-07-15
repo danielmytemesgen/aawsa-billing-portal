@@ -67,6 +67,16 @@ export default function StaffMeterReadingsPage() {
   const [isIndividualCsvModalOpen, setIsIndividualCsvModalOpen] = React.useState(false);
   const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
+  const currentUserRole = React.useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const storedUser = localStorage.getItem('user');
+    if (!storedUser) return null;
+    try {
+      return JSON.parse(storedUser).role?.toLowerCase() ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
   
   const canViewIndividualReadings = hasPermission(PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL);
   const canViewBulkReadings = hasPermission(PERMISSIONS.METER_READINGS_VIEW_BULK);
@@ -117,6 +127,13 @@ export default function StaffMeterReadingsPage() {
       bulkMeters = [];
       individualReadingsRaw = [];
       bulkReadingsRaw = [];
+    }
+
+    const currentMonthYear = format(new Date(), 'yyyy-MM');
+
+    if (currentUserRole === 'reader') {
+      individualReadingsRaw = individualReadingsRaw.filter(r => r.monthYear === currentMonthYear);
+      bulkReadingsRaw = bulkReadingsRaw.filter(r => r.monthYear === currentMonthYear);
     }
 
     const displayedIndividualReadings: DisplayReading[] = individualReadingsRaw.map(r => {
@@ -362,7 +379,7 @@ export default function StaffMeterReadingsPage() {
               </Link>
             </div>
           )}
-          {hasPermission('meter_readings_create') && (
+          {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
@@ -372,18 +389,24 @@ export default function StaffMeterReadingsPage() {
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>Add New Reading</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setIsModalOpen(true)}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  <span>Manual Entry</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setIsIndividualCsvModalOpen(true)}>
-                  <UploadCloud className="mr-2 h-4 w-4" />
-                  <span>Upload Individual (CSV)</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setIsBulkCsvModalOpen(true)}>
-                  <UploadCloud className="mr-2 h-4 w-4" />
-                  <span>Upload Bulk (CSV)</span>
-                </DropdownMenuItem>
+                {(hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_CREATE)) && (
+                  <DropdownMenuItem onSelect={() => setIsModalOpen(true)}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    <span>Manual Entry</span>
+                  </DropdownMenuItem>
+                )}
+                {hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) && (
+                  <DropdownMenuItem onSelect={() => setIsIndividualCsvModalOpen(true)}>
+                    <UploadCloud className="mr-2 h-4 w-4" />
+                    <span>Upload Individual (CSV)</span>
+                  </DropdownMenuItem>
+                )}
+                {hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) && (
+                  <DropdownMenuItem onSelect={() => setIsBulkCsvModalOpen(true)}>
+                    <UploadCloud className="mr-2 h-4 w-4" />
+                    <span>Upload Bulk (CSV)</span>
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}

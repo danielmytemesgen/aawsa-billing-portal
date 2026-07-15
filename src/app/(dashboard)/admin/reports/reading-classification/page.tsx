@@ -45,7 +45,7 @@ import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { ReadingDetailsDialog, type ReadingData } from "@/features/billing/components/reading-details-dialog";
 
-type ReadingCategory = 'Increase' | 'Decrease' | 'Zero' | 'Fault';
+import { classifyReadingCategory, type ReadingCategory } from '@/lib/reading-classification';
 
 interface ReadingRecord {
     id: string;
@@ -158,17 +158,8 @@ export default function ReadingClassificationPage() {
         const prev = Number(r.previousReading) || 0;
         const curr = Number(r.readingValue) || 0;
         const usage = curr - prev;
-
-        let category: ReadingCategory = 'Increase';
         const fault = r.faultCode || (r as any).FAULT_CODE;
-        if (fault) {
-            category = 'Fault';
-        } else if (usage === 0) {
-            category = 'Zero';
-        } else if (usage < 0) {
-            category = 'Decrease';
-        }
-
+        const category = classifyReadingCategory(prev, curr, fault);
         return {
             id: r.id,
             date: r.readingDate,

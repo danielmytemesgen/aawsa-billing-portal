@@ -20,6 +20,7 @@ interface RouteMapInnerProps {
   onReadClick: (meter: any, type: 'bulk' | 'individual') => void;
   userLocation?: Coordinates | null;
   pathHistory?: Coordinates[];
+  canReadBulk?: boolean;
 }
 
 import L from 'leaflet';
@@ -30,7 +31,8 @@ export default function RouteMapInner({
   isMeterRead, 
   onReadClick,
   userLocation,
-  pathHistory = []
+  pathHistory = [],
+  canReadBulk = true
 }: RouteMapInnerProps) {
   // Filter meters that have coordinates
   const markers = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate);
@@ -138,6 +140,8 @@ export default function RouteMapInner({
                         e.stopPropagation();
                         onReadClick(bm, 'bulk');
                       }}
+                      disabled={!canReadBulk}
+                      title={!canReadBulk ? 'You do not have permission to read this.' : undefined}
                     >
                       {isBulkRead ? "Update Reading" : "Read Bulk Meter"}
                     </Button>

@@ -1,5 +1,6 @@
 'use server'
 import { PERMISSIONS } from '@/lib/constants/auth';
+import { canCreateMeterReadingForType } from '@/lib/meter-reading-permissions';
 import { format } from 'date-fns';
 import fs from 'fs';
 import {
@@ -1519,7 +1520,11 @@ export async function getBillWorkflowLogsAction(billId: string) {
 
 export async function upsertSpatialRecordAction(entityId: string, entityType: 'individual_customer' | 'bulk_meter', data: { xCoordinate: number; yCoordinate: number; zCoordinate?: number | null }) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.METER_READINGS_CREATE); 
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canAdd = perms.includes(PERMISSIONS.METER_READINGS_CREATE) || perms.includes(PERMISSIONS.METER_READINGS_ADD_MANUAL) || perms.includes(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || perms.includes(PERMISSIONS.METER_READINGS_UPLOAD_BULK);
+    if (!canAdd) throw new Error('Forbidden: Missing create reading permission');
     
     return await withTransaction(async (client) => {
       const res = await dbUpsertSpatialRecord(entityId, entityType, data, client);
@@ -1599,7 +1604,11 @@ export async function createIndividualCustomerReadingAction(
     return { success: false, message: "Reading period is currently closed globally." };
   }
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canAddIndividual = canCreateMeterReadingForType((permission) => perms.includes(permission), 'individual');
+    if (!canAddIndividual) throw new Error('Forbidden: Missing permission to add individual readings');
     
     return await withTransaction(async (client) => {
       // Fetch current state for sync
@@ -1706,7 +1715,11 @@ export async function createBulkMeterReadingAction(
     return { success: false, message: "Reading period is currently closed globally." };
   }
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canAddBulk = canCreateMeterReadingForType((permission) => perms.includes(permission), 'bulk');
+    if (!canAddBulk) throw new Error('Forbidden: Missing permission to add bulk readings');
     
     return await withTransaction(async (client) => {
       // Fetch current state for sync

@@ -2502,7 +2502,10 @@ export const removeBill = async (billId: string): Promise<StoreOperationResult<v
   return { success: false, message: (error as any)?.message || "Failed to delete bill.", error };
 };
 
-export const addIndividualCustomerReading = async (readingData: Omit<DomainIndividualCustomerReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates }): Promise<StoreOperationResult<DomainIndividualCustomerReading>> => {
+export const addIndividualCustomerReading = async (
+  readingData: Omit<DomainIndividualCustomerReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates },
+  options?: { skipOfflineFallback?: boolean }
+): Promise<StoreOperationResult<DomainIndividualCustomerReading>> => {
   const customer = customers.find(c => c.customerKeyNumber === readingData.individualCustomerId);
   if (!customer) {
     return { success: false, message: "Customer not found." };
@@ -2511,7 +2514,9 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
     return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${customer.currentReading}).` };
   }
 
-  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+  const shouldQueueOffline = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
+
+  if (shouldQueueOffline) {
     const readingId = await offlineDb.queueOfflineReading('individual', readingData);
     
     // Optimistic update
@@ -2550,6 +2555,23 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
   );
 
   if (readingInsertError || !newDbReading) {
+    const shouldQueueOfflineOnError = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
+    if (shouldQueueOfflineOnError) {
+      const readingId = await offlineDb.queueOfflineReading('individual', readingData);
+      const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
+      const newReading: DomainIndividualCustomerReading = {
+        ...readingData,
+        id: 'offline-' + readingId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      } as any;
+      individualCustomerReadings = [newReading, ...individualCustomerReadings];
+      notifyIndividualCustomerReadingListeners();
+      notifyCustomerListeners();
+      window.dispatchEvent(new Event('offline-queue-updated'));
+      return { success: true, data: newReading, message: "Saved to local database. Will sync when connected." };
+    }
+
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
     if (readingInsertError && (readingInsertError as any).message.includes('violates row-level security policy')) {
       userMessage = "Permission denied to add readings. Please check Row Level Security policies in the database.";
@@ -2575,7 +2597,10 @@ export const addIndividualCustomerReading = async (readingData: Omit<DomainIndiv
   return { success: true, data: newReading };
 };
 
-export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates }): Promise<StoreOperationResult<DomainBulkMeterReading>> => {
+export const addBulkMeterReading = async (
+  readingData: Omit<DomainBulkMeterReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates },
+  options?: { skipOfflineFallback?: boolean }
+): Promise<StoreOperationResult<DomainBulkMeterReading>> => {
   const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === readingData.CUSTOMERKEY);
   if (!bulkMeter) {
     return { success: false, message: "Bulk meter not found." };
@@ -2584,7 +2609,9 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
     return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${bulkMeter.currentReading}).` };
   }
 
-  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+  const shouldQueueOffline = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
+
+  if (shouldQueueOffline) {
     const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
     
     // Optimistic update
@@ -2623,6 +2650,23 @@ export const addBulkMeterReading = async (readingData: Omit<DomainBulkMeterReadi
   );
 
   if (readingInsertError || !newDbReading) {
+    const shouldQueueOfflineOnError = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
+    if (shouldQueueOfflineOnError) {
+      const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
+      const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (bulkMeter.currentReading ?? 0);
+      const newReading: DomainBulkMeterReading = {
+        ...readingData,
+        id: 'offline-' + readingId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      } as any;
+      bulkMeterReadings = [newReading, ...bulkMeterReadings];
+      notifyBulkMeterReadingListeners();
+      notifyBulkMeterListeners();
+      window.dispatchEvent(new Event('offline-queue-updated'));
+      return { success: true, data: newReading, message: "Saved to local database. Will sync when connected." };
+    }
+
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
     if (readingInsertError && (readingInsertError as any).message && (readingInsertError as any).message.includes('violates row-level security policy')) {
       userMessage = "Permission denied to add readings. Please check Row Level Security policies in the database.";

@@ -12,6 +12,9 @@ export interface OfflineReading {
   timestamp: number;
   retryCount?: number;
   lastAttempt?: number;
+  routeKey?: string | null;
+  meterKey?: string | null;
+  readerStaffId?: string | null;
 }
 
 export interface CachedMeter {
@@ -90,6 +93,10 @@ export class OfflineDB extends Dexie {
     // add missing uploads index for offline photo sync lookup
     this.version(6).stores({
       uploads: '++id, status, readingId, readingLocalId, readingType, timestamp'
+    });
+    // add route and meter indexes so large offline route batches are easier to manage and replay
+    this.version(7).stores({
+      readings: '++id, localId, idempotencyKey, status, type, timestamp, routeKey, meterKey, readerStaffId'
     });
   }
 }
@@ -326,6 +333,10 @@ export async function queueOfflineReading(type: 'individual' | 'bulk', payload: 
   if (cleanedPayload.meter_photo !== undefined) delete cleanedPayload.meter_photo;
   if (cleanedPayload.meterPhoto !== undefined) delete cleanedPayload.meterPhoto;
 
+  const routeKey = payload?.routeKey || payload?.route_key || payload?.route?.routeKey || payload?.route?.route_key || null;
+  const meterKey = payload?.individualCustomerId || payload?.CUSTOMERKEY || payload?.entityId || payload?.meterId || payload?.meter_id || null;
+  const readerStaffId = payload?.readerStaffId || payload?.reader_staff_id || payload?.readerId || payload?.reader || null;
+
   const readingId = await db.readings.add({
     localId,
     idempotencyKey,
@@ -333,7 +344,10 @@ export async function queueOfflineReading(type: 'individual' | 'bulk', payload: 
     payload: cleanedPayload,
     status: 'pending',
     timestamp: Date.now(),
-    retryCount: 0
+    retryCount: 0,
+    routeKey,
+    meterKey,
+    readerStaffId,
   });
 
   if (photo) {

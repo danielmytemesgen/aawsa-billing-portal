@@ -81,6 +81,11 @@ export const PERMISSIONS = {
     METER_READINGS_ANALYTICS_VIEW: 'meter_readings_analytics_view',
     METER_READINGS_VIEW_INDIVIDUAL: 'meter_readings_view_individual',
     METER_READINGS_VIEW_BULK: 'meter_readings_view_bulk',
+    METER_READINGS_ADD_MANUAL: 'meter_readings_add_manual',
+    METER_READINGS_UPLOAD_INDIVIDUAL: 'meter_readings_upload_individual',
+    METER_READINGS_UPLOAD_BULK: 'meter_readings_upload_bulk',
+    METER_READINGS_CREATE_BULK: 'meter_readings_create_bulk',
+    METER_READINGS_CREATE_INDIVIDUAL: 'meter_readings_create_individual',
 
     // Data Entry
     DATA_ENTRY_ACCESS: 'data_entry_access',

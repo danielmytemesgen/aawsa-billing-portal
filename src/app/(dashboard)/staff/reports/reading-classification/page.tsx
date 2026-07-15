@@ -41,12 +41,10 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { getAllFaultCodes } from "@/lib/fault-codes";
 import { usePermissions } from "@/hooks/use-permissions";
+import { classifyReadingCategory, type ReadingCategory } from '@/lib/reading-classification';
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { ReadingDetailsDialog, type ReadingData } from "@/features/billing/components/reading-details-dialog";
-
-type ReadingCategory = 'Increase' | 'Decrease' | 'Zero' | 'Fault';
-
 
 interface ReadingRecord {
     id: string;
@@ -80,6 +78,16 @@ export default function ReadingClassificationPage() {
     const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
     const [isMounted, setIsMounted] = React.useState(false);
     const [isDownloadingPhoto, setIsDownloadingPhoto] = React.useState<string | null>(null);
+    const currentUserRole = React.useMemo(() => {
+        if (typeof window === 'undefined') return null;
+        const storedUser = localStorage.getItem('user');
+        if (!storedUser) return null;
+        try {
+            return JSON.parse(storedUser).role?.toLowerCase() ?? null;
+        } catch {
+            return null;
+        }
+    }, []);
 
     React.useEffect(() => {
         setIsMounted(true);
@@ -159,15 +167,7 @@ export default function ReadingClassificationPage() {
                 const prev = Number(r.previousReading) || 0;
                 const curr = Number(r.readingValue) || 0;
                 const usage = curr - prev;
-
-                let category: ReadingCategory = 'Increase';
-                if (r.faultCode || (r as any).FAULT_CODE) {
-                    category = 'Fault';
-                } else if (usage === 0) {
-                    category = 'Zero';
-                } else if (usage < 0) {
-                    category = 'Decrease';
-                }
+                const category = classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE);
 
                 processed.push({
                     id: r.id,
@@ -198,15 +198,7 @@ export default function ReadingClassificationPage() {
                 const prev = Number(r.previousReading) || 0;
                 const curr = Number(r.readingValue) || 0;
                 const usage = curr - prev;
-
-                let category: ReadingCategory = 'Increase';
-                if (r.faultCode || (r as any).FAULT_CODE) {
-                    category = 'Fault';
-                } else if (usage === 0) {
-                    category = 'Zero';
-                } else if (usage < 0) {
-                    category = 'Decrease';
-                }
+                const category = classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE);
 
                 processed.push({
                     id: r.id,
@@ -242,10 +234,15 @@ export default function ReadingClassificationPage() {
                 return recordBranchId === staffBranchId;
             });
 
+            const currentMonthYear = format(new Date(), 'yyyy-MM');
+            const finalReadings = currentUserRole === 'reader'
+                ? filteredProcessed.filter(r => r.month === currentMonthYear)
+                : filteredProcessed;
+
             // Sort by date descending
-            filteredProcessed.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            setReadings(filteredProcessed);
-            setFilteredReadings(filteredProcessed);
+            finalReadings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            setReadings(finalReadings);
+            setFilteredReadings(finalReadings);
         } catch (error) {
             console.error("Failed to fetch reading data:", error);
             toast({

@@ -154,9 +154,9 @@ export function SyncHub() {
       try {
         let result;
         if (reading.type === 'individual') {
-          result = await addIndividualCustomerReading(reading.payload);
+          result = await addIndividualCustomerReading(reading.payload, { skipOfflineFallback: true });
         } else {
-          result = await addBulkMeterReading(reading.payload);
+          result = await addBulkMeterReading(reading.payload, { skipOfflineFallback: true });
         }
 
         // #region agent log

@@ -50,6 +50,7 @@ import { ReaderReport } from "@/app/(dashboard)/staff/dashboard/reader-report";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { DatReadingExportDialog } from "@/features/export/components/dat-reading-export-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { ReadingPeriodToggle } from "@/features/admin/components/reading-period-toggle";
@@ -311,7 +312,7 @@ export default function AdminMeterReadingsPage() {
               </Link>
             </div>
           )}
-          {hasPermission('meter_readings_create') && (
+          {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
@@ -321,22 +322,28 @@ export default function AdminMeterReadingsPage() {
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>Add New Reading</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setIsModalOpen(true)}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  <span>Manual Entry</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setIsIndividualCsvModalOpen(true)}>
-                  <UploadCloud className="mr-2 h-4 w-4" />
-                  <span>Upload Individual (CSV)</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setIsBulkCsvModalOpen(true)}>
-                  <UploadCloud className="mr-2 h-4 w-4" />
-                  <span>Upload Bulk (CSV)</span>
-                </DropdownMenuItem>
+                {(hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_CREATE)) && (
+                  <DropdownMenuItem onSelect={() => setIsModalOpen(true)}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    <span>Manual Entry</span>
+                  </DropdownMenuItem>
+                )}
+                {hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) && (
+                  <DropdownMenuItem onSelect={() => setIsIndividualCsvModalOpen(true)}>
+                    <UploadCloud className="mr-2 h-4 w-4" />
+                    <span>Upload Individual (CSV)</span>
+                  </DropdownMenuItem>
+                )}
+                {hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) && (
+                  <DropdownMenuItem onSelect={() => setIsBulkCsvModalOpen(true)}>
+                    <UploadCloud className="mr-2 h-4 w-4" />
+                    <span>Upload Bulk (CSV)</span>
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {hasPermission('meter_readings_create') && (
+          {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>

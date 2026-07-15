@@ -37,6 +37,9 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import type { FaultCodeRow } from "@/lib/action-types";
 import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
 import { MapPin } from "lucide-react";
+import { usePermissions } from "@/hooks/use-permissions";
+import { canCreateMeterReadingForType } from "@/lib/meter-reading-permissions";
+import { getFailedReadings, getPendingReadings } from "@/lib/offline-db";
 
 export default function RouteDetailsClient() {
     const params = useParams();
@@ -45,6 +48,7 @@ export default function RouteDetailsClient() {
     const router = useRouter();
     const { toast } = useToast();
     const { currentUser } = useCurrentUser();
+    const { hasPermission } = usePermissions();
 
     const routes = useRoutes();
     const allBulkMeters = useBulkMeters();
@@ -73,6 +77,9 @@ export default function RouteDetailsClient() {
     const [periodStatus, setPeriodStatus] = React.useState<'Open' | 'Closed'>('Closed');
     const [syncProgress, setSyncProgress] = React.useState<string | null>(null);
     const [locationError, setLocationError] = React.useState<string | null>(null);
+    const [offlineQueueState, setOfflineQueueState] = React.useState({ pending: 0, failed: 0 });
+    const canReadBulk = React.useMemo(() => canCreateMeterReadingForType(hasPermission, 'bulk'), [hasPermission]);
+    const canReadIndividual = React.useMemo(() => canCreateMeterReadingForType(hasPermission, 'individual'), [hasPermission]);
     const [nearbyOnly, setNearbyOnly] = React.useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('meter_nearby_only');
@@ -187,6 +194,22 @@ export default function RouteDetailsClient() {
         let watchId = startWatching(true);
         return () => navigator.geolocation.clearWatch(watchId);
     }, []);
+
+    const refreshOfflineQueueState = React.useCallback(async () => {
+        try {
+            const [pending, failed] = await Promise.all([getPendingReadings(), getFailedReadings()]);
+            setOfflineQueueState({ pending: pending.length, failed: failed.length });
+        } catch (error) {
+            console.warn('Failed to refresh offline queue state', error);
+        }
+    }, []);
+
+    React.useEffect(() => {
+        refreshOfflineQueueState();
+        const handleQueueUpdate = () => refreshOfflineQueueState();
+        window.addEventListener('offline-queue-updated', handleQueueUpdate);
+        return () => window.removeEventListener('offline-queue-updated', handleQueueUpdate);
+    }, [refreshOfflineQueueState]);
 
     React.useEffect(() => {
         const initializeData = async () => {
@@ -353,6 +376,17 @@ export default function RouteDetailsClient() {
             });
             return;
         }
+
+        const canAccessReading = type === 'bulk' ? canReadBulk : canReadIndividual;
+        if (!canAccessReading) {
+            toast({
+                title: "Access Denied",
+                description: "You do not have permission to read this.",
+                variant: "destructive"
+            });
+            return;
+        }
+
         setSelectedMeter({
             type,
             id: meter.customerKeyNumber,
@@ -371,6 +405,13 @@ export default function RouteDetailsClient() {
 
         setIsSubmitting(true);
         try {
+            const readingContext = {
+                routeKey,
+                meterKey: values.entityId,
+                meterType: values.meterType,
+                readerStaffId: currentUser.id,
+            } as any;
+
             let result;
             if (values.meterType === 'bulk_meter') {
                 result = await addBulkMeterReading({
@@ -383,7 +424,8 @@ export default function RouteDetailsClient() {
                     notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
                     capturedCoordinates: values.capturedCoordinates,
                     meter_photo: values.meterPhoto,
-                });
+                    ...readingContext,
+                } as any);
             } else {
                 result = await addIndividualCustomerReading({
                     individualCustomerId: values.entityId,
@@ -395,7 +437,8 @@ export default function RouteDetailsClient() {
                     notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
                     capturedCoordinates: values.capturedCoordinates,
                     meter_photo: values.meterPhoto,
-                });
+                    ...readingContext,
+                } as any);
             }
 
             if (result.success) {
@@ -507,7 +550,14 @@ export default function RouteDetailsClient() {
                     <h1 className="text-2xl font-bold">Route: {route.routeKey}</h1>
                 </div>
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <p className="text-muted-foreground">{route.description || "Reading assignment"}</p>
+                    <div className="flex flex-col gap-1">
+                        <p className="text-muted-foreground">{route.description || "Reading assignment"}</p>
+                        {offlineQueueState.pending > 0 && (
+                            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1 w-fit">
+                                {offlineQueueState.pending} offline reading{offlineQueueState.pending === 1 ? '' : 's'} queued{offlineQueueState.failed > 0 ? ` • ${offlineQueueState.failed} failed` : ''}
+                            </p>
+                        )}
+                    </div>
                     <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
                         <div className="relative w-full sm:w-64">
                             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -564,6 +614,7 @@ export default function RouteDetailsClient() {
                         onReadClick={handleReadClick}
                         userLocation={userLocation}
                         pathHistory={pathHistory}
+                        canReadBulk={canReadBulk}
                     />
                 </div>
             ) : (
@@ -647,7 +698,8 @@ export default function RouteDetailsClient() {
                                             size="sm"
                                             className="text-xs font-bold bg-blue-600 hover:bg-blue-700 shadow-md transition-all rounded-full h-8 px-4"
                                             onClick={() => handleReadClick(bm, 'bulk')}
-                                            disabled={periodStatus === 'Closed'}
+                                            disabled={periodStatus === 'Closed' || !canReadBulk}
+                                            title={!canReadBulk ? 'You do not have permission to read this.' : undefined}
                                         >
                                             {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(bm.customerKeyNumber, 'bulk') ? 'Update' : 'Read Meter')}
                                         </Button>
@@ -699,7 +751,8 @@ export default function RouteDetailsClient() {
                                                     <Button
                                                         className="text-[10px] h-7 px-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-full shadow-sm"
                                                         onClick={() => handleReadClick(c, 'individual')}
-                                                        disabled={periodStatus === 'Closed'}
+                                                        disabled={periodStatus === 'Closed' || !canReadIndividual}
+                                                        title={!canReadIndividual ? 'You do not have permission to read this.' : undefined}
                                                     >
                                                         {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(c.customerKeyNumber, 'individual') ? 'Update' : 'Read')}
                                                     </Button>

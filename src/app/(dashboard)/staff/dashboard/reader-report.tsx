@@ -41,6 +41,7 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getFaultCodeLabel, getFaultCodeColor } from "@/lib/fault-codes";
+import { classifyReadingCategory } from '@/lib/reading-classification';
 
 interface ReaderReportProps {
     branches: Branch[];
@@ -93,20 +94,26 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
         // Charts: Reading Type Ratio (Filtered for recent cycle)
         const zeroReadings = cycleReadings.filter(r => {
-            const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
-            return usage === 0 && !r.FAULT_CODE && !r.faultCode;
+            const prev = Number(r.previousReading) || 0;
+            const curr = Number(r.readingValue) || 0;
+            return classifyReadingCategory(prev, curr, r.faultCode || r.FAULT_CODE) === 'Zero';
         }).length;
 
-        const faultReadings = cycleReadings.filter(r => (r.FAULT_CODE && r.FAULT_CODE !== '') || (r.faultCode && r.faultCode !== '')).length;
+        const faultReadings = cycleReadings.filter(r => {
+            const code = r.FAULT_CODE || r.faultCode;
+            return code && code !== '';
+        }).length;
 
         const increaseReadings = cycleReadings.filter(r => {
-            const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
-            return usage > 0 && !r.FAULT_CODE && !r.faultCode;
+            const prev = Number(r.previousReading) || 0;
+            const curr = Number(r.readingValue) || 0;
+            return classifyReadingCategory(prev, curr, r.faultCode || r.FAULT_CODE) === 'Increase';
         }).length;
 
         const decreaseReadings = cycleReadings.filter(r => {
-            const usage = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
-            return usage < 0 && !r.FAULT_CODE && !r.faultCode;
+            const prev = Number(r.previousReading) || 0;
+            const curr = Number(r.readingValue) || 0;
+            return classifyReadingCategory(prev, curr, r.faultCode || r.FAULT_CODE) === 'Decrease';
         }).length;
 
         const readingTypes = [
