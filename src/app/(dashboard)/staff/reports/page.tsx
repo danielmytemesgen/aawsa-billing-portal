@@ -41,6 +41,7 @@ interface ReportType {
   id: string;
   name: string;
   description: string;
+  category?: string;
   headers?: string[];
   getData?: (filters: ReportFilters) => any[] | Promise<any[]>;
   requiredPermission?: typeof PERMISSIONS[keyof typeof PERMISSIONS];
@@ -60,7 +61,8 @@ const availableStaffReports: ReportType[] = [
     id: "customer-data-export",
     name: "Customer Data Export (XLSX)",
     description: "Download a comprehensive list of individual customers with their details.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_CUSTOMER_DATA_EXPORT,
     headers: ["Customer Key","Name","Contract Number","Customer Type","Book Number","Ordinal","Meter Size","Meter Number","Previous Reading","Current Reading","Month","Specific Area","SubCity","Woreda","Sewerage Connection","Assigned Bulk Meter ID","Status","Payment Status","Calculated Bill","Assigned Branch Name","Created At","Updated At"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -79,7 +81,8 @@ const availableStaffReports: ReportType[] = [
     id: "bulk-meter-data-export",
     name: "Bulk Meter Data Export (XLSX)",
     description: "Download a comprehensive list of all bulk meters, including their details and readings.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_BULK_METER_DATA_EXPORT,
     headers: ["Customer Key","Name","Contract Number","Meter Size","Meter Number","Previous Reading","Current Reading","Month","Specific Area","SubCity","Woreda","Status","Payment Status","Charge Group","Sewerage Connection","Assigned Branch Name","Number of Assigned Individual Customers","Bulk Usage","Total Individual Usage","Total Bulk Bill","Difference Usage","Difference Bill"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -103,7 +106,8 @@ const availableStaffReports: ReportType[] = [
     id: "billing-summary",
     name: "Billing Summary Report (XLSX)",
     description: "Summary of all generated bills, including amounts and payment statuses.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_BILLING_SUMMARY,
     headers: ["Bill ID","Bill Key","Customer Key","Customer Name","Customer TIN","Branch","Period Start","Period End","Month/Year","Previous Reading","Current Reading","Consumption","Reason","Base Water Charge","Sewerage Charge","Maintenance Fee","Sanitation Fee","Meter Rent","Current Bill","Penalty","Total Bill","Amount Paid","Outstanding","Due Date","Status","Bill Number","DR Account","CR Account","Notes","Created At","Updated At"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -135,7 +139,8 @@ const availableStaffReports: ReportType[] = [
     id: "list-of-paid-bills",
     name: "List Of Paid Bills (XLSX)",
     description: "A filtered list showing only the bills marked as Paid.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS,
     headers: ["Bill ID","Individual Customer ID","Customer Key","Period Start","Period End","Month/Year","Previous Reading","Current Reading","Consumption","Base Water Charge","Sewerage Charge","Maintenance Fee","Sanitation Fee","Meter Rent","Total Bill Amount","Amount Paid","Outstanding Amount","Due Date","Status","Bill Number","Notes","Created At","Updated At"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -153,7 +158,8 @@ const availableStaffReports: ReportType[] = [
     id: "list-of-sent-bills",
     name: "List Of Sent Bills (XLSX)",
     description: "A comprehensive list of all generated bills regardless of payment status.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_LIST_OF_SENT_BILLS,
     headers: ["Bill ID","Individual Customer ID","Customer Key","Period Start","Period End","Month/Year","Previous Reading","Current Reading","Consumption","Base Water Charge","Sewerage Charge","Maintenance Fee","Sanitation Fee","Meter Rent","Total Bill Amount","Amount Paid","Outstanding Amount","Due Date","Status","Bill Number","Notes","Created At","Updated At"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -171,7 +177,8 @@ const availableStaffReports: ReportType[] = [
     id: "water-usage",
     name: "Water Usage Report (XLSX)",
     description: "Detailed water consumption report from all meter readings.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Usage',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_WATER_USAGE,
     headers: ["Reading ID","Meter Type","Customer ID","Bulk Meter ID","Staff ID","Reading Date","Month/Year","Reading Value","Is Estimate","Notes","Created At","Updated At"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -193,7 +200,8 @@ const availableStaffReports: ReportType[] = [
     id: "payment-history",
     name: "Payment History Report (XLSX)",
     description: "Detailed log of all payments received.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Payments',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_PAYMENT_HISTORY,
     headers: ["Payment ID","Bill ID","Customer ID","Payment Date","Amount Paid","Payment Method","Reference","Processed By","Notes","Created At","Updated At"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -210,7 +218,8 @@ const availableStaffReports: ReportType[] = [
     id: "meter-reading-accuracy",
     name: "Meter Reading Accuracy Report (XLSX)",
     description: "Detailed export of meter readings with reader information for accuracy analysis.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Usage',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_METER_READING_ACCURACY,
     headers: ["Reading ID","Meter Identifier","Meter Type","Reading Date","Month/Year","Reading Value","Is Estimate","Reader Name","Reader Staff ID","Notes"],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
@@ -240,7 +249,8 @@ const availableStaffReports: ReportType[] = [
     id: "tariffs-data-export",
     name: "Tariffs Data Export (XLSX)",
     description: "Download a comprehensive list of all tariffs.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_TARIFFS_DATA_EXPORT,
     headers: ["Customer Type","Year","Tiers","Maintenance %","Sanitation %","Sewerage Tiers","Meter Rent Prices","VAT Rate","Domestic VAT Threshold"],
     getData: async (filters) => {
       const { chargeGroup } = filters;
@@ -253,7 +263,8 @@ const availableStaffReports: ReportType[] = [
     id: "staff-data-export",
     name: "Staff Data Export (XLSX)",
     description: "Download a comprehensive list of all staff members.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_STAFF_DATA_EXPORT,
     headers: ["Staff ID","Name","Email","Branch Name","Status","Phone","Hire Date","Role"],
     getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -267,7 +278,8 @@ const availableStaffReports: ReportType[] = [
     id: "monthly-bill-export-csv",
     name: "Monthly Bill Export (CSV)",
     description: "Export monthly bills in CSV format for external payment system integration.",
-    requiredPermission: PERMISSIONS.REPORTS_GENERATE_BRANCH,
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_BRANCH_MONTHLY_BILL_EXPORT,
     headers: ["BILLKEY","CUSTOMERKEY","CUSTOMERNAME","CUSTOMERTIN","CUSTOMERBRANCH","REASON","CURRREAD","PREVREAD","CONS","TOTALBILLAMOUNT","THISMONTHBILLAMT","OUTSTANDINGAMT","PENALTYAMT","VAT_AMOUNT","DRACCTNO","CRACCTNO"],
     getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -473,7 +485,16 @@ export default function StaffReportsPage() {
             <Label htmlFor="report-type">Select Report Type</Label>
             <Select value={selectedReportId} onValueChange={(v) => { setSelectedReportId(v); setReportData(null); }}>
               <SelectTrigger id="report-type" className="w-full md:w-[400px]"><SelectValue placeholder="Choose a report..." /></SelectTrigger>
-              <SelectContent>{accessibleReports.map(r => (<SelectItem key={r.id} value={r.id} disabled={!r.getData}><div className="flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-muted-foreground" />{r.name}</div></SelectItem>))}</SelectContent>
+              <SelectContent>
+                {accessibleReports.map(r => (
+                  <SelectItem key={r.id} value={r.id} disabled={!r.getData}>
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-muted-foreground" />{r.name}</div>
+                      {r.category && <div className="text-xs text-slate-400 mt-0.5 ml-6">{r.category}</div>}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
 

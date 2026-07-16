@@ -11,7 +11,18 @@ import { PERMISSIONS } from "./constants/auth";
 
 export async function startBatchPdfGenerationAction(monthYear: string, branchId?: string | null) {
   try {
-    const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const canGenerateAll = perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL);
+    const canGenerateBranch = perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH);
+    if (!canGenerateAll && !canGenerateBranch) throw new Error('Forbidden: Missing report generation permission.');
+
+    // If user only has branch-level report permission, ensure branchId (if provided) matches their branch
+    if (!canGenerateAll && branchId && session.branchId && branchId !== session.branchId) {
+      throw new Error('Forbidden: Cannot generate reports for other branches.');
+    }
     
     const bills = await dbGetBillsForPdfBatch(monthYear, branchId);
     if (bills.length === 0) return { success: false, error: "No bills found for the selected period/branch." };
@@ -55,7 +66,12 @@ export async function startBatchPdfGenerationAction(monthYear: string, branchId?
 
 export async function getActivePdfJobsAction() {
   try {
-    await checkPermission(PERMISSIONS.BILL_VIEW_ALL);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    if (!perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) && !perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
+      throw new Error('Forbidden: Missing report access permission.');
+    }
     const jobs = await dbGetActivePdfJobs();
     return { success: true, jobs };
   } catch (error: any) {
