@@ -332,7 +332,7 @@ export default function BulkMeterDetailsPage() {
     setIsLoading(true);
 
     Promise.all([
-      initializeBulkMeters(), initializeCustomers(), initializeBranches(), initializeBulkMeterReadings(), initializeBills(), initializeTariffs()
+      initializeBulkMeters(true), initializeCustomers(true), initializeBranches(true), initializeBulkMeterReadings(true), initializeBills(true), initializeTariffs(true)
     ]).then(async () => {
       if (!isMounted) return;
 

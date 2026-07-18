@@ -188,12 +188,12 @@ export default function ReadingClassificationPage() {
         setIsLoading(true);
         try {
             await Promise.all([
-                initializeIndividualCustomerReadings(),
-                initializeBulkMeterReadings(),
-                initializeBranches(),
-                initializeCustomers(),
-                initializeBulkMeters(),
-                initializeStaffMembers()
+                initializeIndividualCustomerReadings(true),
+                initializeBulkMeterReadings(true),
+                initializeBranches(true),
+                initializeCustomers(true),
+                initializeBulkMeters(true),
+                initializeStaffMembers(true)
             ]);
 
             const indReadings = getIndividualCustomerReadings();

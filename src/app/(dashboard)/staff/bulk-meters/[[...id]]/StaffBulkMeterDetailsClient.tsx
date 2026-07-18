@@ -344,7 +344,7 @@ export default function StaffBulkMeterDetailsPage() {
     }
 
     setIsLoading(true);
-    Promise.all([initializeBulkMeters(), initializeCustomers(), initializeBulkMeterReadings(), initializeBills(), initializeBranches()]).then(async () => {
+    Promise.all([initializeBulkMeters(true), initializeCustomers(true), initializeBulkMeterReadings(true), initializeBills(true), initializeBranches(true)]).then(async () => {
       if (!isMounted) return;
 
       // Fetch live data for this specific meter to ensure Outstanding Bill is fresh

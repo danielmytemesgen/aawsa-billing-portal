@@ -301,8 +301,8 @@ export default function StaffDashboardPage() {
 
       // 3. Background pre-warming of cache
       const initTasks: Promise<any>[] = [
-        initializeBulkMeters(),
-        initializeCustomers(),
+        initializeBulkMeters(true),
+        initializeCustomers(true),
       ];
 
       // Guard bills data
@@ -316,8 +316,8 @@ export default function StaffDashboardPage() {
       if (hasPermission('meter_readings_view_all') || 
           hasPermission('meter_readings_view_branch') || 
           hasPermission('meter_readings_create')) {
-        initTasks.push(initializeIndividualCustomerReadings());
-        initTasks.push(initializeBulkMeterReadings());
+        initTasks.push(initializeIndividualCustomerReadings(true));
+        initTasks.push(initializeBulkMeterReadings(true));
       }
 
       // Guard route data

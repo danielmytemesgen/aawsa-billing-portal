@@ -92,6 +92,123 @@ Manages the day-to-day operations of a specific branch, including staff and cust
 ### 4.4. Staff
 Focuses on data entry and viewing branch-level information.
 
+### 4.5. Detailed Module Functionality by Web App Area
+This section expands the portal from a feature list into a practical functional map of the actual modules present in the application.
+
+#### 4.5.1 Dashboard and Business Intelligence
+The dashboard experience is role-aware and tailored for administrators, head-office users, branch managers, and frontline staff.
+
+-   **Admin Dashboard**: Displays aggregated operational KPIs such as total customers, active bulk meters, outstanding bills, recent bill activity, and branch-level summaries.
+-   **Head Office Dashboard**: Presents cross-branch performance indicators, payment trends, and comparison metrics for leadership oversight.
+-   **Staff Dashboard**: Focuses on the assigned branch's day-to-day operations, including branch customer counts, bill status, water usage patterns, and recent billing activity.
+-   **Customer Dashboard**: Gives customers a personalized overview of their account, including current balance, outstanding bills, recent usage, and payment status.
+
+#### 4.5.2 Branch Management Module
+Branch management is the organizational backbone of the portal.
+
+-   **Purpose**: Represents physical or administrative AAWSA units such as Bole, Kality, and other service locations.
+-   **Main Functions**: Create, read, update, and delete branches; assign branch-level staff; filter customers, meters, and billing data by branch context.
+-   **Operational Importance**: Branch records are used throughout the system as the primary scope boundary for data visibility, reporting, and staff assignment.
+
+#### 4.5.3 Staff Management Module
+Staff management governs who can access the system and what they can do.
+
+-   **Staff Records**: Stores personal and organizational details for each staff member, including branch, role, and contact information.
+-   **Role Assignment**: Associates each staff member with a predefined role that controls their permissions.
+-   **Operational Controls**: Enables branch administrators to manage local staff operations, while super users can manage staff across all branches.
+-   **Audit Use**: Supports accountability by linking actions to the specific staff member who created or modified records.
+
+#### 4.5.4 Roles and Permissions Module
+This module is the security engine of the application.
+
+-   **Role Definition**: Allows administrators to create or edit roles such as Admin, Head Office Management, Staff Management, Staff, and Customer.
+-   **Permission Mapping**: Connects roles to fine-grained permissions such as branch management, customer management, meter reading creation, reporting, tariff management, and settings access.
+-   **Access Enforcement**: Permissions are applied both in the UI and at the server-action level so unauthorized users cannot bypass navigation controls.
+-   **Administrative Use**: Enables least-privilege access and supports compliance, auditing, and controlled delegation of duties.
+
+#### 4.5.5 Customer and Meter Management Modules
+These modules are central to the operational side of the portal and cover both individual customers and bulk meters.
+
+-   **Individual Customers**: Stores customer profile information, meter details, billing linkage, branch assignment, and relationship to bulk meters.
+-   **Bulk Meters**: Represents large shared meters that serve multiple downstream customers and supports difference billing logic.
+-   **Operational Relationship**: Bulk meter and individual customer records are linked so the system can calculate usage and billable difference accurately.
+-   **Approval and Validation**: Some records can be routed through approval workflows to ensure staff do not add or modify data outside process rules.
+
+#### 4.5.6 Data Entry Module
+The data entry module is designed for both single-record entry and scalable bulk import.
+
+-   **Manual Entry**: Allows staff to create or correct one record at a time for customers and meters.
+-   **CSV Upload**: Supports large-scale import for bulk meters and individual customers. Validation rules ensure the header row, field order, and required identifiers are correct.
+-   **Branch Auto-Association**: Data entered by branch staff is automatically associated with the relevant branch context.
+-   **Correction Workflow**: Supports updating previously imported or created records without needing to rebuild the entire dataset.
+
+#### 4.5.7 Meter Reading Module
+The meter reading module is one of the most operationally important areas of the portal.
+
+-   **Reading Capture**: Supports manual entry of individual customer and bulk meter readings.
+-   **Reading Review**: Allows users to inspect readings by meter, reading date, route, or fault condition.
+-   **Fault and Anomaly Handling**: Detects unusual reading patterns such as zero usage, sudden drops, or suspicious deviations.
+-   **Photo Attachments**: Supports meter-reading photos to provide evidence for field submissions.
+-   **Export and Reporting**: Enables export of reading data in standard formats for downstream analysis and auditing.
+-   **Route-Based Operations**: Helps staff organize readings by route so field work can be executed in a structured way.
+
+#### 4.5.8 Billing and Bill Management Module
+The billing module covers the full bill lifecycle from draft generation to posting, payment review, and reconciliation.
+
+-   **Bill Generation**: Creates monthly bills based on customer type, consumption values, tariff rules, and the current billing period.
+-   **Draft and Approval Flow**: Allows bills to be reviewed before they are finalized and posted.
+-   **Posting and Status Changes**: Moves bills into posted or paid states once reviewed and approved.
+-   **Payment Tracking**: Records payment events and updates outstanding balances.
+-   **Reconciliation**: Supports identifying overdue, partially paid, and fully settled bills.
+-   **Difference Billing Support**: Uses bulk meter and individual customer consumption relationships to calculate the billable difference for bulk meters.
+
+#### 4.5.9 Reports and Analytics Module
+The reporting suite transforms operational data into decision-ready outputs.
+
+-   **Exportable Reports**: Offers Excel and CSV export for customer data, bulk meters, billing summaries, paid bills, sent bills, water usage, payments, tariffs, readings, and staff records.
+-   **Financial Reports**: Includes GL Finance monthly and yearly reports for financial analysis and aging debt review.
+-   **Branch-Scoped Reports**: Allows branch staff to access reports relevant to their own operational scope.
+-   **Specialized Views**: Provides dedicated pages for paid bills, sent bills, and unsettled bills to support follow-up and collection work.
+-   **AI-Powered Reporting**: Supports natural-language report generation for administrative request handling and operational analysis.
+
+#### 4.5.10 Notifications and Knowledge Base Modules
+These modules support communication and knowledge sharing inside the portal.
+
+-   **Notifications**: Enables administrators and branch managers to send announcements, reminders, and operational alerts to specific users or branches.
+-   **Knowledge Base**: Stores support documentation, procedural guidance, and troubleshooting articles for staff and administrators.
+-   **Business Value**: Helps reduce support overhead and standardizes how staff handle common issues and recurring procedures.
+
+#### 4.5.11 Tariff, Settings, and Configuration Module
+This module governs the financial parameters and platform settings used by the billing engine.
+
+-   **Tariff Management**: Defines and updates billing rates, service fees, sewerage rules, meter rent, and other charge components.
+-   **System Settings**: Stores application-wide settings such as defaults for behavior and platform preferences.
+-   **Configuration Governance**: Ensures billing rules are centrally managed and consistently applied across all branches.
+
+#### 4.5.12 Security, Audit, and Maintenance Module
+This area protects the integrity of the platform and supports operational oversight.
+
+-   **Security Logs**: Records important administrative actions, access events, and sensitive changes for audit review.
+-   **Recycle Bin**: Preserves deleted records so they can be restored if needed.
+-   **System Maintenance**: Supports cleanup, verification, and support tasks that keep the platform healthy in production.
+
+#### 4.5.13 Customer Self-Service Portal
+The customer-facing portal gives account holders direct access to their billing and usage information.
+
+-   **Dashboard**: Shows the customer's account summary, outstanding balance, recent activity, and current status.
+-   **Bills**: Allows customers to view and review their bill history and payment-related information.
+-   **Reading History**: Displays past consumption readings and trackable usage trends.
+-   **Account Management**: Lets customers manage their own account context and maintain session-based access securely.
+-   **Security Model**: The customer portal is restricted to the authenticated customer's own records, with server-side validation to prevent cross-account leakage.
+
+#### 4.5.14 Offline Field Operations and Spatial Tracking
+This module extends the portal into field operations for meter readers working in low-connectivity areas.
+
+-   **Offline Capture**: Supports reading entry even when internet connectivity is temporarily unavailable.
+-   **GPS and Spatial Validation**: Captures location data and validates proximity to known meter coordinates.
+-   **Queue-Based Sync**: Stores field activity locally and syncs it once connectivity is restored.
+-   **Operational Benefit**: Improves field productivity and helps ensure readings are attached to the correct physical location.
+
 ---
 
 ## 5. Data Entry and Management

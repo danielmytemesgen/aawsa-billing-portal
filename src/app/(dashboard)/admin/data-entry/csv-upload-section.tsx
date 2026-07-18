@@ -74,8 +74,11 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
 
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const text = e.target?.result as string;
-      const lines = text.split(/\r\n|\n/).filter(line => line.trim() !== "");
+      const text = (e.target?.result as string || '').replace(/\uFEFF/g, '');
+      const rawLines = text.split(/\r\n|\n/);
+      const lines = rawLines
+        .map((line) => line.trim())
+        .filter((line) => line !== "" && !line.startsWith('#'));
 
       if (lines.length < 2) {
         localErrors.push("CSV file must contain a header row and at least one data row.");
@@ -84,11 +87,15 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
         return;
       }
 
+      const normalizeHeader = (header: string) => header.trim().replace(/^\uFEFF/, '').replace(/[\s_-]+/g, '').toLowerCase();
       const headerLine = lines[0].split(CSV_SPLIT_REGEX).map(h => h.trim().replace(/^"|"$/g, ''));
+      const normalizedCSVHeaders = headerLine.map(normalizeHeader);
+      const headerIndexMap = normalizedCSVHeaders.reduce<Record<string, number>>((acc, header, index) => {
+        acc[header] = index;
+        return acc;
+      }, {});
 
-      const normalizedCSVHeaders = headerLine.map(h => h.toLowerCase());
-
-      const missingHeaders = expectedHeaders.filter(h => !normalizedCSVHeaders.includes(h.toLowerCase()));
+      const missingHeaders = expectedHeaders.filter(h => !(normalizeHeader(h) in headerIndexMap));
       if (missingHeaders.length > 0) {
         console.warn("Some expected headers are missing from CSV:", missingHeaders);
       }
@@ -103,8 +110,9 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
         const values = lines[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
         const rowData: Record<string, any> = {};
         expectedHeaders.forEach((expectedHeader) => {
-          const indexInCSV = normalizedCSVHeaders.indexOf(expectedHeader.toLowerCase());
-          rowData[expectedHeader] = indexInCSV !== -1 ? (values[indexInCSV] || undefined) : undefined;
+          const normalizedHeader = normalizeHeader(expectedHeader);
+          const indexInCSV = headerIndexMap[normalizedHeader];
+          rowData[expectedHeader] = indexInCSV !== undefined && indexInCSV !== -1 ? (values[indexInCSV] || undefined) : undefined;
         });
 
         try {
@@ -138,10 +146,15 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
                 localErrors.push(...result.errors);
               }
             } else {
-              localErrors.push("Batch upload failed. Please try again.");
+              const details = result?.errors?.length
+                ? result.errors.join('; ')
+                : (result as any)?.error?.message || JSON.stringify(result);
+              localErrors.push(`Batch upload failed: ${details}`);
             }
           } catch (err: any) {
-            localErrors.push(`Batch upload error: ${err?.message || String(err)}`);
+            const message = err?.message || err?.error?.message || String(err);
+            localErrors.push(`Batch upload error: ${message}`);
+            console.error('CSV batch upload exception:', err);
           }
           setProcessingProgress(100);
         } else {

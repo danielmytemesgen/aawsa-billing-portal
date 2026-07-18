@@ -3795,14 +3795,18 @@ export async function batchImportBulkMetersAction(rows: any[]) {
           const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
           const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
           const values = Object.values(normalizedRow);
-          await client.query(
+          const result = await client.query(
             `INSERT INTO bulk_meters (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
             values
           );
-          if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
-            await dbUpsertSpatialRecord(key, 'bulk_meter', spatial, client);
+          if (result.rowCount === 1) {
+            if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
+              await dbUpsertSpatialRecord(key, 'bulk_meter', spatial, client);
+            }
+            insertedKeys.push(key);
+          } else {
+            errors.push(`Meter ${key}: already exists`);
           }
-          insertedKeys.push(key);
         } catch (err: any) {
           errors.push(`Meter ${key}: ${err?.message || String(err)}`);
         }
@@ -3885,14 +3889,18 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
           const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
           const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
           const values = Object.values(normalizedRow);
-          await client.query(
+          const result = await client.query(
             `INSERT INTO individual_customers (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
             values
           );
-          if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
-            await dbUpsertSpatialRecord(key, 'individual_customer', spatial, client);
+          if (result.rowCount === 1) {
+            if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
+              await dbUpsertSpatialRecord(key, 'individual_customer', spatial, client);
+            }
+            insertedKeys.push(key);
+          } else {
+            errors.push(`Customer ${key}: already exists`);
           }
-          insertedKeys.push(key);
         } catch (err: any) {
           errors.push(`Customer ${key}: ${err?.message || String(err)}`);
         }

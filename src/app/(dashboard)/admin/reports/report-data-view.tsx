@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { format, parseISO } from 'date-fns';
 import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
+import { TablePagination } from "@/components/ui/table-pagination";
 
 interface ReportDataViewProps {
   data: any[];
@@ -15,6 +16,16 @@ interface ReportDataViewProps {
 }
 
 export function ReportDataView({ data, headers }: ReportDataViewProps) {
+  const [page, setPage] = React.useState(0);
+  const [rowsPerPage, setRowsPerPage] = React.useState(10);
+
+  React.useEffect(() => {
+    setPage(0);
+  }, [data.length, headers.length]);
+
+  const pagedData = React.useMemo(() => {
+    return data.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  }, [data, page, rowsPerPage]);
 
   const formatValue = (value: any, headerName: string): React.ReactNode => {
     if (value === null || value === undefined || value === '') {
@@ -60,42 +71,54 @@ export function ReportDataView({ data, headers }: ReportDataViewProps) {
   };
 
   return (
-    <ScrollArea className="h-[600px] w-full border border-slate-200/60 rounded-2xl shadow-inner bg-slate-50/30">
-      <div className="relative">
-        <Table>
-          <TableHeader className="sticky top-0 bg-white shadow-sm z-10">
-            <TableRow className="hover:bg-transparent border-b">
-              {headers.map((header) => (
-                <TableHead key={header} className="font-black text-[11px] uppercase tracking-wider text-slate-500 py-4 px-4 whitespace-nowrap bg-white">
-                  {header.replace(/_/g, ' ')}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody className="bg-white">
-            {data.length > 0 ? (
-              data.map((row, rowIndex) => (
-                <TableRow key={rowIndex} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
-                  {headers.map((header) => (
-                    <TableCell key={`${rowIndex}-${header}`} className="text-[13px] py-3 px-4 whitespace-nowrap border-r border-slate-50 last:border-r-0">
-                      {formatValue(row[header], header)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={headers.length} className="h-40 text-center">
-                  <div className="flex flex-col items-center justify-center text-slate-400">
-                    <p className="text-sm font-medium">No results found for this preview.</p>
-                  </div>
-                </TableCell>
+    <>
+      <ScrollArea className="h-[600px] w-full border border-slate-200/60 rounded-2xl shadow-inner bg-slate-50/30">
+        <div className="relative">
+          <Table>
+            <TableHeader className="sticky top-0 bg-white shadow-sm z-10">
+              <TableRow className="hover:bg-transparent border-b">
+                {headers.map((header) => (
+                  <TableHead key={header} className="font-black text-[11px] uppercase tracking-wider text-slate-500 py-4 px-4 whitespace-nowrap bg-white">
+                    {header.replace(/_/g, ' ')}
+                  </TableHead>
+                ))}
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
+            </TableHeader>
+            <TableBody className="bg-white">
+              {pagedData.length > 0 ? (
+                pagedData.map((row, rowIndex) => (
+                  <TableRow key={rowIndex} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
+                    {headers.map((header) => (
+                      <TableCell key={`${rowIndex}-${header}`} className="text-[13px] py-3 px-4 whitespace-nowrap border-r border-slate-50 last:border-r-0">
+                        {formatValue(row[header], header)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={headers.length} className="h-40 text-center">
+                    <div className="flex flex-col items-center justify-center text-slate-400">
+                      <p className="text-sm font-medium">No results found for this preview.</p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+      <TablePagination
+        count={data.length}
+        page={page}
+        rowsPerPage={rowsPerPage}
+        onPageChange={setPage}
+        onRowsPerPageChange={(newRowsPerPage) => {
+          setRowsPerPage(newRowsPerPage);
+          setPage(0);
+        }}
+      />
+    </>
   );
 }
