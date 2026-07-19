@@ -3728,9 +3728,8 @@ export async function postBillsBulkAction(ids: string[]) {
 export async function batchImportBulkMetersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    try {
-      const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
-      const isRestricted = session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED);
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
+    const isRestricted = session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED);
 
       const preparedRows = rows.map((row: any) => {
         const r = { ...row };
@@ -3827,11 +3826,6 @@ export async function batchImportBulkMetersAction(rows: any[]) {
       // Ensure all errors are strings for serialization
       const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
       return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
-    } catch (outerErr: any) {
-      const errMsg = outerErr?.message || String(outerErr);
-      console.error(`[BatchImportBulkMeters] Outer error: ${errMsg}`);
-      throw outerErr;
-    }
   });
 }
 
@@ -3842,9 +3836,8 @@ export async function batchImportBulkMetersAction(rows: any[]) {
 export async function batchImportIndividualCustomersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    try {
-      const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
-      const isRestricted = session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED);
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
+    const isRestricted = session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED);
 
       const preparedRows = rows.map((row: any) => {
         const r = { ...row };
@@ -3939,10 +3932,5 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
       // Ensure all errors are strings for serialization
       const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
       return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
-    } catch (outerErr: any) {
-      const errMsg = outerErr?.message || String(outerErr);
-      console.error(`[BatchImportIndividualCustomers] Outer error: ${errMsg}`);
-      throw outerErr;
-    }
   });
 }
