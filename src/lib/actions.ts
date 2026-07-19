@@ -260,13 +260,8 @@ const wrap = async <T>(fn: () => Promise<T>) => {
       fs.appendFileSync('server-error.log', new Date().toISOString() + ' : ' + (e instanceof Error ? e.stack : String(e)) + '\n');
     } catch (fsErr) { }
 
-    // Ensure the full error is serialized, not just a generic object
-    const errorObject = e instanceof Error
-      ? { name: e.name, message: e.message, stack: e.stack }
-      : typeof e === 'object' && e !== null
-        ? e
-        : { message: String(e) };
-    return { success: false, data: null, error: errorObject } as any;
+    // Ensure only serializable primitives are returned (no Error objects)
+    return { success: false, data: null, error: { message: errorMessage } } as any;
   }
 };
 
@@ -3733,92 +3728,110 @@ export async function postBillsBulkAction(ids: string[]) {
 export async function batchImportBulkMetersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
-    const isRestricted = session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED);
+    try {
+      const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
+      const isRestricted = session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED);
 
-    const preparedRows = rows.map((row: any) => {
-      const r = { ...row };
-      if (isRestricted) {
-        r.branch_id = r.branch_id || r.branchId || session.branchId;
-        r.status = 'Pending Approval';
-      } else {
-        r.branch_id = r.branch_id || r.branchId;
-        if (!r.status) r.status = 'Active';
-      }
-      // Ensure required keys exist when importing in batch mode. Single-row flows
-      // generate keys on the client, but batch uploads must be resilient server-side.
-      if (!r.customerKeyNumber) {
-        r.customerKeyNumber = `BM-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
-      }
-      if (!r.instKey) {
-        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
-      }
-      // Normalize to DB column names
-      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
-      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
-      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
-      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
-      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
-      delete r.branchId;
-      return { row: r, spatial, key: r.customerKeyNumber };
-    });
-
-    const insertedKeys: string[] = [];
-    const errors: string[] = [];
-
-    await withTransaction(async (client) => {
-      for (const { row, spatial, key } of preparedRows) {
-        try {
-          // Normalize keys to DB column names to avoid inserting unknown columns
-          const normalizedRow: Record<string, any> = {};
-          for (const k of Object.keys(row)) {
-            const v = (row as any)[k];
-            switch (k) {
-              case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
-              case 'meter_key': normalizedRow['METER_KEY'] = v; break;
-              case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
-              case 'instKey': normalizedRow['INST_KEY'] = v; break;
-              case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
-              case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
-              case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
-              case 'branchId': normalizedRow['branch_id'] = v; break;
-              case 'branch_id': normalizedRow['branch_id'] = v; break;
-              case 'chargeGroup': normalizedRow['charge_group'] = v; break;
-              case 'charge_group': normalizedRow['charge_group'] = v; break;
-              case 'sewerageConnection': normalizedRow['sewerage_connection'] = v; break;
-              case 'sewerage_connection': normalizedRow['sewerage_connection'] = v; break;
-              case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-              case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-              default: normalizedRow[k] = v; break;
-            }
-          }
-          const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
-          const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
-          const values = Object.values(normalizedRow);
-          const result = await client.query(
-            `INSERT INTO bulk_meters (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
-            values
-          );
-          if (result.rowCount === 1) {
-            if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
-              await dbUpsertSpatialRecord(key, 'bulk_meter', spatial, client);
-            }
-            insertedKeys.push(key);
-          } else {
-            errors.push(`Meter ${key}: already exists`);
-          }
-        } catch (err: any) {
-          errors.push(`Meter ${key}: ${err?.message || String(err)}`);
+      const preparedRows = rows.map((row: any) => {
+        const r = { ...row };
+        if (isRestricted) {
+          r.branch_id = r.branch_id || r.branchId || session.branchId;
+          r.status = 'Pending Approval';
+        } else {
+          r.branch_id = r.branch_id || r.branchId;
+          if (!r.status) r.status = 'Active';
         }
+        // Ensure required keys exist when importing in batch mode. Single-row flows
+        // generate keys on the client, but batch uploads must be resilient server-side.
+        if (!r.customerKeyNumber) {
+          r.customerKeyNumber = `BM-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
+        }
+        if (!r.instKey) {
+          r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+        }
+        // Normalize to DB column names
+        if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
+        if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
+        if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+        const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+        delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
+        delete r.branchId;
+        return { row: r, spatial, key: r.customerKeyNumber };
+      });
+
+      const insertedKeys: string[] = [];
+      const errors: string[] = [];
+
+      console.log(`[BatchImportBulkMeters] Starting import of ${preparedRows.length} rows`);
+
+      await withTransaction(async (client) => {
+        for (const { row, spatial, key } of preparedRows) {
+          try {
+            // Normalize keys to DB column names to avoid inserting unknown columns
+            const normalizedRow: Record<string, any> = {};
+            for (const k of Object.keys(row)) {
+              const v = (row as any)[k];
+              switch (k) {
+                case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
+                case 'meter_key': normalizedRow['METER_KEY'] = v; break;
+                case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
+                case 'instKey': normalizedRow['INST_KEY'] = v; break;
+                case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
+                case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
+                case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
+                case 'branchId': normalizedRow['branch_id'] = v; break;
+                case 'branch_id': normalizedRow['branch_id'] = v; break;
+                case 'chargeGroup': normalizedRow['charge_group'] = v; break;
+                case 'charge_group': normalizedRow['charge_group'] = v; break;
+                case 'sewerageConnection': normalizedRow['sewerage_connection'] = v; break;
+                case 'sewerage_connection': normalizedRow['sewerage_connection'] = v; break;
+                case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+                case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+                default: normalizedRow[k] = v; break;
+              }
+            }
+            const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
+            const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
+            const values = Object.values(normalizedRow);
+            const result = await client.query(
+              `INSERT INTO bulk_meters (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
+              values
+            );
+            if (result.rowCount === 1) {
+              if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
+                await dbUpsertSpatialRecord(key, 'bulk_meter', spatial, client);
+              }
+              insertedKeys.push(key);
+            } else {
+              errors.push(`Meter ${key}: already exists`);
+            }
+          } catch (err: any) {
+            const errMsg = err?.message || String(err);
+            console.error(`[BatchImportBulkMeters] Error inserting meter ${key}: ${errMsg}`);
+            errors.push(`Meter ${key}: ${errMsg}`);
+          }
+        }
+      });
+
+      console.log(`[BatchImportBulkMeters] Complete: inserted=${insertedKeys.length}, errors=${errors.length}`);
+
+      try {
+        await logSecurityEventAction({
+          event: 'Batch Import Bulk Meters',
+          details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
+        });
+      } catch (logErr) {
+        console.warn('Failed to log batch import event:', logErr);
       }
-    });
 
-    await logSecurityEventAction({
-      event: 'Batch Import Bulk Meters',
-      details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
-    });
-
-    return { success: true, inserted: insertedKeys.length, errors };
+      // Ensure all errors are strings for serialization
+      const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
+      return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
+    } catch (outerErr: any) {
+      const errMsg = outerErr?.message || String(outerErr);
+      console.error(`[BatchImportBulkMeters] Outer error: ${errMsg}`);
+      throw outerErr;
+    }
   });
 }
 
@@ -3829,89 +3842,107 @@ export async function batchImportBulkMetersAction(rows: any[]) {
 export async function batchImportIndividualCustomersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
-    const isRestricted = session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED);
+    try {
+      const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
+      const isRestricted = session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED);
 
-    const preparedRows = rows.map((row: any) => {
-      const r = { ...row };
-      if (isRestricted) {
-        r.branch_id = r.branch_id || r.branchId || session.branchId;
-        r.status = 'Pending Approval';
-      } else {
-        r.branch_id = r.branch_id || r.branchId;
-        if (!r.status) r.status = 'Active';
-      }
-      // Ensure required keys exist for batch imports
-      if (!r.customerKeyNumber) {
-        r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
-      }
-      if (!r.instKey) {
-        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
-      }
-      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
-      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
-      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
-      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
-      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
-      delete r.branchId;
-      return { row: r, spatial, key: r.customerKeyNumber };
-    });
-
-    const insertedKeys: string[] = [];
-    const errors: string[] = [];
-
-    await withTransaction(async (client) => {
-      for (const { row, spatial, key } of preparedRows) {
-        try {
-          // Normalize keys to DB column names before insert
-          const normalizedRow: Record<string, any> = {};
-          for (const k of Object.keys(row)) {
-            const v = (row as any)[k];
-            switch (k) {
-              case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
-              case 'meter_key': normalizedRow['METER_KEY'] = v; break;
-              case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
-              case 'instKey': normalizedRow['INST_KEY'] = v; break;
-              case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
-              case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
-              case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
-              case 'assignedBulkMeterId': normalizedRow['assignedBulkMeterId'] = v; break;
-              case 'branchId': normalizedRow['branch_id'] = v; break;
-              case 'branch_id': normalizedRow['branch_id'] = v; break;
-              case 'chargeGroup': normalizedRow['charge_group'] = v; break;
-              case 'charge_group': normalizedRow['charge_group'] = v; break;
-              case 'sewerageConnection': normalizedRow['sewerageConnection'] = v; break;
-              case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-              case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-              default: normalizedRow[k] = v; break;
-            }
-          }
-          const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
-          const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
-          const values = Object.values(normalizedRow);
-          const result = await client.query(
-            `INSERT INTO individual_customers (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
-            values
-          );
-          if (result.rowCount === 1) {
-            if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
-              await dbUpsertSpatialRecord(key, 'individual_customer', spatial, client);
-            }
-            insertedKeys.push(key);
-          } else {
-            errors.push(`Customer ${key}: already exists`);
-          }
-        } catch (err: any) {
-          errors.push(`Customer ${key}: ${err?.message || String(err)}`);
+      const preparedRows = rows.map((row: any) => {
+        const r = { ...row };
+        if (isRestricted) {
+          r.branch_id = r.branch_id || r.branchId || session.branchId;
+          r.status = 'Pending Approval';
+        } else {
+          r.branch_id = r.branch_id || r.branchId;
+          if (!r.status) r.status = 'Active';
         }
+        // Ensure required keys exist for batch imports
+        if (!r.customerKeyNumber) {
+          r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
+        }
+        if (!r.instKey) {
+          r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+        }
+        if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
+        if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+        if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
+        const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+        delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
+        delete r.branchId;
+        return { row: r, spatial, key: r.customerKeyNumber };
+      });
+
+      const insertedKeys: string[] = [];
+      const errors: string[] = [];
+
+      console.log(`[BatchImportIndividualCustomers] Starting import of ${preparedRows.length} rows`);
+
+      await withTransaction(async (client) => {
+        for (const { row, spatial, key } of preparedRows) {
+          try {
+            // Normalize keys to DB column names before insert
+            const normalizedRow: Record<string, any> = {};
+            for (const k of Object.keys(row)) {
+              const v = (row as any)[k];
+              switch (k) {
+                case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
+                case 'meter_key': normalizedRow['METER_KEY'] = v; break;
+                case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
+                case 'instKey': normalizedRow['INST_KEY'] = v; break;
+                case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
+                case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
+                case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
+                case 'assignedBulkMeterId': normalizedRow['assignedBulkMeterId'] = v; break;
+                case 'branchId': normalizedRow['branch_id'] = v; break;
+                case 'branch_id': normalizedRow['branch_id'] = v; break;
+                case 'chargeGroup': normalizedRow['charge_group'] = v; break;
+                case 'charge_group': normalizedRow['charge_group'] = v; break;
+                case 'sewerageConnection': normalizedRow['sewerageConnection'] = v; break;
+                case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+                case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+                default: normalizedRow[k] = v; break;
+              }
+            }
+            const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
+            const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
+            const values = Object.values(normalizedRow);
+            const result = await client.query(
+              `INSERT INTO individual_customers (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
+              values
+            );
+            if (result.rowCount === 1) {
+              if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
+                await dbUpsertSpatialRecord(key, 'individual_customer', spatial, client);
+              }
+              insertedKeys.push(key);
+            } else {
+              errors.push(`Customer ${key}: already exists`);
+            }
+          } catch (err: any) {
+            const errMsg = err?.message || String(err);
+            console.error(`[BatchImportIndividualCustomers] Error inserting customer ${key}: ${errMsg}`);
+            errors.push(`Customer ${key}: ${errMsg}`);
+          }
+        }
+      });
+
+      console.log(`[BatchImportIndividualCustomers] Complete: inserted=${insertedKeys.length}, errors=${errors.length}`);
+
+      try {
+        await logSecurityEventAction({
+          event: 'Batch Import Individual Customers',
+          details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
+        });
+      } catch (logErr) {
+        console.warn('Failed to log batch import event:', logErr);
       }
-    });
 
-    await logSecurityEventAction({
-      event: 'Batch Import Individual Customers',
-      details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
-    });
-
-    return { success: true, inserted: insertedKeys.length, errors };
+      // Ensure all errors are strings for serialization
+      const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
+      return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
+    } catch (outerErr: any) {
+      const errMsg = outerErr?.message || String(outerErr);
+      console.error(`[BatchImportIndividualCustomers] Outer error: ${errMsg}`);
+      throw outerErr;
+    }
   });
 }

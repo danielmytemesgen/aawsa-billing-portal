@@ -152,7 +152,18 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
               localErrors.push(`Batch upload failed: ${details}`);
             }
           } catch (err: any) {
-            const message = err?.message || err?.error?.message || String(err);
+            // Handle various error formats from Next.js Server Actions
+            let message = 'Unknown error occurred';
+            if (err?.message) {
+              message = err.message;
+            } else if (err?.error?.message) {
+              message = err.error.message;
+            } else if (typeof err === 'string') {
+              message = err;
+            } else if (err?.digest) {
+              // Next.js production error with digest
+              message = `Server error (digest: ${err.digest}). Check server logs for details.`;
+            }
             localErrors.push(`Batch upload error: ${message}`);
             console.error('CSV batch upload exception:', err);
           }
