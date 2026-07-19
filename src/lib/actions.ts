@@ -3729,17 +3729,12 @@ export async function batchImportBulkMetersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
-    const isRestricted = session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED);
 
       const preparedRows = rows.map((row: any) => {
         const r = { ...row };
-        if (isRestricted) {
-          r.branch_id = r.branch_id || r.branchId || session.branchId;
-          r.status = 'Pending Approval';
-        } else {
-          r.branch_id = r.branch_id || r.branchId;
-          if (!r.status) r.status = 'Active';
-        }
+        // Batch CSV imports always require approval, regardless of permission level
+        r.branch_id = r.branch_id || r.branchId || session.branchId;
+        r.status = 'Pending Approval';
         // Ensure required keys exist when importing in batch mode. Single-row flows
         // generate keys on the client, but batch uploads must be resilient server-side.
         if (!r.customerKeyNumber) {
@@ -3849,17 +3844,12 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
-    const isRestricted = session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED);
 
       const preparedRows = rows.map((row: any) => {
         const r = { ...row };
-        if (isRestricted) {
-          r.branch_id = r.branch_id || r.branchId || session.branchId;
-          r.status = 'Pending Approval';
-        } else {
-          r.branch_id = r.branch_id || r.branchId;
-          if (!r.status) r.status = 'Active';
-        }
+        // Batch CSV imports always require approval, regardless of permission level
+        r.branch_id = r.branch_id || r.branchId || session.branchId;
+        r.status = 'Pending Approval';
         // Ensure required keys exist for batch imports
         if (!r.customerKeyNumber) {
           r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
