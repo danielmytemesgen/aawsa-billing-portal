@@ -3765,7 +3765,11 @@ export async function batchImportBulkMetersAction(rows: any[]) {
 
       await withTransaction(async (client) => {
         for (const { row, spatial, key } of preparedRows) {
+          const spName = `sp_${insertedKeys.length}_${errors.length}`;
           try {
+            // Create savepoint to isolate this row's errors
+            await client.query(`SAVEPOINT ${spName}`);
+            
             // Normalize keys to DB column names to avoid inserting unknown columns
             const normalizedRow: Record<string, any> = {};
             for (const k of Object.keys(row)) {
@@ -3804,7 +3808,15 @@ export async function batchImportBulkMetersAction(rows: any[]) {
             } else {
               errors.push(`Meter ${key}: already exists`);
             }
+            // Release savepoint on success
+            await client.query(`RELEASE SAVEPOINT ${spName}`);
           } catch (err: any) {
+            // Rollback to savepoint on error (keeps transaction alive)
+            try {
+              await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+            } catch (spErr) {
+              console.error(`[BatchImportBulkMeters] Savepoint rollback failed: ${spErr}`);
+            }
             const errMsg = err?.message || String(err);
             console.error(`[BatchImportBulkMeters] Error inserting meter ${key}: ${errMsg}`);
             errors.push(`Meter ${key}: ${errMsg}`);
@@ -3871,7 +3883,11 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
 
       await withTransaction(async (client) => {
         for (const { row, spatial, key } of preparedRows) {
+          const spName = `sp_${insertedKeys.length}_${errors.length}`;
           try {
+            // Create savepoint to isolate this row's errors
+            await client.query(`SAVEPOINT ${spName}`);
+            
             // Normalize keys to DB column names before insert
             const normalizedRow: Record<string, any> = {};
             for (const k of Object.keys(row)) {
@@ -3910,7 +3926,15 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
             } else {
               errors.push(`Customer ${key}: already exists`);
             }
+            // Release savepoint on success
+            await client.query(`RELEASE SAVEPOINT ${spName}`);
           } catch (err: any) {
+            // Rollback to savepoint on error (keeps transaction alive)
+            try {
+              await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+            } catch (spErr) {
+              console.error(`[BatchImportIndividualCustomers] Savepoint rollback failed: ${spErr}`);
+            }
             const errMsg = err?.message || String(err);
             console.error(`[BatchImportIndividualCustomers] Error inserting customer ${key}: ${errMsg}`);
             errors.push(`Customer ${key}: ${errMsg}`);
