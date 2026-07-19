@@ -3722,6 +3722,57 @@ export async function postBillsBulkAction(ids: string[]) {
 // =====================================================
 
 /**
+ * Shared two-layer savepoint guard used by all batch CSV import functions.
+ *
+ * Layer 1 — ROLLBACK TO SAVEPOINT:
+ *   If the rollback itself throws, the transaction is permanently aborted.
+ *   Returns { ok: false, transactionDead: true }.
+ *
+ * Layer 2 — SELECT 1 health probe (double-check):
+ *   Even when ROLLBACK TO SAVEPOINT succeeds without throwing, PostgreSQL can
+ *   silently leave the connection in a broken state. The probe detects this.
+ *   Returns { ok: false, transactionDead: true } if the probe fails.
+ *
+ * On a normal (recoverable) row error it returns { ok: false, transactionDead: false },
+ * meaning the transaction is still alive and the loop can continue.
+ * On success it returns { ok: true }.
+ */
+async function savepointGuard(
+  client: any,
+  spName: string,
+  fn: () => Promise<void>,
+  tag: string // e.g. "[BatchImportBulkMeters]"
+): Promise<{ ok: true } | { ok: false; errMsg: string; transactionDead: boolean }> {
+  try {
+    await client.query(`SAVEPOINT ${spName}`);
+    await fn();
+    await client.query(`RELEASE SAVEPOINT ${spName}`);
+    return { ok: true };
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    console.error(`${tag} Row error: ${errMsg}`);
+
+    // ── Layer 1: attempt savepoint rollback ────────────────────────────────
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+    } catch (spErr: any) {
+      console.error(`${tag} CRITICAL: Savepoint rollback failed — transaction is dead: ${spErr?.message || spErr}`);
+      return { ok: false, errMsg, transactionDead: true };
+    }
+
+    // ── Layer 2: double-check the connection is genuinely alive ────────────
+    try {
+      await client.query('SELECT 1');
+    } catch {
+      console.error(`${tag} CRITICAL: Health probe failed after savepoint rollback — transaction is dead`);
+      return { ok: false, errMsg, transactionDead: true };
+    }
+
+    return { ok: false, errMsg, transactionDead: false };
+  }
+}
+
+/**
  * Batch-import bulk meters from a CSV upload.
  * Replaces N individual createBulkMeterAction calls with a single server roundtrip.
  */
@@ -3759,12 +3810,16 @@ export async function batchImportBulkMetersAction(rows: any[]) {
       console.log(`[BatchImportBulkMeters] Starting import of ${preparedRows.length} rows`);
 
       await withTransaction(async (client) => {
+        let transactionDead = false;
+
         for (const { row, spatial, key } of preparedRows) {
-          const spName = `sp_${insertedKeys.length}_${errors.length}`;
-          try {
-            // Create savepoint to isolate this row's errors
-            await client.query(`SAVEPOINT ${spName}`);
-            
+          if (transactionDead) {
+            errors.push(`Meter ${key}: skipped — transaction was aborted by an earlier critical error`);
+            continue;
+          }
+
+          const spName = `sp_row_${insertedKeys.length + errors.length}`;
+          const guard = await savepointGuard(client, spName, async () => {
             // Normalize keys to DB column names to avoid inserting unknown columns
             const normalizedRow: Record<string, any> = {};
             for (const k of Object.keys(row)) {
@@ -3803,18 +3858,11 @@ export async function batchImportBulkMetersAction(rows: any[]) {
             } else {
               errors.push(`Meter ${key}: already exists`);
             }
-            // Release savepoint on success
-            await client.query(`RELEASE SAVEPOINT ${spName}`);
-          } catch (err: any) {
-            // Rollback to savepoint on error (keeps transaction alive)
-            try {
-              await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
-            } catch (spErr) {
-              console.error(`[BatchImportBulkMeters] Savepoint rollback failed: ${spErr}`);
-            }
-            const errMsg = err?.message || String(err);
-            console.error(`[BatchImportBulkMeters] Error inserting meter ${key}: ${errMsg}`);
-            errors.push(`Meter ${key}: ${errMsg}`);
+          }, '[BatchImportBulkMeters]');
+
+          if (!guard.ok) {
+            errors.push(`Meter ${key}: ${guard.errMsg}`);
+            if (guard.transactionDead) transactionDead = true;
           }
         }
       });
@@ -3872,12 +3920,16 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
       console.log(`[BatchImportIndividualCustomers] Starting import of ${preparedRows.length} rows`);
 
       await withTransaction(async (client) => {
+        let transactionDead = false;
+
         for (const { row, spatial, key } of preparedRows) {
-          const spName = `sp_${insertedKeys.length}_${errors.length}`;
-          try {
-            // Create savepoint to isolate this row's errors
-            await client.query(`SAVEPOINT ${spName}`);
-            
+          if (transactionDead) {
+            errors.push(`Customer ${key}: skipped — transaction was aborted by an earlier critical error`);
+            continue;
+          }
+
+          const spName = `sp_row_${insertedKeys.length + errors.length}`;
+          const guard = await savepointGuard(client, spName, async () => {
             // Normalize keys to DB column names before insert
             const normalizedRow: Record<string, any> = {};
             for (const k of Object.keys(row)) {
@@ -3916,18 +3968,11 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
             } else {
               errors.push(`Customer ${key}: already exists`);
             }
-            // Release savepoint on success
-            await client.query(`RELEASE SAVEPOINT ${spName}`);
-          } catch (err: any) {
-            // Rollback to savepoint on error (keeps transaction alive)
-            try {
-              await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
-            } catch (spErr) {
-              console.error(`[BatchImportIndividualCustomers] Savepoint rollback failed: ${spErr}`);
-            }
-            const errMsg = err?.message || String(err);
-            console.error(`[BatchImportIndividualCustomers] Error inserting customer ${key}: ${errMsg}`);
-            errors.push(`Customer ${key}: ${errMsg}`);
+          }, '[BatchImportIndividualCustomers]');
+
+          if (!guard.ok) {
+            errors.push(`Customer ${key}: ${guard.errMsg}`);
+            if (guard.transactionDead) transactionDead = true;
           }
         }
       });
@@ -3948,3 +3993,4 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
       return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
   });
 }
+
