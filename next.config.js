@@ -17,6 +17,7 @@ const nextConfig = {
   experimental: {
     serverActions: {
       allowedOrigins: allowedDevOrigins,
+      bodySizeLimit: '10mb',
     },
   },
   images: {
