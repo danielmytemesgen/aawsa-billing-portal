@@ -4551,3 +4551,63 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Individual Customer ↔ Bulk Meter Assignment Actions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns all individual customers currently assigned to the given bulk meter. */
+export async function getAssignedCustomersForBulkMeterAction(bulkMeterId: string) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    const rows = await dbGetCustomersByBulkMeterId(bulkMeterId);
+    return rows as any[];
+  });
+}
+
+/**
+ * Returns individual customers that are NOT currently assigned to any bulk meter.
+ * Supports an optional search term to filter by name or customerKeyNumber.
+ */
+export async function getUnassignedIndividualCustomersAction(searchTerm?: string) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    let sql = `SELECT "customerKeyNumber", name, "METER_KEY", branch_id
+               FROM individual_customers
+               WHERE "assignedBulkMeterId" IS NULL
+                 AND deleted_at IS NULL
+                 AND status != 'Pending Approval'`;
+    const params: any[] = [];
+    if (searchTerm && searchTerm.trim()) {
+      sql += ` AND (name ILIKE $1 OR "customerKeyNumber" ILIKE $1 OR "METER_KEY" ILIKE $1)`;
+      params.push(`%${searchTerm.trim()}%`);
+    }
+    sql += ' ORDER BY name ASC LIMIT 100';
+    const rows = await query(sql, params);
+    return rows as any[];
+  });
+}
+
+/** Assigns an individual customer to a bulk meter by setting assignedBulkMeterId. */
+export async function assignCustomerToBulkMeterAction(customerKeyNumber: string, bulkMeterId: string) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    await dbUpdateCustomer(customerKeyNumber, { assignedBulkMeterId: bulkMeterId } as any);
+    revalidatePath('/staff/bill-management');
+    revalidatePath('/admin/dashboard');
+    return { customerKeyNumber, bulkMeterId };
+  });
+}
+
+/** Removes an individual customer from their current bulk meter assignment. */
+export async function unassignCustomerFromBulkMeterAction(customerKeyNumber: string) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    await query(
+      `UPDATE individual_customers SET "assignedBulkMeterId" = NULL WHERE "customerKeyNumber" = $1`,
+      [customerKeyNumber]
+    );
+    revalidatePath('/staff/bill-management');
+    revalidatePath('/admin/dashboard');
+    return { customerKeyNumber };
+  });
+}

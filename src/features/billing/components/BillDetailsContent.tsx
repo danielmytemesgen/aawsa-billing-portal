@@ -24,6 +24,10 @@ import {
     getAssignedCustomerReadingsAction,
     updateBulkAndAssignedReadingsAction,
     recalculateBulkBillAction,
+    getAssignedCustomersForBulkMeterAction,
+    getUnassignedIndividualCustomersAction,
+    assignCustomerToBulkMeterAction,
+    unassignCustomerFromBulkMeterAction,
 } from '@/lib/actions';
 import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
@@ -31,7 +35,10 @@ import { initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload } from 'lucide-react';
+import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+
 
 import { cn } from '@/lib/utils';
 import {
@@ -281,6 +288,14 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     // Reject / Correct reason dialog state
     const [rejectDialog, setRejectDialog] = useState<{ open: boolean; action: 'reject' | 'correct' }>({ open: false, action: 'reject' });
     const [rejectReason, setRejectReason] = useState('');
+
+    // Manage Assigned Customers dialog state
+    const [manageCustomersOpen, setManageCustomersOpen] = useState(false);
+    const [assignedCustomers, setAssignedCustomers] = useState<any[]>([]);
+    const [unassignedCustomers, setUnassignedCustomers] = useState<any[]>([]);
+    const [customerSearch, setCustomerSearch] = useState('');
+    const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
+    const [customerActionLoading, setCustomerActionLoading] = useState<string | null>(null);
 
     const [isExporting, setIsExporting] = useState(false);
 
@@ -1176,6 +1191,32 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 <RotateCcw className="mr-2 h-4 w-4" /> Correct Bill
                                             </Button>
                                         )}
+                                        {/* Manage Assigned Individual Customers — only for bulk meter bills */}
+                                        {bill.CUSTOMERKEY && (
+                                            <Button
+                                                variant="outline"
+                                                className="w-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                                                onClick={async () => {
+                                                    setManageCustomersOpen(true);
+                                                    setIsLoadingCustomers(true);
+                                                    setCustomerSearch('');
+                                                    try {
+                                                        const [assignedRes, unassignedRes] = await Promise.all([
+                                                            getAssignedCustomersForBulkMeterAction(bill.CUSTOMERKEY!),
+                                                            getUnassignedIndividualCustomersAction(),
+                                                        ]);
+                                                        setAssignedCustomers(assignedRes.data ?? []);
+                                                        setUnassignedCustomers(unassignedRes.data ?? []);
+                                                    } catch (e) {
+                                                        toast({ title: 'Error', description: 'Failed to load customers.', variant: 'destructive' });
+                                                    } finally {
+                                                        setIsLoadingCustomers(false);
+                                                    }
+                                                }}
+                                            >
+                                                <Users className="mr-2 h-4 w-4" /> Manage Assigned Customers
+                                            </Button>
+                                        )}
                                         <Button variant="outline" className="w-full" onClick={() => router.push(`/staff/bill-management/${bill.id}?print=true`)}>
                                             <Printer className="mr-2 h-4 w-4" /> Print Copy
                                         </Button>
@@ -1232,6 +1273,164 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                             disabled={!rejectReason.trim()}
                         >
                             {rejectDialog.action === 'reject' ? 'Reject & Return' : 'Confirm Correction'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Manage Assigned Individual Customers Dialog */}
+            <Dialog open={manageCustomersOpen} onOpenChange={setManageCustomersOpen}>
+                <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Users className="h-5 w-5 text-blue-600" />
+                            Manage Assigned Customers
+                        </DialogTitle>
+                        <DialogDescription>
+                            Add or remove individual customers assigned to bulk meter{' '}
+                            <span className="font-semibold text-gray-800">{bill?.CUSTOMERKEY}</span>.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {isLoadingCustomers ? (
+                        <div className="flex items-center justify-center py-10">
+                            <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                            <span className="ml-2 text-sm text-gray-500">Loading customers...</span>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-4 overflow-hidden flex-1">
+
+                            {/* ── Currently Assigned ── */}
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <p className="text-sm font-semibold text-gray-700">
+                                        Currently Assigned
+                                    </p>
+                                    <Badge variant="secondary">{assignedCustomers.length}</Badge>
+                                </div>
+                                <ScrollArea className="h-40 rounded-md border bg-gray-50/50">
+                                    {assignedCustomers.length === 0 ? (
+                                        <p className="text-center text-sm text-gray-400 py-6">No customers assigned yet.</p>
+                                    ) : (
+                                        <ul className="divide-y divide-gray-100">
+                                            {assignedCustomers.map((c) => (
+                                                <li key={c.customerKeyNumber} className="flex items-center justify-between px-3 py-2 hover:bg-white transition-colors">
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
+                                                        <p className="text-xs text-gray-400">{c.customerKeyNumber}</p>
+                                                    </div>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 ml-2 shrink-0"
+                                                        disabled={customerActionLoading === c.customerKeyNumber}
+                                                        onClick={async () => {
+                                                            setCustomerActionLoading(c.customerKeyNumber);
+                                                            try {
+                                                                const res = await unassignCustomerFromBulkMeterAction(c.customerKeyNumber);
+                                                                if (res.success) {
+                                                                    setAssignedCustomers(prev => prev.filter(x => x.customerKeyNumber !== c.customerKeyNumber));
+                                                                    setUnassignedCustomers(prev => [...prev, c].sort((a, b) => a.name?.localeCompare(b.name)));
+                                                                    toast({ title: 'Removed', description: `${c.name} unassigned from this meter.` });
+                                                                } else {
+                                                                    toast({ title: 'Error', description: res.error || 'Failed to remove.', variant: 'destructive' });
+                                                                }
+                                                            } catch {
+                                                                toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
+                                                            } finally {
+                                                                setCustomerActionLoading(null);
+                                                            }
+                                                        }}
+                                                    >
+                                                        {customerActionLoading === c.customerKeyNumber
+                                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                            : <UserMinus className="h-3.5 w-3.5" />
+                                                        }
+                                                        <span className="ml-1 text-xs">Remove</span>
+                                                    </Button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </ScrollArea>
+                            </div>
+
+                            {/* ── Add Unassigned Customers ── */}
+                            <div className="flex flex-col gap-2 flex-1 overflow-hidden">
+                                <p className="text-sm font-semibold text-gray-700">Add Customer</p>
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search by name or key..."
+                                        value={customerSearch}
+                                        onChange={(e) => setCustomerSearch(e.target.value)}
+                                        className="w-full pl-8 pr-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                                    />
+                                </div>
+                                <ScrollArea className="flex-1 min-h-[120px] max-h-48 rounded-md border bg-gray-50/50">
+                                    {(() => {
+                                        const filtered = customerSearch.trim()
+                                            ? unassignedCustomers.filter(c =>
+                                                c.name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
+                                                c.customerKeyNumber?.toLowerCase().includes(customerSearch.toLowerCase()) ||
+                                                c.METER_KEY?.toLowerCase().includes(customerSearch.toLowerCase())
+                                              )
+                                            : unassignedCustomers;
+                                        if (filtered.length === 0) {
+                                            return <p className="text-center text-sm text-gray-400 py-6">No unassigned customers found.</p>;
+                                        }
+                                        return (
+                                            <ul className="divide-y divide-gray-100">
+                                                {filtered.map((c) => (
+                                                    <li key={c.customerKeyNumber} className="flex items-center justify-between px-3 py-2 hover:bg-white transition-colors">
+                                                        <div className="min-w-0">
+                                                            <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
+                                                            <p className="text-xs text-gray-400">{c.customerKeyNumber}</p>
+                                                        </div>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            className="text-green-600 hover:text-green-800 hover:bg-green-50 ml-2 shrink-0"
+                                                            disabled={customerActionLoading === c.customerKeyNumber}
+                                                            onClick={async () => {
+                                                                if (!bill?.CUSTOMERKEY) return;
+                                                                setCustomerActionLoading(c.customerKeyNumber);
+                                                                try {
+                                                                    const res = await assignCustomerToBulkMeterAction(c.customerKeyNumber, bill.CUSTOMERKEY);
+                                                                    if (res.success) {
+                                                                        setUnassignedCustomers(prev => prev.filter(x => x.customerKeyNumber !== c.customerKeyNumber));
+                                                                        setAssignedCustomers(prev => [...prev, c].sort((a, b) => a.name?.localeCompare(b.name)));
+                                                                        toast({ title: 'Assigned', description: `${c.name} assigned to this meter.` });
+                                                                    } else {
+                                                                        toast({ title: 'Error', description: res.error || 'Failed to assign.', variant: 'destructive' });
+                                                                    }
+                                                                } catch {
+                                                                    toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
+                                                                } finally {
+                                                                    setCustomerActionLoading(null);
+                                                                }
+                                                            }}
+                                                        >
+                                                            {customerActionLoading === c.customerKeyNumber
+                                                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                                : <UserPlus className="h-3.5 w-3.5" />
+                                                            }
+                                                            <span className="ml-1 text-xs">Add</span>
+                                                        </Button>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        );
+                                    })()}
+                                </ScrollArea>
+                            </div>
+                        </div>
+                    )}
+
+                    <DialogFooter className="mt-2">
+                        <Button variant="outline" onClick={() => setManageCustomersOpen(false)}>
+                            Done
                         </Button>
                     </DialogFooter>
                 </DialogContent>
