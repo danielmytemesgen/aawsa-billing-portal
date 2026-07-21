@@ -4555,35 +4555,73 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
 // Individual Customer ↔ Bulk Meter Assignment Actions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Returns all individual customers currently assigned to the given bulk meter. */
-export async function getAssignedCustomersForBulkMeterAction(bulkMeterId: string) {
+/**
+ * Returns a paginated list of individual customers assigned to the given bulk meter.
+ * Also returns the total count for pagination controls.
+ */
+export async function getAssignedCustomersForBulkMeterAction(
+  bulkMeterId: string,
+  page: number = 1,
+  pageSize: number = 5
+) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL);
-    const rows = await dbGetCustomersByBulkMeterId(bulkMeterId);
-    return rows as any[];
+    const offset = (page - 1) * pageSize;
+    const [rows, countResult] = await Promise.all([
+      query(
+        `SELECT "customerKeyNumber", name, "METER_KEY", branch_id
+         FROM individual_customers
+         WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL
+         ORDER BY name ASC
+         LIMIT $2 OFFSET $3`,
+        [bulkMeterId, pageSize, offset]
+      ),
+      query(
+        `SELECT COUNT(*) AS total FROM individual_customers WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL`,
+        [bulkMeterId]
+      ),
+    ]);
+    return { rows: rows as any[], total: parseInt((countResult[0] as any).total, 10) };
   });
 }
 
 /**
- * Returns individual customers that are NOT currently assigned to any bulk meter.
- * Supports an optional search term to filter by name or customerKeyNumber.
+ * Returns a paginated list of individual customers NOT assigned to any bulk meter.
+ * Supports optional search term and returns total count for pagination controls.
  */
-export async function getUnassignedIndividualCustomersAction(searchTerm?: string) {
+export async function getUnassignedIndividualCustomersAction(
+  searchTerm?: string,
+  page: number = 1,
+  pageSize: number = 5
+) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL);
-    let sql = `SELECT "customerKeyNumber", name, "METER_KEY", branch_id
-               FROM individual_customers
-               WHERE "assignedBulkMeterId" IS NULL
-                 AND deleted_at IS NULL
-                 AND status != 'Pending Approval'`;
-    const params: any[] = [];
+    const offset = (page - 1) * pageSize;
+    const baseWhere = `"assignedBulkMeterId" IS NULL AND deleted_at IS NULL AND status != 'Pending Approval'`;
+    const searchParams: any[] = [];
+    let searchClause = '';
     if (searchTerm && searchTerm.trim()) {
-      sql += ` AND (name ILIKE $1 OR "customerKeyNumber" ILIKE $1 OR "METER_KEY" ILIKE $1)`;
-      params.push(`%${searchTerm.trim()}%`);
+      searchClause = ` AND (name ILIKE $1 OR "customerKeyNumber" ILIKE $1 OR "METER_KEY" ILIKE $1)`;
+      searchParams.push(`%${searchTerm.trim()}%`);
     }
-    sql += ' ORDER BY name ASC LIMIT 1000';
-    const rows = await query(sql, params);
-    return rows as any[];
+    const rowsParams = [...searchParams, pageSize, offset];
+    const limitParam = searchParams.length + 1;
+    const offsetParam = searchParams.length + 2;
+    const [rows, countResult] = await Promise.all([
+      query(
+        `SELECT "customerKeyNumber", name, "METER_KEY", branch_id
+         FROM individual_customers
+         WHERE ${baseWhere}${searchClause}
+         ORDER BY name ASC
+         LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        rowsParams
+      ),
+      query(
+        `SELECT COUNT(*) AS total FROM individual_customers WHERE ${baseWhere}${searchClause}`,
+        searchParams
+      ),
+    ]);
+    return { rows: rows as any[], total: parseInt((countResult[0] as any).total, 10) };
   });
 }
 

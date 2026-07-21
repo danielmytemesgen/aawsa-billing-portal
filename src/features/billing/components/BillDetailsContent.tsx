@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { BillWorkflowMap } from '@/features/maps/components/BillWorkflowMap';
 import { Button } from '@/components/ui/button';
@@ -293,15 +293,53 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     // Manage Assigned Customers dialog state
     const [manageCustomersOpen, setManageCustomersOpen] = useState(false);
     const [assignedCustomers, setAssignedCustomers] = useState<any[]>([]);
+    const [assignedTotal, setAssignedTotal] = useState(0);
     const [unassignedCustomers, setUnassignedCustomers] = useState<any[]>([]);
+    const [unassignedTotal, setUnassignedTotal] = useState(0);
     const [customerSearch, setCustomerSearch] = useState('');
     const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
+    const [isLoadingUnassigned, setIsLoadingUnassigned] = useState(false);
     const [customerActionLoading, setCustomerActionLoading] = useState<string | null>(null);
     const [manageReasonOpen, setManageReasonOpen] = useState(false);
     const [manageReasonText, setManageReasonText] = useState('');
     const [assignedPage, setAssignedPage] = useState(1);
     const [unassignedPage, setUnassignedPage] = useState(1);
     const CUSTOMERS_PER_PAGE = 5;
+
+    // ── Server-side pagination fetch helpers ──
+    const fetchAssignedPage = useCallback(async (page: number) => {
+        if (!bill?.CUSTOMERKEY) return;
+        setIsLoadingCustomers(true);
+        try {
+            const res = await getAssignedCustomersForBulkMeterAction(bill.CUSTOMERKEY, page, CUSTOMERS_PER_PAGE);
+            if (res.data) {
+                setAssignedCustomers(res.data.rows);
+                setAssignedTotal(res.data.total);
+                setAssignedPage(page);
+            }
+        } catch {
+            toast({ title: 'Error', description: 'Failed to load assigned customers.', variant: 'destructive' });
+        } finally {
+            setIsLoadingCustomers(false);
+        }
+    }, [bill?.CUSTOMERKEY]);
+
+    const fetchUnassignedPage = useCallback(async (page: number, search: string) => {
+        if (!bill?.CUSTOMERKEY) return;
+        setIsLoadingUnassigned(true);
+        try {
+            const res = await getUnassignedIndividualCustomersAction(search, page, CUSTOMERS_PER_PAGE);
+            if (res.data) {
+                setUnassignedCustomers(res.data.rows);
+                setUnassignedTotal(res.data.total);
+                setUnassignedPage(page);
+            }
+        } catch {
+            toast({ title: 'Error', description: 'Failed to load unassigned customers.', variant: 'destructive' });
+        } finally {
+            setIsLoadingUnassigned(false);
+        }
+    }, [bill?.CUSTOMERKEY]);
 
     const [isExporting, setIsExporting] = useState(false);
 
@@ -594,12 +632,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
                 if (bill?.CUSTOMERKEY) {
                     await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
-                    const [assignedRes, unassignedRes] = await Promise.all([
-                        getAssignedCustomersForBulkMeterAction(bill.CUSTOMERKEY),
-                        getUnassignedIndividualCustomersAction(),
+                    await Promise.all([
+                        fetchAssignedPage(1),
+                        fetchUnassignedPage(1, ''),
                     ]);
-                    setAssignedCustomers(assignedRes.data ?? []);
-                    setUnassignedCustomers(unassignedRes.data ?? []);
+                    setCustomerSearch('');
                     await loadData();
                 }
             } catch (err) {
@@ -1411,12 +1448,12 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                         details: { reason: manageReasonText }
                                     });
 
-                                    const [assignedRes, unassignedRes] = await Promise.all([
-                                        getAssignedCustomersForBulkMeterAction(bill?.CUSTOMERKEY!),
-                                        getUnassignedIndividualCustomersAction(),
+                                    setAssignedPage(1);
+                                    setUnassignedPage(1);
+                                    await Promise.all([
+                                        fetchAssignedPage(1),
+                                        fetchUnassignedPage(1, ''),
                                     ]);
-                                    setAssignedCustomers(assignedRes.data ?? []);
-                                    setUnassignedCustomers(unassignedRes.data ?? []);
                                 } catch (e) {
                                     toast({ title: 'Error', description: 'Failed to load customers.', variant: 'destructive' });
                                 } finally {
@@ -1476,111 +1513,110 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                         </label>
                                     </div>
                                 </div>
-                                {(() => {
-                                    const totalPages = Math.ceil(assignedCustomers.length / CUSTOMERS_PER_PAGE) || 1;
-                                    const currentPage = Math.min(assignedPage, totalPages);
-                                    const startIndex = (currentPage - 1) * CUSTOMERS_PER_PAGE;
-                                    const currentBatch = assignedCustomers.slice(startIndex, startIndex + CUSTOMERS_PER_PAGE);
-
-                                    return (
-                                        <div className="flex flex-col gap-1.5">
-                                            <ScrollArea className="h-44 rounded-md border bg-gray-50/30 overflow-auto">
-                                                <div className="w-full">
-                                                    <table className="w-full text-xs">
-                                                        <thead className="bg-gray-100/80 text-gray-700 sticky top-0 border-b z-10">
-                                                            <tr>
-                                                                <th className="px-3 py-2 text-left font-semibold">Customer Key</th>
-                                                                <th className="px-3 py-2 text-left font-semibold">Name</th>
-                                                                <th className="px-3 py-2 text-center font-semibold">Action</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-gray-100 bg-white">
-                                                            {assignedCustomers.length === 0 ? (
-                                                                <tr>
-                                                                    <td colSpan={3} className="text-center text-sm text-gray-400 py-8 italic">
-                                                                        No customers assigned yet.
-                                                                    </td>
-                                                                </tr>
-                                                            ) : (
-                                                                currentBatch.map((c) => (
-                                                                    <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
-                                                                        <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
-                                                                        <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
-                                                                        <td className="px-3 py-2 text-center">
-                                                                            <Button
-                                                                                size="sm"
-                                                                                variant="ghost"
-                                                                                className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
-                                                                                disabled={customerActionLoading === c.customerKeyNumber}
-                                                                                onClick={async () => {
-                                                                                    setCustomerActionLoading(c.customerKeyNumber);
-                                                                                    try {
-                                                                                        const res = await unassignCustomerFromBulkMeterAction(c.customerKeyNumber);
-                                                                                        if (res.success) {
-                                                                                            if (bill?.CUSTOMERKEY) {
-                                                                                                await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
-                                                                                            }
-                                                                                            setAssignedCustomers(prev => prev.filter(x => x.customerKeyNumber !== c.customerKeyNumber));
-                                                                                            setUnassignedCustomers(prev => [...prev, c].sort((a, b) => a.name?.localeCompare(b.name)));
-                                                                                            toast({ title: 'Removed', description: `${c.name} unassigned from this meter.` });
-                                                                                            await loadData();
-                                                                                        } else {
-                                                                                            toast({ title: 'Error', description: res.error || 'Failed to remove.', variant: 'destructive' });
-                                                                                        }
-                                                                                    } catch {
-                                                                                        toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
-                                                                                    } finally {
-                                                                                        setCustomerActionLoading(null);
+                                <div className="flex flex-col gap-1.5">
+                                    <ScrollArea className="h-44 rounded-md border bg-gray-50/30 overflow-auto">
+                                        <div className="w-full">
+                                            <table className="w-full text-xs">
+                                                <thead className="bg-gray-100/80 text-gray-700 sticky top-0 border-b z-10">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left font-semibold">Customer Key</th>
+                                                        <th className="px-3 py-2 text-left font-semibold">Name</th>
+                                                        <th className="px-3 py-2 text-center font-semibold">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100 bg-white">
+                                                    {isLoadingCustomers ? (
+                                                        <tr>
+                                                            <td colSpan={3} className="text-center py-8">
+                                                                <Loader2 className="h-5 w-5 animate-spin mx-auto text-gray-400" />
+                                                            </td>
+                                                        </tr>
+                                                    ) : assignedCustomers.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan={3} className="text-center text-sm text-gray-400 py-8 italic">
+                                                                No customers assigned yet.
+                                                            </td>
+                                                        </tr>
+                                                    ) : (
+                                                        assignedCustomers.map((c) => (
+                                                            <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
+                                                                <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
+                                                                <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
+                                                                <td className="px-3 py-2 text-center">
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="ghost"
+                                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                                                                        disabled={customerActionLoading === c.customerKeyNumber}
+                                                                        onClick={async () => {
+                                                                            setCustomerActionLoading(c.customerKeyNumber);
+                                                                            try {
+                                                                                const res = await unassignCustomerFromBulkMeterAction(c.customerKeyNumber);
+                                                                                if (res.success) {
+                                                                                    if (bill?.CUSTOMERKEY) {
+                                                                                        await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
                                                                                     }
-                                                                                }}
-                                                                            >
-                                                                                {customerActionLoading === c.customerKeyNumber
-                                                                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                                                    : <UserMinus className="h-3.5 w-3.5" />
+                                                                                    toast({ title: 'Removed', description: `${c.name} unassigned from this meter.` });
+                                                                                    await Promise.all([
+                                                                                        fetchAssignedPage(assignedPage),
+                                                                                        fetchUnassignedPage(unassignedPage, customerSearch),
+                                                                                    ]);
+                                                                                    await loadData();
+                                                                                } else {
+                                                                                    toast({ title: 'Error', description: res.error || 'Failed to remove.', variant: 'destructive' });
                                                                                 }
-                                                                                <span className="ml-1 text-[11px]">Remove</span>
-                                                                            </Button>
-                                                                        </td>
-                                                                    </tr>
-                                                                ))
-                                                            )}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </ScrollArea>
-                                            {assignedCustomers.length > 0 && (
-                                                <div className="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-0.5">
-                                                    <span>
-                                                        Showing {startIndex + 1}-{Math.min(startIndex + CUSTOMERS_PER_PAGE, assignedCustomers.length)} of {assignedCustomers.length}
-                                                    </span>
-                                                    <div className="flex items-center gap-1">
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="h-6 w-6 p-0"
-                                                            disabled={currentPage <= 1}
-                                                            onClick={() => setAssignedPage(p => Math.max(1, p - 1))}
-                                                        >
-                                                            <ChevronLeft className="h-3 w-3" />
-                                                        </Button>
-                                                        <span className="px-1 text-[11px] font-medium text-gray-600">
-                                                            {currentPage} / {totalPages}
-                                                        </span>
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="h-6 w-6 p-0"
-                                                            disabled={currentPage >= totalPages}
-                                                            onClick={() => setAssignedPage(p => Math.min(totalPages, p + 1))}
-                                                        >
-                                                            <ChevronRight className="h-3 w-3" />
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            )}
+                                                                            } catch {
+                                                                                toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
+                                                                            } finally {
+                                                                                setCustomerActionLoading(null);
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        {customerActionLoading === c.customerKeyNumber
+                                                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                                            : <UserMinus className="h-3.5 w-3.5" />
+                                                                        }
+                                                                        <span className="ml-1 text-[11px]">Remove</span>
+                                                                    </Button>
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                    );
-                                })()}
+                                    </ScrollArea>
+                                    {assignedTotal > 0 && (
+                                        <div className="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-0.5">
+                                            <span>
+                                                Showing {(assignedPage - 1) * CUSTOMERS_PER_PAGE + 1}-{Math.min(assignedPage * CUSTOMERS_PER_PAGE, assignedTotal)} of {assignedTotal}
+                                            </span>
+                                            <div className="flex items-center gap-1">
+                                                <Button
+                                                    variant="outline"
+                                                    size="icon"
+                                                    className="h-6 w-6 p-0"
+                                                    disabled={assignedPage <= 1 || isLoadingCustomers}
+                                                    onClick={() => fetchAssignedPage(assignedPage - 1)}
+                                                >
+                                                    <ChevronLeft className="h-3 w-3" />
+                                                </Button>
+                                                <span className="px-1 text-[11px] font-medium text-gray-600">
+                                                    {assignedPage} / {Math.ceil(assignedTotal / CUSTOMERS_PER_PAGE) || 1}
+                                                </span>
+                                                <Button
+                                                    variant="outline"
+                                                    size="icon"
+                                                    className="h-6 w-6 p-0"
+                                                    disabled={assignedPage >= Math.ceil(assignedTotal / CUSTOMERS_PER_PAGE) || isLoadingCustomers}
+                                                    onClick={() => fetchAssignedPage(assignedPage + 1)}
+                                                >
+                                                    <ChevronRight className="h-3 w-3" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             {/* ── Add Unassigned Customers ── */}
@@ -1593,124 +1629,120 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                         placeholder="Search by name or key..."
                                         value={customerSearch}
                                         onChange={(e) => {
-                                            setCustomerSearch(e.target.value);
-                                            setUnassignedPage(1);
+                                            const value = e.target.value;
+                                            setCustomerSearch(value);
+                                            // Debounce server fetch by 300ms
+                                            const timer = setTimeout(() => {
+                                                fetchUnassignedPage(1, value);
+                                            }, 300);
+                                            return () => clearTimeout(timer);
                                         }}
                                         className="w-full pl-8 pr-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                                     />
                                 </div>
-                                {(() => {
-                                    const filtered = customerSearch.trim()
-                                        ? unassignedCustomers.filter(c =>
-                                            c.name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-                                            c.customerKeyNumber?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-                                            c.METER_KEY?.toLowerCase().includes(customerSearch.toLowerCase())
-                                          )
-                                        : unassignedCustomers;
-
-                                    const totalPages = Math.ceil(filtered.length / CUSTOMERS_PER_PAGE) || 1;
-                                    const currentPage = Math.min(unassignedPage, totalPages);
-                                    const startIndex = (currentPage - 1) * CUSTOMERS_PER_PAGE;
-                                    const currentBatch = filtered.slice(startIndex, startIndex + CUSTOMERS_PER_PAGE);
-
-                                    return (
-                                        <div className="flex flex-col gap-1.5">
-                                            <ScrollArea className="flex-1 min-h-[140px] max-h-48 rounded-md border bg-gray-50/30 overflow-auto">
-                                                <div className="w-full">
-                                                    <table className="w-full text-xs">
-                                                        <thead className="bg-gray-100/80 text-gray-700 sticky top-0 border-b z-10">
-                                                            <tr>
-                                                                <th className="px-3 py-2 text-left font-semibold">Customer Key</th>
-                                                                <th className="px-3 py-2 text-left font-semibold">Name</th>
-                                                                <th className="px-3 py-2 text-center font-semibold">Action</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-gray-100 bg-white">
-                                                            {filtered.length === 0 ? (
-                                                                <tr>
-                                                                    <td colSpan={3} className="text-center text-sm text-gray-400 py-8 italic">
-                                                                        No unassigned customers found.
-                                                                    </td>
-                                                                </tr>
-                                                            ) : (
-                                                                currentBatch.map((c) => (
-                                                                    <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
-                                                                        <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
-                                                                        <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
-                                                                        <td className="px-3 py-2 text-center">
-                                                                            <Button
-                                                                                size="sm"
-                                                                                variant="ghost"
-                                                                                className="text-green-600 hover:text-green-800 hover:bg-green-50 h-7 px-2"
-                                                                                disabled={customerActionLoading === c.customerKeyNumber}
-                                                                                onClick={async () => {
-                                                                                    if (!bill?.CUSTOMERKEY) return;
-                                                                                    setCustomerActionLoading(c.customerKeyNumber);
-                                                                                    try {
-                                                                                        const res = await assignCustomerToBulkMeterAction(c.customerKeyNumber, bill.CUSTOMERKEY);
-                                                                                        if (res.success) {
-                                                                                            await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
-                                                                                            setUnassignedCustomers(prev => prev.filter(x => x.customerKeyNumber !== c.customerKeyNumber));
-                                                                                            setAssignedCustomers(prev => [...prev, c].sort((a, b) => a.name?.localeCompare(b.name)));
-                                                                                            toast({ title: 'Assigned', description: `${c.name} assigned to this meter.` });
-                                                                                            await loadData();
-                                                                                        } else {
-                                                                                            toast({ title: 'Error', description: res.error || 'Failed to assign.', variant: 'destructive' });
-                                                                                        }
-                                                                                    } catch {
-                                                                                        toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
-                                                                                    } finally {
-                                                                                        setCustomerActionLoading(null);
-                                                                                    }
-                                                                                }}
-                                                                            >
-                                                                                {customerActionLoading === c.customerKeyNumber
-                                                                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                                                    : <UserPlus className="h-3.5 w-3.5" />
+                                <div className="flex flex-col gap-1.5">
+                                    <ScrollArea className="flex-1 min-h-[140px] max-h-48 rounded-md border bg-gray-50/30 overflow-auto">
+                                        <div className="w-full">
+                                            <table className="w-full text-xs">
+                                                <thead className="bg-gray-100/80 text-gray-700 sticky top-0 border-b z-10">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left font-semibold">Customer Key</th>
+                                                        <th className="px-3 py-2 text-left font-semibold">Name</th>
+                                                        <th className="px-3 py-2 text-center font-semibold">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100 bg-white">
+                                                    {isLoadingUnassigned ? (
+                                                        <tr>
+                                                            <td colSpan={3} className="text-center py-8">
+                                                                <Loader2 className="h-5 w-5 animate-spin mx-auto text-gray-400" />
+                                                            </td>
+                                                        </tr>
+                                                    ) : unassignedCustomers.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan={3} className="text-center text-sm text-gray-400 py-8 italic">
+                                                                No unassigned customers found.
+                                                            </td>
+                                                        </tr>
+                                                    ) : (
+                                                        unassignedCustomers.map((c) => (
+                                                            <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
+                                                                <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
+                                                                <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
+                                                                <td className="px-3 py-2 text-center">
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="ghost"
+                                                                        className="text-green-600 hover:text-green-800 hover:bg-green-50 h-7 px-2"
+                                                                        disabled={customerActionLoading === c.customerKeyNumber}
+                                                                        onClick={async () => {
+                                                                            if (!bill?.CUSTOMERKEY) return;
+                                                                            setCustomerActionLoading(c.customerKeyNumber);
+                                                                            try {
+                                                                                const res = await assignCustomerToBulkMeterAction(c.customerKeyNumber, bill.CUSTOMERKEY);
+                                                                                if (res.success) {
+                                                                                    await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
+                                                                                    toast({ title: 'Assigned', description: `${c.name} assigned to this meter.` });
+                                                                                    await Promise.all([
+                                                                                        fetchAssignedPage(assignedPage),
+                                                                                        fetchUnassignedPage(unassignedPage, customerSearch),
+                                                                                    ]);
+                                                                                    await loadData();
+                                                                                } else {
+                                                                                    toast({ title: 'Error', description: res.error || 'Failed to assign.', variant: 'destructive' });
                                                                                 }
-                                                                                <span className="ml-1 text-[11px]">Add</span>
-                                                                            </Button>
-                                                                        </td>
-                                                                    </tr>
-                                                                ))
-                                                            )}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </ScrollArea>
-                                            {filtered.length > 0 && (
-                                                <div className="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-0.5">
-                                                    <span>
-                                                        Showing {startIndex + 1}-{Math.min(startIndex + CUSTOMERS_PER_PAGE, filtered.length)} of {filtered.length}
-                                                    </span>
-                                                    <div className="flex items-center gap-1">
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="h-6 w-6 p-0"
-                                                            disabled={currentPage <= 1}
-                                                            onClick={() => setUnassignedPage(p => Math.max(1, p - 1))}
-                                                        >
-                                                            <ChevronLeft className="h-3 w-3" />
-                                                        </Button>
-                                                        <span className="px-1 text-[11px] font-medium text-gray-600">
-                                                            {currentPage} / {totalPages}
-                                                        </span>
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="h-6 w-6 p-0"
-                                                            disabled={currentPage >= totalPages}
-                                                            onClick={() => setUnassignedPage(p => Math.min(totalPages, p + 1))}
-                                                        >
-                                                            <ChevronRight className="h-3 w-3" />
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            )}
+                                                                            } catch {
+                                                                                toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
+                                                                            } finally {
+                                                                                setCustomerActionLoading(null);
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        {customerActionLoading === c.customerKeyNumber
+                                                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                                            : <UserPlus className="h-3.5 w-3.5" />
+                                                                        }
+                                                                        <span className="ml-1 text-[11px]">Add</span>
+                                                                    </Button>
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                    );
-                                })()}
+                                    </ScrollArea>
+                                    {unassignedTotal > 0 && (
+                                        <div className="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-0.5">
+                                            <span>
+                                                Showing {(unassignedPage - 1) * CUSTOMERS_PER_PAGE + 1}-{Math.min(unassignedPage * CUSTOMERS_PER_PAGE, unassignedTotal)} of {unassignedTotal}
+                                            </span>
+                                            <div className="flex items-center gap-1">
+                                                <Button
+                                                    variant="outline"
+                                                    size="icon"
+                                                    className="h-6 w-6 p-0"
+                                                    disabled={unassignedPage <= 1 || isLoadingUnassigned}
+                                                    onClick={() => fetchUnassignedPage(unassignedPage - 1, customerSearch)}
+                                                >
+                                                    <ChevronLeft className="h-3 w-3" />
+                                                </Button>
+                                                <span className="px-1 text-[11px] font-medium text-gray-600">
+                                                    {unassignedPage} / {Math.ceil(unassignedTotal / CUSTOMERS_PER_PAGE) || 1}
+                                                </span>
+                                                <Button
+                                                    variant="outline"
+                                                    size="icon"
+                                                    className="h-6 w-6 p-0"
+                                                    disabled={unassignedPage >= Math.ceil(unassignedTotal / CUSTOMERS_PER_PAGE) || isLoadingUnassigned}
+                                                    onClick={() => fetchUnassignedPage(unassignedPage + 1, customerSearch)}
+                                                >
+                                                    <ChevronRight className="h-3 w-3" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
