@@ -906,7 +906,9 @@ export const dbCreateBill = async (bill: any, client?: any) => {
     }
 
     const keys = Object.keys(bill);
-    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
+    const placeholders = keys.map((k, i) =>
+        k === 'payment_status' ? `$${i + 1}::payment_status` : `$${i + 1}`
+    ).join(',');
     const sql = `INSERT INTO bills (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
     const params = keys.map(k => bill[k]);
 
@@ -924,7 +926,10 @@ export const dbUpdateBill = async (id: string, bill: any, client?: any, monthYea
     const { month_year: _ignored, ...safeFields } = bill;
     const keys = Object.keys(safeFields);
     if (keys.length === 0) return null;
-    const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+    const setClause = keys.map((k, i) =>
+        k === 'payment_status' ? `"${k}" = $${i + 1}::payment_status` : `"${k}" = $${i + 1}`
+    ).join(',');
+
     const monthYearClause = monthYear ? ` AND month_year = $${keys.length + 2}` : '';
     const sql = `UPDATE bills SET ${setClause} WHERE id = $${keys.length + 1}${monthYearClause} RETURNING *`;
     const params = monthYear
@@ -3113,7 +3118,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "OUTSTANDINGAMT" = $5, 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
-                 payment_status = CASE WHEN payment_status = 'Paid' THEN 'Paid' ELSE $8 END
+                 payment_status = CASE WHEN payment_status = 'Paid' THEN 'Paid'::payment_status ELSE $8::payment_status END
              WHERE id = $9 AND month_year = $10`,
             [
                 d30_rounded,
