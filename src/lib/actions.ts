@@ -4581,7 +4581,7 @@ export async function getUnassignedIndividualCustomersAction(searchTerm?: string
       sql += ` AND (name ILIKE $1 OR "customerKeyNumber" ILIKE $1 OR "METER_KEY" ILIKE $1)`;
       params.push(`%${searchTerm.trim()}%`);
     }
-    sql += ' ORDER BY name ASC LIMIT 100';
+    sql += ' ORDER BY name ASC LIMIT 1000';
     const rows = await query(sql, params);
     return rows as any[];
   });
