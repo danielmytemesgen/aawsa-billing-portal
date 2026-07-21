@@ -55,8 +55,9 @@ import {
     MoreVertical,
     Trash2,
     Eye,
-    Printer
-,
+    Printer,
+    ShieldAlert,
+    X,
     RefreshCw} from 'lucide-react';
 import {
     AlertDialog,
@@ -96,6 +97,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [loading, setLoading] = useState(true);
     const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
     const [branches, setBranches] = useState<any[]>([]);
+    const [dismissedAnomalies, setDismissedAnomalies] = useState<Set<string>>(new Set());
 
     // Filter states
     const [searchQuery, setSearchQuery] = useState('');
@@ -220,10 +222,19 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         loadData();
     }, []);
 
-    const handleDelete = async (id: string) => {
-        if (!confirm("Are you sure you want to delete this bill record?")) return;
+    // Delete confirmation state
+    const [billToDelete, setBillToDelete] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const handleDelete = (id: string) => {
+        setBillToDelete(id);
+    };
+
+    const confirmDeleteBill = async () => {
+        if (!billToDelete) return;
+        setIsDeleting(true);
         try {
-            const res = await deleteBillAction(id);
+            const res = await deleteBillAction(billToDelete);
             if (res.data) {
                 toast({ title: "Deleted", description: "Bill record removed successfully." });
                 await loadData();
@@ -232,6 +243,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             }
         } catch (e) {
             console.error(e);
+        } finally {
+            setIsDeleting(false);
+            setBillToDelete(null);
         }
     };
 
@@ -397,6 +411,117 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         return results;
     }, [bills]);
 
+    // Stats Calculations helper based on reconstructed history
+    const getBillTotalPayable = (b: any) => {
+        const recon = reconstructedHistoryMap.get(b.id);
+        if (recon) {
+            return recon.outstanding + Math.max(0, recon.currentMonthly);
+        }
+
+        const d30 = Number(b.debit30 || b.debit_30 || 0);
+        const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
+        const d60 = Number(b.debit60 || b.debit_60 || 0);
+        const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+        const penalty = Number(b.PENALTYAMT || 0);
+        const outstanding = totalUnpaidDebt + penalty;
+        const current = getMonthlyBillAmt(b);
+        return outstanding + current;
+    };
+
+    // ── Feature 2: Billing Anomaly & Fraud Detection Engine ────────────────────
+    // Runs on the current in-memory bills for the selected month.
+    const anomalyWarnings = React.useMemo(() => {
+        const warnings: { id: string; severity: 'critical' | 'warning'; icon: string; title: string; detail: string }[] = [];
+
+        if (bills.length === 0) return warnings;
+
+        // Build per-customer usage history map for spike detection (6-month average)
+        const usageByCustomer: Map<string, number[]> = new Map();
+        bills.forEach((b: any) => {
+            const key = b.CUSTOMERKEY || b.individual_customer_id;
+            if (!key) return;
+            const usage = Number(b.CONSUMPTION || b.consumption || b.UNITS || 0);
+            if (!usageByCustomer.has(key)) usageByCustomer.set(key, []);
+            usageByCustomer.get(key)!.push(usage);
+        });
+
+        // Anomaly checks on the latest month's bills only
+        const latestBills = bills.filter((b: any) => b.month_year === latestMonth);
+
+        // 1. Consumption Spike Detection (> 150% above customer average)
+        const spikeMeters: string[] = [];
+        latestBills.forEach((b: any) => {
+            const key = b.CUSTOMERKEY || b.individual_customer_id;
+            if (!key) return;
+            const history = usageByCustomer.get(key) || [];
+            if (history.length < 2) return;
+            const pastUsage = history.slice(0, -1);
+            const avg = pastUsage.reduce((s, v) => s + v, 0) / pastUsage.length;
+            const current = history[history.length - 1];
+            if (avg > 0 && current > avg * 2.5) {
+                spikeMeters.push(key);
+            }
+        });
+        if (spikeMeters.length > 0) {
+            warnings.push({
+                id: 'spike',
+                severity: 'critical',
+                icon: '📈',
+                title: `${spikeMeters.length} Consumption Spike(s) Detected`,
+                detail: `The following meter(s) show usage > 150% above their historical average and may be data-entry errors: ${spikeMeters.slice(0, 3).join(', ')}${spikeMeters.length > 3 ? ` +${spikeMeters.length - 3} more` : ''}.`
+            });
+        }
+
+        // 2. Zero-Consumption on Active Meters
+        const zeroMeters = latestBills.filter((b: any) => {
+            const usage = Number(b.CONSUMPTION || b.consumption || b.UNITS || 0);
+            return usage === 0;
+        });
+        if (zeroMeters.length > 0) {
+            warnings.push({
+                id: 'zero',
+                severity: 'warning',
+                icon: '⚠️',
+                title: `${zeroMeters.length} Meter(s) with Zero Consumption`,
+                detail: `${zeroMeters.length} meter(s) recorded 0 m³ for ${latestMonth}. Verify meter reads — these may be inactive, tampered, or missing.`
+            });
+        }
+
+        // 3. Suspiciously High Bill Amount (> 5x median bill)
+        const amounts = latestBills.map((b: any) => getBillTotalPayable(b)).filter(v => v > 0).sort((a, b) => a - b);
+        if (amounts.length >= 5) {
+            const median = amounts[Math.floor(amounts.length / 2)];
+            const highBills = latestBills.filter((b: any) => getBillTotalPayable(b) > median * 5);
+            if (highBills.length > 0) {
+                warnings.push({
+                    id: 'highamt',
+                    severity: 'warning',
+                    icon: '💰',
+                    title: `${highBills.length} Suspiciously High Bill Amount(s)`,
+                    detail: `${highBills.length} bill(s) are over 5× the median bill amount (ETB ${median.toFixed(2)}). Please review before approving.`
+                });
+            }
+        }
+
+        // 4. Negative outstanding amount anomaly (indicates rollover / data corruption)
+        const negativeDebt = latestBills.filter((b: any) => {
+            const outstanding = Number(b.OUTSTANDINGAMT || 0);
+            return outstanding < -0.01;
+        });
+        if (negativeDebt.length > 0) {
+            warnings.push({
+                id: 'negdebt',
+                severity: 'critical',
+                icon: '🔴',
+                title: `${negativeDebt.length} Negative Outstanding Amount(s)`,
+                detail: `${negativeDebt.length} bill(s) have negative OUTSTANDINGAMT — this indicates a data corruption or incorrect rollover. Immediate review required.`
+            });
+        }
+
+        return warnings.filter(w => !dismissedAnomalies.has(w.id));
+    }, [bills, latestMonth, dismissedAnomalies, getBillTotalPayable]);
+    // ────────────────────────────────────────────────────────────────────────────
+
     const handleSubmitAll = async () => {
         const drafts = [...myDrafts, ...reworkItems];
         if (drafts.length === 0) return;
@@ -517,27 +642,6 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         );
     }
 
-    // Stats Calculations based on filtered data
-    // Per business rules: Outstanding = all unpaid debt + current penalty
-    // Total Payable = Outstanding + Current Bill
-    const getBillTotalPayable = (b: any) => {
-        const recon = reconstructedHistoryMap.get(b.id);
-        if (recon) {
-            return recon.outstanding + Math.max(0, recon.currentMonthly);
-        }
-
-        const d30 = Number(b.debit30 || b.debit_30 || 0);
-        const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
-        const d60 = Number(b.debit60 || b.debit_60 || 0);
-        const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-        const penalty = Number(b.PENALTYAMT || 0);
-        // Outstanding = all unpaid debt + current penalty
-        const outstanding = totalUnpaidDebt + penalty;
-        const current = getMonthlyBillAmt(b);
-        // Total Payable = Outstanding + Current Bill
-        return outstanding + current;
-    };
-
     const now = new Date();
 
     // Aging Calculations based on unique customers in the filtered set
@@ -615,7 +719,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
         const handleExportCSV = () => {
         const headers = ['Bill ID', 'Customer Key', 'Month', 'Date Billed', 'Due Date', 'Status', 'Total Payable'];
-        const rows = filteredOutstanding.map(b => {
+        const exportSet = outstandingBills.length > 0 ? outstandingBills : filteredOutstanding;
+        const rows = exportSet.map(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
             return [
                 b.id,
@@ -624,7 +729,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 formatDate(b.created_at),
                 formatDate(b.due_date),
                 isBillOverdue ? 'Overdue' : 'Unpaid',
-                Number(b.TOTALBILLAMOUNT).toFixed(2)
+                getBillTotalPayable(b).toFixed(2)
             ];
         });
 
@@ -658,6 +763,36 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     )}
                 </div>
             </div>
+
+            {/* ── Feature 2: Anomaly Alert Banner ─────────────────────────── */}
+            {anomalyWarnings.length > 0 && (
+                <div className="space-y-2 animate-in fade-in duration-300">
+                    {anomalyWarnings.map(w => (
+                        <div
+                            key={w.id}
+                            className={`flex items-start gap-3 p-3.5 rounded-xl border text-sm font-medium ${
+                                w.severity === 'critical'
+                                    ? 'bg-red-50 border-red-200 text-red-800'
+                                    : 'bg-amber-50 border-amber-200 text-amber-800'
+                            }`}
+                        >
+                            <ShieldAlert className={`h-5 w-5 shrink-0 mt-0.5 ${ w.severity === 'critical' ? 'text-red-500' : 'text-amber-500'}`} />
+                            <div className="flex-1 min-w-0">
+                                <span className="font-bold mr-1.5">{w.icon} {w.title}</span>
+                                <span className="font-normal text-xs opacity-90">{w.detail}</span>
+                            </div>
+                            <button
+                                type="button"
+                                aria-label="Dismiss warning"
+                                className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+                                onClick={() => setDismissedAnomalies(prev => new Set([...prev, w.id]))}
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
 
             {/* Summary Statistics Bar */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -936,6 +1071,28 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                 pendingBulkAction?.type === 'approve' ? 'bg-green-600 hover:bg-green-700' : ''}
                         >
                             Confirm Action
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Delete Confirmation Dialog */}
+            <AlertDialog open={!!billToDelete} onOpenChange={(open) => !open && setBillToDelete(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Bill Record</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete this bill record? This action will restore previous meter readings and adjust customer balance accordingly.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={confirmDeleteBill}
+                            disabled={isDeleting}
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                            {isDeleting ? "Deleting..." : "Delete Record"}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

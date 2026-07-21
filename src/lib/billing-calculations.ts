@@ -272,6 +272,8 @@ export function calculateBillFromTariff(
 
     const usageForSewerage = sewerageCONS !== undefined ? sewerageCONS : CONS;
     let sewerageCharge = 0;
+    const sewerageTierBreakdown: Array<{ start: number; end: number | typeof Infinity; usage: number; rate: number; charge: number }> = [];
+
     if (sewerageConnection === "Yes" && tariffConfig.sewerage_tiers && tariffConfig.sewerage_tiers.length > 0) {
         const sortedSewerageTiers = tariffConfig.sewerage_tiers.sort((a, b) => (a.limit === "Infinity" ? Infinity : Number(a.limit)) - (b.limit === "Infinity" ? Infinity : Number(b.limit)));
         if (customerType === 'Domestic' || customerType === 'rental domestic') {
@@ -283,7 +285,17 @@ export function calculateBillFromTariff(
                 const tierRate = Number(tier.rate);
                 const tierBlockSize = tierLimit - lastLimit;
                 const usageInThisTier = Math.min(remainingUsage, tierBlockSize);
-                sewerageCharge += usageInThisTier * tierRate;
+                const tierCharge = usageInThisTier * tierRate;
+                sewerageCharge += tierCharge;
+                if (usageInThisTier > 0) {
+                    sewerageTierBreakdown.push({
+                        start: lastLimit,
+                        end: tierLimit,
+                        usage: usageInThisTier,
+                        rate: tierRate,
+                        charge: tierCharge
+                    });
+                }
                 remainingUsage -= usageInThisTier;
                 lastLimit = tierLimit;
             }
@@ -295,6 +307,13 @@ export function calculateBillFromTariff(
                 if (usageForSewerage <= tierLimit) break;
             }
             sewerageCharge = Number(usageForSewerage) * Number(applicableRate);
+            sewerageTierBreakdown.push({
+                start: 0,
+                end: Infinity,
+                usage: usageForSewerage,
+                rate: applicableRate,
+                charge: sewerageCharge
+            });
         }
     }
 
@@ -338,5 +357,6 @@ export function calculateBillFromTariff(
         effectiveUsage: effectiveUsage,
         additionalFeesBreakdown,
         waterTierBreakdown,
+        sewerageTierBreakdown,
     };
 }

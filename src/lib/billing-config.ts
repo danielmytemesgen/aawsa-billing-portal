@@ -41,6 +41,8 @@ export function getBillingCycleConfig(): BillingCycleConfig {
     return { mode, cycleStartDay, dueDateOffsetDays };
 }
 
+
+
 // ─── Period helpers ───────────────────────────────────────────────────────────
 
 /**

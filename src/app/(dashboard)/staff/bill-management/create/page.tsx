@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, Search, Loader2 } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, Printer } from 'lucide-react';
 import { getBulkMeterByIdAction, calculateBillAction, createBillAction, closeBillingCycleAction } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -390,23 +390,13 @@ export default function CreateBillPage() {
                     </CardContent>
                     <CardFooter className="flex-col gap-3">
                         <div className="w-full">
-                            <p className="text-sm font-semibold mb-2">End of Month Actions</p>
-                            <Button
-                                onClick={handleSubmit((data) => onSubmit(data, 'paid'))}
-                                disabled={!calculationResult || isSubmitting || (customer && customer.status !== 'Active')}
-                                className="w-full bg-blue-600 hover:bg-blue-700 mb-2"
-                            >
-                                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                                Mark Paid & Start New Cycle
-                            </Button>
                             <Button
                                 onClick={handleSubmit((data) => onSubmit(data, 'carry'))}
                                 disabled={!calculationResult || isSubmitting || (customer && customer.status !== 'Active')}
-                                variant="destructive"
-                                className="w-full"
+                                className="w-full bg-blue-600 hover:bg-blue-700 font-semibold"
                             >
-                                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                                Carry Balance & Start New Cycle
+                                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+                                Print Bill for {watch('month_year') || format(new Date(), "yyyy-MM")}
                             </Button>
                         </div>
                     </CardFooter>

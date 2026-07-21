@@ -1,6 +1,6 @@
 
 import * as React from "react";
-import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle, Download } from "lucide-react";
+import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle, Download, Printer, Terminal, ArrowRight, Wrench, Check, RotateCcw, FileText, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -29,7 +29,10 @@ import {
     startBillingJobAction, 
     getBranchesLookupAction,
     getSystemSettingsAction,
-    resetStuckBillingJobsAction
+    resetStuckBillingJobsAction,
+    createBulkMeterReadingAction,
+    createIndividualCustomerReadingAction,
+    getBulkMeterByIdAction
 } from "@/lib/actions";
 import { format, parse } from "date-fns";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -74,6 +77,28 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     const [isStuck, setIsStuck] = React.useState(false);
     const [isResetting, setIsResetting] = React.useState(false);
     const [jobErrors, setJobErrors] = React.useState<string[]>([]);
+
+    // Timing & Metrics for Premium dashboard
+    const [startTime, setStartTime] = React.useState<number | null>(null);
+    const [speed, setSpeed] = React.useState<number>(0);
+    const [eta, setEta] = React.useState<number | null>(null);
+
+    // Live Terminal Console
+    const [terminalLogs, setTerminalLogs] = React.useState<string[]>([]);
+    const [isConsoleOpen, setIsConsoleOpen] = React.useState(false);
+
+    // Interactive Correction List
+    interface ParsedJobError {
+        id: string;
+        customerKey: string;
+        message: string;
+        resolved?: boolean;
+        isResolving?: boolean;
+        isEditingReading?: boolean;
+        customReadingValue?: string;
+        customPrevReadingValue?: string;
+    }
+    const [parsedErrors, setParsedErrors] = React.useState<ParsedJobError[]>([]);
 
     // Cleanup polling on unmount
     React.useEffect(() => {
@@ -182,6 +207,10 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         setProcessedCount(0);
         setNegativeConsumptionWarning(null);
         setJobErrors([]);
+        setStartTime(Date.now());
+        setSpeed(0);
+        setEta(null);
+        setTerminalLogs([`[${new Date().toLocaleTimeString()}] 🚀 Initiated billing job for month ${monthYear}`]);
 
         // Build period override for custom/unlimited mode
         const periodOverride = (cycleMode === 'custom' || cycleMode === 'unlimited')
@@ -304,10 +333,37 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 setProcessedCount(job.processed_items || 0);
                 setTotalCount(job.total_items || total);
 
+                // Throughput and ETA calculation
+                const activeStartTime = startTime || Date.now();
+                const elapsed = (Date.now() - activeStartTime) / 1000;
+                if (elapsed > 0.5 && job.processed_items > 0) {
+                    const currentSpeed = job.processed_items / elapsed;
+                    setSpeed(currentSpeed);
+                    const remaining = (job.total_items || total) - job.processed_items;
+                    if (currentSpeed > 0) {
+                        setEta(Math.ceil(remaining / currentSpeed));
+                    }
+                }
+
                 if (job.error_log) {
                     const lines = job.error_log.split('\n').filter(Boolean);
                     setJobErrors(lines);
                 }
+
+                // Update Live Console Logs
+                setTerminalLogs(prev => {
+                    const timeStr = new Date().toLocaleTimeString();
+                    const progressMsg = `[${timeStr}] ⚙️ Processed ${job.processed_items}/${job.total_items || total} items...`;
+                    
+                    const nextLogs = [...prev];
+                    // Replace previous progress log to keep terminal neat
+                    if (nextLogs.length > 0 && nextLogs[nextLogs.length - 1].includes("Processed")) {
+                        nextLogs[nextLogs.length - 1] = progressMsg;
+                    } else {
+                        nextLogs.push(progressMsg);
+                    }
+                    return nextLogs;
+                });
 
                 if (job.status === 'completed') {
                     clearInterval(pollingRef.current!);
@@ -316,6 +372,11 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     const errorLines: string[] = job.error_log
                         ? job.error_log.split('\n').filter(Boolean)
                         : [];
+
+                    setTerminalLogs(prev => [
+                        ...prev,
+                        `[${new Date().toLocaleTimeString()}] ✅ Billing job completed. Success count: ${job.processed_items}. Issues count: ${errorLines.length}`
+                    ]);
 
                     // Separate overlap-skipped meters from other errors
                     const overlapSkipped = errorLines.filter((l: string) =>
@@ -352,6 +413,10 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                 } else if (job.status === 'failed') {
                     clearInterval(pollingRef.current!);
                     pollingRef.current = null;
+                    setTerminalLogs(prev => [
+                        ...prev,
+                        `[${new Date().toLocaleTimeString()}] ❌ Job failed: ${job.error_log || 'Unknown error'}`
+                    ]);
                     toast({ variant: "destructive", title: "Job Failed", description: job.error_log || "Unknown error during processing." });
                     setIsProcessing(false);
                 }
@@ -393,6 +458,128 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred during reset." });
         } finally {
             setIsResetting(false);
+        }
+    };
+
+    // Live update parsed errors list when new jobErrors arrive
+    React.useEffect(() => {
+        if (jobErrors.length > 0) {
+            setParsedErrors(prev => {
+                const existingMap = new Map(prev.map(e => [e.id, e]));
+                
+                return jobErrors.map((err, idx) => {
+                    const separatorIndex = err.indexOf(':');
+                    const customerKey = separatorIndex !== -1 ? err.substring(0, separatorIndex).trim() : '';
+                    const message = separatorIndex !== -1 ? err.substring(separatorIndex + 1).trim() : err;
+                    const errorId = `${customerKey}-${idx}`;
+                    
+                    const existing = existingMap.get(errorId);
+                    if (existing) {
+                        return { ...existing, message };
+                    }
+                    
+                    return {
+                        id: errorId,
+                        customerKey,
+                        message,
+                        resolved: false,
+                        isResolving: false,
+                        isEditingReading: false,
+                        customReadingValue: "",
+                        customPrevReadingValue: ""
+                    };
+                });
+            });
+        } else {
+            setParsedErrors([]);
+        }
+    }, [jobErrors]);
+
+    const handleResolveInline = async (errItem: any, isBulkType: boolean) => {
+        if (!errItem.customReadingValue) {
+            toast({ variant: "destructive", title: "Missing value", description: "Please enter a reading value." });
+            return;
+        }
+
+        setParsedErrors(prev => prev.map(e => e.id === errItem.id ? { ...e, isResolving: true } : e));
+
+        try {
+            const readingVal = parseFloat(errItem.customReadingValue);
+            const prevReadingVal = errItem.customPrevReadingValue ? parseFloat(errItem.customPrevReadingValue) : undefined;
+            const rDate = new Date();
+            const rMonth = monthYear;
+
+            if (isBulkType) {
+                const readingInsert = {
+                    CUSTOMERKEY: errItem.customerKey,
+                    reading_date: rDate.toISOString(),
+                    reading_value: readingVal,
+                    month_year: rMonth
+                };
+                
+                const res = await createBulkMeterReadingAction(readingInsert);
+                if (res.error) {
+                    toast({ variant: "destructive", title: "Error", description: res.error.message || "Failed to save reading" });
+                    return;
+                }
+            } else {
+                const readingInsert = {
+                    individual_customer_id: errItem.customerKey,
+                    reading_date: rDate.toISOString(),
+                    reading_value: readingVal,
+                    month_year: rMonth
+                };
+                const res = await createIndividualCustomerReadingAction(readingInsert);
+                if (res.error) {
+                    toast({ variant: "destructive", title: "Error", description: res.error.message || "Failed to save reading" });
+                    return;
+                }
+            }
+
+            const res = await runBillingCycleAction({
+                bulkMeterId: errItem.customerKey,
+                carryBalance: true,
+                monthYear,
+                dueDateOffsetDays,
+                allowOverlap: true,
+            });
+
+            if (res.data?.success) {
+                toast({ title: "Resolved & Billed", description: `Reading updated and bill generated for customer ${errItem.customerKey}.` });
+                setParsedErrors(prev => prev.map(e => e.id === errItem.id ? { ...e, resolved: true, isResolving: false } : e));
+                onComplete?.();
+            } else {
+                toast({ variant: "destructive", title: "Failed to bill", description: res.error?.message || "Reading saved, but billing failed." });
+            }
+        } catch (e: any) {
+            toast({ variant: "destructive", title: "Error", description: e?.message || "Failed to resolve inline error" });
+        } finally {
+            setParsedErrors(prev => prev.map(e => e.id === errItem.id ? { ...e, isResolving: false } : e));
+        }
+    };
+
+    const handleForceRecreate = async (errItem: any, isBulkType: boolean) => {
+        setParsedErrors(prev => prev.map(e => e.id === errItem.id ? { ...e, isResolving: true } : e));
+        try {
+            const res = await runBillingCycleAction({
+                bulkMeterId: errItem.customerKey,
+                carryBalance: true,
+                monthYear,
+                dueDateOffsetDays,
+                allowOverlap: true,
+            });
+
+            if (res.data?.success) {
+                toast({ title: "Bill Recreated", description: `Existing bill overwritten successfully for customer ${errItem.customerKey}.` });
+                setParsedErrors(prev => prev.map(e => e.id === errItem.id ? { ...e, resolved: true, isResolving: false } : e));
+                onComplete?.();
+            } else {
+                toast({ variant: "destructive", title: "Action Failed", description: res.error?.message || "Failed to recreate bill." });
+            }
+        } catch (e: any) {
+            toast({ variant: "destructive", title: "Error", description: e?.message || "Unexpected error occurred." });
+        } finally {
+            setParsedErrors(prev => prev.map(e => e.id === errItem.id ? { ...e, isResolving: false } : e));
         }
     };
 
@@ -601,65 +788,238 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                         </div>
                     )}
 
-                    {/* Progress bar */}
+                    {/* Premium Progress Dashboard */}
                     {currentJobId && (
-                        <div className="space-y-3 pt-4 border-t">
-                            <div className="flex justify-between text-xs font-medium">
-                                <span className="flex items-center gap-1.5">
-                                    {isProcessing ? (
-                                        <>
-                                            <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
-                                            Processing on server...
-                                        </>
-                                    ) : (
-                                        <>
-                                            {jobErrors.length > 0 ? (
-                                                <AlertTriangle className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
-                                            ) : (
-                                                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
-                                            )}
-                                            {jobErrors.length > 0 ? "Completed with issues" : "Completed successfully"}
-                                        </>
-                                    )}
-                                </span>
-                                <span>{processedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
-                            </div>
-                            <Progress value={totalCount > 0 ? (processedCount / totalCount) * 100 : 0} className="h-2" />
-                            {isProcessing ? (
-                                <p className="text-[10px] text-muted-foreground text-center italic">
-                                    ✅ Safe to close this dialog — processing continues on the server.
-                                </p>
-                            ) : (
-                                <p className="text-[10px] text-center font-medium text-green-600">
-                                    Job execution completed.
-                                </p>
-                            )}
-
-                            {/* Live Issues/Skips Panel */}
-                            {jobErrors.length > 0 && (
-                                <div className="mt-4 border border-red-200 rounded-lg overflow-hidden animate-fadeIn">
-                                    <div className="bg-red-50 px-3 py-2 border-b border-red-200 flex items-center justify-between text-xs text-red-800 font-semibold">
-                                        <div className="flex items-center gap-1.5">
-                                            <AlertTriangle className="h-3.5 w-3.5 text-red-700" />
-                                            <span>Skipped Meters & Issues ({jobErrors.length})</span>
+                        <div className="space-y-4 pt-4 border-t animate-in fade-in duration-300">
+                            {/* Dashboard grid */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                                {/* SVG Ring Center */}
+                                <div className="flex flex-col items-center justify-center space-y-1">
+                                    <div className="relative w-24 h-24">
+                                        <svg className="w-full h-full transform -rotate-90">
+                                            <circle
+                                                className="text-slate-100"
+                                                strokeWidth="6"
+                                                stroke="currentColor"
+                                                fill="transparent"
+                                                r="42"
+                                                cx="48"
+                                                cy="48"
+                                            />
+                                            <circle
+                                                className="text-blue-600 transition-all duration-300 ease-out"
+                                                strokeWidth="6"
+                                                strokeDasharray="263.89"
+                                                strokeDashoffset={263.89 - (totalCount > 0 ? (processedCount / totalCount) * 263.89 : 0)}
+                                                strokeLinecap="round"
+                                                stroke="currentColor"
+                                                fill="transparent"
+                                                r="42"
+                                                cx="48"
+                                                cy="48"
+                                            />
+                                        </svg>
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                            <span className="text-lg font-bold text-slate-800">
+                                                {totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0}%
+                                            </span>
+                                            <span className="text-[9px] text-slate-400 font-medium">Billed</span>
                                         </div>
+                                    </div>
+                                </div>
+
+                                {/* Performance metrics */}
+                                <div className="md:col-span-2 space-y-2.5">
+                                    <div className="flex items-center justify-between text-xs border-b border-slate-100 pb-1.5">
+                                        <span className="text-slate-500 font-medium">Status</span>
+                                        <span className="font-bold flex items-center gap-1">
+                                            {isProcessing ? (
+                                                <>
+                                                    <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                                                    <span className="text-blue-600">Processing...</span>
+                                                </>
+                                            ) : jobErrors.length > 0 ? (
+                                                <span className="text-amber-600">Billed with Issues</span>
+                                            ) : (
+                                                <span className="text-green-600">Completed</span>
+                                            )}
+                                        </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                        <div className="bg-white p-2 rounded-lg border border-slate-100 shadow-sm">
+                                            <span className="text-slate-400 block font-medium">Speed</span>
+                                            <span className="font-bold text-slate-700">{speed > 0 ? `${speed.toFixed(1)} bills/s` : '--'}</span>
+                                        </div>
+                                        <div className="bg-white p-2 rounded-lg border border-slate-100 shadow-sm">
+                                            <span className="text-slate-400 block font-medium">ETA</span>
+                                            <span className="font-bold text-slate-700">{eta !== null ? `${eta}s` : '--'}</span>
+                                        </div>
+                                        <div className="bg-white p-2 rounded-lg border border-slate-100 shadow-sm col-span-2 flex justify-between items-center">
+                                            <div>
+                                                <span className="text-slate-400 block font-medium">Progress</span>
+                                                <span className="font-bold text-slate-700">{processedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
+                                            </div>
+                                            <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                                ID: {currentJobId?.substring(0, 8)}
+                                            </Badge>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Collapsible Carbon Console Log */}
+                            <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsConsoleOpen(!isConsoleOpen)}
+                                    className="w-full bg-slate-100 px-3 py-2 flex items-center justify-between text-xs text-slate-700 font-bold hover:bg-slate-200 transition-colors"
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <Terminal className="h-3.5 w-3.5" />
+                                        <span>Job Live Terminal Console</span>
+                                    </div>
+                                    {isConsoleOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                </button>
+                                {isConsoleOpen && (
+                                    <div className="bg-slate-950 font-mono text-[10px] text-green-400 p-3 h-28 overflow-y-auto space-y-1 scrollbar-thin scrollbar-thumb-slate-800">
+                                        {terminalLogs.map((log, idx) => (
+                                            <div key={idx} className="leading-relaxed whitespace-pre-wrap">{log}</div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Live Issues & Inline Corrections Panel */}
+                            {parsedErrors.length > 0 && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                                            <AlertCircle className="h-4 w-4 text-amber-500" />
+                                            Actionable Failures & Skips ({parsedErrors.filter(e => !e.resolved).length})
+                                        </span>
                                         <Button
                                             variant="ghost"
                                             size="sm"
                                             onClick={handleExportIssues}
-                                            className="h-7 px-2 text-[10px] text-red-700 hover:text-red-900 hover:bg-red-100/50 border border-red-200 flex items-center gap-1 font-semibold"
+                                            className="h-7 px-2 text-[10px] text-slate-600 hover:text-slate-900 border"
                                         >
-                                            <Download className="h-3 w-3" />
-                                            Export Issues
+                                            <Download className="h-3 w-3 mr-1" />
+                                            Export Logs
                                         </Button>
                                     </div>
-                                    <div className="p-2 max-h-[140px] overflow-y-auto bg-white font-mono text-[10px] text-red-700 divide-y divide-red-50/50">
-                                        {jobErrors.map((err, idx) => (
-                                            <div key={idx} className="py-1 px-1 flex items-start gap-2">
-                                                <span className="font-bold text-red-800 shrink-0">⚠️</span>
-                                                <span className="break-all leading-normal">{err}</span>
-                                            </div>
-                                        ))}
+
+                                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                                        {parsedErrors.map((err) => {
+                                            const isOverlap = err.message.toLowerCase().includes("overlap");
+                                            return (
+                                                <div
+                                                    key={err.id}
+                                                    className={`p-3 rounded-lg border transition-all ${
+                                                        err.resolved
+                                                            ? "bg-green-50 border-green-200 text-green-800"
+                                                            : "bg-white border-slate-200 shadow-sm"
+                                                    }`}
+                                                >
+                                                    <div className="flex justify-between items-start gap-3">
+                                                        <div className="space-y-0.5">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <Badge variant={err.resolved ? "default" : "destructive"} className="text-[8px] font-bold py-0 h-4">
+                                                                    {err.customerKey || "System"}
+                                                                </Badge>
+                                                                {err.resolved && (
+                                                                    <span className="text-[10px] font-bold text-green-700 flex items-center gap-0.5">
+                                                                        <Check className="h-3 w-3" /> Resolved
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-[11px] font-medium text-slate-700 leading-normal">
+                                                                {err.message}
+                                                            </p>
+                                                        </div>
+
+                                                        {!err.resolved && (
+                                                            <div className="flex gap-1.5">
+                                                                {isOverlap ? (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="h-7 text-[10px] border-amber-300 text-amber-800 hover:bg-amber-50"
+                                                                        disabled={err.isResolving}
+                                                                        onClick={() => handleForceRecreate(err, true)}
+                                                                    >
+                                                                        {err.isResolving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RotateCcw className="h-3 w-3 mr-1" />}
+                                                                        Overwrite Bill
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="h-7 text-[10px] border-blue-300 text-blue-800 hover:bg-blue-50"
+                                                                        disabled={err.isResolving}
+                                                                        onClick={() => {
+                                                                            setParsedErrors(prev =>
+                                                                                prev.map(e => e.id === err.id ? { ...e, isEditingReading: !e.isEditingReading } : e)
+                                                                            );
+                                                                        }}
+                                                                    >
+                                                                        <Wrench className="h-3 w-3 mr-1" />
+                                                                        {err.isEditingReading ? "Cancel" : "Fix Reading"}
+                                                                    </Button>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Expandable Inline correction form */}
+                                                    {err.isEditingReading && !err.resolved && (
+                                                        <div className="mt-3 p-3 bg-slate-50 rounded-md border border-slate-100 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                                                            <div className="grid grid-cols-2 gap-2.5">
+                                                                <div className="space-y-1">
+                                                                    <span className="text-[10px] font-bold text-slate-500">Prev. Reading</span>
+                                                                    <Input
+                                                                        type="number"
+                                                                        placeholder="e.g. 100"
+                                                                        className="h-8 text-[11px]"
+                                                                        value={err.customPrevReadingValue || ""}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            setParsedErrors(prev =>
+                                                                                prev.map(item => item.id === err.id ? { ...item, customPrevReadingValue: val } : item)
+                                                                            );
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <span className="text-[10px] font-bold text-slate-500">New Reading</span>
+                                                                    <Input
+                                                                        type="number"
+                                                                        placeholder="e.g. 150"
+                                                                        className="h-8 text-[11px]"
+                                                                        value={err.customReadingValue || ""}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            setParsedErrors(prev =>
+                                                                                prev.map(item => item.id === err.id ? { ...item, customReadingValue: val } : item)
+                                                                            );
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <Button
+                                                                size="sm"
+                                                                className="w-full h-8 text-[11px] bg-blue-600 hover:bg-blue-700"
+                                                                disabled={err.isResolving}
+                                                                onClick={() => handleResolveInline(err, true)}
+                                                            >
+                                                                {err.isResolving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Check className="h-3 w-3 mr-1" />}
+                                                                Save Reading & Re-create Bill
+                                                            </Button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -712,25 +1072,14 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isProcessing && !currentJobId}>
                         {processedCount > 0 && processedCount === totalCount && !isProcessing ? "Close" : "Cancel"}
                     </Button>
-                    <div className="flex gap-2 w-full sm:w-auto">
-                        <Button
-                            variant="destructive"
-                            className="flex-1 sm:flex-none"
-                            onClick={() => handleRunCycle(true)}
-                            disabled={isProcessing}
-                        >
-                            {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
-                            Carry Balance
-                        </Button>
-                        <Button
-                            className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700"
-                            onClick={() => handleRunCycle(false)}
-                            disabled={isProcessing}
-                        >
-                            {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-                            Mark Paid
-                        </Button>
-                    </div>
+                    <Button
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-semibold flex-1 sm:flex-none"
+                        onClick={() => handleRunCycle(true)}
+                        disabled={isProcessing}
+                    >
+                        {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+                        Print Bill for {monthYear}
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

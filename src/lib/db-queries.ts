@@ -886,6 +886,25 @@ export const dbGetBillsByCustomerKey = async (customerKey: string) => {
 
 
 export const dbCreateBill = async (bill: any, client?: any) => {
+    const qFunc = client ? client.query.bind(client) : query;
+
+    // Soft-delete existing active bill for the same customer & month to avoid unique constraint violations
+    if (bill.month_year) {
+        if (bill.CUSTOMERKEY) {
+            await qFunc(
+                `UPDATE bills SET deleted_at = NOW(), deleted_by = '00000000-0000-0000-0000-000000000000'::uuid 
+                 WHERE deleted_at IS NULL AND month_year = $1 AND "CUSTOMERKEY" = $2`,
+                [bill.month_year, bill.CUSTOMERKEY]
+            );
+        } else if (bill.individual_customer_id) {
+            await qFunc(
+                `UPDATE bills SET deleted_at = NOW(), deleted_by = '00000000-0000-0000-0000-000000000000'::uuid 
+                 WHERE deleted_at IS NULL AND month_year = $1 AND individual_customer_id = $2`,
+                [bill.month_year, bill.individual_customer_id]
+            );
+        }
+    }
+
     const keys = Object.keys(bill);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO bills (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
@@ -899,11 +918,18 @@ export const dbCreateBill = async (bill: any, client?: any) => {
     return rows[0] || bill;
 };
 
-export const dbUpdateBill = async (id: string, bill: any, client?: any) => {
-    const keys = Object.keys(bill);
+export const dbUpdateBill = async (id: string, bill: any, client?: any, monthYear?: string) => {
+    // Never update the partition key — strip it defensively so callers can't accidentally
+    // change month_year, which would require PostgreSQL to move the row to another partition.
+    const { month_year: _ignored, ...safeFields } = bill;
+    const keys = Object.keys(safeFields);
+    if (keys.length === 0) return null;
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const sql = `UPDATE bills SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`;
-    const params = [...keys.map(k => bill[k]), id];
+    const monthYearClause = monthYear ? ` AND month_year = $${keys.length + 2}` : '';
+    const sql = `UPDATE bills SET ${setClause} WHERE id = $${keys.length + 1}${monthYearClause} RETURNING *`;
+    const params = monthYear
+        ? [...keys.map(k => safeFields[k]), id, monthYear]
+        : [...keys.map(k => safeFields[k]), id];
 
     if (client) {
         const res = await client.query(sql, params);
@@ -912,6 +938,8 @@ export const dbUpdateBill = async (id: string, bill: any, client?: any) => {
     const rows = await query(sql, params);
     return rows[0] ?? null;
 };
+
+
 
 export const dbDeleteBill = async (id: string, deletedBy?: string) => {
     return await withTransaction(async (client) => {
@@ -931,6 +959,53 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
             } else if (bill.individual_customer_id) {
                 await client.query('UPDATE individual_customers SET "outStandingbill" = GREATEST(0, COALESCE("outStandingbill", 0) - $1) WHERE "customerKeyNumber" = $2', [unpaidAmt, bill.individual_customer_id]);
             }
+        }
+
+        // Restore pre-rollover readings when the bill is deleted so they can be re-billed/edited correctly.
+        if (bill.CUSTOMERKEY) {
+            // Restore bulk meter readings
+            await client.query(
+                `UPDATE bulk_meters 
+                 SET "previousReading" = $1, "currentReading" = $2, month = $3 
+                 WHERE "customerKeyNumber" = $4`,
+                [bill.PREVREAD, bill.CURRREAD, bill.month_year, bill.CUSTOMERKEY]
+            );
+
+            // Restore assigned individual sub-meters readings using reading records of that month
+            if (bill.month_year && bill.month_year.includes('-')) {
+                const [year, month] = bill.month_year.split('-').map(Number);
+                const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+                const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
+
+                const readingsRes = await client.query(
+                    `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
+                     FROM individual_customer_readings 
+                     WHERE "CUST_KEY" IN (
+                         SELECT "customerKeyNumber" FROM individual_customers 
+                         WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL
+                     )
+                     AND deleted_at IS NULL
+                     AND "READING_DATE" >= $2 AND "READING_DATE" < $3`,
+                    [bill.CUSTOMERKEY, startDate, endDate]
+                );
+
+                for (const r of readingsRes.rows) {
+                    await client.query(
+                        `UPDATE individual_customers 
+                         SET "previousReading" = $1, "currentReading" = $2, month = $3 
+                         WHERE "customerKeyNumber" = $4`,
+                        [r.PREVIOUS_READING, r.METER_READING, bill.month_year, r.CUST_KEY]
+                    );
+                }
+            }
+        } else if (bill.individual_customer_id) {
+            // Restore standalone individual customer readings
+            await client.query(
+                `UPDATE individual_customers 
+                 SET "previousReading" = $1, "currentReading" = $2, month = $3 
+                 WHERE "customerKeyNumber" = $4`,
+                [bill.PREVREAD, bill.CURRREAD, bill.month_year, bill.individual_customer_id]
+            );
         }
 
         await client.query('UPDATE bills SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
@@ -1077,10 +1152,18 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
 };
 
 export const dbCreateIndividualCustomerReading = async (reading: any, client?: any) => {
-    const keys = Object.keys(reading);
+    // Ensure reading_month is set — the BEFORE INSERT trigger that did this automatically
+    // has been removed to fix the "moving row to another partition" partition trigger error.
+    const withMonth = { ...reading };
+    if (!withMonth.reading_month && (withMonth.READING_DATE || withMonth.reading_date)) {
+        const dateVal = withMonth.READING_DATE || withMonth.reading_date;
+        const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+        withMonth.reading_month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const keys = Object.keys(withMonth);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const params = keys.map(k => reading[k]);
+    const params = keys.map(k => withMonth[k]);
     
     if (client) {
         const res = await client.query(sql, params);
@@ -1090,10 +1173,18 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
     return rows[0] || reading;
 };
 
-export const dbUpdateIndividualCustomerReading = async (id: string, reading: any) => {
-    const keys = Object.keys(reading);
+
+export const dbUpdateIndividualCustomerReading = async (id: string, reading: any, readingMonth?: string) => {
+    const { reading_month: _ignored, ...safeFields } = reading;
+    const keys = Object.keys(safeFields);
+    if (keys.length === 0) return null;
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE individual_customer_readings SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`, [...keys.map(k => reading[k]), id]);
+    const monthClause = readingMonth ? ` AND reading_month = $${keys.length + 2}` : '';
+    const sql = `UPDATE individual_customer_readings SET ${setClause} WHERE id = $${keys.length + 1}${monthClause} RETURNING *`;
+    const params = readingMonth
+        ? [...keys.map(k => safeFields[k]), id, readingMonth]
+        : [...keys.map(k => safeFields[k]), id];
+    const rows = await query(sql, params);
     return rows[0] ?? null;
 };
 
@@ -1143,10 +1234,17 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
 
 export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
     try {
-        const keys = Object.keys(reading);
+        // Ensure reading_month is set (trigger no longer does this automatically)
+        const withMonth = { ...reading };
+        if (!withMonth.reading_month && (withMonth.READING_DATE || withMonth.reading_date)) {
+            const dateVal = withMonth.READING_DATE || withMonth.reading_date;
+            const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+            withMonth.reading_month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        }
+        const keys = Object.keys(withMonth);
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO bulk_meter_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-        const params = keys.map(k => reading[k]);
+        const params = keys.map(k => withMonth[k]);
         
         if (client) {
             const res = await client.query(sql, params);
@@ -1160,10 +1258,18 @@ export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
     }
 };
 
-export const dbUpdateBulkMeterReading = async (id: string, reading: any) => {
-    const keys = Object.keys(reading);
+
+export const dbUpdateBulkMeterReading = async (id: string, reading: any, readingMonth?: string) => {
+    const { reading_month: _ignored, ...safeFields } = reading;
+    const keys = Object.keys(safeFields);
+    if (keys.length === 0) return null;
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE bulk_meter_readings SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`, [...keys.map(k => reading[k]), id]);
+    const monthClause = readingMonth ? ` AND reading_month = $${keys.length + 2}` : '';
+    const sql = `UPDATE bulk_meter_readings SET ${setClause} WHERE id = $${keys.length + 1}${monthClause} RETURNING *`;
+    const params = readingMonth
+        ? [...keys.map(k => safeFields[k]), id, readingMonth]
+        : [...keys.map(k => safeFields[k]), id];
+    const rows = await query(sql, params);
     return rows[0] ?? null;
 };
 
@@ -2170,6 +2276,7 @@ export const dbGetUnprocessedIndividualCustomersForJob = async (job: any, limit:
         SELECT * FROM individual_customers 
         WHERE status = 'Active' 
         AND deleted_at IS NULL
+        AND "assignedBulkMeterId" IS NULL
     `;
     const params: any[] = [];
     let paramIndex = 1;
@@ -2196,6 +2303,31 @@ export const dbGetUnprocessedIndividualCustomersForJob = async (job: any, limit:
  */
 export const dbBatchInsertBills = async (bills: any[], client?: any) => {
     if (bills.length === 0) return [];
+
+    const qFunc = client ? client.query.bind(client) : query;
+
+    // Soft-delete any existing active bills for these customers and months
+    // so re-running or overlapping bill creation does not violate the partial unique index.
+    const monthYears = Array.from(new Set(bills.map(b => b.month_year).filter(Boolean)));
+    const bulkKeys = Array.from(new Set(bills.map(b => b.CUSTOMERKEY).filter(Boolean)));
+    const indivKeys = Array.from(new Set(bills.map(b => b.individual_customer_id).filter(Boolean)));
+
+    if (monthYears.length > 0) {
+        if (bulkKeys.length > 0) {
+            await qFunc(
+                `UPDATE bills SET deleted_at = NOW(), deleted_by = '00000000-0000-0000-0000-000000000000'::uuid
+                 WHERE deleted_at IS NULL AND month_year = ANY($1) AND "CUSTOMERKEY" = ANY($2)`,
+                [monthYears, bulkKeys]
+            );
+        }
+        if (indivKeys.length > 0) {
+            await qFunc(
+                `UPDATE bills SET deleted_at = NOW(), deleted_by = '00000000-0000-0000-0000-000000000000'::uuid
+                 WHERE deleted_at IS NULL AND month_year = ANY($1) AND individual_customer_id = ANY($2)`,
+                [monthYears, indivKeys]
+            );
+        }
+    }
 
     // Map all fields in the bills table with their PostgreSQL types.
     // Explicit types are REQUIRED for unnest() — without them PostgreSQL
@@ -2266,7 +2398,6 @@ export const dbBatchInsertBills = async (bills: any[], client?: any) => {
         return val;
     }));
 
-    const qFunc = client ? client.query.bind(client) : query;
     const res = await qFunc(sql, columnData);
     const rows = client ? res.rows : res;
     return rows;
@@ -2971,6 +3102,8 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
 
         // Preserve any bills already manually marked as 'Paid'.
         // If a bill's current payment_status is 'Paid', keep it as 'Paid'; otherwise set to computed status.
+        // Include month_year in the WHERE clause so PostgreSQL can route the UPDATE
+        // directly to the correct partition without crossing the BEFORE ROW trigger boundary.
         await qFunc(
             `UPDATE bills 
              SET debit_30 = $1, 
@@ -2981,7 +3114,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
                  payment_status = CASE WHEN payment_status = 'Paid' THEN 'Paid' ELSE $8 END
-             WHERE id = $9`,
+             WHERE id = $9 AND month_year = $10`,
             [
                 d30_rounded,
                 d30_60_rounded,
@@ -2991,7 +3124,8 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                 currentMonthlyCharge_rounded,
                 totalPayable_rounded,
                 billPaymentStatus,
-                bill.id
+                bill.id,
+                billMonth
             ]
         );
 

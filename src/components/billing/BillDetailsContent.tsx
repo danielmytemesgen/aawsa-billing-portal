@@ -20,7 +20,10 @@ import {
     updateBillAction,
     getBranchByIdAction,
     correctBillAction,
-    getBillsByCustomerKeyAction
+    getBillsByCustomerKeyAction,
+    getAssignedCustomerReadingsAction,
+    updateBulkAndAssignedReadingsAction,
+    recalculateBulkBillAction,
 } from '@/lib/actions';
 import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
@@ -28,7 +31,7 @@ import { initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown } from 'lucide-react';
+import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import {
@@ -262,6 +265,19 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     const [calculatedPreview, setCalculatedPreview] = useState<{ usage: number, amount: number } | null>(null);
     const [isCalculating, setIsCalculating] = useState(false);
 
+    // Assigned sub-meter readings state (for bulk bills)
+    type AssignedReadingRow = {
+        customerKeyNumber: string;
+        name: string;
+        previous: number;
+        current: number;
+        billId?: string | null;
+        billStatus?: string | null;
+    };
+    const [assignedReadings, setAssignedReadings] = useState<AssignedReadingRow[]>([]);
+    const [assignedReadingEdits, setAssignedReadingEdits] = useState<Record<string, { previous: number; current: number }>>({});
+    const [isLoadingAssigned, setIsLoadingAssigned] = useState(false);
+
     // Reject / Correct reason dialog state
     const [rejectDialog, setRejectDialog] = useState<{ open: boolean; action: 'reject' | 'correct' }>({ open: false, action: 'reject' });
     const [rejectReason, setRejectReason] = useState('');
@@ -478,22 +494,156 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         }
     }
 
+    const handleFileUploadAssignedReadings = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const text = event.target?.result as string;
+                if (!text) return;
+
+                const lines = text.split(/\r\n|\n/).map(l => l.trim()).filter(Boolean);
+                if (lines.length < 2) {
+                    toast({ variant: "destructive", title: "CSV Error", description: "File must contain a header row and at least one data row." });
+                    return;
+                }
+
+                const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
+
+                const keyIdx = headers.findIndex(h => ['customerkey', 'customer key', 'customer', 'cust_key', 'customerkeynumber', 'meterkey', 'meter', 'id'].includes(h));
+                const prevIdx = headers.findIndex(h => ['previousreading', 'previous reading', 'prevreading', 'prev reading', 'prevread', 'prev_read', 'previous'].includes(h));
+                const currIdx = headers.findIndex(h => ['currentreading', 'current reading', 'currreading', 'curr reading', 'currread', 'curr_read', 'reading', 'readingvalue', 'current'].includes(h));
+
+                if (keyIdx === -1 || (currIdx === -1 && prevIdx === -1)) {
+                    toast({
+                        variant: "destructive",
+                        title: "Invalid Headers",
+                        description: "CSV must contain columns: 'Customer Key' and ('Current Reading' or 'Previous Reading')."
+                    });
+                    return;
+                }
+
+                let updatedCount = 0;
+                const newEdits = { ...assignedReadingEdits };
+
+                for (let i = 1; i < lines.length; i++) {
+                    const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+                    const key = cols[keyIdx];
+                    if (!key) continue;
+
+                    const matched = assignedReadings.find(r =>
+                        r.customerKeyNumber.toLowerCase() === key.toLowerCase() ||
+                        r.customerKeyNumber.replace(/\D/g, '') === key.replace(/\D/g, '')
+                    );
+                    if (matched) {
+                        const targetKey = matched.customerKeyNumber;
+                        const existing = newEdits[targetKey] || { previous: matched.previous, current: matched.current };
+
+                        const newPrev = prevIdx !== -1 && cols[prevIdx] !== '' ? parseFloat(cols[prevIdx]) : existing.previous;
+                        const newCurr = currIdx !== -1 && cols[currIdx] !== '' ? parseFloat(cols[currIdx]) : existing.current;
+
+                        newEdits[targetKey] = {
+                            previous: isNaN(newPrev) ? existing.previous : newPrev,
+                            current: isNaN(newCurr) ? existing.current : newCurr,
+                        };
+                        updatedCount++;
+                    }
+                }
+
+                setAssignedReadingEdits(newEdits);
+                toast({
+                    title: "CSV Uploaded",
+                    description: `Successfully loaded ${updatedCount} sub-meter reading(s) from CSV.`
+                });
+            } catch (err) {
+                console.error("CSV Parse Error", err);
+                toast({ variant: "destructive", title: "Error", description: "Failed to parse CSV file." });
+            } finally {
+                e.target.value = '';
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const handleDownloadTemplate = () => {
+        const rows = assignedReadings.map(row => {
+            const edits = assignedReadingEdits[row.customerKeyNumber] ?? { previous: row.previous, current: row.current };
+            return [
+                `"${row.customerKeyNumber}"`,
+                `"${row.name}"`,
+                edits.previous,
+                edits.current
+            ].join(',');
+        });
+        const csvContent = [
+            'Customer Key,Customer Name,Previous Reading,Current Reading',
+            ...rows
+        ].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `readings_template_${bill?.CUSTOMERKEY ?? 'bulk'}_${bill?.month_year ?? ''}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({ title: 'Template Downloaded', description: `${assignedReadings.length} customers exported. Edit values then re-upload via "Upload CSV".` });
+    };
+
     const handleEditChange = (field: 'current' | 'previous', value: string) => {
         setEditValues(prev => ({ ...prev, [field]: parseFloat(value) || 0 }));
     };
+
+    const handleAssignedReadingChange = (key: string, field: 'current' | 'previous', value: string) => {
+        setAssignedReadingEdits(prev => ({
+            ...prev,
+            [key]: { ...prev[key], [field]: parseFloat(value) || 0 }
+        }));
+    };
+
+    // Load assigned customer readings whenever editing starts on a bulk bill
+    useEffect(() => {
+        if (!isEditing || !bill || !bill.CUSTOMERKEY) return;
+        let cancelled = false;
+        setIsLoadingAssigned(true);
+        getAssignedCustomerReadingsAction(bill.CUSTOMERKEY, bill.month_year).then(res => {
+            if (cancelled) return;
+            if (res.data && Array.isArray(res.data)) {
+                setAssignedReadings(res.data);
+                const initEdits: Record<string, { previous: number; current: number }> = {};
+                for (const row of res.data as any[]) {
+                    initEdits[row.customerKeyNumber] = { previous: row.previous, current: row.current };
+                }
+                setAssignedReadingEdits(initEdits);
+            }
+        }).catch(console.error).finally(() => {
+            if (!cancelled) setIsLoadingAssigned(false);
+        });
+        return () => { cancelled = true; };
+    }, [isEditing, bill?.id]);
 
     const handleRecalculate = async () => {
         if (!relatedData) return;
         setIsCalculating(true);
         try {
             const usage = editValues.current - editValues.previous;
-            const typeParam = relatedData.type === 'bulk' ? relatedData.charge_group : relatedData.customerType;
+            const isBulk = relatedData.type === 'bulk';
+            const typeParam = isBulk ? relatedData.charge_group : relatedData.customerType;
             const sizeParam = relatedData.meterSize;
             const sewerage = relatedData.sewerageConnection || relatedData.sewerage_connection;
             const month = bill?.month_year || '2025-01';
 
+            let effectiveUsage = usage;
+            if (isBulk) {
+                const totalIndiv = Object.values(assignedReadingEdits).reduce(
+                    (sum, r) => sum + (r.current - r.previous), 0
+                );
+                effectiveUsage = usage - totalIndiv;
+            }
+
             const calcRes = await calculateBillAction(
-                Math.max(0, usage),
+                Math.max(0, effectiveUsage),
                 typeParam,
                 sewerage,
                 sizeParam,
@@ -514,30 +664,57 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         if (!bill || !relatedData) return;
         setLoading(true);
         try {
+            const isBulk = !!(bill.CUSTOMERKEY);
             const usage = editValues.current - editValues.previous;
-            const typeParam = relatedData.type === 'bulk' ? relatedData.charge_group : relatedData.customerType;
-            const sizeParam = relatedData.meterSize;
-            const sewerage = relatedData.sewerageConnection || relatedData.sewerage_connection;
-            const month = bill.month_year;
 
-            const calcRes = await calculateBillAction(Math.max(0, usage), typeParam, sewerage, sizeParam, month);
-
-            if (calcRes.data) {
-                const currentOutstanding = Number(bill.OUTSTANDINGAMT || bill.balance_carried_forward || 0);
-                await updateBillAction(bill.id, {
-                    CURRREAD: editValues.current,
-                    PREVREAD: editValues.previous,
-                    CONS: Math.max(0, usage),
-                    difference_usage: calcRes.data.effectiveUsage,
-                    THISMONTHBILLAMT: calcRes.data.totalBill,
-                    TOTALBILLAMOUNT: calcRes.data.totalBill + currentOutstanding,
+            if (isBulk) {
+                const assignedUpdates = Object.entries(assignedReadingEdits).map(([key, vals]) => ({
+                    customerKeyNumber: key,
+                    currRead: vals.current,
+                    prevRead: vals.previous,
+                }));
+                const res = await updateBulkAndAssignedReadingsAction({
+                    bulkBillId: bill.id,
+                    bulkCurrRead: editValues.current,
+                    bulkPrevRead: editValues.previous,
+                    assignedUpdates,
                 });
-                await loadData();
-                setIsEditing(false);
-                setCalculatedPreview(null);
+                if (res?.error) {
+                    toast({ title: "Save Failed", description: res.error.message || "An error occurred.", variant: "destructive" });
+                } else {
+                    toast({ title: "Saved", description: "Bulk meter and assigned customer readings updated and rebilled." });
+                    await loadData();
+                    setIsEditing(false);
+                    setCalculatedPreview(null);
+                    setAssignedReadings([]);
+                    setAssignedReadingEdits({});
+                }
+            } else {
+                const typeParam = relatedData.type === 'bulk' ? relatedData.charge_group : relatedData.customerType;
+                const sizeParam = relatedData.meterSize;
+                const sewerage = relatedData.sewerageConnection || relatedData.sewerage_connection;
+                const month = bill.month_year;
+
+                const calcRes = await calculateBillAction(Math.max(0, usage), typeParam, sewerage, sizeParam, month);
+
+                if (calcRes.data) {
+                    const currentOutstanding = Number(bill.OUTSTANDINGAMT || bill.balance_carried_forward || 0);
+                    await updateBillAction(bill.id, {
+                        CURRREAD: editValues.current,
+                        PREVREAD: editValues.previous,
+                        CONS: Math.max(0, usage),
+                        difference_usage: calcRes.data.effectiveUsage,
+                        THISMONTHBILLAMT: calcRes.data.totalBill,
+                        TOTALBILLAMOUNT: calcRes.data.totalBill + currentOutstanding,
+                    });
+                    await loadData();
+                    setIsEditing(false);
+                    setCalculatedPreview(null);
+                }
             }
         } catch (error) {
             console.error(error);
+            toast({ title: "Error", description: "Failed to save changes.", variant: "destructive" });
         } finally {
             setLoading(false);
         }
@@ -693,6 +870,99 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 <Input type="number" value={editValues.current} onChange={(e) => handleEditChange('current', e.target.value)} className="h-9" />
                                             </div>
                                         </div>
+
+                                        {/* Sub-meter readings table for bulk bills */}
+                                        {bill.CUSTOMERKEY && (
+                                            <div className="mt-4 space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <h5 className="text-xs font-semibold text-amber-800 uppercase tracking-wide flex items-center gap-2">
+                                                        Assigned Individual Customer Readings
+                                                        {isLoadingAssigned && <span className="text-amber-600 font-normal normal-case">(loading…)</span>}
+                                                    </h5>
+                                                    <label className="cursor-pointer">
+                                                        <input type="file" accept=".csv,.txt" onChange={handleFileUploadAssignedReadings} className="hidden" />
+                                                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-900 hover:bg-amber-100 transition-colors shadow-sm">
+                                                            <Upload className="h-3.5 w-3.5 text-amber-700" /> Upload CSV
+                                                        </span>
+                                                    </label>
+                                                </div>
+                                                {!isLoadingAssigned && assignedReadings.length === 0 && (
+                                                    <p className="text-xs text-amber-700 italic">No assigned individual customers found for this bulk meter.</p>
+                                                )}
+                                                {assignedReadings.length > 0 && (
+                                                    <div className="rounded border border-amber-200 overflow-hidden text-xs">
+                                                        <table className="w-full">
+                                                            <thead className="bg-amber-100 text-amber-900">
+                                                                <tr>
+                                                                    <th className="px-2 py-1.5 text-left font-semibold">Customer</th>
+                                                                    <th className="px-2 py-1.5 text-right font-semibold">Prev. Reading</th>
+                                                                    <th className="px-2 py-1.5 text-right font-semibold">Curr. Reading</th>
+                                                                    <th className="px-2 py-1.5 text-right font-semibold">Usage (m³)</th>
+                                                                    <th className="px-2 py-1.5 text-center font-semibold">Bill Status</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="bg-white divide-y divide-amber-100">
+                                                                {assignedReadings.map((row) => {
+                                                                    const edits = assignedReadingEdits[row.customerKeyNumber] ?? { previous: row.previous, current: row.current };
+                                                                    const usage = edits.current - edits.previous;
+                                                                    return (
+                                                                        <tr key={row.customerKeyNumber} className="hover:bg-amber-50">
+                                                                            <td className="px-2 py-1.5">
+                                                                                <div className="font-medium text-gray-800">{row.name}</div>
+                                                                                <div className="text-gray-400 text-[10px]">{row.customerKeyNumber}</div>
+                                                                            </td>
+                                                                            <td className="px-2 py-1.5 text-right">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    value={edits.previous}
+                                                                                    onChange={(e) => handleAssignedReadingChange(row.customerKeyNumber, 'previous', e.target.value)}
+                                                                                    className="w-20 border border-amber-300 rounded px-1 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                                                                />
+                                                                            </td>
+                                                                            <td className="px-2 py-1.5 text-right">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    value={edits.current}
+                                                                                    onChange={(e) => handleAssignedReadingChange(row.customerKeyNumber, 'current', e.target.value)}
+                                                                                    className="w-20 border border-amber-300 rounded px-1 py-0.5 text-right text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                                                                />
+                                                                            </td>
+                                                                            <td className={`px-2 py-1.5 text-right font-mono font-semibold ${usage < 0 ? 'text-red-600' : 'text-gray-700'}`}>
+                                                                                {usage.toFixed(2)}
+                                                                            </td>
+                                                                            <td className="px-2 py-1.5 text-center">
+                                                                                {row.billStatus ? (
+                                                                                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                                                                                        row.billStatus === 'Posted' ? 'bg-green-100 text-green-700' :
+                                                                                        row.billStatus === 'Draft' ? 'bg-gray-100 text-gray-600' :
+                                                                                        row.billStatus === 'Approved' ? 'bg-blue-100 text-blue-700' :
+                                                                                        'bg-orange-100 text-orange-700'
+                                                                                    }`}>{row.billStatus}</span>
+                                                                                ) : (
+                                                                                    <span className="text-gray-400 text-[10px] italic">No bill</span>
+                                                                                )}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                            <tfoot className="bg-amber-50 border-t border-amber-200">
+                                                                <tr>
+                                                                    <td colSpan={2} className="px-2 py-1.5 text-right text-amber-800 font-semibold">Total Sub-meter Usage:</td>
+                                                                    <td className="px-2 py-1.5 text-right font-mono font-bold text-amber-900">
+                                                                        {Object.values(assignedReadingEdits).reduce((sum, r) => sum + (r.current - r.previous), 0).toFixed(2)} m³
+                                                                    </td>
+                                                                    <td colSpan={2} className="px-2 py-1.5 text-left text-[10px] text-amber-700 italic">
+                                                                        Bulk diff = {(editValues.current - editValues.previous - Object.values(assignedReadingEdits).reduce((s, r) => s + (r.current - r.previous), 0)).toFixed(2)} m³
+                                                                    </td>
+                                                                </tr>
+                                                            </tfoot>
+                                                        </table>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {calculatedPreview && (
                                             <div className="bg-white p-3 rounded border border-amber-200 text-sm">
                                                 <div className="flex justify-between border-b pb-1 mb-1">
@@ -705,16 +975,29 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 </div>
                                             </div>
                                         )}
-                                        <div className="flex gap-2 justify-end pt-2">
-                                            <Button size="sm" variant="outline" onClick={() => { setIsEditing(false); setCalculatedPreview(null); }}>
-                                                <X className="mr-2 h-4 w-4" /> Cancel
-                                            </Button>
-                                            <Button size="sm" variant="secondary" onClick={handleRecalculate} disabled={isCalculating}>
-                                                {isCalculating ? "Calculating..." : "Check Preview"}
-                                            </Button>
-                                            <Button size="sm" onClick={handleSave} disabled={loading}>
-                                                <Save className="mr-2 h-4 w-4" /> Save Changes
-                                            </Button>
+                                        <div className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center pt-2">
+                                            <div>
+                                                {bill.CUSTOMERKEY && assignedReadings.length > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleDownloadTemplate}
+                                                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded border border-emerald-400 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors shadow-sm"
+                                                    >
+                                                        <FileDown className="h-4 w-4 text-emerald-600" /> Download Template
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className="flex gap-2 justify-end">
+                                                <Button size="sm" variant="outline" onClick={() => { setIsEditing(false); setCalculatedPreview(null); setAssignedReadings([]); setAssignedReadingEdits({}); }}>
+                                                    <X className="mr-2 h-4 w-4" /> Cancel
+                                                </Button>
+                                                <Button size="sm" variant="secondary" onClick={handleRecalculate} disabled={isCalculating}>
+                                                    {isCalculating ? "Calculating..." : "Check Preview"}
+                                                </Button>
+                                                <Button size="sm" onClick={handleSave} disabled={loading}>
+                                                    <Save className="mr-2 h-4 w-4" /> Save Changes
+                                                </Button>
+                                            </div>
                                         </div>
                                     </div>
                                 ) : (
