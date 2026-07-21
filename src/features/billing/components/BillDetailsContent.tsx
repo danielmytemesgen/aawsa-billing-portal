@@ -1474,20 +1474,24 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                     </div>
                                 </div>
                                 <ScrollArea className="h-44 rounded-md border bg-gray-50/30 overflow-auto">
-                                    {assignedCustomers.length === 0 ? (
-                                        <p className="text-center text-sm text-gray-400 py-10">No customers assigned yet.</p>
-                                    ) : (
-                                        <div className="w-full">
-                                            <table className="w-full text-xs">
-                                                <thead className="bg-gray-100/80 text-gray-700 sticky top-0 border-b z-10">
+                                    <div className="w-full">
+                                        <table className="w-full text-xs">
+                                            <thead className="bg-gray-100/80 text-gray-700 sticky top-0 border-b z-10">
+                                                <tr>
+                                                    <th className="px-3 py-2 text-left font-semibold">Customer Key</th>
+                                                    <th className="px-3 py-2 text-left font-semibold">Name</th>
+                                                    <th className="px-3 py-2 text-center font-semibold">Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100 bg-white">
+                                                {assignedCustomers.length === 0 ? (
                                                     <tr>
-                                                        <th className="px-3 py-2 text-left font-semibold">Customer Key</th>
-                                                        <th className="px-3 py-2 text-left font-semibold">Name</th>
-                                                        <th className="px-3 py-2 text-center font-semibold">Action</th>
+                                                        <td colSpan={3} className="text-center text-sm text-gray-400 py-8 italic">
+                                                            No customers assigned yet.
+                                                        </td>
                                                     </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-gray-100 bg-white">
-                                                    {assignedCustomers.map((c) => (
+                                                ) : (
+                                                    assignedCustomers.map((c) => (
                                                         <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
                                                             <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
                                                             <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
@@ -1527,11 +1531,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                                 </Button>
                                                             </td>
                                                         </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    )}
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </ScrollArea>
                             </div>
 
@@ -1557,9 +1561,6 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 c.METER_KEY?.toLowerCase().includes(customerSearch.toLowerCase())
                                               )
                                             : unassignedCustomers;
-                                        if (filtered.length === 0) {
-                                            return <p className="text-center text-sm text-gray-400 py-10">No unassigned customers found.</p>;
-                                        }
                                         return (
                                             <div className="w-full">
                                                 <table className="w-full text-xs">
@@ -1571,46 +1572,54 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-gray-100 bg-white">
-                                                        {filtered.map((c) => (
-                                                            <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
-                                                                <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
-                                                                <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
-                                                                <td className="px-3 py-2 text-center">
-                                                                    <Button
-                                                                        size="sm"
-                                                                        variant="ghost"
-                                                                        className="text-green-600 hover:text-green-800 hover:bg-green-50 h-7 px-2"
-                                                                        disabled={customerActionLoading === c.customerKeyNumber}
-                                                                        onClick={async () => {
-                                                                            if (!bill?.CUSTOMERKEY) return;
-                                                                            setCustomerActionLoading(c.customerKeyNumber);
-                                                                            try {
-                                                                                const res = await assignCustomerToBulkMeterAction(c.customerKeyNumber, bill.CUSTOMERKEY);
-                                                                                if (res.success) {
-                                                                                    await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
-                                                                                    setUnassignedCustomers(prev => prev.filter(x => x.customerKeyNumber !== c.customerKeyNumber));
-                                                                                    setAssignedCustomers(prev => [...prev, c].sort((a, b) => a.name?.localeCompare(b.name)));
-                                                                                    toast({ title: 'Assigned', description: `${c.name} assigned to this meter.` });
-                                                                                    await loadData();
-                                                                                } else {
-                                                                                    toast({ title: 'Error', description: res.error || 'Failed to assign.', variant: 'destructive' });
-                                                                                }
-                                                                            } catch {
-                                                                                toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
-                                                                            } finally {
-                                                                                setCustomerActionLoading(null);
-                                                                            }
-                                                                        }}
-                                                                    >
-                                                                        {customerActionLoading === c.customerKeyNumber
-                                                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                                            : <UserPlus className="h-3.5 w-3.5" />
-                                                                        }
-                                                                        <span className="ml-1 text-[11px]">Add</span>
-                                                                    </Button>
+                                                        {filtered.length === 0 ? (
+                                                            <tr>
+                                                                <td colSpan={3} className="text-center text-sm text-gray-400 py-8 italic">
+                                                                    No unassigned customers found.
                                                                 </td>
                                                             </tr>
-                                                        ))}
+                                                        ) : (
+                                                            filtered.map((c) => (
+                                                                <tr key={c.customerKeyNumber} className="hover:bg-gray-50/50 transition-colors">
+                                                                    <td className="px-3 py-2 font-mono text-gray-500">{c.customerKeyNumber}</td>
+                                                                    <td className="px-3 py-2 font-medium text-gray-800 truncate max-w-[200px]">{c.name}</td>
+                                                                    <td className="px-3 py-2 text-center">
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="ghost"
+                                                                            className="text-green-600 hover:text-green-800 hover:bg-green-50 h-7 px-2"
+                                                                            disabled={customerActionLoading === c.customerKeyNumber}
+                                                                            onClick={async () => {
+                                                                                if (!bill?.CUSTOMERKEY) return;
+                                                                                setCustomerActionLoading(c.customerKeyNumber);
+                                                                                try {
+                                                                                    const res = await assignCustomerToBulkMeterAction(c.customerKeyNumber, bill.CUSTOMERKEY);
+                                                                                    if (res.success) {
+                                                                                        await recalculateBulkBillAction(bill.CUSTOMERKEY, bill.month_year);
+                                                                                        setUnassignedCustomers(prev => prev.filter(x => x.customerKeyNumber !== c.customerKeyNumber));
+                                                                                        setAssignedCustomers(prev => [...prev, c].sort((a, b) => a.name?.localeCompare(b.name)));
+                                                                                        toast({ title: 'Assigned', description: `${c.name} assigned to this meter.` });
+                                                                                        await loadData();
+                                                                                    } else {
+                                                                                        toast({ title: 'Error', description: res.error || 'Failed to assign.', variant: 'destructive' });
+                                                                                    }
+                                                                                } catch {
+                                                                                    toast({ title: 'Error', description: 'Unexpected error.', variant: 'destructive' });
+                                                                                } finally {
+                                                                                    setCustomerActionLoading(null);
+                                                                                }
+                                                                            }}
+                                                                        >
+                                                                            {customerActionLoading === c.customerKeyNumber
+                                                                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                                                : <UserPlus className="h-3.5 w-3.5" />
+                                                                            }
+                                                                            <span className="ml-1 text-[11px]">Add</span>
+                                                                        </Button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))
+                                                        )}
                                                     </tbody>
                                                 </table>
                                             </div>
