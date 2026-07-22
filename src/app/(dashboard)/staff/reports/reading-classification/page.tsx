@@ -41,6 +41,7 @@ import * as XLSX from 'xlsx';
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { getAllFaultCodes } from "@/lib/fault-codes";
+import { subscribeToFaultCodes } from "@/lib/data-store";
 import { usePermissions } from "@/hooks/use-permissions";
 import { classifyReadingCategory, type ReadingCategory } from '@/lib/reading-classification';
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -90,8 +91,14 @@ export default function ReadingClassificationPage() {
         }
     }, []);
 
+    const [faultCodesList, setFaultCodesList] = React.useState(getAllFaultCodes());
+
     React.useEffect(() => {
         setIsMounted(true);
+        const unsubscribe = subscribeToFaultCodes(() => {
+            setFaultCodesList(getAllFaultCodes());
+        });
+        return () => unsubscribe();
     }, []);
 
     const handleViewDetails = (r: ReadingRecord) => {
@@ -488,7 +495,7 @@ export default function ReadingClassificationPage() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All Faults</SelectItem>
-                                    {getAllFaultCodes().map(fc => (
+                                    {faultCodesList.map(fc => (
                                         <SelectItem key={fc.code} value={fc.code}>
                                             <span className="font-bold mr-2">{fc.code}</span> - {fc.label}
                                         </SelectItem>

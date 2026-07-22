@@ -41,6 +41,7 @@ import { individualCustomerStatuses } from "@/app/(dashboard)/admin/individual-c
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getAllFaultCodes } from "@/lib/fault-codes";
+import { subscribeToFaultCodes } from "@/lib/data-store";
 
 
 
@@ -60,6 +61,14 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
   const [staffBranchId, setStaffBranchId] = React.useState<string | undefined>(undefined);
   const [hasFault, setHasFault] = React.useState(false);
+  const [faultCodesList, setFaultCodesList] = React.useState(getAllFaultCodes());
+
+  React.useEffect(() => {
+    const unsubscribe = subscribeToFaultCodes(() => {
+      setFaultCodesList(getAllFaultCodes());
+    });
+    return () => unsubscribe();
+  }, []);
 
   const form = useForm<StaffEntryFormValues>({
     resolver: zodResolver(StaffEntryFormSchema),
@@ -302,7 +311,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {getAllFaultCodes().map(fc => (
+                          {faultCodesList.map(fc => (
                             <SelectItem key={fc.code} value={fc.code}>
                               <span className="font-medium text-destructive">{fc.code}</span> - {fc.label}
                             </SelectItem>
