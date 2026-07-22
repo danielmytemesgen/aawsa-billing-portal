@@ -108,7 +108,9 @@ export function calculateBillFromTariff(
     };
 
     // --- Rule of 3: apply minimum consumption if configured ---
-    const effectiveUsage = (tariffConfig.use_rule_of_three && CONS < 3) ? 3 : CONS;
+    // When diff usage is negative and rule_of_three is active, treat as 3 m³.
+    // When diff usage is negative and rule_of_three is NOT active, clamp to 0.
+    const effectiveUsage = (tariffConfig.use_rule_of_three && CONS < 3) ? 3 : Math.max(0, CONS);
     const usageForBaseWaterCharge = baseWaterChargeCONS !== undefined ? baseWaterChargeCONS : effectiveUsage;
     if (usageForBaseWaterCharge < 0) return emptyResult;
 
@@ -270,7 +272,8 @@ export function calculateBillFromTariff(
         }
     }
 
-    const usageForSewerage = sewerageCONS !== undefined ? sewerageCONS : CONS;
+    // Use effectiveUsage (already rule-of-3 and negative-clamped) so sewerage is never negative.
+    const usageForSewerage = sewerageCONS !== undefined ? sewerageCONS : effectiveUsage;
     let sewerageCharge = 0;
     const sewerageTierBreakdown: Array<{ start: number; end: number | typeof Infinity; usage: number; rate: number; charge: number }> = [];
 

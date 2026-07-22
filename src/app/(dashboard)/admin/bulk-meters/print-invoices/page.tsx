@@ -169,12 +169,12 @@ export default function PrintInvoicesPage() {
 
               <div className="flex justify-between items-end mt-4">
                 <div className="space-y-1">
-                  <div className="text-sm">Paid/Unpaid: {bill.paymentStatus ?? 'Unpaid'}</div>
+                  <div className="text-sm">Paid/Unpaid: Unpaid</div>
                   <div className="text-sm">Month: {bill.monthYear}</div>
                   {bill.BILLKEY && <div className="text-xs text-muted-foreground">Key: {bill.BILLKEY}</div>}
                 </div>
                 <div className="print-status-box">
-                  {bill.paymentStatus ?? 'Unpaid'}
+                  Unpaid
                 </div>
               </div>
 

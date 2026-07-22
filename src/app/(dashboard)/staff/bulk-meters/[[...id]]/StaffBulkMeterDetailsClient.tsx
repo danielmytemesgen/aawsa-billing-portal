@@ -1064,7 +1064,7 @@ export default function StaffBulkMeterDetailsPage() {
                     <div className="text-lg font-bold text-slate-900">{billForPrintView?.monthYear || billCardDetails.month}</div>
                   </div>
                   <div className="print-status-box">
-                    {billForPrintView?.paymentStatus || billCardDetails.paymentStatus}
+                    Unpaid
                   </div>
                 </div>
 
