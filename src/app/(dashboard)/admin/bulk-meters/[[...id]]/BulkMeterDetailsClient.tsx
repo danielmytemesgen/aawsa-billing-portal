@@ -941,7 +941,12 @@ export default function BulkMeterDetailsPage() {
                       <tr><td>Number of Assigned Individual Customers:</td><td>{snapshot_data?.individualCustomerCount ?? associatedCustomers.length}</td></tr>
                       <tr><td>Previous and current reading:</td><td>{(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} / {(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
                       <tr><td>Bulk usage:</td><td>{(billForPrintView?.CONS ?? billCardDetails.usage).toFixed(2)} m³</td></tr>
-                      <tr><td>Total Individual Usage:</td><td>{(snapshot_data?.totalIndividualUsage ?? (billForPrintView ? (billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0) : totalIndividualUsage)).toFixed(2)} m³</td></tr>
+                      <tr><td>Total Individual Usage:</td><td>{(
+                        snapshot_data?.totalIndividualUsage ??
+                        (billForPrintView
+                          ? (billForPrintView.snapshot_data?.totalIndividualUsage ?? ((billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0)))
+                          : totalIndividualUsage)
+                      ).toFixed(2)} m³</td></tr>
                       <tr><td>Difference usage:</td><td>{(billForPrintView?.differenceUsage ?? billCardDetails.differenceUsage).toFixed(2)} m³</td></tr>
                     </tbody>
                   </table>

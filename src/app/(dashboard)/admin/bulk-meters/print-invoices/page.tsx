@@ -127,7 +127,7 @@ export default function PrintInvoicesPage() {
                     <tr><td>Bill Month:</td><td>{bill.monthYear}</td></tr>
                     <tr><td>Previous and Current Reading:</td><td>{Number(bill.PREVREAD).toFixed(2)} / {Number(bill.CURRREAD).toFixed(2)} m³</td></tr>
                     <tr><td>Bulk Usage:</td><td>{Number(bill.CONS ?? 0).toFixed(2)} m³</td></tr>
-                    <tr><td>Total Individual Usage:</td><td>{(Number(bill.CONS ?? 0) - Number(bill.differenceUsage ?? 0)).toFixed(2)} m³</td></tr>
+                    <tr><td>Total Individual Usage:</td><td>{(Number(bill.snapshot_data?.totalIndividualUsage ?? (Number(bill.CONS ?? 0) - Number(bill.differenceUsage ?? 0)))).toFixed(2)} m³</td></tr>
                     <tr><td>Difference Usage:</td><td>{Number(bill.differenceUsage ?? 0).toFixed(2)} m³</td></tr>
                   </tbody>
                 </table>

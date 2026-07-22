@@ -1020,7 +1020,12 @@ export default function StaffBulkMeterDetailsPage() {
                       <tr><td>Assigned Customers</td><td>{billForPrintView?.snapshot_data?.individualCustomerCount ?? associatedCustomers.length}</td></tr>
                       <tr><td>Reading Range</td><td>{(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} - {(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
                       <tr><td>Main Meter Usage</td><td>{(billForPrintView?.CONS ?? billCardDetails.usage).toFixed(2)} m³</td></tr>
-                      <tr><td>Sub-Meter Total Usage</td><td>{(billForPrintView?.snapshot_data?.totalIndividualUsage ?? (billForPrintView ? (billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0) : totalIndividualUsage)).toFixed(2)} m³</td></tr>
+                      <tr><td>Sub-Meter Total Usage</td><td>{(
+                        billForPrintView?.snapshot_data?.totalIndividualUsage ??
+                        (billForPrintView
+                          ? (billForPrintView.snapshot_data?.totalIndividualUsage ?? ((billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0)))
+                          : totalIndividualUsage)
+                      ).toFixed(2)} m³</td></tr>
                       <tr className="font-bold"><td>Billable Difference</td><td>{(billForPrintView?.differenceUsage ?? billCardDetails.differenceUsage).toFixed(2)} m³</td></tr>
                     </tbody>
                   </table>

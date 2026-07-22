@@ -2084,6 +2084,13 @@ export async function recalculateBulkBillAction(bulkMeterId: string, monthYear: 
 
       const currentOutstanding = Number(bulkBill.OUTSTANDINGAMT || bulkBill.balance_carried_forward || 0);
 
+      // Fetch existing snapshot_data to merge (preserve other fields like chargeGroup)
+      const existingSnapshotRes = await client.query(
+        `SELECT snapshot_data FROM bills WHERE id = $1 LIMIT 1`,
+        [bulkBillId]
+      );
+      const existingSnapshot = existingSnapshotRes.rows[0]?.snapshot_data || {};
+
       await dbUpdateBill(bulkBillId, {
         difference_usage: bulkCalc.effectiveUsage,
         THISMONTHBILLAMT: bulkCalc.totalBill,
@@ -2094,6 +2101,10 @@ export async function recalculateBulkBillAction(bulkMeterId: string, monthYear: 
         maintenance_fee: bulkCalc.maintenanceFee,
         sanitation_fee: bulkCalc.sanitationFee,
         vat_amount: bulkCalc.vatAmount,
+        snapshot_data: {
+          ...existingSnapshot,
+          totalIndividualUsage: totalIndivUsage,
+        } as any,
       }, client, monthYear);
 
       await dbSyncAgingForCustomer(bulkMeterId, client);
@@ -2280,6 +2291,12 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
 
       const currentOutstanding = Number(bulkBill.OUTSTANDINGAMT || bulkBill.balance_carried_forward || 0);
 
+      const existingSnapshotRes2 = await client.query(
+        `SELECT snapshot_data FROM bills WHERE id = $1 LIMIT 1`,
+        [payload.bulkBillId]
+      );
+      const existingSnapshot2 = existingSnapshotRes2.rows[0]?.snapshot_data || {};
+
       await dbUpdateBill(payload.bulkBillId, {
         CURRREAD: payload.bulkCurrRead,
         PREVREAD: payload.bulkPrevRead,
@@ -2293,6 +2310,10 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         maintenance_fee: bulkCalc.maintenanceFee,
         sanitation_fee: bulkCalc.sanitationFee,
         vat_amount: bulkCalc.vatAmount,
+        snapshot_data: {
+          ...existingSnapshot2,
+          totalIndividualUsage: totalIndivUsage,
+        } as any,
       }, client, monthYear);
 
       await dbCreateBillWorkflowLog({
