@@ -354,54 +354,6 @@ export default function AdminMeterReadingsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Meter Readings Management</h1>
           <p className="text-muted-foreground mt-1 text-base">Record, view, and manage all meter readings.</p>
-          {anomalies.length > 0 && (
-            <div
-              className="mt-4 relative overflow-hidden rounded-3xl border border-rose-200/70 shadow-lg"
-              style={{
-                background: 'linear-gradient(135deg, rgba(255,248,248,0.97) 0%, rgba(255,241,241,0.95) 100%)',
-                backdropFilter: 'blur(12px)',
-              }}
-            >
-              <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-rose-200/30 blur-2xl pointer-events-none" />
-              <div className="absolute -bottom-6 -left-6 h-28 w-28 rounded-full bg-amber-200/20 blur-2xl pointer-events-none" />
-              <div className="relative z-10 px-5 pt-5 pb-4">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
-                    <AlertTriangle className="h-5 w-5 text-rose-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected</p>
-                    <p className="text-xs text-rose-500">{anomalies.length} meter{anomalies.length > 1 ? 's require' : ' requires'} attention</p>
-                  </div>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {anomalies.map((a) => (
-                    <div
-                      key={a.key}
-                      className={`flex items-start gap-3 rounded-2xl px-3.5 py-3 border ${
-                        a.severity === 'high'
-                          ? 'bg-rose-50 border-rose-200'
-                          : 'bg-amber-50 border-amber-200'
-                      }`}
-                    >
-                      <div className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                        a.severity === 'high' ? 'bg-rose-100' : 'bg-amber-100'
-                      }`}>
-                        {a.severity === 'high'
-                          ? <XCircle className="h-3.5 w-3.5 text-rose-600" />
-                          : <AlertCircle className="h-3.5 w-3.5 text-amber-600" />}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold">{a.name}</p>
-                        <p className="text-xs text-slate-500">{a.type} meter</p>
-                        <p className="text-xs text-slate-600">{a.reason}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
         <div className="flex gap-2 w-full md:w-auto flex-wrap justify-end">
           <div className="relative flex-grow md:flex-grow-0">
@@ -484,6 +436,55 @@ export default function AdminMeterReadingsPage() {
           )}
         </div>
       </div>
+
+      {anomalies.length > 0 && (
+        <div
+          className="relative overflow-hidden rounded-3xl border border-rose-200/70 shadow-lg"
+          style={{
+            background: 'linear-gradient(135deg, rgba(255,248,248,0.97) 0%, rgba(255,241,241,0.95) 100%)',
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-rose-200/30 blur-2xl pointer-events-none" />
+          <div className="absolute -bottom-6 -left-6 h-28 w-28 rounded-full bg-amber-200/20 blur-2xl pointer-events-none" />
+          <div className="relative z-10 px-5 pt-5 pb-4">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected</p>
+                <p className="text-xs text-rose-500">{anomalies.length} meter{anomalies.length > 1 ? 's require' : ' requires'} attention</p>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+              {anomalies.map((a) => (
+                <div
+                  key={a.key}
+                  className={`flex items-start gap-3 rounded-2xl px-3.5 py-3 border ${
+                    a.severity === 'high'
+                      ? 'bg-rose-50 border-rose-200'
+                      : 'bg-amber-50 border-amber-200'
+                  }`}
+                >
+                  <div className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    a.severity === 'high' ? 'bg-rose-100' : 'bg-amber-100'
+                  }`}>
+                    {a.severity === 'high'
+                      ? <XCircle className="h-3.5 w-3.5 text-rose-600" />
+                      : <AlertCircle className="h-3.5 w-3.5 text-amber-600" />}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold">{a.name}</p>
+                    <p className="text-xs text-slate-500">{a.type} meter</p>
+                    <p className="text-xs text-slate-600">{a.reason}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="w-full">
         <ReadingPeriodToggle />

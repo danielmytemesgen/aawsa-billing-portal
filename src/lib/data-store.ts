@@ -3270,12 +3270,15 @@ export const updatePermission = async (id: number, permissionData: Partial<{ nam
 // ===========================================
 
 export const getFaultCodes = (): DomainFaultCode[] => {
-  if (!faultCodesFetched) initializeFaultCodes();
   return faultCodes;
 };
 
 export const initializeFaultCodes = async (force: boolean = false): Promise<void> => {
   if (!force && faultCodesFetched) return;
+  
+  if (typeof window === 'undefined') {
+    return; // Do not fetch in SSR to prevent "missing action dispatcher" error
+  }
   
   // If offline, attempt to load from localStorage first
   if (typeof window !== 'undefined' && !window.navigator.onLine) {
