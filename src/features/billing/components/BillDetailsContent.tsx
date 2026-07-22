@@ -39,6 +39,7 @@ import { format } from 'date-fns';
 import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { TablePagination } from '@/components/ui/table-pagination';
 
 
 import { cn } from '@/lib/utils';
@@ -303,16 +304,20 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     const [manageReasonOpen, setManageReasonOpen] = useState(false);
     const [manageReasonText, setManageReasonText] = useState('');
     const [assignedPage, setAssignedPage] = useState(1);
+    const [assignedRowsPerPage, setAssignedRowsPerPage] = useState(5);
     const [unassignedPage, setUnassignedPage] = useState(1);
-    const CUSTOMERS_PER_PAGE = 5;
+    const [unassignedRowsPerPage, setUnassignedRowsPerPage] = useState(5);
 
     // ── Server-side pagination fetch helpers ──
-    const fetchAssignedPage = useCallback(async (page: number) => {
+    const fetchAssignedPage = useCallback(async (page: number, limit: number = assignedRowsPerPage) => {
         if (!bill?.CUSTOMERKEY) return;
         setIsLoadingCustomers(true);
         try {
-            const res = await getAssignedCustomersForBulkMeterAction(bill.CUSTOMERKEY, page, CUSTOMERS_PER_PAGE);
+            const res = await getAssignedCustomersForBulkMeterAction(bill.CUSTOMERKEY, page, limit);
             if (res.data) {
+                if (res.data.rows.length === 0 && page > 1 && res.data.total > 0) {
+                    return fetchAssignedPage(page - 1, limit);
+                }
                 setAssignedCustomers(res.data.rows);
                 setAssignedTotal(res.data.total);
                 setAssignedPage(page);
@@ -322,13 +327,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         } finally {
             setIsLoadingCustomers(false);
         }
-    }, [bill?.CUSTOMERKEY]);
+    }, [bill?.CUSTOMERKEY, assignedRowsPerPage]);
 
-    const fetchUnassignedPage = useCallback(async (page: number, search: string) => {
+    const fetchUnassignedPage = useCallback(async (page: number, search: string, limit: number = unassignedRowsPerPage) => {
         if (!bill?.CUSTOMERKEY) return;
         setIsLoadingUnassigned(true);
         try {
-            const res = await getUnassignedIndividualCustomersAction(search, page, CUSTOMERS_PER_PAGE);
+            const res = await getUnassignedIndividualCustomersAction(search, page, limit);
             if (res.data) {
                 setUnassignedCustomers(res.data.rows);
                 setUnassignedTotal(res.data.total);
@@ -339,7 +344,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         } finally {
             setIsLoadingUnassigned(false);
         }
-    }, [bill?.CUSTOMERKEY]);
+    }, [bill?.CUSTOMERKEY, unassignedRowsPerPage]);
 
     const [isExporting, setIsExporting] = useState(false);
 
@@ -553,21 +558,31 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         }
     }
 
-    const handleDownloadAssignmentTemplate = () => {
-        const headers = 'Customer Key,Action';
-        const sampleRows = [
-            '# Action should be ADD or REMOVE',
-            ...assignedCustomers.map(c => `"${c.customerKeyNumber}",REMOVE`)
-        ];
-        const csvContent = [headers, ...sampleRows].join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `assignment_template_${bill?.CUSTOMERKEY ?? 'bulk'}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast({ title: 'Template Downloaded', description: 'Modify the Action column and upload via "Upload CSV".' });
+    const handleDownloadAssignmentTemplate = async () => {
+        if (!bill?.CUSTOMERKEY) return;
+        try {
+            toast({ title: 'Preparing Template...', description: 'Fetching assigned customers for template.' });
+            const res = await getAssignedCustomersForBulkMeterAction(bill.CUSTOMERKEY, 1, Math.max(assignedTotal, 10000));
+            const allCustomers = res.data?.rows || assignedCustomers;
+
+            const headers = 'Customer Key,Action';
+            const sampleRows = [
+                '# Action should be ADD or REMOVE',
+                ...allCustomers.map((c: any) => `"${c.customerKeyNumber}",REMOVE`)
+            ];
+            const csvContent = [headers, ...sampleRows].join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `assignment_template_${bill.CUSTOMERKEY}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+            toast({ title: 'Template Downloaded', description: `Downloaded template with ${allCustomers.length} assigned customer(s).` });
+        } catch (error) {
+            console.error('Failed to download template', error);
+            toast({ title: 'Download Failed', description: 'Could not fetch assigned customers.', variant: 'destructive' });
+        }
     };
 
     const handleUploadAssignmentCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1451,8 +1466,8 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                     setAssignedPage(1);
                                     setUnassignedPage(1);
                                     await Promise.all([
-                                        fetchAssignedPage(1),
-                                        fetchUnassignedPage(1, ''),
+                                        fetchAssignedPage(1, assignedRowsPerPage),
+                                        fetchUnassignedPage(1, '', unassignedRowsPerPage),
                                     ]);
                                 } catch (e) {
                                     toast({ title: 'Error', description: 'Failed to load customers.', variant: 'destructive' });
@@ -1494,7 +1509,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                 <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
                                         <p className="text-sm font-semibold text-gray-700">Currently Assigned</p>
-                                        <Badge variant="secondary">{assignedCustomers.length}</Badge>
+                                        <Badge variant="secondary">{assignedTotal}</Badge>
                                     </div>
                                     <div className="flex items-center gap-1.5">
                                         <Button
@@ -1587,34 +1602,18 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                         </div>
                                     </ScrollArea>
                                     {assignedTotal > 0 && (
-                                        <div className="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-0.5">
-                                            <span>
-                                                Showing {(assignedPage - 1) * CUSTOMERS_PER_PAGE + 1}-{Math.min(assignedPage * CUSTOMERS_PER_PAGE, assignedTotal)} of {assignedTotal}
-                                            </span>
-                                            <div className="flex items-center gap-1">
-                                                <Button
-                                                    variant="outline"
-                                                    size="icon"
-                                                    className="h-6 w-6 p-0"
-                                                    disabled={assignedPage <= 1 || isLoadingCustomers}
-                                                    onClick={() => fetchAssignedPage(assignedPage - 1)}
-                                                >
-                                                    <ChevronLeft className="h-3 w-3" />
-                                                </Button>
-                                                <span className="px-1 text-[11px] font-medium text-gray-600">
-                                                    {assignedPage} / {Math.ceil(assignedTotal / CUSTOMERS_PER_PAGE) || 1}
-                                                </span>
-                                                <Button
-                                                    variant="outline"
-                                                    size="icon"
-                                                    className="h-6 w-6 p-0"
-                                                    disabled={assignedPage >= Math.ceil(assignedTotal / CUSTOMERS_PER_PAGE) || isLoadingCustomers}
-                                                    onClick={() => fetchAssignedPage(assignedPage + 1)}
-                                                >
-                                                    <ChevronRight className="h-3 w-3" />
-                                                </Button>
-                                            </div>
-                                        </div>
+                                        <TablePagination
+                                            count={assignedTotal}
+                                            page={assignedPage - 1}
+                                            rowsPerPage={assignedRowsPerPage}
+                                            rowsPerPageOptions={[5, 10, 25, 50]}
+                                            onPageChange={(newPage) => fetchAssignedPage(newPage + 1, assignedRowsPerPage)}
+                                            onRowsPerPageChange={(newLimit) => {
+                                                setAssignedRowsPerPage(newLimit);
+                                                fetchAssignedPage(1, newLimit);
+                                            }}
+                                            className="p-1 text-xs justify-between border-t-0 mt-1 space-x-2"
+                                        />
                                     )}
                                 </div>
                             </div>
@@ -1713,34 +1712,18 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                         </div>
                                     </ScrollArea>
                                     {unassignedTotal > 0 && (
-                                        <div className="flex items-center justify-between text-[11px] text-gray-500 px-1 pt-0.5">
-                                            <span>
-                                                Showing {(unassignedPage - 1) * CUSTOMERS_PER_PAGE + 1}-{Math.min(unassignedPage * CUSTOMERS_PER_PAGE, unassignedTotal)} of {unassignedTotal}
-                                            </span>
-                                            <div className="flex items-center gap-1">
-                                                <Button
-                                                    variant="outline"
-                                                    size="icon"
-                                                    className="h-6 w-6 p-0"
-                                                    disabled={unassignedPage <= 1 || isLoadingUnassigned}
-                                                    onClick={() => fetchUnassignedPage(unassignedPage - 1, customerSearch)}
-                                                >
-                                                    <ChevronLeft className="h-3 w-3" />
-                                                </Button>
-                                                <span className="px-1 text-[11px] font-medium text-gray-600">
-                                                    {unassignedPage} / {Math.ceil(unassignedTotal / CUSTOMERS_PER_PAGE) || 1}
-                                                </span>
-                                                <Button
-                                                    variant="outline"
-                                                    size="icon"
-                                                    className="h-6 w-6 p-0"
-                                                    disabled={unassignedPage >= Math.ceil(unassignedTotal / CUSTOMERS_PER_PAGE) || isLoadingUnassigned}
-                                                    onClick={() => fetchUnassignedPage(unassignedPage + 1, customerSearch)}
-                                                >
-                                                    <ChevronRight className="h-3 w-3" />
-                                                </Button>
-                                            </div>
-                                        </div>
+                                        <TablePagination
+                                            count={unassignedTotal}
+                                            page={unassignedPage - 1}
+                                            rowsPerPage={unassignedRowsPerPage}
+                                            rowsPerPageOptions={[5, 10, 25, 50]}
+                                            onPageChange={(newPage) => fetchUnassignedPage(newPage + 1, customerSearch, unassignedRowsPerPage)}
+                                            onRowsPerPageChange={(newLimit) => {
+                                                setUnassignedRowsPerPage(newLimit);
+                                                fetchUnassignedPage(1, customerSearch, newLimit);
+                                            }}
+                                            className="p-1 text-xs justify-between border-t-0 mt-1 space-x-2"
+                                        />
                                     )}
                                 </div>
                             </div>

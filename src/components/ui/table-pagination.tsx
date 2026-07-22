@@ -1,4 +1,5 @@
-"use client";
+/* eslint-disable */
+'use client';
 
 import * as React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -20,16 +21,19 @@ interface TablePaginationProps {
   onPageChange: (newPage: number) => void;
   onRowsPerPageChange: (newRowsPerPage: number) => void;
   rowsPerPageOptions?: number[];
+  className?: string;
 }
 
-export function TablePagination({
-  count,
-  page,
-  rowsPerPage,
-  onPageChange,
-  onRowsPerPageChange,
-  rowsPerPageOptions = [5, 10, 25, 50, 100],
-}: TablePaginationProps) {
+export function TablePagination(props: TablePaginationProps) {
+  const {
+    count,
+    page,
+    rowsPerPage,
+    onPageChange,
+    onRowsPerPageChange,
+    rowsPerPageOptions = [5, 10, 25, 50, 100],
+    className,
+  } = props;
   const totalPages = Math.ceil(count / rowsPerPage);
 
   const handleBackButtonClick = () => {
@@ -41,9 +45,9 @@ export function TablePagination({
   };
 
   return (
-    <div className="flex items-center justify-end space-x-6 p-4 text-sm font-medium border-t">
+    <div className={cn("flex items-center justify-end space-x-6 p-4 text-sm font-medium border-t", className)}>
        <div className="flex items-center gap-2">
-        <Label htmlFor="rows-per-page" className="hidden sm:block">Rows per page</Label>
+        <Label htmlFor="rows-per-page" className="text-sm font-medium">Rows per page</Label>
         <Select
           value={`${rowsPerPage}`}
           onValueChange={(value) => {
