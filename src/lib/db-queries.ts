@@ -1157,18 +1157,11 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
 };
 
 export const dbCreateIndividualCustomerReading = async (reading: any, client?: any) => {
-    // Ensure reading_month is set — the BEFORE INSERT trigger that did this automatically
-    // has been removed to fix the "moving row to another partition" partition trigger error.
-    const withMonth = { ...reading };
-    if (!withMonth.reading_month && (withMonth.READING_DATE || withMonth.reading_date)) {
-        const dateVal = withMonth.READING_DATE || withMonth.reading_date;
-        const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
-        withMonth.reading_month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    }
-    const keys = Object.keys(withMonth);
+    const { reading_month: _ignored, ...safeFields } = reading;
+    const keys = Object.keys(safeFields);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const params = keys.map(k => withMonth[k]);
+    const params = keys.map(k => safeFields[k]);
     
     if (client) {
         const res = await client.query(sql, params);
@@ -1239,17 +1232,11 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
 
 export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
     try {
-        // Ensure reading_month is set (trigger no longer does this automatically)
-        const withMonth = { ...reading };
-        if (!withMonth.reading_month && (withMonth.READING_DATE || withMonth.reading_date)) {
-            const dateVal = withMonth.READING_DATE || withMonth.reading_date;
-            const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
-            withMonth.reading_month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        }
-        const keys = Object.keys(withMonth);
+        const { reading_month: _ignored, ...safeFields } = reading;
+        const keys = Object.keys(safeFields);
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO bulk_meter_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-        const params = keys.map(k => withMonth[k]);
+        const params = keys.map(k => safeFields[k]);
         
         if (client) {
             const res = await client.query(sql, params);

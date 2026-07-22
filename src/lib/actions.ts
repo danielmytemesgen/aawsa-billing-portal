@@ -2164,9 +2164,9 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         } else {
           await client.query(
             `INSERT INTO individual_customer_readings 
-             ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE", reading_month) 
-             VALUES ($1, $2, $3, $4, $5)`,
-            [custId, update.currRead, update.prevRead, new Date(Date.UTC(year, month - 1, 15)).toISOString(), monthYear]
+             ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE") 
+             VALUES ($1, $2, $3, $4)`,
+            [custId, update.currRead, update.prevRead, new Date(Date.UTC(year, month - 1, 15)).toISOString()]
           );
         }
 
@@ -2254,9 +2254,9 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         );
       } else {
         await client.query(
-          `INSERT INTO bulk_meter_readings ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE", reading_month)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [bulkMeterId, payload.bulkCurrRead, payload.bulkPrevRead, new Date(Date.UTC(bYear, bMonth - 1, 15)).toISOString(), monthYear]
+          `INSERT INTO bulk_meter_readings ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE") 
+           VALUES ($1, $2, $3, $4)`,
+          [bulkMeterId, payload.bulkCurrRead, payload.bulkPrevRead, new Date(Date.UTC(bYear, bMonth - 1, 15)).toISOString()]
         );
       }
 
