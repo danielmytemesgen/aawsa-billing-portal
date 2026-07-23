@@ -67,14 +67,14 @@ export default function AdminSettingsPage() {
     try {
       const res = await getSessionSettingsAction();
       const s = (res?.data ?? res) as Record<string, string> | null;
-      if (s?.session_duration_seconds) {
-        setDbSessionDurationSeconds(s.session_duration_seconds);
-      } else if (s?.session_duration_hours) {
-        setDbSessionDurationSeconds(String(Number(s.session_duration_hours) * 3600));
-      }
-      if (s?.session_warning_seconds) {
-        setDbSessionWarningSeconds(s.session_warning_seconds);
-      }
+      const duration = s?.session_duration_seconds ?? (s?.session_duration_hours ? String(Number(s.session_duration_hours) * 3600) : '7200');
+      const warning = s?.session_warning_seconds ?? '120';
+
+      setDbSessionDurationSeconds(duration);
+      setSessionDurationSeconds(duration);
+
+      setDbSessionWarningSeconds(warning);
+      setSessionWarningSeconds(warning);
     } finally {
       setIsLoadingSessionSettings(false);
     }

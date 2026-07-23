@@ -75,10 +75,17 @@ export const dbGetSessionSettings = async () => {
     `;
     const rows: any = await query(sql);
     const row = rows[0] ?? null;
-    if (!row) return {};
+    
+    const sysDuration = await dbGetSessionSetting('session_duration_seconds');
+    const sysWarning = await dbGetSessionSetting('session_warning_seconds');
+
     return {
-        session_duration_seconds: row.session_duration_seconds != null ? String(row.session_duration_seconds) : undefined,
-        session_warning_seconds: row.warning_before_expiry_seconds != null ? String(row.warning_before_expiry_seconds) : undefined,
+        session_duration_seconds: row?.session_duration_seconds != null 
+            ? String(row.session_duration_seconds) 
+            : (sysDuration ?? undefined),
+        session_warning_seconds: row?.warning_before_expiry_seconds != null 
+            ? String(row.warning_before_expiry_seconds) 
+            : (sysWarning ?? undefined),
     } as Record<string, string>;
 };
 
@@ -99,7 +106,15 @@ export const dbUpdateSessionSettings = async (durationSeconds: string, warningSe
         WHERE NOT EXISTS (SELECT 1 FROM updated)
         RETURNING *
     `;
-    const rows: any = await query(sql, [isNaN(duration) ? 7200 : duration, isNaN(warning) ? 120 : warning]);
+    const finalDuration = String(isNaN(duration) ? 7200 : duration);
+    const finalWarning = String(isNaN(warning) ? 120 : warning);
+
+    const rows: any = await query(sql, [Number(finalDuration), Number(finalWarning)]);
+
+    // Also update system_settings table so both tables stay in sync
+    await dbUpdateSystemSetting('session_duration_seconds', finalDuration);
+    await dbUpdateSystemSetting('session_warning_seconds', finalWarning);
+
     return rows[0];
 };
 
