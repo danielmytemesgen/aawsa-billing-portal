@@ -26,7 +26,12 @@ import {
     Calendar,
     Bell,
     CheckCircle2,
-    Search
+    Search,
+    Upload,
+    Link as LinkIcon,
+    Image as ImageIcon,
+    FileImage,
+    Sparkles
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -76,6 +81,59 @@ export default function PromotionsManagementPage() {
         image_url: ""
     });
 
+    const [imageSourceMode, setImageSourceMode] = React.useState<"file" | "url">("file");
+    const [isDragging, setIsDragging] = React.useState(false);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+    const getImageFormatBadge = (url: string) => {
+        if (!url) return null;
+        if (url.startsWith('data:image/svg+xml') || url.toLowerCase().includes('.svg')) return 'SVG Vector';
+        if (url.startsWith('data:image/gif') || url.toLowerCase().includes('.gif')) return 'GIF Graphic';
+        if (url.startsWith('data:image/png') || url.toLowerCase().includes('.png')) return 'PNG Image';
+        if (url.startsWith('data:image/webp') || url.toLowerCase().includes('.webp')) return 'WebP Image';
+        if (url.startsWith('data:image/jpeg') || url.startsWith('data:image/jpg') || url.toLowerCase().match(/\.jpe?g/)) return 'JPEG Image';
+        if (url.startsWith('data:image/avif') || url.toLowerCase().includes('.avif')) return 'AVIF Image';
+        if (url.startsWith('data:image/bmp') || url.toLowerCase().includes('.bmp')) return 'BMP Graphic';
+        return 'Graphic Image';
+    };
+
+    const handleFileSelected = (file: File) => {
+        if (!file) return;
+
+        const isImage = file.type.startsWith('image/') || file.name.match(/\.(png|jpe?g|webp|gif|svg|avif|bmp|ico|tiff?)$/i);
+
+        if (!isImage) {
+            toast({
+                variant: "destructive",
+                title: "Invalid File Format",
+                description: "Please select a valid image or graphic file (PNG, JPG, WebP, GIF, SVG, AVIF, BMP)."
+            });
+            return;
+        }
+
+        if (file.size > 8 * 1024 * 1024) {
+            toast({
+                variant: "destructive",
+                title: "File Too Large",
+                description: "Image size should be less than 8MB."
+            });
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const result = e.target?.result as string;
+            if (result) {
+                setFormData(prev => ({ ...prev, image_url: result }));
+                toast({
+                    title: "Image Uploaded",
+                    description: `${file.name} attached successfully.`
+                });
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+
     const fetchPromotions = React.useCallback(async () => {
         setIsLoading(true);
         const result = await getAllPromotionsAction();
@@ -122,6 +180,7 @@ export default function PromotionsManagementPage() {
 
     const handleEdit = (promo: any) => {
         setEditingPromo(promo);
+        const imgUrl = promo.image_url || "";
         setFormData({
             title: promo.title,
             description: promo.description,
@@ -130,8 +189,13 @@ export default function PromotionsManagementPage() {
             is_active: promo.is_active,
             display_order: promo.display_order || 0,
             display_duration: promo.display_duration || 5000,
-            image_url: promo.image_url || ""
+            image_url: imgUrl
         });
+        if (imgUrl.startsWith('data:')) {
+            setImageSourceMode("file");
+        } else if (imgUrl.startsWith('http')) {
+            setImageSourceMode("url");
+        }
         setIsDialogOpen(true);
     };
 
@@ -247,14 +311,119 @@ export default function PromotionsManagementPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="image_url">Image URL (Optional)</Label>
-                                    <Input
-                                        id="image_url"
-                                        value={formData.image_url}
-                                        onChange={e => setFormData({ ...formData, image_url: e.target.value })}
-                                        placeholder="https://example.com/image.jpg"
-                                    />
-                                    <p className="text-[10px] text-muted-foreground">If provided, this image will be shown on the login page.</p>
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-xs font-semibold">Banner Graphic / Image (Optional)</Label>
+                                        <div className="flex items-center bg-muted rounded-lg p-0.5 text-xs">
+                                            <button
+                                                type="button"
+                                                onClick={() => setImageSourceMode("file")}
+                                                className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 font-medium ${
+                                                    imageSourceMode === "file"
+                                                        ? "bg-background text-foreground shadow-sm"
+                                                        : "text-muted-foreground hover:text-foreground"
+                                                }`}
+                                            >
+                                                <Upload className="h-3 w-3" /> Upload File
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setImageSourceMode("url")}
+                                                className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 font-medium ${
+                                                    imageSourceMode === "url"
+                                                        ? "bg-background text-foreground shadow-sm"
+                                                        : "text-muted-foreground hover:text-foreground"
+                                                }`}
+                                            >
+                                                <LinkIcon className="h-3 w-3" /> Image URL
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {imageSourceMode === "file" ? (
+                                        <div
+                                            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                            onDragLeave={() => setIsDragging(false)}
+                                            onDrop={(e) => {
+                                                e.preventDefault();
+                                                setIsDragging(false);
+                                                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                                    handleFileSelected(e.dataTransfer.files[0]);
+                                                }
+                                            }}
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
+                                                isDragging
+                                                    ? "border-primary bg-primary/10"
+                                                    : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
+                                            }`}
+                                        >
+                                            <input
+                                                ref={fileInputRef}
+                                                type="file"
+                                                accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.svg,.avif,.bmp,.ico"
+                                                className="hidden"
+                                                onChange={(e) => {
+                                                    if (e.target.files && e.target.files[0]) {
+                                                        handleFileSelected(e.target.files[0]);
+                                                    }
+                                                }}
+                                            />
+                                            <div className="p-2.5 rounded-full bg-primary/10 text-primary">
+                                                <Upload className="h-4 w-4" />
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-semibold text-foreground">Click to upload image or drag & drop</p>
+                                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                                    Supports SVG vector graphics, PNG, JPG, WebP, GIF, AVIF, BMP (Max 8MB)
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-1.5">
+                                            <Input
+                                                id="image_url"
+                                                value={formData.image_url}
+                                                onChange={e => setFormData({ ...formData, image_url: e.target.value })}
+                                                placeholder="https://example.com/banner-graphic.png"
+                                            />
+                                            <p className="text-[10px] text-muted-foreground">Enter a direct image URL link to display as promo background.</p>
+                                        </div>
+                                    )}
+
+                                    {/* Live Graphic / Image Preview */}
+                                    {formData.image_url && (
+                                        <div className="relative mt-1 rounded-lg border bg-slate-900 text-white p-2.5 overflow-hidden flex items-center justify-between gap-3 shadow-sm">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <div className="relative w-14 h-11 rounded border border-white/20 overflow-hidden bg-black/50 flex-shrink-0 flex items-center justify-center">
+                                                    <img
+                                                        src={formData.image_url}
+                                                        alt="Promo Graphic Preview"
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-medium text-white truncate">Graphic Preview</span>
+                                                        <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-blue-500/30 text-blue-300 font-bold border border-blue-400/30">
+                                                            {getImageFormatBadge(formData.image_url)}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-400 truncate max-w-[200px]">
+                                                        {formData.image_url.startsWith('data:') ? 'Uploaded local file graphic' : formData.image_url}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-500/20 shrink-0"
+                                                onClick={() => setFormData({ ...formData, image_url: "" })}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear
+                                            </Button>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="grid gap-2">
@@ -360,8 +529,13 @@ export default function PromotionsManagementPage() {
                                                             {ICONS.find(i => i.name === promo.icon_name)?.icon || <Megaphone className="h-4 w-4" />}
                                                         </div>
                                                         {promo.image_url && (
-                                                            <div className="w-10 h-10 rounded border overflow-hidden bg-gray-50 flex-shrink-0">
-                                                                <img src={promo.image_url} alt="Preview" className="w-full h-full object-cover" />
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="w-10 h-10 rounded border overflow-hidden bg-gray-900 flex-shrink-0 flex items-center justify-center shadow-sm">
+                                                                    <img src={promo.image_url} alt="Preview" className="w-full h-full object-cover" />
+                                                                </div>
+                                                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-muted text-muted-foreground border">
+                                                                    {getImageFormatBadge(promo.image_url)}
+                                                                </span>
                                                             </div>
                                                         )}
                                                     </div>
