@@ -2507,18 +2507,43 @@ export const dbGetUnsettledBillsCount = async (params: {
 
 export const dbEnsurePaymentColumnsExist = async () => {
     try {
-        await query(`
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS reconciliation_status text DEFAULT 'Not reconciled';
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS payment_channel text;
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS bank_ref text;
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS last_payment_date timestamp with time zone;
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS phone text;
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS route_key text;
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS walk_order integer;
-            ALTER TABLE bills ADD COLUMN IF NOT EXISTS meter_key text;
+        console.log('[DB] Checking and ensuring payment columns exist on bills table...');
+        
+        // First, verify columns don't already exist
+        const existingColumns = await query(`
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'bills' 
+            AND column_name IN ('reconciliation_status', 'payment_channel', 'bank_ref', 'last_payment_date', 'phone', 'route_key', 'walk_order', 'meter_key')
         `);
+        
+        console.log(`[DB] Found ${existingColumns?.length || 0} existing payment columns on bills table`);
+        
+        // Add missing columns one by one to catch specific failures
+        const columns = [
+            { name: 'reconciliation_status', def: "text DEFAULT 'Not reconciled'" },
+            { name: 'payment_channel', def: 'text' },
+            { name: 'bank_ref', def: 'text' },
+            { name: 'last_payment_date', def: 'timestamp with time zone' },
+            { name: 'phone', def: 'text' },
+            { name: 'route_key', def: 'text' },
+            { name: 'walk_order', def: 'integer' },
+            { name: 'meter_key', def: 'text' },
+        ];
+        
+        for (const col of columns) {
+            try {
+                await query(`ALTER TABLE bills ADD COLUMN IF NOT EXISTS ${col.name} ${col.def}`);
+                console.log(`[DB] ✅ Column '${col.name}' ensured on bills table`);
+            } catch (colErr) {
+                console.error(`[DB] ❌ Failed to add column '${col.name}':`, colErr);
+                throw colErr; // Re-throw so caller knows this failed
+            }
+        }
+        
+        console.log('[DB] ✅ All payment columns verified on bills table');
     } catch (e) {
-        console.error('Failed ensuring payment columns exist:', e);
+        console.error('[DB] ❌ Critical error ensuring payment columns exist:', e);
+        throw new Error(`Database schema initialization failed: ${e instanceof Error ? e.message : String(e)}`);
     }
 };
 
@@ -2947,10 +2972,42 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const paymentDate = rec.paymentDate ? new Date(rec.paymentDate) : new Date();
             const validPaymentDate = isNaN(paymentDate.getTime()) ? new Date() : paymentDate;
             const reconStatus = rec.reconciliationStatus?.trim() || targetBill.reconciliation_status || 'Not reconciled';
-            const channel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'CBE';
+            
+            // Map payment channel to valid enum values: Cash, Bank Transfer, Mobile Money, Online Payment, Other
+            const rawChannel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'Bank Transfer';
+            const validChannels: {[key: string]: string} = {
+                'CBE': 'Bank Transfer',
+                'bank transfer': 'Bank Transfer',
+                'bank_transfer': 'Bank Transfer',
+                'cash': 'Cash',
+                'mobile money': 'Mobile Money',
+                'mobile_money': 'Mobile Money',
+                'online payment': 'Online Payment',
+                'online_payment': 'Online Payment',
+                'other': 'Other'
+            };
+            const channel = validChannels[rawChannel.toLowerCase()] || (rawChannel ? 'Other' : 'Bank Transfer');
+            
             const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
 
             const rawBranchName = rec.branch?.trim() || targetBill.CUSTOMERBRANCH || '';
+            
+            console.log(`[CSV] Row ${rowNum} - Found bill: ${billIdent} (id: ${targetBill.id})`);
+            console.log(`[CSV] Row ${rowNum} - Current state:`, {
+                payment_status: targetBill.payment_status,
+                amount_paid: targetBill.amount_paid,
+                reconciliation_status: targetBill.reconciliation_status,
+                bank_ref: targetBill.bank_ref
+            });
+            console.log(`[CSV] Row ${rowNum} - Payment channel mapping: "${rawChannel}" → "${channel}"`);
+            console.log(`[CSV] Row ${rowNum} - Will update to:`, {
+                payment_status: 'Paid',
+                amount_paid: amountPaid,
+                reconciliation_status: reconStatus,
+                bank_ref: bankRef,
+                payment_channel: channel,
+                last_payment_date: validPaymentDate
+            });
             
             // Primary UPDATE attempt
             let updateRes: any = await query(`
@@ -2966,7 +3023,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                     "CUSTOMERBRANCH" = COALESCE(NULLIF($6, ''), "CUSTOMERBRANCH"),
                     updated_at = NOW()
                 WHERE id = $7
-                RETURNING id
+                RETURNING id, "BILLKEY", payment_status, amount_paid, last_payment_date
             `, [
                 amountPaid,
                 validPaymentDate,
@@ -2977,10 +3034,14 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 targetBill.id
             ]);
 
+            console.log(`[CSV] Row ${rowNum} - Primary UPDATE (by id) result:`, updateRes);
+
             // Fallback: Try BILLKEY or bill_number if id didn't match
             if (!updateRes || updateRes.length === 0) {
+                console.log(`[CSV] Row ${rowNum} - Primary UPDATE returned 0 rows, trying fallback...`);
                 const fallbackKey = String(targetBill.BILLKEY || targetBill.bill_number || '').trim();
                 if (fallbackKey) {
+                    console.log(`[CSV] Row ${rowNum} - Fallback: trying BILLKEY="${fallbackKey}"`);
                     updateRes = await query(`
                         UPDATE bills
                         SET payment_status = 'Paid',
@@ -2994,7 +3055,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                             "CUSTOMERBRANCH" = COALESCE(NULLIF($6, ''), "CUSTOMERBRANCH"),
                             updated_at = NOW()
                         WHERE TRIM("BILLKEY") = TRIM($7) OR TRIM(bill_number) = TRIM($7)
-                        RETURNING id
+                        RETURNING id, "BILLKEY", payment_status, amount_paid, last_payment_date
                     `, [
                         amountPaid,
                         validPaymentDate,
@@ -3004,42 +3065,50 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                         rawBranchName,
                         fallbackKey
                     ]);
+                    console.log(`[CSV] Row ${rowNum} - Fallback UPDATE result:`, updateRes);
                 }
             }
 
             if (!updateRes || updateRes.length === 0) {
-                console.error(`CSV Payment Update - Row ${rowNum} Failed:`, {
+                console.error(`[CSV] Row ${rowNum} ❌ UPDATE FAILED - No rows affected`, {
                     billId: targetBill.id,
                     billKey: targetBill.BILLKEY,
                     billNumber: targetBill.bill_number,
                     csvBillKey: rawBillKey,
                     csvCustKey: rawCustKey,
+                    updateQuery: 'WHERE id = $7',
+                    updateParams: [targetBill.id]
                 });
-                errors.push({ row: rowNum, error: `Failed to update database record for Bill "${targetBill.BILLKEY || targetBill.bill_number || rawBillKey || 'Bill'}"` });
+                errors.push({ row: rowNum, error: `Failed to update database record for Bill "${targetBill.BILLKEY || targetBill.bill_number || rawBillKey || 'Bill'}" - UPDATE returned 0 rows` });
                 continue;
             }
+            
+            console.log(`[CSV] Row ${rowNum} ✅ UPDATE SUCCESS:`, updateRes[0]);
 
             // Synchronize paymentStatus on individual_customers or bulk_meters
             if (targetBill.individual_customer_id) {
                 try {
-                    await query(`UPDATE individual_customers SET "paymentStatus" = 'Paid', "updated_at" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.individual_customer_id]);
+                    const syncRes = await query(`UPDATE individual_customers SET "paymentStatus" = 'Paid', "updated_at" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.individual_customer_id]);
+                    console.log(`[CSV] Row ${rowNum} ✅ Synced individual_customers for customer ${targetBill.individual_customer_id}:`, syncRes);
                 } catch (syncErr) {
-                    console.warn('Individual customer sync warning (Row ' + rowNum + '):', syncErr);
+                    console.error(`[CSV] Row ${rowNum} ❌ Individual customer sync failed:`, syncErr);
                 }
             }
             if (targetBill.CUSTOMERKEY) {
                 try {
-                    await query(`UPDATE bulk_meters SET payment_status = 'Paid', updated_at = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
+                    const syncRes = await query(`UPDATE bulk_meters SET payment_status = 'Paid', updated_at = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
+                    console.log(`[CSV] Row ${rowNum} ✅ Synced bulk_meters for customer ${targetBill.CUSTOMERKEY}:`, syncRes);
                 } catch (syncErr) {
-                    console.warn('Bulk meter sync warning (Row ' + rowNum + '):', syncErr);
+                    console.error(`[CSV] Row ${rowNum} ❌ Bulk meter sync failed:`, syncErr);
                 }
             }
 
             // Log payment into payments table
             try {
-                await query(`
+                const payRes = await query(`
                     INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    RETURNING id
                 `, [
                     targetBill.id,
                     targetBill.month_year,
@@ -3051,8 +3120,10 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                     validPaymentDate,
                     `CSV Payment Update: Recon=${reconStatus}`
                 ]);
-            } catch (pErr) {
-                console.warn(`Payments insert warning (Row ${rowNum}):`, pErr);
+                console.log(`[CSV] Row ${rowNum} ✅ Payment logged to payments table (id: ${payRes?.[0]?.id})`);
+            } catch (pErr: any) {
+                console.error(`[CSV] Row ${rowNum} ❌ Payments insert failed:`, pErr);
+                // Continue even if payments table insert fails - the main update succeeded
             }
 
             // Update targetBill in-memory state so subsequent duplicate rows in the same CSV are recognized as already updated
@@ -3063,11 +3134,12 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
 
             updatedCount++;
         } catch (err: any) {
-            console.error(`Error processing row ${rowNum}:`, err);
+            console.error(`[CSV] Row ${rowNum} ❌ Unexpected error:`, err);
             errors.push({ row: rowNum, error: err.message || 'Database update error' });
         }
     }
 
+    console.log(`[CSV] ✅ Batch complete: ${updatedCount} updated, ${errors.length} errors`);
     return { success: true, updatedCount, errors };
 };
 

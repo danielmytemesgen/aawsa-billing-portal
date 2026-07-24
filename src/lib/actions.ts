@@ -4695,22 +4695,67 @@ export async function updatePaymentsFromCsvAction(records: Array<{
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     
-    console.log(`CSV Payment Update Started: ${records.length} records received`, {
-      staffId: session.id,
-      timestamp: new Date().toISOString(),
-      env: process.env.NODE_ENV
-    });
+    const startTime = Date.now();
+    console.log(`[CSV UPLOAD] ⏱️  Started at ${new Date().toISOString()}`);
+    console.log(`[CSV UPLOAD] 📊 Records to process: ${records.length}`);
+    console.log(`[CSV UPLOAD] 🔑 Staff ID: ${session.id}`);
+    console.log(`[CSV UPLOAD] 🏢 Branch: ${session.branchId}`);
+    console.log(`[CSV UPLOAD] 🌐 Environment: ${process.env.NODE_ENV}`);
+    console.log(`[CSV UPLOAD] 🗄️  Database Host: ${process.env.POSTGRES_HOST}`);
+    
+    try {
+      // Verify database connection and schema
+      const testQuery = await query('SELECT 1 as connection_test');
+      console.log(`[CSV UPLOAD] ✅ Database connection verified`);
+      
+      // Check if payment columns exist
+      const columnsCheck = await query(`
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_name = 'bills' 
+        AND column_name IN ('reconciliation_status', 'payment_channel', 'bank_ref', 'last_payment_date')
+        LIMIT 1
+      `);
+      
+      if (!columnsCheck || columnsCheck.length === 0) {
+        console.error(`[CSV UPLOAD] ❌ Payment columns DO NOT EXIST on bills table! Schema not initialized.`);
+        throw new Error('Database schema not initialized. Please run migrations: database/migrations/050_payment_infrastructure_csv.sql');
+      }
+      
+      console.log(`[CSV UPLOAD] ✅ Database schema verified - payment columns exist`);
+      
+      // Diagnostic: Count total bills in database
+      const billCountResult = await query('SELECT COUNT(*) as count FROM bills');
+      const totalBills = billCountResult?.[0]?.count || 0;
+      console.log(`[CSV UPLOAD] 📊 Total bills in database: ${totalBills}`);
+      
+      // Diagnostic: Check payment_status column type
+      const statusTypeResult = await query(`
+        SELECT data_type FROM information_schema.columns 
+        WHERE table_name='bills' AND column_name='payment_status'
+      `);
+      console.log(`[CSV UPLOAD] 📋 payment_status column type:`, statusTypeResult?.[0]?.data_type || 'UNKNOWN');
+    } catch (checkErr) {
+      console.error(`[CSV UPLOAD] ❌ Pre-flight check failed:`, checkErr);
+      throw checkErr;
+    }
     
     const result = await dbBatchUpdatePaymentsFromCsv(records, session.id);
     
-    console.log(`CSV Payment Update Completed: ${result.updatedCount} records updated, ${result.errors?.length || 0} errors`, {
-      staffId: session.id,
-      timestamp: new Date().toISOString(),
-      successCount: result.updatedCount,
-      errorCount: result.errors?.length || 0
+    const duration = Date.now() - startTime;
+    console.log(`[CSV UPLOAD] ✅ Completed in ${duration}ms`);
+    console.log(`[CSV UPLOAD] 📈 Result:`, {
+      success: result.success,
+      updatedCount: result.updatedCount,
+      errorCount: result.errors?.length || 0,
+      duration: `${duration}ms`
     });
     
+    if (result.errors && result.errors.length > 0) {
+      console.log(`[CSV UPLOAD] ⚠️  Sample errors (first 3):`, result.errors.slice(0, 3));
+    }
+    
     // Invalidate cache paths to refresh UI
+    console.log(`[CSV UPLOAD] 🔄 Invalidating cache paths...`);
     revalidatePath('/admin/reports');
     revalidatePath('/staff/reports');
     revalidatePath('/admin/reports/paid-bills');
@@ -4719,6 +4764,9 @@ export async function updatePaymentsFromCsvAction(records: Array<{
     revalidatePath('/staff/reports/sent-bills');
     revalidatePath('/staff/bill-management');
     revalidatePath('/admin/bill-management');
+    
+    console.log(`[CSV UPLOAD] ✅ Cache invalidated`);
+    console.log(`[CSV UPLOAD] 🎉 Final result:`, result);
     
     return result;
   });
