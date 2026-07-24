@@ -2791,19 +2791,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 continue;
             }
 
-            // Skip ONLY if the bill is ALREADY Paid AND ALREADY Reconciled AND has a Bank Reference
-            const isPaid = String(targetBill.payment_status || '').trim().toLowerCase() === 'paid';
-            const isReconciled = String(targetBill.reconciliation_status || '').trim().toLowerCase() === 'reconciled';
-            const hasBankRef = Boolean(targetBill.bank_ref && String(targetBill.bank_ref).trim() !== '' && String(targetBill.bank_ref).trim() !== '-');
 
-            if (isPaid && isReconciled && hasBankRef) {
-                const billIdent = targetBill.BILLKEY || targetBill.bill_number || targetBill.id || 'Bill';
-                errors.push({
-                    row: rowNum,
-                    error: `Bill "${billIdent}" is already paid and reconciled. Skipped.`
-                });
-                continue;
-            }
 
             // Validate that provided CSV values do not contradict the existing sent bill
             const rowContradictions: string[] = [];
@@ -2955,7 +2943,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
         }
     }
 
-    return { success: errors.length === 0, updatedCount, errors };
+    return { success: true, updatedCount, errors };
 };
 
 export const dbGetPaidBillsCount = async (params: {

@@ -228,12 +228,9 @@ export function PaymentCsvUploadDialog({ openTrigger }: PaymentCsvUploadDialogPr
     try {
       const res = await updatePaymentsFromCsvAction(parsedRows);
 
-      if (res.success || (res.updatedCount && res.updatedCount > 0)) {
-        setSuccessCount(res.updatedCount || 0);
-        toast({
-          title: "Payments Updated Successfully",
-          description: `Successfully updated ${res.updatedCount || 0} payment record(s).`,
-        });
+      if (res && res.success) {
+        const count = res.updatedCount || 0;
+        setSuccessCount(count);
 
         if (res.errors && res.errors.length > 0) {
           setErrors(res.errors.map((e: any) => `Row ${e.row}: ${e.error}`));
@@ -241,26 +238,36 @@ export function PaymentCsvUploadDialog({ openTrigger }: PaymentCsvUploadDialogPr
           setErrors([]);
         }
 
-        // Dispatch a custom event so any listening page can re-fetch its data immediately
-        window.dispatchEvent(new CustomEvent("payment-csv-upload-success", {
-          detail: { updatedCount: res.updatedCount || 0 }
-        }));
+        if (count > 0) {
+          toast({
+            title: "Payments Updated Successfully",
+            description: `Successfully updated ${count} payment record(s).`,
+          });
 
-        // Auto-close dialog after 1.5s so user sees the refreshed list.
-        // Force a page reload so the report page re-reads the fresh server state
-        // instead of continuing to render a stale client snapshot.
-        setTimeout(() => {
-          setOpen(false);
-          resetState();
-          window.location.reload();
-        }, 1500);
+          // Dispatch a custom event so any listening page can re-fetch its data immediately
+          window.dispatchEvent(new CustomEvent("payment-csv-upload-success", {
+            detail: { updatedCount: count }
+          }));
+
+          // Auto-close dialog after 1.5s so user sees the refreshed list.
+          setTimeout(() => {
+            setOpen(false);
+            resetState();
+            window.location.reload();
+          }, 1500);
+        } else {
+          toast({
+            title: "CSV Processed",
+            description: "No new payment records were updated. See validation notes below.",
+          });
+        }
       } else {
         toast({
           variant: "destructive",
           title: "Update Failed",
           description: "Failed to update payments from CSV.",
         });
-        if (res.errors) {
+        if (res?.errors) {
           setErrors(res.errors.map((e: any) => `Row ${e.row}: ${e.error}`));
         }
       }
