@@ -2555,7 +2555,7 @@ export const dbGetPaidBillsPaginated = async (params: {
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND (b.branch_id = $${paramIndex} OR c.branch_id = $${paramIndex} OR bm.branch_id = $${paramIndex})`;
+        sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
         queryParams.push(params.branchId);
         paramIndex++;
     }
@@ -2839,6 +2839,7 @@ export const dbGetPaidBillsCount = async (params: {
         FROM bills b
         LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
         LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.deleted_at IS NULL
           AND (
             LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
@@ -2849,7 +2850,7 @@ export const dbGetPaidBillsCount = async (params: {
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND (b.branch_id = $${paramIndex} OR c.branch_id = $${paramIndex} OR bm.branch_id = $${paramIndex})`;
+        sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
         queryParams.push(params.branchId);
         paramIndex++;
     }
@@ -2876,6 +2877,9 @@ export const dbGetAllSentBillsPaginated = async (params: {
 }) => {
     let sql = `
         SELECT b.* FROM bills b
+        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.status = 'Posted'
           AND b.deleted_at IS NULL
     `;
@@ -2883,8 +2887,9 @@ export const dbGetAllSentBillsPaginated = async (params: {
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND b.branch_id = $${paramIndex++}`;
+        sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
         queryParams.push(params.branchId);
+        paramIndex++;
     }
 
     if (params.searchTerm) {
@@ -2903,17 +2908,25 @@ export const dbGetAllSentBillsCount = async (params: {
     searchTerm?: string;
     branchId?: string;
 }) => {
-    let sql = `SELECT COUNT(*) FROM bills WHERE status = 'Posted' AND deleted_at IS NULL`;
+    let sql = `
+        SELECT COUNT(*) 
+        FROM bills b
+        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
+        WHERE b.status = 'Posted' AND b.deleted_at IS NULL
+    `;
     const queryParams: any[] = [];
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND branch_id = $${paramIndex++}`;
+        sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
         queryParams.push(params.branchId);
+        paramIndex++;
     }
 
     if (params.searchTerm) {
-        sql += ` AND ("BILLKEY" ILIKE $${paramIndex} OR "CUSTOMERNAME" ILIKE $${paramIndex} OR "CUSTOMERKEY" ILIKE $${paramIndex} OR individual_customer_id ILIKE $${paramIndex})`;
+        sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex})`;
         queryParams.push(`%${params.searchTerm}%`);
     }
 
