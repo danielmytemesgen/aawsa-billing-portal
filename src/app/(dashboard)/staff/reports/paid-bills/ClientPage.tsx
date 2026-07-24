@@ -4,7 +4,9 @@
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { TablePagination } from "@/components/ui/table-pagination";
-import { BillTable } from "../bill-table";
+import { PaidBillsTable } from "@/components/billing/PaidBillsTable";
+import { PaymentCsvUploadDialog } from "@/components/billing/PaymentCsvUploadDialog";
+import { Button } from "@/components/ui/button";
 import {
   getCustomers, initializeCustomers, subscribeToCustomers,
   getBulkMeters, initializeBulkMeters, subscribeToBulkMeters,
@@ -15,11 +17,10 @@ import { getPaidBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { CheckCircle2, Search } from "lucide-react";
+import { CheckCircle2, Search, FileSpreadsheet, Lock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-import { Lock } from "lucide-react";
 
 interface UserProfile {
   id: string;
@@ -41,6 +42,8 @@ export default function StaffPaidBillsReportPage() {
   const [searchTerm, setSearchTerm] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+  const [openTrigger, setOpenTrigger] = React.useState(0);
+  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -77,10 +80,18 @@ export default function StaffPaidBillsReportPage() {
     const unsubBms = subscribeToBulkMeters(setBulkMeters);
     const unsubBranches = subscribeToBranches(setBranches);
 
+    const handleUploadSuccess = () => {
+      setPage(0);
+      setRefreshTrigger((prev) => prev + 1);
+    };
+
+    window.addEventListener("payment-csv-upload-success", handleUploadSuccess);
+
     return () => {
       unsubCustomers();
       unsubBms();
       unsubBranches();
+      window.removeEventListener("payment-csv-upload-success", handleUploadSuccess);
     };
   }, []);
 
@@ -106,7 +117,7 @@ export default function StaffPaidBillsReportPage() {
     };
 
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, currentUser]);
+  }, [page, rowsPerPage, debouncedSearch, currentUser, refreshTrigger]);
 
   if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
     return (
@@ -122,6 +133,19 @@ export default function StaffPaidBillsReportPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Paid Bills</h1>
+          <p className="text-muted-foreground text-sm">List of paid bill records for {currentUser?.branchName || 'your branch'}.</p>
+        </div>
+        <Button
+          onClick={() => setOpenTrigger((prev) => prev + 1)}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl gap-2 shadow-sm"
+        >
+          <FileSpreadsheet className="h-4 w-4" /> Upload Payment CSV
+        </Button>
+      </div>
+
       <Card className="shadow-lg">
         <CardHeader>
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -144,11 +168,11 @@ export default function StaffPaidBillsReportPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 overflow-x-auto">
           {isLoading ? (
             <div className="text-center p-8 text-muted-foreground">Loading paid bills...</div>
           ) : (
-            <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} showDebitColumns={true} />
+            <PaidBillsTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
           )}
         </CardContent>
         {totalBills > 0 && (
@@ -164,7 +188,12 @@ export default function StaffPaidBillsReportPage() {
           />
         )}
       </Card>
+
+      <PaymentCsvUploadDialog
+        openTrigger={openTrigger}
+      />
     </div>
   );
 }
+
 

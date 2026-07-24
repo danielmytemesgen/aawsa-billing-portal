@@ -103,13 +103,17 @@ export function AuthAds() {
                         {ads[currentAd].tag}
                     </div>
 
-                    <h3 className="text-2xl font-bold text-white mb-3 flex items-center gap-3">
-                        {ads[currentAd].title}
-                    </h3>
+                    {ads[currentAd].title && (
+                        <h3 className="text-2xl font-bold text-white mb-3 flex items-center gap-3">
+                            {ads[currentAd].title}
+                        </h3>
+                    )}
 
-                    <p className="text-lg text-white/70 leading-relaxed min-h-[80px]">
-                        {ads[currentAd].description}
-                    </p>
+                    {ads[currentAd].description && (
+                        <p className="text-lg text-white/70 leading-relaxed min-h-[60px]">
+                            {ads[currentAd].description}
+                        </p>
+                    )}
 
                     <div className="mt-8 flex gap-2">
                         {ads.map((_, idx) => (

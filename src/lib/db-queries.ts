@@ -2505,6 +2505,23 @@ export const dbGetUnsettledBillsCount = async (params: {
     return parseInt(rows[0].count);
 };
 
+export const dbEnsurePaymentColumnsExist = async () => {
+    try {
+        await query(`
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS reconciliation_status text DEFAULT 'Not reconciled';
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS payment_channel text;
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS bank_ref text;
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS last_payment_date timestamp with time zone;
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS phone text;
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS route_key text;
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS walk_order integer;
+            ALTER TABLE bills ADD COLUMN IF NOT EXISTS meter_key text;
+        `);
+    } catch (e) {
+        console.error('Failed ensuring payment columns exist:', e);
+    }
+};
+
 export const dbGetPaidBillsPaginated = async (params: {
     limit: number;
     offset: number;
@@ -2513,25 +2530,34 @@ export const dbGetPaidBillsPaginated = async (params: {
     monthYear?: string;
     excludeUnfinalized?: boolean;
 }) => {
+    await dbEnsurePaymentColumnsExist();
     let sql = `
         SELECT b.*,
+               COALESCE(NULLIF(b.phone, '-'), bm."phoneNumber", c.phone_number, '-') as phone_computed,
+               COALESCE(NULLIF(b.meter_key, '-'), bm."METER_KEY", c."METER_KEY", '-') as meter_key_computed,
+               COALESCE(NULLIF(b.route_key, '-'), bm."ROUTE_KEY", c."ROUTE_KEY", '-') as route_key_computed,
+               COALESCE(b.walk_order, bm.ordinal, c.ordinal) as walk_order_computed,
+               COALESCE(b.reconciliation_status, 'Not reconciled') as reconciliation_status_computed,
+               br.name as branch_name,
                c."customerType" as customer_type,
                bm.charge_group as charge_group
         FROM bills b
-        LEFT JOIN individual_customers c ON b.individual_customer_id = c."customerKeyNumber"
-        LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
-        WHERE b.payment_status = 'Paid'
+        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
+        WHERE b.deleted_at IS NULL
+          AND (
+            LOWER(TRIM(COALESCE(b.payment_status, ''))) = 'paid'
+            OR COALESCE(b.amount_paid, 0) > 0
+          )
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
 
-    if (params.excludeUnfinalized) {
-        sql += " AND b.status = 'Posted'";
-    }
-
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND b.branch_id = $${paramIndex++}`;
+        sql += ` AND (b.branch_id = $${paramIndex} OR c.branch_id = $${paramIndex} OR bm.branch_id = $${paramIndex})`;
         queryParams.push(params.branchId);
+        paramIndex++;
     }
 
     if (params.monthYear) {
@@ -2545,10 +2571,197 @@ export const dbGetPaidBillsPaginated = async (params: {
         paramIndex++;
     }
 
-    sql += ` ORDER BY b.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    sql += ` ORDER BY COALESCE(b.last_payment_date, b.updated_at, b.created_at) DESC NULLS LAST LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     queryParams.push(params.limit, params.offset);
 
     return await query(sql, queryParams);
+};
+
+export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
+    billKey?: string;
+    customerKey?: string;
+    customerName?: string;
+    branch?: string;
+    amount?: number;
+    paymentDate?: string;
+    reconciliationStatus?: string;
+    paymentChannel?: string;
+    bankRef?: string;
+    phone?: string;
+    routeKey?: string;
+    walkOrder?: number | string;
+    meterKey?: string;
+}>, staffId?: string) => {
+    await dbEnsurePaymentColumnsExist();
+    let updatedCount = 0;
+    const errors: Array<{ row: number; error: string }> = [];
+
+    for (let i = 0; i < records.length; i++) {
+        const rec = records[i];
+        const rowNum = i + 1;
+
+        try {
+            const rawBillKey = rec.billKey?.trim() || '';
+            const rawCustKey = rec.customerKey?.trim() || '';
+            const rawMeterKey = rec.meterKey?.trim() || '';
+
+            const cleanKey = (val: string) => val.replace(/^(BBPT|BILL|BM|IND|CUST)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim();
+            const cBillKey = cleanKey(rawBillKey);
+            const cCustKey = cleanKey(rawCustKey);
+            const cMeterKey = cleanKey(rawMeterKey);
+
+            if (!rawBillKey && !rawCustKey && !rawMeterKey) {
+                errors.push({ row: rowNum, error: 'Neither Bill Key, Customer Key, nor Meter Key was provided.' });
+                continue;
+            }
+
+            // Find bill by billKey, customerKey, or meterKey
+            let targetBill: any = null;
+
+            // 1. Search by Bill Key
+            if (rawBillKey) {
+                const rows: any = await query(`
+                    SELECT * FROM bills 
+                    WHERE TRIM("BILLKEY") ILIKE TRIM($1) 
+                       OR id::text ILIKE TRIM($1) 
+                       OR TRIM(bill_number) ILIKE TRIM($1)
+                       OR ($2 <> '' AND (
+                           REPLACE(REPLACE(TRIM("BILLKEY"), 'BBPT-', ''), '-', '') ILIKE $2
+                           OR REPLACE(REPLACE(TRIM(bill_number), 'BBPT-', ''), '-', '') ILIKE $2
+                       ))
+                    LIMIT 1
+                `, [rawBillKey, cBillKey ? `%${cBillKey}%` : '']);
+                targetBill = rows[0];
+            }
+
+            // 2. Search by Customer Key
+            if (!targetBill && rawCustKey) {
+                const rows: any = await query(`
+                    SELECT * FROM bills 
+                    WHERE (individual_customer_id ILIKE TRIM($1) OR "CUSTOMERKEY" ILIKE TRIM($1))
+                       OR ($2 <> '' AND (
+                           REPLACE(REPLACE(TRIM(individual_customer_id), 'BM-', ''), '-', '') ILIKE $2
+                           OR REPLACE(REPLACE(TRIM("CUSTOMERKEY"), 'BM-', ''), '-', '') ILIKE $2
+                       ))
+                    ORDER BY CASE WHEN LOWER(COALESCE(payment_status, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC 
+                    LIMIT 1
+                `, [rawCustKey, cCustKey ? `%${cCustKey}%` : '']);
+                targetBill = rows[0];
+            }
+
+            // 3. Search by Meter Key
+            if (!targetBill && rawMeterKey && rawMeterKey !== '-') {
+                const rows: any = await query(`
+                    SELECT b.* FROM bills b
+                    LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+                    LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+                    WHERE TRIM(c."METER_KEY") ILIKE TRIM($1) OR TRIM(bm."METER_KEY") ILIKE TRIM($1) OR TRIM(b.meter_key) ILIKE TRIM($1)
+                       OR ($2 <> '' AND (
+                           REPLACE(REPLACE(TRIM(c."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
+                           OR REPLACE(REPLACE(TRIM(bm."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
+                       ))
+                    ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC 
+                    LIMIT 1
+                `, [rawMeterKey, cMeterKey ? `%${cMeterKey}%` : '']);
+                targetBill = rows[0];
+            }
+
+            if (!targetBill) {
+                errors.push({ row: rowNum, error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}"` });
+                continue;
+            }
+
+            const amountPaid = rec.amount !== undefined && !isNaN(Number(rec.amount)) 
+                ? Number(rec.amount) 
+                : Number(targetBill.TOTALBILLAMOUNT || targetBill.amount_paid || 0);
+
+            const paymentDate = rec.paymentDate ? new Date(rec.paymentDate) : new Date();
+            const validPaymentDate = isNaN(paymentDate.getTime()) ? new Date() : paymentDate;
+            const reconStatus = rec.reconciliationStatus?.trim() || targetBill.reconciliation_status || 'Not reconciled';
+            const channel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'CBE';
+            const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
+            const sanitizeOptional = (val?: string) => {
+                if (!val) return null;
+                const trimmed = val.trim();
+                if (trimmed === '' || trimmed === '-') return null;
+                return trimmed;
+            };
+
+            const phone = sanitizeOptional(rec.phone) || targetBill.phone || null;
+            const routeKey = sanitizeOptional(rec.routeKey) || targetBill.route_key || null;
+            const walkOrder = rec.walkOrder !== undefined && rec.walkOrder !== null && rec.walkOrder !== '' && rec.walkOrder !== '-' && !isNaN(Number(rec.walkOrder))
+                ? Number(rec.walkOrder)
+                : (targetBill.walk_order || null);
+            const meterKey = sanitizeOptional(rec.meterKey) || targetBill.meter_key || null;
+
+            await query(`
+                UPDATE bills
+                SET payment_status = 'Paid',
+                    status = 'Posted',
+                    amount_paid = GREATEST(COALESCE(amount_paid, 0), $1),
+                    last_payment_date = $2,
+                    reconciliation_status = $3,
+                    payment_channel = $4,
+                    bank_ref = $5,
+                    phone = COALESCE($6, phone),
+                    route_key = COALESCE($7, route_key),
+                    walk_order = COALESCE($8, walk_order),
+                    meter_key = COALESCE($9, meter_key),
+                    updated_at = NOW()
+                WHERE id = $10
+            `, [
+                amountPaid,
+                validPaymentDate,
+                reconStatus,
+                channel,
+                bankRef,
+                phone,
+                routeKey,
+                walkOrder,
+                meterKey,
+                targetBill.id
+            ]);
+
+            // Synchronize paymentStatus on individual_customers or bulk_meters
+            if (targetBill.individual_customer_id) {
+                try {
+                    await query(`UPDATE individual_customers SET "paymentStatus" = 'Paid', "updated_at" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.individual_customer_id]);
+                } catch (e) {}
+            }
+            if (targetBill.CUSTOMERKEY) {
+                try {
+                    await query(`UPDATE bulk_meters SET payment_status = 'Paid', updated_at = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
+                } catch (e) {}
+            }
+
+            // Log payment into payments table
+            try {
+                await query(`
+                    INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                `, [
+                    targetBill.id,
+                    targetBill.month_year,
+                    targetBill.individual_customer_id || targetBill.CUSTOMERKEY,
+                    amountPaid,
+                    channel,
+                    bankRef,
+                    staffId || null,
+                    validPaymentDate,
+                    `CSV Payment Update: Recon=${reconStatus}`
+                ]);
+            } catch (pErr) {
+                console.warn('Payments insert warning:', pErr);
+            }
+
+            updatedCount++;
+        } catch (err: any) {
+            console.error(`Error processing row ${rowNum}:`, err);
+            errors.push({ row: rowNum, error: err.message || 'Database update error' });
+        }
+    }
+
+    return { success: errors.length === 0, updatedCount, errors };
 };
 
 export const dbGetPaidBillsCount = async (params: {
@@ -2557,25 +2770,33 @@ export const dbGetPaidBillsCount = async (params: {
     monthYear?: string;
     excludeUnfinalized?: boolean;
 }) => {
-    let sql = `SELECT COUNT(*) FROM bills WHERE payment_status = 'Paid'`;
-    if (params.excludeUnfinalized) {
-        sql += " AND status = 'Posted'";
-    }
+    let sql = `
+        SELECT COUNT(*) 
+        FROM bills b
+        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        WHERE b.deleted_at IS NULL
+          AND (
+            LOWER(TRIM(COALESCE(b.payment_status, ''))) = 'paid'
+            OR COALESCE(b.amount_paid, 0) > 0
+          )
+    `;
     const queryParams: any[] = [];
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND branch_id = $${paramIndex++}`;
+        sql += ` AND (b.branch_id = $${paramIndex} OR c.branch_id = $${paramIndex} OR bm.branch_id = $${paramIndex})`;
         queryParams.push(params.branchId);
+        paramIndex++;
     }
 
     if (params.monthYear) {
-        sql += ` AND month_year = $${paramIndex++}`;
+        sql += ` AND b.month_year = $${paramIndex++}`;
         queryParams.push(params.monthYear);
     }
 
     if (params.searchTerm) {
-        sql += ` AND ("BILLKEY" ILIKE $${paramIndex} OR "CUSTOMERNAME" ILIKE $${paramIndex} OR "CUSTOMERKEY" ILIKE $${paramIndex} OR individual_customer_id ILIKE $${paramIndex})`;
+        sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex})`;
         queryParams.push(`%${params.searchTerm}%`);
     }
 
@@ -2592,6 +2813,7 @@ export const dbGetAllSentBillsPaginated = async (params: {
     let sql = `
         SELECT b.* FROM bills b
         WHERE b.status = 'Posted'
+          AND (b.payment_status IS NULL OR b.payment_status != 'Paid')
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
@@ -2617,7 +2839,7 @@ export const dbGetAllSentBillsCount = async (params: {
     searchTerm?: string;
     branchId?: string;
 }) => {
-    let sql = `SELECT COUNT(*) FROM bills WHERE status = 'Posted'`;
+    let sql = `SELECT COUNT(*) FROM bills WHERE status = 'Posted' AND (payment_status IS NULL OR payment_status != 'Paid')`;
     const queryParams: any[] = [];
     let paramIndex = 1;
 

@@ -120,6 +120,7 @@ import {
   dbGetUnsettledBillsCount,
   dbGetPaidBillsPaginated,
   dbGetPaidBillsCount,
+  dbBatchUpdatePaymentsFromCsv,
   dbGetAllSentBillsPaginated,
   dbGetAllSentBillsCount,
   dbArchiveOldRecords,
@@ -3955,11 +3956,12 @@ export async function getPaidBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+    const roleLower = session.role?.toLowerCase() || '';
+    const isAdminOrGlobal = ['admin', 'super admin', 'head office', 'staff management', 'staff'].includes(roleLower) || !session.branchId;
+    const hasGlobalAccess = isAdminOrGlobal || perms.includes('reports_generate_all') || perms.includes('bill:manage_all') || perms.includes('reports_generate_branch');
 
-    // If user doesn't have global access, they are restricted to their own branch
-    const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
-    const normalizedBranchId = effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+    const effectiveBranchId = (params.branchId && params.branchId !== 'all') ? params.branchId : (hasGlobalAccess ? undefined : session.branchId);
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
     const [bills, total] = await Promise.all([
@@ -3981,10 +3983,12 @@ export async function getAllSentBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+    const roleLower = session.role?.toLowerCase() || '';
+    const isAdminOrGlobal = ['admin', 'super admin', 'head office', 'staff management'].includes(roleLower);
+    const hasGlobalAccess = isAdminOrGlobal || perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
 
     const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
-    const normalizedBranchId = effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
     const [bills, total] = await Promise.all([
@@ -4670,3 +4674,34 @@ export async function unassignCustomerFromBulkMeterAction(customerKeyNumber: str
     return { customerKeyNumber };
   });
 }
+
+/** Batch-update payments from a CSV file (Bill Key, Customer Key, Customer Name, Branch, Amount, Payment Date, Reconciliation Status, Payment Channel, Bank Ref, Phone, Route Key, Walk Order, Meter Key). */
+export async function updatePaymentsFromCsvAction(records: Array<{
+  billKey?: string;
+  customerKey?: string;
+  customerName?: string;
+  branch?: string;
+  amount?: number;
+  paymentDate?: string;
+  reconciliationStatus?: string;
+  paymentChannel?: string;
+  bankRef?: string;
+  phone?: string;
+  routeKey?: string;
+  walkOrder?: number | string;
+  meterKey?: string;
+}>) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const result = await dbBatchUpdatePaymentsFromCsv(records, session.id);
+    revalidatePath('/admin/reports/paid-bills');
+    revalidatePath('/staff/reports/paid-bills');
+    revalidatePath('/admin/reports/sent-bills');
+    revalidatePath('/staff/reports/sent-bills');
+    revalidatePath('/staff/bill-management');
+    revalidatePath('/admin/bill-management');
+    return result;
+  });
+}
+

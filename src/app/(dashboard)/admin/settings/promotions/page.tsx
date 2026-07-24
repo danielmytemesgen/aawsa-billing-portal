@@ -182,8 +182,8 @@ export default function PromotionsManagementPage() {
         setEditingPromo(promo);
         const imgUrl = promo.image_url || "";
         setFormData({
-            title: promo.title,
-            description: promo.description,
+            title: promo.title || "",
+            description: promo.description || "",
             tag: promo.tag,
             icon_name: promo.icon_name || "Megaphone",
             is_active: promo.is_active,
@@ -221,9 +221,9 @@ export default function PromotionsManagementPage() {
     };
 
     const filteredPromotions = promotions.filter(p =>
-        p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.tag.toLowerCase().includes(searchTerm.toLowerCase())
+        (p.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.tag || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     if (!hasPermission('promotions_manage') && !hasPermission('settings_view')) {
@@ -281,13 +281,12 @@ export default function PromotionsManagementPage() {
                             </DialogHeader>
                             <div className="grid gap-4 py-4">
                                 <div className="grid gap-2">
-                                    <Label htmlFor="title">Title</Label>
+                                    <Label htmlFor="title">Title (Optional)</Label>
                                     <Input
                                         id="title"
                                         value={formData.title}
                                         onChange={e => setFormData({ ...formData, title: e.target.value })}
                                         placeholder="e.g. Digital Payment Simplified"
-                                        required
                                     />
                                 </div>
                                 <div className="grid gap-2">
@@ -301,13 +300,12 @@ export default function PromotionsManagementPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="description">Description</Label>
+                                    <Label htmlFor="description">Description (Optional)</Label>
                                     <Input
                                         id="description"
                                         value={formData.description}
                                         onChange={e => setFormData({ ...formData, description: e.target.value })}
                                         placeholder="Brief details about the promotion..."
-                                        required
                                     />
                                 </div>
                                 <div className="grid gap-2">
