@@ -2765,6 +2765,8 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
         return null;
     };
 
+    const processedBillIds = new Set<string>();
+
     // Execute row updates independently to guarantee total row isolation and prevent transaction aborts
     for (let i = 0; i < records.length; i++) {
         const rec = records[i];
@@ -2788,6 +2790,26 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
 
             if (!targetBill) {
                 errors.push({ row: rowNum, error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}"` });
+                continue;
+            }
+
+            const billIdent = targetBill.BILLKEY || targetBill.bill_number || targetBill.id || rawBillKey || 'Bill';
+
+            // Check if already processed in this CSV upload batch (Duplicate check)
+            if (processedBillIds.has(billIdent)) {
+                errors.push({ row: rowNum, error: `Bill "${billIdent}" is duplicate in CSV file. Skipped.` });
+                continue;
+            }
+
+            // Check if bill is ALREADY paid & reconciled with identical bank reference in DB
+            const isPaid = String(targetBill.payment_status || '').trim().toLowerCase() === 'paid';
+            const isReconciled = String(targetBill.reconciliation_status || '').trim().toLowerCase() === 'reconciled';
+            const existingBankRef = String(targetBill.bank_ref || '').trim();
+            const csvBankRef = String(rec.bankRef || '').trim();
+            
+            if (isPaid && isReconciled && existingBankRef !== '' && existingBankRef !== '-' && (csvBankRef === '' || csvBankRef === existingBankRef)) {
+                errors.push({ row: rowNum, error: `Bill "${billIdent}" is already paid and reconciled. Skipped.` });
+                processedBillIds.add(billIdent);
                 continue;
             }
 
@@ -2944,6 +2966,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             targetBill.payment_status = 'Paid';
             targetBill.reconciliation_status = reconStatus;
             targetBill.bank_ref = bankRef;
+            processedBillIds.add(billIdent);
 
             updatedCount++;
         } catch (err: any) {
