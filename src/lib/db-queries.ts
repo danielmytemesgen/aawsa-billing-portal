@@ -2596,239 +2596,367 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     let updatedCount = 0;
     const errors: Array<{ row: number; error: string }> = [];
 
-    for (let i = 0; i < records.length; i++) {
-        const rec = records[i];
-        const rowNum = i + 1;
+    if (!records || records.length === 0) {
+        return { success: true, updatedCount: 0, errors: [] };
+    }
 
+    const cleanKey = (val?: string) => (val || '').replace(/^(BBPT|BILL|BM|IND|CUST|METER)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim().toLowerCase();
+
+    // Collect all raw keys for bulk pre-fetching
+    const rawBillKeys = new Set<string>();
+    const rawCustKeys = new Set<string>();
+    const rawMeterKeys = new Set<string>();
+
+    for (const rec of records) {
+        if (rec.billKey?.trim()) rawBillKeys.add(rec.billKey.trim());
+        if (rec.customerKey?.trim()) rawCustKeys.add(rec.customerKey.trim());
+        if (rec.meterKey?.trim() && rec.meterKey.trim() !== '-') rawMeterKeys.add(rec.meterKey.trim());
+    }
+
+    // Fast in-memory lookup map
+    const billMap = new Map<string, any>();
+
+    // 1. Bulk pre-fetch by Bill Keys / Numbers
+    if (rawBillKeys.size > 0) {
+        const keyList = Array.from(rawBillKeys);
         try {
-            const rawBillKey = rec.billKey?.trim() || '';
-            const rawCustKey = rec.customerKey?.trim() || '';
-            const rawMeterKey = rec.meterKey?.trim() || '';
-
-            const cleanKey = (val: string) => val.replace(/^(BBPT|BILL|BM|IND|CUST)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim();
-            const cBillKey = cleanKey(rawBillKey);
-            const cCustKey = cleanKey(rawCustKey);
-            const cMeterKey = cleanKey(rawMeterKey);
-
-            if (!rawBillKey && !rawCustKey && !rawMeterKey) {
-                errors.push({ row: rowNum, error: 'Neither Bill Key, Customer Key, nor Meter Key was provided.' });
-                continue;
+            const rows: any = await query(`
+                SELECT * FROM bills 
+                WHERE TRIM("BILLKEY") = ANY($1) 
+                   OR bill_number = ANY($1)
+                   OR id::text = ANY($1)
+                   OR "BILLKEY" ILIKE ANY($1)
+            `, [keyList]);
+            for (const b of (rows || [])) {
+                if (b.id) billMap.set(b.id.toString(), b);
+                if (b.BILLKEY) billMap.set(b.BILLKEY.trim(), b);
+                if (b.bill_number) billMap.set(b.bill_number.trim(), b);
+                const cBk = cleanKey(b.BILLKEY);
+                if (cBk) billMap.set(`clean_${cBk}`, b);
+                const cBn = cleanKey(b.bill_number);
+                if (cBn) billMap.set(`clean_${cBn}`, b);
             }
-
-            // Find bill by billKey, customerKey, or meterKey
-            let targetBill: any = null;
-
-            // 1. Search by Bill Key
-            if (rawBillKey) {
-                const rows: any = await query(`
-                    SELECT * FROM bills 
-                    WHERE TRIM("BILLKEY") ILIKE TRIM($1) 
-                       OR id::text ILIKE TRIM($1) 
-                       OR TRIM(bill_number) ILIKE TRIM($1)
-                       OR ($2 <> '' AND (
-                           REPLACE(REPLACE(TRIM("BILLKEY"), 'BBPT-', ''), '-', '') ILIKE $2
-                           OR REPLACE(REPLACE(TRIM(bill_number), 'BBPT-', ''), '-', '') ILIKE $2
-                       ))
-                    LIMIT 1
-                `, [rawBillKey, cBillKey ? `%${cBillKey}%` : '']);
-                targetBill = rows[0];
-            }
-
-            // 2. Search by Customer Key
-            if (!targetBill && rawCustKey) {
-                const rows: any = await query(`
-                    SELECT * FROM bills 
-                    WHERE (individual_customer_id ILIKE TRIM($1) OR "CUSTOMERKEY" ILIKE TRIM($1))
-                       OR ($2 <> '' AND (
-                           REPLACE(REPLACE(TRIM(individual_customer_id), 'BM-', ''), '-', '') ILIKE $2
-                           OR REPLACE(REPLACE(TRIM("CUSTOMERKEY"), 'BM-', ''), '-', '') ILIKE $2
-                       ))
-                    ORDER BY CASE WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC 
-                    LIMIT 1
-                `, [rawCustKey, cCustKey ? `%${cCustKey}%` : '']);
-                targetBill = rows[0];
-            }
-
-            // 3. Search by Meter Key
-            if (!targetBill && rawMeterKey && rawMeterKey !== '-') {
-                const rows: any = await query(`
-                    SELECT b.* FROM bills b
-                    LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
-                    LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
-                    WHERE TRIM(c."METER_KEY") ILIKE TRIM($1) OR TRIM(bm."METER_KEY") ILIKE TRIM($1) OR TRIM(b.meter_key) ILIKE TRIM($1)
-                       OR ($2 <> '' AND (
-                           REPLACE(REPLACE(TRIM(c."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
-                           OR REPLACE(REPLACE(TRIM(bm."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
-                       ))
-                    ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC 
-                    LIMIT 1
-                `, [rawMeterKey, cMeterKey ? `%${cMeterKey}%` : '']);
-                targetBill = rows[0];
-            }
-
-            if (!targetBill) {
-                errors.push({ row: rowNum, error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}"` });
-                continue;
-            }
-
-            // Skip ONLY if the bill is ALREADY Paid AND ALREADY Reconciled AND has a Bank Reference
-            const isPaid = String(targetBill.payment_status || '').trim().toLowerCase() === 'paid';
-            const isReconciled = String(targetBill.reconciliation_status || '').trim().toLowerCase() === 'reconciled';
-            const hasBankRef = Boolean(targetBill.bank_ref && String(targetBill.bank_ref).trim() !== '' && String(targetBill.bank_ref).trim() !== '-');
-
-            if (isPaid && isReconciled && hasBankRef) {
-                const billIdent = targetBill.BILLKEY || targetBill.bill_number || targetBill.id || 'Bill';
-                errors.push({
-                    row: rowNum,
-                    error: `Bill "${billIdent}" is already paid and reconciled. Skipped.`
-                });
-                continue;
-            }
-
-            // Validate that provided CSV values do not contradict the existing sent bill
-            const rowContradictions: string[] = [];
-            const cleanStrVal = (val: any) => (val === undefined || val === null ? '' : String(val).replace(/[-_\s]+/g, '').trim().toLowerCase());
-            const cleanKeyVal = (val: string) => (val || '').replace(/^(BBPT|BILL|BM|IND|CUST|METER)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim().toLowerCase();
-
-            // 1. Customer Key
-            if (rawCustKey && rawCustKey !== '-') {
-                const targetCustKey = targetBill.individual_customer_id || targetBill.CUSTOMERKEY || '';
-                if (targetCustKey && cleanKeyVal(rawCustKey) !== cleanKeyVal(targetCustKey)) {
-                    rowContradictions.push(`Customer Key "${rawCustKey}" contradicts existing bill Customer Key ("${targetCustKey}")`);
-                }
-            }
-
-            // 2. Customer Name
-            const rawCustName = rec.customerName?.trim();
-            if (rawCustName && rawCustName !== '-' && targetBill.CUSTOMERNAME) {
-                if (rawCustName.toLowerCase() !== targetBill.CUSTOMERNAME.trim().toLowerCase()) {
-                    rowContradictions.push(`Customer Name "${rawCustName}" contradicts existing bill Customer Name ("${targetBill.CUSTOMERNAME}")`);
-                }
-            }
-
-            // 3. Branch
-            const rawBranch = rec.branch?.trim();
-            if (rawBranch && rawBranch !== '-' && targetBill.CUSTOMERBRANCH) {
-                if (rawBranch.toLowerCase() !== targetBill.CUSTOMERBRANCH.trim().toLowerCase()) {
-                    rowContradictions.push(`Branch "${rawBranch}" contradicts existing bill Branch ("${targetBill.CUSTOMERBRANCH}")`);
-                }
-            }
-
-            // 4. Amount
-            if (rec.amount !== undefined && rec.amount !== null && !isNaN(Number(rec.amount))) {
-                const csvAmount = Number(rec.amount);
-                const billAmount = Number(targetBill.TOTALBILLAMOUNT || 0);
-                if (billAmount > 0 && Math.abs(csvAmount - billAmount) > 0.05) {
-                    rowContradictions.push(`Amount (${csvAmount}) contradicts existing bill total amount (${billAmount})`);
-                }
-            }
-
-            // 5. Phone
-            const rawPhone = rec.phone?.trim();
-            if (rawPhone && rawPhone !== '-' && targetBill.phone && targetBill.phone !== '-') {
-                if (cleanStrVal(rawPhone) !== cleanStrVal(targetBill.phone)) {
-                    rowContradictions.push(`Phone "${rawPhone}" contradicts existing bill Phone ("${targetBill.phone}")`);
-                }
-            }
-
-            // 6. Route Key
-            const rawRouteKey = rec.routeKey?.trim();
-            if (rawRouteKey && rawRouteKey !== '-' && targetBill.route_key && targetBill.route_key !== '-') {
-                if (cleanStrVal(rawRouteKey) !== cleanStrVal(targetBill.route_key)) {
-                    rowContradictions.push(`Route Key "${rawRouteKey}" contradicts existing bill Route Key ("${targetBill.route_key}")`);
-                }
-            }
-
-            // 7. Walk Order
-            const strWalkOrder = rec.walkOrder !== undefined && rec.walkOrder !== null ? String(rec.walkOrder).trim() : '';
-            if (strWalkOrder !== '' && strWalkOrder !== '-' && !isNaN(Number(strWalkOrder))) {
-                const csvWalkOrder = Number(strWalkOrder);
-                if (targetBill.walk_order !== null && targetBill.walk_order !== undefined && csvWalkOrder !== Number(targetBill.walk_order)) {
-                    rowContradictions.push(`Walk Order (${csvWalkOrder}) contradicts existing bill Walk Order (${targetBill.walk_order})`);
-                }
-            }
-
-            // 8. Meter Key
-            if (rawMeterKey && rawMeterKey !== '-' && targetBill.meter_key && targetBill.meter_key !== '-') {
-                if (cleanKeyVal(rawMeterKey) !== cleanKeyVal(targetBill.meter_key)) {
-                    rowContradictions.push(`Meter Key "${rawMeterKey}" contradicts existing bill Meter Key ("${targetBill.meter_key}")`);
-                }
-            }
-
-            if (rowContradictions.length > 0) {
-                errors.push({ row: rowNum, error: rowContradictions.join('; ') });
-                continue;
-            }
-
-            const amountPaid = rec.amount !== undefined && !isNaN(Number(rec.amount)) 
-                ? Number(rec.amount) 
-                : Number(targetBill.TOTALBILLAMOUNT || targetBill.amount_paid || 0);
-
-            const paymentDate = rec.paymentDate ? new Date(rec.paymentDate) : new Date();
-            const validPaymentDate = isNaN(paymentDate.getTime()) ? new Date() : paymentDate;
-            const reconStatus = rec.reconciliationStatus?.trim() || targetBill.reconciliation_status || 'Not reconciled';
-            const channel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'CBE';
-            const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
-            await query(`
-                UPDATE bills
-                SET payment_status = 'Paid',
-                    status = 'Posted',
-                    amount_paid = GREATEST(COALESCE(amount_paid, 0), $1),
-                    last_payment_date = $2,
-                    reconciliation_status = $3,
-                    payment_channel = $4,
-                    bank_ref = $5,
-                    updated_at = NOW()
-                WHERE id = $6
-            `, [
-                amountPaid,
-                validPaymentDate,
-                reconStatus,
-                channel,
-                bankRef,
-                targetBill.id
-            ]);
-
-            // Synchronize paymentStatus on individual_customers or bulk_meters
-            if (targetBill.individual_customer_id) {
-                try {
-                    await query(`UPDATE individual_customers SET "paymentStatus" = 'Paid', "updated_at" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.individual_customer_id]);
-                } catch (e) {}
-            }
-            if (targetBill.CUSTOMERKEY) {
-                try {
-                    await query(`UPDATE bulk_meters SET payment_status = 'Paid', updated_at = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
-                } catch (e) {}
-            }
-
-            // Log payment into payments table
-            try {
-                await query(`
-                    INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                `, [
-                    targetBill.id,
-                    targetBill.month_year,
-                    targetBill.individual_customer_id || targetBill.CUSTOMERKEY,
-                    amountPaid,
-                    channel,
-                    bankRef,
-                    staffId || null,
-                    validPaymentDate,
-                    `CSV Payment Update: Recon=${reconStatus}`
-                ]);
-            } catch (pErr) {
-                console.warn('Payments insert warning:', pErr);
-            }
-
-            updatedCount++;
-        } catch (err: any) {
-            console.error(`Error processing row ${rowNum}:`, err);
-            errors.push({ row: rowNum, error: err.message || 'Database update error' });
+        } catch (e) {
+            console.warn('Pre-fetch by Bill Key warning:', e);
         }
     }
 
-    return { success: errors.length === 0, updatedCount, errors };
+    // 2. Bulk pre-fetch by Customer Keys
+    if (rawCustKeys.size > 0) {
+        const keyList = Array.from(rawCustKeys);
+        try {
+            const rows: any = await query(`
+                SELECT * FROM bills 
+                WHERE individual_customer_id = ANY($1) 
+                   OR "CUSTOMERKEY" = ANY($1)
+                   OR individual_customer_id ILIKE ANY($1)
+                   OR "CUSTOMERKEY" ILIKE ANY($1)
+                ORDER BY CASE WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC
+            `, [keyList]);
+            for (const b of (rows || [])) {
+                if (b.individual_customer_id && !billMap.has(`cust_${b.individual_customer_id.trim()}`)) {
+                    billMap.set(`cust_${b.individual_customer_id.trim()}`, b);
+                }
+                if (b.CUSTOMERKEY && !billMap.has(`cust_${b.CUSTOMERKEY.trim()}`)) {
+                    billMap.set(`cust_${b.CUSTOMERKEY.trim()}`, b);
+                }
+                const cCust = cleanKey(b.individual_customer_id || b.CUSTOMERKEY);
+                if (cCust && !billMap.has(`clean_cust_${cCust}`)) {
+                    billMap.set(`clean_cust_${cCust}`, b);
+                }
+            }
+        } catch (e) {
+            console.warn('Pre-fetch by Customer Key warning:', e);
+        }
+    }
+
+    // 3. Bulk pre-fetch by Meter Keys
+    if (rawMeterKeys.size > 0) {
+        const keyList = Array.from(rawMeterKeys);
+        try {
+            const rows: any = await query(`
+                SELECT b.*, c."METER_KEY" as cust_meter, bm."METER_KEY" as bulk_meter FROM bills b
+                LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+                LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+                WHERE TRIM(c."METER_KEY") = ANY($1) OR TRIM(bm."METER_KEY") = ANY($1) OR TRIM(b.meter_key) = ANY($1)
+                ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC
+            `, [keyList]);
+            for (const b of (rows || [])) {
+                const mk = b.meter_key || b.cust_meter || b.bulk_meter;
+                if (mk && !billMap.has(`meter_${mk.trim()}`)) {
+                    billMap.set(`meter_${mk.trim()}`, b);
+                }
+                const cMk = cleanKey(mk);
+                if (cMk && !billMap.has(`clean_meter_${cMk}`)) {
+                    billMap.set(`clean_meter_${cMk}`, b);
+                }
+            }
+        } catch (e) {
+            console.warn('Pre-fetch by Meter Key warning:', e);
+        }
+    }
+
+    // Helper for fast in-memory target bill resolution
+    const findTargetBill = async (rawBillKey: string, rawCustKey: string, rawMeterKey: string, cBillKey: string, cCustKey: string, cMeterKey: string) => {
+        // 1. By exact or clean Bill Key
+        if (rawBillKey) {
+            let found = billMap.get(rawBillKey) || billMap.get(`clean_${cBillKey}`);
+            if (found) return found;
+        }
+
+        // 2. By exact or clean Customer Key
+        if (rawCustKey) {
+            let found = billMap.get(`cust_${rawCustKey}`) || billMap.get(`clean_cust_${cCustKey}`);
+            if (found) return found;
+        }
+
+        // 3. By exact or clean Meter Key
+        if (rawMeterKey && rawMeterKey !== '-') {
+            let found = billMap.get(`meter_${rawMeterKey}`) || billMap.get(`clean_meter_${cMeterKey}`);
+            if (found) return found;
+        }
+
+        // Fallback to single SQL query if not found in pre-fetched map
+        if (rawBillKey) {
+            const rows: any = await query(`
+                SELECT * FROM bills 
+                WHERE TRIM("BILLKEY") ILIKE TRIM($1) 
+                   OR id::text ILIKE TRIM($1) 
+                   OR TRIM(bill_number) ILIKE TRIM($1)
+                   OR ($2 <> '' AND (
+                       REPLACE(REPLACE(TRIM("BILLKEY"), 'BBPT-', ''), '-', '') ILIKE $2
+                       OR REPLACE(REPLACE(TRIM(bill_number), 'BBPT-', ''), '-', '') ILIKE $2
+                   ))
+                LIMIT 1
+            `, [rawBillKey, cBillKey ? `%${cBillKey}%` : '']);
+            if (rows && rows[0]) return rows[0];
+        }
+
+        if (rawCustKey) {
+            const rows: any = await query(`
+                SELECT * FROM bills 
+                WHERE (individual_customer_id ILIKE TRIM($1) OR "CUSTOMERKEY" ILIKE TRIM($1))
+                   OR ($2 <> '' AND (
+                       REPLACE(REPLACE(TRIM(individual_customer_id), 'BM-', ''), '-', '') ILIKE $2
+                       OR REPLACE(REPLACE(TRIM("CUSTOMERKEY"), 'BM-', ''), '-', '') ILIKE $2
+                   ))
+                ORDER BY CASE WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC 
+                LIMIT 1
+            `, [rawCustKey, cCustKey ? `%${cCustKey}%` : '']);
+            if (rows && rows[0]) return rows[0];
+        }
+
+        if (rawMeterKey && rawMeterKey !== '-') {
+            const rows: any = await query(`
+                SELECT b.* FROM bills b
+                LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+                LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+                WHERE TRIM(c."METER_KEY") ILIKE TRIM($1) OR TRIM(bm."METER_KEY") ILIKE TRIM($1) OR TRIM(b.meter_key) ILIKE TRIM($1)
+                   OR ($2 <> '' AND (
+                       REPLACE(REPLACE(TRIM(c."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
+                       OR REPLACE(REPLACE(TRIM(bm."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
+                   ))
+                ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC 
+                LIMIT 1
+            `, [rawMeterKey, cMeterKey ? `%${cMeterKey}%` : '']);
+            if (rows && rows[0]) return rows[0];
+        }
+
+        return null;
+    };
+
+    // Execute batch update in a transaction
+    return await withTransaction(async (client) => {
+        for (let i = 0; i < records.length; i++) {
+            const rec = records[i];
+            const rowNum = i + 1;
+
+            try {
+                const rawBillKey = rec.billKey?.trim() || '';
+                const rawCustKey = rec.customerKey?.trim() || '';
+                const rawMeterKey = rec.meterKey?.trim() || '';
+
+                const cBillKey = cleanKey(rawBillKey);
+                const cCustKey = cleanKey(rawCustKey);
+                const cMeterKey = cleanKey(rawMeterKey);
+
+                if (!rawBillKey && !rawCustKey && !rawMeterKey) {
+                    errors.push({ row: rowNum, error: 'Neither Bill Key, Customer Key, nor Meter Key was provided.' });
+                    continue;
+                }
+
+                const targetBill = await findTargetBill(rawBillKey, rawCustKey, rawMeterKey, cBillKey, cCustKey, cMeterKey);
+
+                if (!targetBill) {
+                    errors.push({ row: rowNum, error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}"` });
+                    continue;
+                }
+
+                // Skip ONLY if the bill is ALREADY Paid AND ALREADY Reconciled AND has a Bank Reference
+                const isPaid = String(targetBill.payment_status || '').trim().toLowerCase() === 'paid';
+                const isReconciled = String(targetBill.reconciliation_status || '').trim().toLowerCase() === 'reconciled';
+                const hasBankRef = Boolean(targetBill.bank_ref && String(targetBill.bank_ref).trim() !== '' && String(targetBill.bank_ref).trim() !== '-');
+
+                if (isPaid && isReconciled && hasBankRef) {
+                    const billIdent = targetBill.BILLKEY || targetBill.bill_number || targetBill.id || 'Bill';
+                    errors.push({
+                        row: rowNum,
+                        error: `Bill "${billIdent}" is already paid and reconciled. Skipped.`
+                    });
+                    continue;
+                }
+
+                // Validate that provided CSV values do not contradict the existing sent bill
+                const rowContradictions: string[] = [];
+                const cleanStrVal = (val: any) => (val === undefined || val === null ? '' : String(val).replace(/[-_\s]+/g, '').trim().toLowerCase());
+                const cleanKeyVal = (val: string) => (val || '').replace(/^(BBPT|BILL|BM|IND|CUST|METER)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim().toLowerCase();
+
+                // 1. Customer Key
+                if (rawCustKey && rawCustKey !== '-') {
+                    const targetCustKey = targetBill.individual_customer_id || targetBill.CUSTOMERKEY || '';
+                    if (targetCustKey && cleanKeyVal(rawCustKey) !== cleanKeyVal(targetCustKey)) {
+                        rowContradictions.push(`Customer Key "${rawCustKey}" contradicts existing bill Customer Key ("${targetCustKey}")`);
+                    }
+                }
+
+                // 2. Customer Name
+                const rawCustName = rec.customerName?.trim();
+                if (rawCustName && rawCustName !== '-' && targetBill.CUSTOMERNAME) {
+                    if (rawCustName.toLowerCase() !== targetBill.CUSTOMERNAME.trim().toLowerCase()) {
+                        rowContradictions.push(`Customer Name "${rawCustName}" contradicts existing bill Customer Name ("${targetBill.CUSTOMERNAME}")`);
+                    }
+                }
+
+                // 3. Branch
+                const rawBranch = rec.branch?.trim();
+                if (rawBranch && rawBranch !== '-' && targetBill.CUSTOMERBRANCH) {
+                    if (rawBranch.toLowerCase() !== targetBill.CUSTOMERBRANCH.trim().toLowerCase()) {
+                        rowContradictions.push(`Branch "${rawBranch}" contradicts existing bill Branch ("${targetBill.CUSTOMERBRANCH}")`);
+                    }
+                }
+
+                // 4. Amount
+                if (rec.amount !== undefined && rec.amount !== null && !isNaN(Number(rec.amount))) {
+                    const csvAmount = Number(rec.amount);
+                    const billAmount = Number(targetBill.TOTALBILLAMOUNT || 0);
+                    if (billAmount > 0 && Math.abs(csvAmount - billAmount) > 0.05) {
+                        rowContradictions.push(`Amount (${csvAmount}) contradicts existing bill total amount (${billAmount})`);
+                    }
+                }
+
+                // 5. Phone
+                const rawPhone = rec.phone?.trim();
+                if (rawPhone && rawPhone !== '-' && targetBill.phone && targetBill.phone !== '-') {
+                    if (cleanStrVal(rawPhone) !== cleanStrVal(targetBill.phone)) {
+                        rowContradictions.push(`Phone "${rawPhone}" contradicts existing bill Phone ("${targetBill.phone}")`);
+                    }
+                }
+
+                // 6. Route Key
+                const rawRouteKey = rec.routeKey?.trim();
+                if (rawRouteKey && rawRouteKey !== '-' && targetBill.route_key && targetBill.route_key !== '-') {
+                    if (cleanStrVal(rawRouteKey) !== cleanStrVal(targetBill.route_key)) {
+                        rowContradictions.push(`Route Key "${rawRouteKey}" contradicts existing bill Route Key ("${targetBill.route_key}")`);
+                    }
+                }
+
+                // 7. Walk Order
+                const strWalkOrder = rec.walkOrder !== undefined && rec.walkOrder !== null ? String(rec.walkOrder).trim() : '';
+                if (strWalkOrder !== '' && strWalkOrder !== '-' && !isNaN(Number(strWalkOrder))) {
+                    const csvWalkOrder = Number(strWalkOrder);
+                    if (targetBill.walk_order !== null && targetBill.walk_order !== undefined && csvWalkOrder !== Number(targetBill.walk_order)) {
+                        rowContradictions.push(`Walk Order (${csvWalkOrder}) contradicts existing bill Walk Order (${targetBill.walk_order})`);
+                    }
+                }
+
+                // 8. Meter Key
+                if (rawMeterKey && rawMeterKey !== '-' && targetBill.meter_key && targetBill.meter_key !== '-') {
+                    if (cleanKeyVal(rawMeterKey) !== cleanKeyVal(targetBill.meter_key)) {
+                        rowContradictions.push(`Meter Key "${rawMeterKey}" contradicts existing bill Meter Key ("${targetBill.meter_key}")`);
+                    }
+                }
+
+                if (rowContradictions.length > 0) {
+                    errors.push({ row: rowNum, error: rowContradictions.join('; ') });
+                    continue;
+                }
+
+                const amountPaid = rec.amount !== undefined && !isNaN(Number(rec.amount)) 
+                    ? Number(rec.amount) 
+                    : Number(targetBill.TOTALBILLAMOUNT || targetBill.amount_paid || 0);
+
+                const paymentDate = rec.paymentDate ? new Date(rec.paymentDate) : new Date();
+                const validPaymentDate = isNaN(paymentDate.getTime()) ? new Date() : paymentDate;
+                const reconStatus = rec.reconciliationStatus?.trim() || targetBill.reconciliation_status || 'Not reconciled';
+                const channel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'CBE';
+                const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
+
+                await client.query(`
+                    UPDATE bills
+                    SET payment_status = 'Paid',
+                        status = 'Posted',
+                        amount_paid = GREATEST(COALESCE(amount_paid, 0), $1),
+                        last_payment_date = $2,
+                        reconciliation_status = $3,
+                        payment_channel = $4,
+                        bank_ref = $5,
+                        updated_at = NOW()
+                    WHERE id = $6
+                `, [
+                    amountPaid,
+                    validPaymentDate,
+                    reconStatus,
+                    channel,
+                    bankRef,
+                    targetBill.id
+                ]);
+
+                // Synchronize paymentStatus on individual_customers or bulk_meters
+                if (targetBill.individual_customer_id) {
+                    try {
+                        await client.query(`UPDATE individual_customers SET "paymentStatus" = 'Paid', "updated_at" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.individual_customer_id]);
+                    } catch (e) {}
+                }
+                if (targetBill.CUSTOMERKEY) {
+                    try {
+                        await client.query(`UPDATE bulk_meters SET payment_status = 'Paid', updated_at = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
+                    } catch (e) {}
+                }
+
+                // Log payment into payments table
+                try {
+                    await client.query(`
+                        INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    `, [
+                        targetBill.id,
+                        targetBill.month_year,
+                        targetBill.individual_customer_id || targetBill.CUSTOMERKEY,
+                        amountPaid,
+                        channel,
+                        bankRef,
+                        staffId || null,
+                        validPaymentDate,
+                        `CSV Payment Update: Recon=${reconStatus}`
+                    ]);
+                } catch (pErr) {
+                    console.warn('Payments insert warning:', pErr);
+                }
+
+                // Update targetBill in-memory state so subsequent duplicate rows in the same CSV are recognized as already updated
+                targetBill.payment_status = 'Paid';
+                targetBill.reconciliation_status = reconStatus;
+                targetBill.bank_ref = bankRef;
+
+                updatedCount++;
+            } catch (err: any) {
+                console.error(`Error processing row ${rowNum}:`, err);
+                errors.push({ row: rowNum, error: err.message || 'Database update error' });
+            }
+        }
+
+        return { success: errors.length === 0, updatedCount, errors };
+    });
 };
 
 export const dbGetPaidBillsCount = async (params: {
