@@ -4694,13 +4694,32 @@ export async function updatePaymentsFromCsvAction(records: Array<{
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
+    
+    console.log(`CSV Payment Update Started: ${records.length} records received`, {
+      staffId: session.id,
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV
+    });
+    
     const result = await dbBatchUpdatePaymentsFromCsv(records, session.id);
+    
+    console.log(`CSV Payment Update Completed: ${result.updatedCount} records updated, ${result.errors?.length || 0} errors`, {
+      staffId: session.id,
+      timestamp: new Date().toISOString(),
+      successCount: result.updatedCount,
+      errorCount: result.errors?.length || 0
+    });
+    
+    // Invalidate cache paths to refresh UI
+    revalidatePath('/admin/reports');
+    revalidatePath('/staff/reports');
     revalidatePath('/admin/reports/paid-bills');
     revalidatePath('/staff/reports/paid-bills');
     revalidatePath('/admin/reports/sent-bills');
     revalidatePath('/staff/reports/sent-bills');
     revalidatePath('/staff/bill-management');
     revalidatePath('/admin/bill-management');
+    
     return result;
   });
 }
