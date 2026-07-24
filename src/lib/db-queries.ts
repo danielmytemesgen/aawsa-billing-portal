@@ -2547,7 +2547,7 @@ export const dbGetPaidBillsPaginated = async (params: {
         LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.deleted_at IS NULL
           AND (
-            LOWER(TRIM(COALESCE(b.payment_status, ''))) = 'paid'
+            LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
             OR COALESCE(b.amount_paid, 0) > 0
           )
     `;
@@ -2643,7 +2643,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                            REPLACE(REPLACE(TRIM(individual_customer_id), 'BM-', ''), '-', '') ILIKE $2
                            OR REPLACE(REPLACE(TRIM("CUSTOMERKEY"), 'BM-', ''), '-', '') ILIKE $2
                        ))
-                    ORDER BY CASE WHEN LOWER(COALESCE(payment_status, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC 
+                    ORDER BY CASE WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC 
                     LIMIT 1
                 `, [rawCustKey, cCustKey ? `%${cCustKey}%` : '']);
                 targetBill = rows[0];
@@ -2660,7 +2660,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                            REPLACE(REPLACE(TRIM(c."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
                            OR REPLACE(REPLACE(TRIM(bm."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
                        ))
-                    ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC 
+                    ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC 
                     LIMIT 1
                 `, [rawMeterKey, cMeterKey ? `%${cMeterKey}%` : '']);
                 targetBill = rows[0];
@@ -2668,6 +2668,92 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
 
             if (!targetBill) {
                 errors.push({ row: rowNum, error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}"` });
+                continue;
+            }
+
+            // Check if the bill is already paid and reconciled
+            const isAlreadyPaid = String(targetBill.payment_status || '').trim().toLowerCase() === 'paid';
+            if (isAlreadyPaid) {
+                const billIdent = targetBill.BILLKEY || targetBill.bill_number || targetBill.id || 'Bill';
+                errors.push({
+                    row: rowNum,
+                    error: `Bill "${billIdent}" is already paid and reconciled. Skipped.`
+                });
+                continue;
+            }
+
+            // Validate that provided CSV values do not contradict the existing sent bill
+            const rowContradictions: string[] = [];
+            const cleanStrVal = (val: any) => (val === undefined || val === null ? '' : String(val).replace(/[-_\s]+/g, '').trim().toLowerCase());
+            const cleanKeyVal = (val: string) => (val || '').replace(/^(BBPT|BILL|BM|IND|CUST|METER)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim().toLowerCase();
+
+            // 1. Customer Key
+            if (rawCustKey && rawCustKey !== '-') {
+                const targetCustKey = targetBill.individual_customer_id || targetBill.CUSTOMERKEY || '';
+                if (targetCustKey && cleanKeyVal(rawCustKey) !== cleanKeyVal(targetCustKey)) {
+                    rowContradictions.push(`Customer Key "${rawCustKey}" contradicts existing bill Customer Key ("${targetCustKey}")`);
+                }
+            }
+
+            // 2. Customer Name
+            const rawCustName = rec.customerName?.trim();
+            if (rawCustName && rawCustName !== '-' && targetBill.CUSTOMERNAME) {
+                if (rawCustName.toLowerCase() !== targetBill.CUSTOMERNAME.trim().toLowerCase()) {
+                    rowContradictions.push(`Customer Name "${rawCustName}" contradicts existing bill Customer Name ("${targetBill.CUSTOMERNAME}")`);
+                }
+            }
+
+            // 3. Branch
+            const rawBranch = rec.branch?.trim();
+            if (rawBranch && rawBranch !== '-' && targetBill.CUSTOMERBRANCH) {
+                if (rawBranch.toLowerCase() !== targetBill.CUSTOMERBRANCH.trim().toLowerCase()) {
+                    rowContradictions.push(`Branch "${rawBranch}" contradicts existing bill Branch ("${targetBill.CUSTOMERBRANCH}")`);
+                }
+            }
+
+            // 4. Amount
+            if (rec.amount !== undefined && rec.amount !== null && !isNaN(Number(rec.amount))) {
+                const csvAmount = Number(rec.amount);
+                const billAmount = Number(targetBill.TOTALBILLAMOUNT || 0);
+                if (billAmount > 0 && Math.abs(csvAmount - billAmount) > 0.05) {
+                    rowContradictions.push(`Amount (${csvAmount}) contradicts existing bill total amount (${billAmount})`);
+                }
+            }
+
+            // 5. Phone
+            const rawPhone = rec.phone?.trim();
+            if (rawPhone && rawPhone !== '-' && targetBill.phone && targetBill.phone !== '-') {
+                if (cleanStrVal(rawPhone) !== cleanStrVal(targetBill.phone)) {
+                    rowContradictions.push(`Phone "${rawPhone}" contradicts existing bill Phone ("${targetBill.phone}")`);
+                }
+            }
+
+            // 6. Route Key
+            const rawRouteKey = rec.routeKey?.trim();
+            if (rawRouteKey && rawRouteKey !== '-' && targetBill.route_key && targetBill.route_key !== '-') {
+                if (cleanStrVal(rawRouteKey) !== cleanStrVal(targetBill.route_key)) {
+                    rowContradictions.push(`Route Key "${rawRouteKey}" contradicts existing bill Route Key ("${targetBill.route_key}")`);
+                }
+            }
+
+            // 7. Walk Order
+            const strWalkOrder = rec.walkOrder !== undefined && rec.walkOrder !== null ? String(rec.walkOrder).trim() : '';
+            if (strWalkOrder !== '' && strWalkOrder !== '-' && !isNaN(Number(strWalkOrder))) {
+                const csvWalkOrder = Number(strWalkOrder);
+                if (targetBill.walk_order !== null && targetBill.walk_order !== undefined && csvWalkOrder !== Number(targetBill.walk_order)) {
+                    rowContradictions.push(`Walk Order (${csvWalkOrder}) contradicts existing bill Walk Order (${targetBill.walk_order})`);
+                }
+            }
+
+            // 8. Meter Key
+            if (rawMeterKey && rawMeterKey !== '-' && targetBill.meter_key && targetBill.meter_key !== '-') {
+                if (cleanKeyVal(rawMeterKey) !== cleanKeyVal(targetBill.meter_key)) {
+                    rowContradictions.push(`Meter Key "${rawMeterKey}" contradicts existing bill Meter Key ("${targetBill.meter_key}")`);
+                }
+            }
+
+            if (rowContradictions.length > 0) {
+                errors.push({ row: rowNum, error: rowContradictions.join('; ') });
                 continue;
             }
 
@@ -2680,20 +2766,6 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const reconStatus = rec.reconciliationStatus?.trim() || targetBill.reconciliation_status || 'Not reconciled';
             const channel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'CBE';
             const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
-            const sanitizeOptional = (val?: string) => {
-                if (!val) return null;
-                const trimmed = val.trim();
-                if (trimmed === '' || trimmed === '-') return null;
-                return trimmed;
-            };
-
-            const phone = sanitizeOptional(rec.phone) || targetBill.phone || null;
-            const routeKey = sanitizeOptional(rec.routeKey) || targetBill.route_key || null;
-            const walkOrder = rec.walkOrder !== undefined && rec.walkOrder !== null && rec.walkOrder !== '' && rec.walkOrder !== '-' && !isNaN(Number(rec.walkOrder))
-                ? Number(rec.walkOrder)
-                : (targetBill.walk_order || null);
-            const meterKey = sanitizeOptional(rec.meterKey) || targetBill.meter_key || null;
-
             await query(`
                 UPDATE bills
                 SET payment_status = 'Paid',
@@ -2703,22 +2775,14 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                     reconciliation_status = $3,
                     payment_channel = $4,
                     bank_ref = $5,
-                    phone = COALESCE($6, phone),
-                    route_key = COALESCE($7, route_key),
-                    walk_order = COALESCE($8, walk_order),
-                    meter_key = COALESCE($9, meter_key),
                     updated_at = NOW()
-                WHERE id = $10
+                WHERE id = $6
             `, [
                 amountPaid,
                 validPaymentDate,
                 reconStatus,
                 channel,
                 bankRef,
-                phone,
-                routeKey,
-                walkOrder,
-                meterKey,
                 targetBill.id
             ]);
 
@@ -2777,7 +2841,7 @@ export const dbGetPaidBillsCount = async (params: {
         LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
         WHERE b.deleted_at IS NULL
           AND (
-            LOWER(TRIM(COALESCE(b.payment_status, ''))) = 'paid'
+            LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
             OR COALESCE(b.amount_paid, 0) > 0
           )
     `;
@@ -2813,7 +2877,7 @@ export const dbGetAllSentBillsPaginated = async (params: {
     let sql = `
         SELECT b.* FROM bills b
         WHERE b.status = 'Posted'
-          AND (b.payment_status IS NULL OR b.payment_status != 'Paid')
+          AND b.deleted_at IS NULL
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
@@ -2839,7 +2903,7 @@ export const dbGetAllSentBillsCount = async (params: {
     searchTerm?: string;
     branchId?: string;
 }) => {
-    let sql = `SELECT COUNT(*) FROM bills WHERE status = 'Posted' AND (payment_status IS NULL OR payment_status != 'Paid')`;
+    let sql = `SELECT COUNT(*) FROM bills WHERE status = 'Posted' AND deleted_at IS NULL`;
     const queryParams: any[] = [];
     let paramIndex = 1;
 
