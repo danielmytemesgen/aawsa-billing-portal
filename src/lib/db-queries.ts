@@ -2847,16 +2847,20 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 continue;
             }
 
-            // Check if bill is ALREADY paid & reconciled with identical bank reference in DB
-            const isPaid = String(targetBill.payment_status || '').trim().toLowerCase() === 'paid';
-            const isReconciled = String(targetBill.reconciliation_status || '').trim().toLowerCase() === 'reconciled';
+            // Note: We allow CSV updates even if bill has partial payment info
+            // The CSV is the source of truth for payment reconciliation
+            const existingPaymentStatus = String(targetBill.payment_status || '').trim().toLowerCase();
+            const existingReconStatus = String(targetBill.reconciliation_status || '').trim().toLowerCase();
             const existingBankRef = String(targetBill.bank_ref || '').trim();
-            const csvBankRef = String(rec.bankRef || '').trim();
             
-            if (isPaid && isReconciled && existingBankRef !== '' && existingBankRef !== '-' && (csvBankRef === '' || csvBankRef === existingBankRef)) {
-                errors.push({ row: rowNum, error: `Bill "${billIdent}" is already paid and reconciled. Skipped.` });
-                processedBillIds.add(billIdent);
-                continue;
+            // Debug logging for payment status
+            if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled' && existingBankRef && existingBankRef !== '-') {
+                console.log(`Row ${rowNum} - Bill "${billIdent}" current status:`, {
+                    payment_status: targetBill.payment_status,
+                    reconciliation_status: targetBill.reconciliation_status,
+                    bank_ref: targetBill.bank_ref,
+                    csv_bank_ref: rec.bankRef
+                });
             }
 
 
