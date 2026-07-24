@@ -2878,7 +2878,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const channel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'CBE';
             const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
 
-            await query(`
+            const updateRes: any = await query(`
                 UPDATE bills
                 SET payment_status = 'Paid',
                     status = 'Posted',
@@ -2889,15 +2889,24 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                     payment_channel = $4,
                     bank_ref = $5,
                     updated_at = NOW()
-                WHERE id = $6
+                WHERE (id IS NOT NULL AND id::text = $6)
+                   OR ("BILLKEY" IS NOT NULL AND TRIM("BILLKEY") = TRIM($7))
+                   OR (bill_number IS NOT NULL AND TRIM(bill_number) = TRIM($7))
+                RETURNING id
             `, [
                 amountPaid,
                 validPaymentDate,
                 reconStatus,
                 channel,
                 bankRef,
-                targetBill.id
+                String(targetBill.id || ''),
+                String(targetBill.BILLKEY || targetBill.bill_number || rawBillKey || '').trim()
             ]);
+
+            if (!updateRes || updateRes.length === 0) {
+                errors.push({ row: rowNum, error: `Failed to update database record for Bill "${targetBill.BILLKEY || targetBill.bill_number || rawBillKey || 'Bill'}"` });
+                continue;
+            }
 
             // Synchronize paymentStatus on individual_customers or bulk_meters
             if (targetBill.individual_customer_id) {
