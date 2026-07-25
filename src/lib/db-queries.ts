@@ -3136,7 +3136,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             }
             if (targetBill.CUSTOMERKEY) {
                 try {
-                    const syncRes = await query(`UPDATE bulk_meters SET "paymentStatus" = 'Paid', updated_at = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
+                    const syncRes = await query(`UPDATE bulk_meters SET "paymentStatus" = 'Paid', "updatedAt" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
                     console.log(`[CSV] Row ${rowNum} ✅ Synced bulk_meters for customer ${targetBill.CUSTOMERKEY}:`, syncRes);
                 } catch (syncErr) {
                     console.error(`[CSV] Row ${rowNum} ❌ Bulk meter sync failed:`, syncErr);
