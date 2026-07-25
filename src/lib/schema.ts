@@ -211,6 +211,7 @@ export const payments = pgTable('payments', {
   billId: uuid('bill_id'),
   billMonthYear: text('bill_month_year'), // Must match the partition key of bills
   individualCustomerId: text('individual_customer_id').references(() => individualCustomers.customerKeyNumber),
+  bulkMeterId: text('bulk_meter_id').references(() => bulkMeters.customerKeyNumber),
   amountPaid: numeric('amount_paid', { precision: 12, scale: 2 }).notNull(),
   paymentMethod: text('payment_method'),
   transactionReference: text('transaction_reference'),

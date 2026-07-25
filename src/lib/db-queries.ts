@@ -3148,17 +3148,19 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             if (!validIndividualCustomerId && targetBill.individual_customer_id) {
                 console.warn(`[CSV] Row ${rowNum} ⚠️ individual_customer_id "${targetBill.individual_customer_id}" does not exist in individual_customers. Inserting payment with NULL individual_customer_id.`);
             }
+            const bulkMeterId = targetBill.CUSTOMERKEY || null;
 
             // Log payment into payments table
             try {
                 const payRes = await query(`
-                    INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, bulk_meter_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING id
                 `, [
                     targetBill.id,
                     targetBill.month_year,
                     validIndividualCustomerId,
+                    bulkMeterId,
                     amountPaid,
                     channel,
                     bankRef,
@@ -3169,16 +3171,17 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 console.log(`[CSV] Row ${rowNum} ✅ Payment logged to payments table (id: ${payRes?.[0]?.id})`);
             } catch (pErr: any) {
                 console.log(`[CSV] Row ${rowNum} ⚠️  Payment insert with method="${channel}" failed, retrying without payment_method...`);
-                // If payment_method causes constraint violation, retry without it
+                // If payment_method causes constraint violation, retry without payment_method
                 try {
                     const payRes2 = await query(`
-                        INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, transaction_reference, processed_by_staff_id, payment_date, notes)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, bulk_meter_id, amount_paid, transaction_reference, processed_by_staff_id, payment_date, notes)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                         RETURNING id
                     `, [
                         targetBill.id,
                         targetBill.month_year,
                         validIndividualCustomerId,
+                        bulkMeterId,
                         amountPaid,
                         bankRef,
                         staffId || null,
