@@ -2911,7 +2911,10 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const targetBill = await findTargetBill(rawBillKey, rawCustKey, rawMeterKey, cBillKey, cCustKey, cMeterKey);
 
             if (!targetBill) {
-                errors.push({ row: rowNum, error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}"` });
+                errors.push({
+                    row: rowNum,
+                    error: `Bill not found for Bill Key "${rawBillKey || ''}" / Customer Key "${rawCustKey || ''}" / Meter Key "${rawMeterKey || ''}". Please confirm that the bill exists in this database and that the provided identifiers are correct.`
+                });
                 continue;
             }
 
@@ -2929,6 +2932,14 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const existingReconStatus = String(targetBill.reconciliation_status || '').trim().toLowerCase();
             const existingBankRef = String(targetBill.bank_ref || '').trim();
             
+            if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled') {
+                errors.push({
+                    row: rowNum,
+                    error: `Bill "${billIdent}" is already marked as paid and reconciled. No further update was applied.`
+                });
+                continue;
+            }
+
             // Debug logging for payment status
             if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled' && existingBankRef && existingBankRef !== '-') {
                 console.log(`Row ${rowNum} - Bill "${billIdent}" current status:`, {
@@ -3012,7 +3023,10 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             }
 
             if (rowContradictions.length > 0) {
-                errors.push({ row: rowNum, error: rowContradictions.join('; ') });
+                errors.push({
+                    row: rowNum,
+                    error: `Payment CSV row does not match existing bill ${billIdent}. Please ensure Bill Key, Customer Key, Customer Name, Branch, and Amount are correct. Details: ${rowContradictions.join('; ')}`
+                });
                 continue;
             }
 
