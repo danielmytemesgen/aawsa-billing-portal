@@ -59,9 +59,13 @@ export function ReportPrintSummaryDialog({
     let reconciledCount = 0;
 
     bills.forEach((bill: any) => {
+      // Use difference_usage (Diff. Usage) as the primary consumption metric
+      const diffUsage = bill.differenceUsage ?? bill.difference_usage ?? null;
       const prevRead = Number(bill.PREVREAD ?? bill.prevRead ?? 0);
       const currRead = Number(bill.CURRREAD ?? bill.currRead ?? 0);
-      const usage = bill.CONS !== undefined && bill.CONS !== null ? Number(bill.CONS) : Math.max(0, currRead - prevRead);
+      const usage = diffUsage !== null && diffUsage !== undefined
+        ? Number(diffUsage)
+        : (bill.CONS !== undefined && bill.CONS !== null ? Number(bill.CONS) : Math.max(0, currRead - prevRead));
       totalUsage += usage;
 
       const d30 = Number(bill.debit30 ?? bill.debit_30 ?? 0);
@@ -250,7 +254,7 @@ export function ReportPrintSummaryDialog({
               <div className="text-2xl font-black text-slate-900 mt-1">{metrics.totalCount}</div>
             </div>
             <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
-              <div className="text-xs font-bold text-blue-700 uppercase">Total Consumption</div>
+              <div className="text-xs font-bold text-blue-700 uppercase">Total Diff. Usage</div>
               <div className="text-2xl font-black text-blue-900 mt-1">{formatNumber(metrics.totalUsage)} m³</div>
             </div>
             {type === 'sent' ? (
@@ -288,7 +292,7 @@ export function ReportPrintSummaryDialog({
                   <th className="py-3 px-3">Customer / Meter</th>
                   <th className="py-3 px-3">Customer Key</th>
                   <th className="py-3 px-3">Branch</th>
-                  <th className="py-3 px-3 text-right">Usage (m³)</th>
+                  <th className="py-3 px-3 text-right">Diff. Usage (m³)</th>
                   {type === 'sent' ? (
                     <>
                       <th className="py-3 px-3 text-right">Current Bill</th>
@@ -315,9 +319,13 @@ export function ReportPrintSummaryDialog({
                     const custKey = getCustomerKeyDisplay(bill);
                     const branchName = getBranchNameDisplay(bill, customers, bulkMeters, branches);
 
+                    // Use difference_usage (Diff. Usage) as the primary per-row consumption metric
+                    const diffUsageRow = bill.differenceUsage ?? bill.difference_usage ?? null;
                     const prevRead = Number(bill.PREVREAD ?? bill.prevRead ?? 0);
                     const currRead = Number(bill.CURRREAD ?? bill.currRead ?? 0);
-                    const usage = bill.CONS !== undefined && bill.CONS !== null ? Number(bill.CONS) : Math.max(0, currRead - prevRead);
+                    const usage = diffUsageRow !== null && diffUsageRow !== undefined
+                      ? Number(diffUsageRow)
+                      : (bill.CONS !== undefined && bill.CONS !== null ? Number(bill.CONS) : Math.max(0, currRead - prevRead));
 
                     const currentBill = getMonthlyBillAmt(bill);
                     const d30 = Number(bill.debit30 ?? bill.debit_30 ?? 0);
