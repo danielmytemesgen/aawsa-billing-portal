@@ -1380,7 +1380,48 @@ export const dbGetAllPayments = async (branchId?: string) => {
     return await query('SELECT * FROM payments WHERE deleted_at IS NULL');
 };
 
+const normalizePaymentMethod = (rawMethod?: string | null): string | null => {
+    const cleaned = rawMethod?.toString().trim();
+    if (!cleaned) return null;
+
+    const normalized = cleaned.replace(/[_\s]+/g, ' ').toLowerCase();
+    const validChannels: {[key: string]: string} = {
+        'cbe': 'Bank Transfer',
+        'bank transfer': 'Bank Transfer',
+        'bank_transfer': 'Bank Transfer',
+        'banktransfer': 'Bank Transfer',
+        'cash': 'Cash',
+        'mobile money': 'Mobile Money',
+        'mobile_money': 'Mobile Money',
+        'mobilemoney': 'Mobile Money',
+        'online payment': 'Online Payment',
+        'online_payment': 'Online Payment',
+        'onlinepayment': 'Online Payment',
+        'other': 'Other'
+    };
+
+    if (validChannels[normalized]) {
+        return validChannels[normalized];
+    }
+    if (normalized.includes('cbe')) {
+        return 'Bank Transfer';
+    }
+    if (normalized.includes('mobile')) {
+        return 'Mobile Money';
+    }
+    if (normalized.includes('online')) {
+        return 'Online Payment';
+    }
+    if (normalized.includes('bank')) {
+        return 'Bank Transfer';
+    }
+    return 'Other';
+};
+
 export const dbCreatePayment = async (payment: any) => {
+    if (payment.payment_method !== undefined) {
+        payment.payment_method = normalizePaymentMethod(payment.payment_method);
+    }
     const keys = Object.keys(payment);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO payments (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
@@ -2838,6 +2879,16 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
 
     const processedBillIds = new Set<string>();
 
+    const resolveExistingIndividualCustomerId = async (customerId?: string | null) => {
+        if (!customerId) return null;
+        const rows: any = await query(`
+            SELECT 1 FROM individual_customers
+            WHERE "customerKeyNumber" = $1
+            LIMIT 1
+        `, [customerId]);
+        return rows && rows.length > 0 ? customerId : null;
+    };
+
     // Execute row updates independently to guarantee total row isolation and prevent transaction aborts
     for (let i = 0; i < records.length; i++) {
         const rec = records[i];
@@ -2975,18 +3026,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             
             // Map payment channel to valid enum values: Cash, Bank Transfer, Mobile Money, Online Payment, Other
             const rawChannel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'Bank Transfer';
-            const validChannels: {[key: string]: string} = {
-                'CBE': 'Bank Transfer',
-                'bank transfer': 'Bank Transfer',
-                'bank_transfer': 'Bank Transfer',
-                'cash': 'Cash',
-                'mobile money': 'Mobile Money',
-                'mobile_money': 'Mobile Money',
-                'online payment': 'Online Payment',
-                'online_payment': 'Online Payment',
-                'other': 'Other'
-            };
-            const channel = validChannels[rawChannel.toLowerCase()] || (rawChannel ? 'Other' : 'Bank Transfer');
+            const channel = normalizePaymentMethod(rawChannel) || 'Bank Transfer';
             
             const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
 
@@ -3103,6 +3143,12 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 }
             }
 
+            // Double check that the individual customer ID exists before inserting payment
+            const validIndividualCustomerId = await resolveExistingIndividualCustomerId(targetBill.individual_customer_id || null);
+            if (!validIndividualCustomerId && targetBill.individual_customer_id) {
+                console.warn(`[CSV] Row ${rowNum} ⚠️ individual_customer_id "${targetBill.individual_customer_id}" does not exist in individual_customers. Inserting payment with NULL individual_customer_id.`);
+            }
+
             // Log payment into payments table
             try {
                 const payRes = await query(`
@@ -3112,7 +3158,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 `, [
                     targetBill.id,
                     targetBill.month_year,
-                    targetBill.individual_customer_id || targetBill.CUSTOMERKEY,
+                    validIndividualCustomerId,
                     amountPaid,
                     channel,
                     bankRef,
@@ -3122,8 +3168,28 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 ]);
                 console.log(`[CSV] Row ${rowNum} ✅ Payment logged to payments table (id: ${payRes?.[0]?.id})`);
             } catch (pErr: any) {
-                console.error(`[CSV] Row ${rowNum} ❌ Payments insert failed:`, pErr);
-                // Continue even if payments table insert fails - the main update succeeded
+                console.log(`[CSV] Row ${rowNum} ⚠️  Payment insert with method="${channel}" failed, retrying without payment_method...`);
+                // If payment_method causes constraint violation, retry without it
+                try {
+                    const payRes2 = await query(`
+                        INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, amount_paid, transaction_reference, processed_by_staff_id, payment_date, notes)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        RETURNING id
+                    `, [
+                        targetBill.id,
+                        targetBill.month_year,
+                        validIndividualCustomerId,
+                        amountPaid,
+                        bankRef,
+                        staffId || null,
+                        validPaymentDate,
+                        `CSV Payment Update: Recon=${reconStatus}`
+                    ]);
+                    console.log(`[CSV] Row ${rowNum} ✅ Payment logged to payments table without method (id: ${payRes2?.[0]?.id})`);
+                } catch (pErr2: any) {
+                    console.error(`[CSV] Row ${rowNum} ❌ Payments insert failed (both attempts):`, pErr2);
+                    // Continue even if payments table insert fails - the main update succeeded
+                }
             }
 
             // Update targetBill in-memory state so subsequent duplicate rows in the same CSV are recognized as already updated
