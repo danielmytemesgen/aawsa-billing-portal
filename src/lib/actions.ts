@@ -3977,6 +3977,7 @@ export async function getAllSentBillsAction(params: {
   limit: number;
   searchTerm?: string;
   branchId?: string;
+  monthYear?: string;
 }) {
   return await wrap(async () => {
     const session = await getSession();

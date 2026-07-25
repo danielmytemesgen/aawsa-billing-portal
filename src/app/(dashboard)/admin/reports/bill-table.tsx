@@ -12,6 +12,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
 import type { Branch } from "../branches/branch-types";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { getBillKey } from "@/lib/export-utils";
 
 interface BillTableProps {
   bills: DomainBill[];
@@ -84,6 +85,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
         <TableHeader className="bg-slate-50/50 border-b">
           <TableRow className="hover:bg-transparent">
             <TableHead className="font-bold text-slate-700 py-5 pl-6">Customer/Meter Name</TableHead>
+            <TableHead className="font-bold text-slate-700 py-5">Bill Key</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Customer Key</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Branch</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Month</TableHead>
@@ -111,6 +113,11 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
             bills.map((bill) => (
               <TableRow key={bill.id} className="hover:bg-slate-50/80 transition-colors group">
                 <TableCell className="font-bold text-slate-900 py-4 pl-6">{getIdentifier(bill)}</TableCell>
+                <TableCell className="py-4 whitespace-nowrap">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    {getBillKey(bill)}
+                  </span>
+                </TableCell>
                 <TableCell className="text-slate-600 py-4">{getCustomerKey(bill)}</TableCell>
                 <TableCell className="text-slate-600 py-4">
                   <div className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-xs font-bold w-fit border border-blue-100">

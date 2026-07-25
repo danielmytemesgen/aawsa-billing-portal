@@ -11,6 +11,7 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { getBillKey } from "@/lib/export-utils";
 
 interface BillTableProps {
   bills: DomainBill[];
@@ -86,6 +87,7 @@ export function BillTable({ bills, customers, bulkMeters, branches = [], showDeb
         <TableHeader>
           <TableRow>
             <TableHead>Customer/Meter Name</TableHead>
+            <TableHead>Bill Key</TableHead>
             <TableHead>Customer Key</TableHead>
             <TableHead>Branch</TableHead>
             <TableHead>Month</TableHead>
@@ -113,6 +115,11 @@ export function BillTable({ bills, customers, bulkMeters, branches = [], showDeb
             bills.map((bill) => (
               <TableRow key={bill.id}>
                 <TableCell className="font-medium">{getIdentifier(bill)}</TableCell>
+                <TableCell className="py-3 whitespace-nowrap">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    {getBillKey(bill)}
+                  </span>
+                </TableCell>
                 <TableCell>{getCustomerKey(bill)}</TableCell>
                 <TableCell>{getBranchName(bill)}</TableCell>
                 {(() => {

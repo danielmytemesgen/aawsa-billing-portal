@@ -3233,6 +3233,7 @@ export const dbGetAllSentBillsPaginated = async (params: {
     offset: number;
     searchTerm?: string;
     branchId?: string;
+    monthYear?: string;
 }) => {
     let sql = `
         SELECT b.* FROM bills b
@@ -3251,6 +3252,11 @@ export const dbGetAllSentBillsPaginated = async (params: {
         paramIndex++;
     }
 
+    if (params.monthYear && params.monthYear !== 'all') {
+        sql += ` AND b.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
     if (params.searchTerm) {
         sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex})`;
         queryParams.push(`%${params.searchTerm}%`);
@@ -3266,6 +3272,7 @@ export const dbGetAllSentBillsPaginated = async (params: {
 export const dbGetAllSentBillsCount = async (params: {
     searchTerm?: string;
     branchId?: string;
+    monthYear?: string;
 }) => {
     let sql = `
         SELECT COUNT(*) 
@@ -3282,6 +3289,11 @@ export const dbGetAllSentBillsCount = async (params: {
         sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
         queryParams.push(params.branchId);
         paramIndex++;
+    }
+
+    if (params.monthYear && params.monthYear !== 'all') {
+        sql += ` AND b.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
     }
 
     if (params.searchTerm) {
