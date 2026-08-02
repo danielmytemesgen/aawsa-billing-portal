@@ -1785,6 +1785,46 @@ export async function createIndividualCustomerReadingAction(
     });
   });
 }
+
+export async function batchCreateIndividualCustomerReadingsAction(
+  items: Array<{ reading: IndividualCustomerReadingInsert; previousReading?: number }>
+) {
+  const status = await getReadingPeriodStatusAction();
+  if (status === 'Closed') {
+    return { success: false, message: "Reading period is currently closed globally." };
+  }
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canAddIndividual = canCreateMeterReadingForType((permission) => perms.includes(permission), 'individual');
+    if (!canAddIndividual) throw new Error('Forbidden: Missing permission to add individual readings');
+
+    return await withTransaction(async (client) => {
+      let count = 0;
+      for (const item of items) {
+        const reading = item.reading;
+        const custId = reading.individual_customer_id || (reading as any).CUST_KEY;
+        const customer = await dbGetCustomerById(custId, client);
+        if (customer) {
+          await dbCreateIndividualCustomerReading(reading, client);
+          const rDate = (reading as any).READING_DATE || (reading as any).reading_date || reading.reading_date;
+          const rValue = (reading as any).METER_READING !== undefined ? (reading as any).METER_READING : ((reading as any).reading_value !== undefined ? (reading as any).reading_value : reading.reading_value);
+          const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
+          const monthYear = format(readingDate, 'yyyy-MM');
+          const previousReadingValue = item.previousReading !== undefined ? item.previousReading : (customer.currentReading ?? 0);
+          await dbUpdateCustomer(custId, {
+            previousReading: previousReadingValue,
+            currentReading: rValue,
+            month: monthYear
+          }, client);
+          count++;
+        }
+      }
+      return { success: true, count };
+    });
+  });
+}
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
@@ -1893,6 +1933,46 @@ export async function createBulkMeterReadingAction(
       });
       
       return result;
+    });
+  });
+}
+
+export async function batchCreateBulkMeterReadingsAction(
+  items: Array<{ reading: BulkMeterReadingInsert; previousReading?: number }>
+) {
+  const status = await getReadingPeriodStatusAction();
+  if (status === 'Closed') {
+    return { success: false, message: "Reading period is currently closed globally." };
+  }
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canAddBulk = canCreateMeterReadingForType((permission) => perms.includes(permission), 'bulk');
+    if (!canAddBulk) throw new Error('Forbidden: Missing permission to add bulk readings');
+
+    return await withTransaction(async (client) => {
+      let count = 0;
+      for (const item of items) {
+        const reading = item.reading;
+        const custKey = reading.CUSTOMERKEY || (reading as any).CUST_KEY;
+        const meter = await dbGetBulkMeterById(custKey, client);
+        if (meter) {
+          await dbCreateBulkMeterReading(reading, client);
+          const rDate = (reading as any).READING_DATE || (reading as any).reading_date || reading.reading_date;
+          const rValue = (reading as any).METER_READING !== undefined ? (reading as any).METER_READING : ((reading as any).reading_value !== undefined ? (reading as any).reading_value : reading.reading_value);
+          const readingDate = rDate instanceof Date ? rDate : new Date(rDate as string);
+          const monthYear = format(readingDate, 'yyyy-MM');
+          const previousReadingValue = item.previousReading !== undefined ? item.previousReading : (meter.currentReading ?? 0);
+          await dbUpdateBulkMeter(custKey, {
+            previousReading: previousReadingValue,
+            currentReading: rValue,
+            month: monthYear
+          }, client);
+          count++;
+        }
+      }
+      return { success: true, count };
     });
   });
 }
