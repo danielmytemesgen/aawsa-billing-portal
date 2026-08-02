@@ -54,7 +54,7 @@ const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, 
     : `Tier ${index + 1}: ${minConsumptionDisplay} - ${maxConsumptionDisplay} m³`;
 
   return {
-    id: `tier-${index}-${tier.rate}-${String(tier.limit)}`,
+    id: `tier-${index}-${tier.rate}-${String(tier.limit)}-${typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`,
     description,
     minConsumption: minConsumptionDisplay,
     maxConsumption: maxConsumptionDisplay,
@@ -163,7 +163,7 @@ export default function TariffManagementPage() {
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
 
-  const [currentEffectiveDate, setCurrentEffectiveDate] = React.useState<string>("2021-01-01");
+  const [currentEffectiveDate, setCurrentEffectiveDate] = React.useState<string>("");
   const [currentTariffType, setCurrentTariffType] = React.useState<'Domestic' | 'Non-domestic' | 'rental Non domestic' | 'rental domestic'>('Domestic');
   const [allTariffs, setAllTariffs] = React.useState<TariffRow[]>([]);
   const [isDataLoading, setIsDataLoading] = React.useState(true);
@@ -187,6 +187,8 @@ export default function TariffManagementPage() {
   } | null>(null);
   const [isPenaltyDialogOpen, setIsPenaltyDialogOpen] = React.useState(false);
   const [isNewVersionDialogOpen, setIsNewVersionDialogOpen] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [pendingReset, setPendingReset] = React.useState<{ fieldName: keyof TariffInfo; feeName: string; resetValue: number } | null>(null);
 
   // Get unique effective dates for the current tariff type
   const availableDates = React.useMemo(() => {
@@ -197,9 +199,9 @@ export default function TariffManagementPage() {
     return Array.from(new Set(dates));
   }, [allTariffs, currentTariffType]);
 
-  // If currentEffectiveDate is not in availableDates, pick the latest one
+  // Dynamically set currentEffectiveDate to the latest active tariff date when tariffs load or change
   React.useEffect(() => {
-    if (availableDates.length > 0 && !availableDates.includes(currentEffectiveDate)) {
+    if (availableDates.length > 0 && (!currentEffectiveDate || !availableDates.includes(currentEffectiveDate))) {
       setCurrentEffectiveDate(availableDates[0]);
     }
   }, [availableDates, currentEffectiveDate]);
@@ -267,6 +269,22 @@ export default function TariffManagementPage() {
 
       handleTierUpdate(newRatesList, rateToDelete.type);
       toast({ title: `Tariff Tier Deleted`, description: `Tier "${rateToDelete.tier.description}" has been removed.` });
+
+      // Fix 3: Auto-clear fixed_tier_index if it now points out-of-bounds after deletion
+      if (
+        rateToDelete.type === 'water' &&
+        activeTariffInfo.fixed_tier_index !== null &&
+        activeTariffInfo.fixed_tier_index !== undefined &&
+        Number(activeTariffInfo.fixed_tier_index) >= newRatesList.length
+      ) {
+        handleUpdateFixedTierIndex(null);
+        toast({
+          variant: "destructive",
+          title: "Fixed Tier Override Cleared",
+          description: "The previously selected override tier was removed. Billing has been reset to progressive mode.",
+        });
+      }
+
       setRateToDelete(null);
     }
   };
@@ -359,15 +377,16 @@ export default function TariffManagementPage() {
   const handleDeleteAdditionalFee = async (index: number) => {
     if (!activeTariffInfo) return;
 
-    const feeToDelete = activeTariffInfo.additional_fees[index];
-    const updatedFees = activeTariffInfo.additional_fees.filter((_, i) => i !== index);
+    const fees = activeTariffInfo.additional_fees ?? [];
+    const feeToDelete = fees[index];
+    const updatedFees = fees.filter((_, i) => i !== index);
 
     const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
       additional_fees: updatedFees
     } as any);
 
     if (result.success) {
-      toast({ title: "Fee Deleted", description: `Successfully removed the additional fee "${feeToDelete.name}".` });
+      toast({ title: "Fee Deleted", description: `Successfully removed the additional fee "${feeToDelete?.name ?? 'Unknown'}".` });
     } else {
       toast({ variant: "destructive", title: "Deletion Failed", description: result.message });
     }
@@ -414,35 +433,35 @@ export default function TariffManagementPage() {
     }
   };
 
-  const handleResetFee = async (fieldName: keyof TariffInfo, feeName: string) => {
+  // Fix 4: Sensible system defaults per field (stored as decimals, e.g. 0.05 = 5%)
+  const FIELD_DEFAULTS: Partial<Record<keyof TariffInfo, number>> = {
+    maintenance_percentage: 0.05,
+    sanitation_percentage: 0.05,
+    vat_rate: 0.15,
+    domestic_vat_threshold_m3: 0,
+  };
+
+  const handleResetFee = (fieldName: keyof TariffInfo, feeName: string) => {
     if (!activeTariffInfo) return;
+    const resetValue = FIELD_DEFAULTS[fieldName] ?? 0;
+    // Show confirmation dialog instead of writing directly
+    setPendingReset({ fieldName, feeName, resetValue });
+  };
 
-    // Determine a sensible default for resetting. For percentages, 0. For thresholds, 0.
-    let resetValue: number;
-    switch (fieldName) {
-      case 'maintenance_percentage':
-      case 'sanitation_percentage':
-      case 'vat_rate':
-        resetValue = 0; // Or a system default if one exists
-        break;
-      case 'domestic_vat_threshold_m3':
-        resetValue = 0;
-        break;
-      default:
-        resetValue = 0;
-    }
+  const confirmResetFee = async () => {
+    if (!activeTariffInfo || !pendingReset) return;
+    const { fieldName, feeName, resetValue } = pendingReset;
 
-    const updatePayload: Partial<TariffInfo> = {
-      [fieldName]: resetValue,
-    };
-
+    const updatePayload: Partial<TariffInfo> = { [fieldName]: resetValue };
     const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any);
 
     if (result.success) {
-      toast({ title: "Fee Reset", description: `${feeName} has been reset to its default value.` });
+      const displayValue = resetValue < 1 && resetValue > 0 ? `${(resetValue * 100).toFixed(0)}%` : String(resetValue);
+      toast({ title: "Fee Reset", description: `${feeName} has been reset to ${displayValue}.` });
     } else {
       toast({ variant: "destructive", title: "Reset Failed", description: result.message });
     }
+    setPendingReset(null);
   };
 
   const handleUpdatePenalty = async (values: {
@@ -462,31 +481,42 @@ export default function TariffManagementPage() {
     }
   };
 
+  // Fix 2: isSaving guard prevents concurrent double-writes on rapid clicks
   const handleUpdateFixedTierIndex = async (newIndex: number | null) => {
     if (!activeTariffInfo) return;
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
-      fixed_tier_index: newIndex
-    } as any);
-    if (result.success) {
-      if (newIndex !== null) {
-        toast({ title: "Tier Selection Updated", description: `Billing for ${currentTariffType} will now use Tier ${newIndex + 1} (${activeWaterTiers[newIndex]?.description || ''}).` });
+    setIsSaving(true);
+    try {
+      const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
+        fixed_tier_index: newIndex
+      } as any);
+      if (result.success) {
+        if (newIndex !== null) {
+          toast({ title: "Tier Selection Updated", description: `Billing for ${currentTariffType} will now use Tier ${newIndex + 1} (${activeWaterTiers[newIndex]?.description || ''}).` });
+        } else {
+          toast({ title: "Override Cleared", description: `Billing for ${currentTariffType} has been reset to default rules.` });
+        }
       } else {
-        toast({ title: "Override Cleared", description: `Billing for ${currentTariffType} has been reset to default rules.` });
+        toast({ variant: "destructive", title: "Update Failed", description: result.message });
       }
-    } else {
-      toast({ variant: "destructive", title: "Update Failed", description: result.message });
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleToggleRuleOfThree = async (enabled: boolean) => {
     if (!activeTariffInfo) return;
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
-      use_rule_of_three: enabled
-    } as any);
-    if (result.success) {
-      toast({ title: "3m³ Rule Updated", description: `Minimum 3m³ adjustment is now ${enabled ? 'ENABLED' : 'DISABLED'} for ${currentTariffType}.` });
-    } else {
-      toast({ variant: "destructive", title: "Update Failed", description: result.message });
+    setIsSaving(true);
+    try {
+      const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
+        use_rule_of_three: enabled
+      } as any);
+      if (result.success) {
+        toast({ title: "3m³ Rule Updated", description: `Minimum 3m³ adjustment is now ${enabled ? 'ENABLED' : 'DISABLED'} for ${currentTariffType}.` });
+      } else {
+        toast({ variant: "destructive", title: "Update Failed", description: result.message });
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -758,7 +788,7 @@ export default function TariffManagementPage() {
                         id="rule-of-three-toggle"
                         checked={activeTariffInfo.use_rule_of_three !== false}
                         onCheckedChange={handleToggleRuleOfThree}
-                        disabled={!canUpdateTariffs}
+                        disabled={!canUpdateTariffs || isSaving}
                       />
                     </div>
                   </div>
@@ -794,13 +824,13 @@ export default function TariffManagementPage() {
                         return (
                           <button
                             key={tier.id}
-                            onClick={() => canUpdateTariffs && handleUpdateFixedTierIndex(index)}
-                            disabled={!canUpdateTariffs}
+                            onClick={() => canUpdateTariffs && !isSaving && handleUpdateFixedTierIndex(index)}
+                            disabled={!canUpdateTariffs || isSaving}
                             className={`group relative p-5 rounded-2xl border-2 text-left transition-all duration-200 ${
                               isSelected
                                 ? 'border-violet-500 bg-violet-50 shadow-lg shadow-violet-100'
                                 : 'border-slate-200 bg-white hover:border-violet-300 hover:bg-violet-50/50'
-                            } ${!canUpdateTariffs ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                            } ${(!canUpdateTariffs || isSaving) ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
                           >
                             <div className={`absolute top-3 right-3 h-5 w-5 rounded-full border-2 flex items-center justify-center transition-all ${
                               isSelected ? 'border-violet-500 bg-violet-500' : 'border-slate-300'
@@ -879,7 +909,7 @@ export default function TariffManagementPage() {
                               <Button size="icon" variant="ghost" className="h-10 w-10 bg-white shadow-sm hover:text-indigo-600 rounded-xl border border-slate-200" onClick={() => handleOpenFeeDialog(item.field as any, item.label)}>
                                 <Edit2 className="h-4 w-4" />
                               </Button>
-                              <Button size="icon" variant="ghost" className="h-10 w-10 bg-white shadow-sm hover:text-red-600 rounded-xl border border-slate-200" onClick={() => handleResetFee(item.field as any, item.label)}>
+                              <Button size="icon" variant="ghost" title={`Reset to default (${((FIELD_DEFAULTS[item.field as keyof TariffInfo] ?? 0) * 100).toFixed(0)}%)`} className="h-10 w-10 bg-white shadow-sm hover:text-red-600 rounded-xl border border-slate-200" onClick={() => handleResetFee(item.field as any, item.label)}>
                                 <RotateCcw className="h-4 w-4" />
                               </Button>
                             </div>
@@ -1013,34 +1043,44 @@ export default function TariffManagementPage() {
                   </div>
                 </div>
 
-                {/* Sewerage Fee Integrated at Bottom */}
-                <div className="pt-10 border-t border-slate-100 space-y-6">
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="h-12 w-12 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-700 shadow-sm border border-blue-200">
-                        <ArrowUpRight className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h4 className="text-2xl font-black text-slate-900">Sewerage Utility Matrix</h4>
-                        <p className="text-sm font-bold text-slate-500 mt-1">Treatment and maintenance surcharge structure</p>
-                      </div>
+              </CardContent>
+            </Card>
+
+            {/* Fix 5: Sewerage Matrix promoted to its own top-level Card */}
+            <Card className="shadow-2xl border-none bg-white overflow-hidden rounded-3xl transition-shadow hover:shadow-cyan-100/50">
+              <div className="h-2 bg-gradient-to-r from-cyan-600 via-teal-500 to-blue-600" />
+              <CardHeader className="pb-6 bg-slate-50/50 border-b">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-cyan-100 flex items-center justify-center text-cyan-700">
+                      <ArrowUpRight className="h-6 w-6" />
                     </div>
-                    {canUpdateTariffs && (
-                      <Button onClick={() => handleAddTier('sewerage')} variant="outline" className="h-11 px-6 rounded-xl border-slate-300 font-black text-slate-700 hover:bg-slate-100 shadow-sm">
-                        <PlusCircle className="mr-2 h-5 w-5" /> Add Sewerage Tier
-                      </Button>
-                    )}
+                    <div>
+                      <CardTitle className="text-2xl font-black text-slate-900">Sewerage Utility Matrix</CardTitle>
+                      <CardDescription className="font-bold text-slate-500 mt-0.5">
+                        Treatment & Maintenance Surcharges • {activeTariffInfo?.effective_date}
+                      </CardDescription>
+                    </div>
                   </div>
-                  <div className="mt-4">
-                    <TariffRateTable
-                      rates={activeSewerageTiers}
-                      onEdit={(rate) => handleEditTier(rate, 'sewerage')}
-                      onDelete={(rate) => handleDeleteTier(rate, 'sewerage')}
-                      currency="ETB"
-                      canUpdate={canUpdateTariffs}
-                    />
-                  </div>
+                  {canUpdateTariffs && (
+                    <Button onClick={() => handleAddTier('sewerage')} className="h-11 bg-cyan-600 hover:bg-cyan-700 font-bold px-6 rounded-xl shadow-lg shadow-cyan-100">
+                      <PlusCircle className="mr-2 h-4 w-4" /> Add Sewerage Tier
+                    </Button>
+                  )}
                 </div>
+                <p className="mt-4 text-sm font-medium text-slate-500 flex items-center gap-2">
+                  <Info className="h-4 w-4 text-cyan-500" />
+                  Sewerage tiers apply as a separate surcharge on top of the water bill, based on the same consumption volume.
+                </p>
+              </CardHeader>
+              <CardContent className="pt-8">
+                <TariffRateTable
+                  rates={activeSewerageTiers}
+                  onEdit={(rate) => handleEditTier(rate, 'sewerage')}
+                  onDelete={(rate) => handleDeleteTier(rate, 'sewerage')}
+                  currency="ETB"
+                  canUpdate={canUpdateTariffs}
+                />
               </CardContent>
             </Card>
           </>
@@ -1099,11 +1139,41 @@ export default function TariffManagementPage() {
                 <AlertDialogTitle>Are you sure you want to delete this tier?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This action cannot be undone. Tier: &quot;{rateToDelete?.tier.description}&quot;
+                  {rateToDelete?.type === 'water' &&
+                    activeTariffInfo?.fixed_tier_index !== null &&
+                    activeTariffInfo?.fixed_tier_index !== undefined &&
+                    Number(activeTariffInfo.fixed_tier_index) >= (rateToDelete.type === 'water' ? activeWaterTiers : activeSewerageTiers).filter(r => r.id !== rateToDelete.tier.id).length && (
+                    <span className="block mt-2 text-amber-600 font-semibold">
+                      ⚠ The current Fixed Tier Override points to this tier and will be automatically cleared.
+                    </span>
+                  )}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel onClick={() => setRateToDelete(null)}>Cancel</AlertDialogCancel>
                 <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90">Delete Tier</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {/* Fix 4: Reset fee confirmation dialog */}
+          <AlertDialog open={!!pendingReset} onOpenChange={(open) => !open && setPendingReset(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Reset {pendingReset?.feeName}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will overwrite the current value and set <strong>{pendingReset?.feeName}</strong> to its system default of{' '}
+                  <strong>
+                    {pendingReset && pendingReset.resetValue > 0 && pendingReset.resetValue < 1
+                      ? `${(pendingReset.resetValue * 100).toFixed(0)}%`
+                      : String(pendingReset?.resetValue ?? 0)}
+                  </strong>.
+                  This action can be undone by editing the field manually.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setPendingReset(null)}>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={confirmResetFee} className="bg-indigo-600 hover:bg-indigo-700">Confirm Reset</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

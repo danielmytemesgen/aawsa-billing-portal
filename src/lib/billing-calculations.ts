@@ -110,11 +110,12 @@ export function calculateBillFromTariff(
     // --- Rule of 3: apply minimum consumption if configured ---
     // When diff usage is negative and rule_of_three is active, treat as 3 m³.
     // When diff usage is negative and rule_of_three is NOT active, clamp to 0.
-    const effectiveUsage = (tariffConfig.use_rule_of_three && CONS < 3) ? 3 : Math.max(0, CONS);
+    const useRuleOfThree = tariffConfig.use_rule_of_three !== false;
+    const effectiveUsage = (useRuleOfThree && CONS < 3) ? 3 : Math.max(0, CONS);
     const usageForBaseWaterCharge = baseWaterChargeCONS !== undefined ? baseWaterChargeCONS : effectiveUsage;
     if (usageForBaseWaterCharge < 0) return emptyResult;
 
-    const sortedTiers = (tariffConfig.tiers || []).sort((a, b) => {
+    const sortedTiers = [...(tariffConfig.tiers || [])].sort((a, b) => {
         const limitA = a.limit === "Infinity" ? Infinity : Number(a.limit);
         const limitB = b.limit === "Infinity" ? Infinity : Number(b.limit);
         return limitA - limitB;
@@ -278,7 +279,7 @@ export function calculateBillFromTariff(
     const sewerageTierBreakdown: Array<{ start: number; end: number | typeof Infinity; usage: number; rate: number; charge: number }> = [];
 
     if (sewerageConnection === "Yes" && tariffConfig.sewerage_tiers && tariffConfig.sewerage_tiers.length > 0) {
-        const sortedSewerageTiers = tariffConfig.sewerage_tiers.sort((a, b) => (a.limit === "Infinity" ? Infinity : Number(a.limit)) - (b.limit === "Infinity" ? Infinity : Number(b.limit)));
+        const sortedSewerageTiers = [...tariffConfig.sewerage_tiers].sort((a, b) => (a.limit === "Infinity" ? Infinity : Number(a.limit)) - (b.limit === "Infinity" ? Infinity : Number(b.limit)));
         if (customerType === 'Domestic' || customerType === 'rental domestic') {
             let remainingUsage = usageForSewerage;
             let lastLimit = 0;

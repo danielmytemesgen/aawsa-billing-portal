@@ -49,7 +49,9 @@ export function normalizeTariff(tariffRow: any): TariffInfo {
         fixed_tier_index: tariffRow.fixed_tier_index !== undefined && tariffRow.fixed_tier_index !== null
             ? Number(tariffRow.fixed_tier_index)
             : undefined,
-        use_rule_of_three: Boolean(tariffRow.use_rule_of_three),
+        use_rule_of_three: tariffRow.use_rule_of_three !== undefined && tariffRow.use_rule_of_three !== null
+            ? (typeof tariffRow.use_rule_of_three === 'boolean' ? tariffRow.use_rule_of_three : Boolean(Number(tariffRow.use_rule_of_three)))
+            : true,
         // Penalty fields (passed through as-is; calculateDebtAging reads them)
         penalty_month_threshold: tariffRow.penalty_month_threshold !== undefined && tariffRow.penalty_month_threshold !== null
             ? Number(tariffRow.penalty_month_threshold)
