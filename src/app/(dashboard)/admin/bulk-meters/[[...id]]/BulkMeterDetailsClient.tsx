@@ -999,7 +999,7 @@ export default function BulkMeterDetailsPage() {
 
                 <div className="flex justify-between items-end mt-1 px-1">
                   <div className="space-y-0 text-[9px] font-medium">
-                    <div>Paid/Unpaid: Unpaid</div>
+                    <div>Payment Status: Unpaid</div>
                     <div>Month: {billForPrintView?.monthYear || billCardDetails.month}</div>
                   </div>
                   <div className="print-status-box scale-[0.6] origin-bottom-right">

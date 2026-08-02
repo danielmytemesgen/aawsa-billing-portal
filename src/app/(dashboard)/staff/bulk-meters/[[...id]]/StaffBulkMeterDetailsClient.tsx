@@ -898,7 +898,7 @@ export default function StaffBulkMeterDetailsPage() {
       { 'Description': 'Total Difference bill', 'Value': `ETB ${billCardDetails.totalDifferenceBill.toFixed(2)}` },
       { 'Description': 'Outstanding Bill (Previous Balance)', 'Value': `ETB ${billCardDetails.outstandingBill.toFixed(2)}` },
       { 'Description': 'Total Amount Payable', 'Value': `ETB ${billCardDetails.totalPayable.toFixed(2)}` },
-      { 'Description': 'Paid/Unpaid', 'Value': billCardDetails.paymentStatus },
+      { 'Description': 'Payment Status', 'Value': billCardDetails.paymentStatus },
       { 'Description': 'Month', 'Value': billCardDetails.month },
     ];
 
