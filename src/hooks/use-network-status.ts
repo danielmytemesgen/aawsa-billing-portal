@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { getPendingReadings, getFailedReadings } from "@/lib/offline-db";
-import { useBandwidthHint } from "@/hooks/use-bandwidth-hint";
 
 export function useNetworkStatus() {
   const [isOnline, setIsOnline] = useState(
@@ -12,8 +11,6 @@ export function useNetworkStatus() {
   const [pendingCount, setPendingCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
   const [offlineSince, setOfflineSince] = useState<Date | null>(null);
-
-  const { isSlowConnection, effectiveType, saveData } = useBandwidthHint();
 
   const updateQueueCounts = useCallback(async () => {
     try {
@@ -66,9 +63,6 @@ export function useNetworkStatus() {
   return {
     isOnline,
     wasOffline,
-    isSlowConnection,
-    effectiveType,
-    saveData,
     pendingCount,
     failedCount,
     offlineSince,

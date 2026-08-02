@@ -1,6 +1,5 @@
 import { query, withTransaction } from './db';
 import { randomUUID } from 'crypto';
-import { restoreBillReadingsForBill } from './bill-restore';
 
 // Postgres-backed implementations for common DB operations.
 // These functions keep `any` shapes to match the existing codebase.
@@ -124,14 +123,11 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
         SELECT
             sm.*,
             r.role_name,
-            b.name AS branch_name,
             STRING_AGG(p.name, ',') AS permissions
         FROM
             staff_members sm
         LEFT JOIN
             roles r ON sm.role_id = r.id
-        LEFT JOIN
-            branches b ON sm.branch_id = b.id
         LEFT JOIN
             role_permissions rp ON r.id = rp.role_id
         LEFT JOIN
@@ -147,7 +143,7 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
         params.push(password);
     }
 
-    sql += ' GROUP BY sm.id, r.role_name, b.name';
+    sql += ' GROUP BY sm.id, r.role_name';
 
     const rows: any = await query(sql, params);
 
@@ -234,7 +230,7 @@ export const dbGetBranchById = async (id: string) => {
     return rows[0] ?? null;
 };
 
-export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) => {
+export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) => {
     let sql = `
         SELECT ic.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate 
         FROM individual_customers ic 
@@ -250,11 +246,6 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?
     if (options?.branchId) {
         sql += ` AND ic.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
-    }
-
-    if (options?.status && options.status !== 'All') {
-        sql += ` AND ic.status = $${paramIndex++}`;
-        params.push(options.status);
     }
 
     if (options?.readerId) {
@@ -293,7 +284,7 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?
     return await query(sql, params);
 };
 
-export const dbCountCustomers = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean; status?: string }) => {
+export const dbCountCustomers = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean }) => {
     let sql = 'SELECT COUNT(*) as total FROM individual_customers ic LEFT JOIN branches b ON ic.branch_id = b.id WHERE ic.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
@@ -301,11 +292,6 @@ export const dbCountCustomers = async (options?: { branchId?: string; searchTerm
     if (options?.branchId) {
         sql += ` AND ic.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
-    }
-
-    if (options?.status && options.status !== 'All') {
-        sql += ` AND ic.status = $${paramIndex++}`;
-        params.push(options.status);
     }
 
     if (options?.excludePending) {
@@ -520,7 +506,7 @@ export const dbGetCustomersByBookNumber = async (bookNumber: string) => {
     return await query('SELECT * FROM individual_customers WHERE "bookNumber" = $1 AND status = \'Active\' AND deleted_at IS NULL', [bookNumber]);
 };
 
-export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) => {
+export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) => {
     let sql = `
         SELECT bm.*, b.name as branch_name, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
         FROM bulk_meters bm 
@@ -535,11 +521,6 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId
     if (options?.branchId) {
         sql += ` AND bm.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
-    }
-
-    if (options?.status && options.status !== 'All') {
-        sql += ` AND bm.status = $${paramIndex++}`;
-        params.push(options.status);
     }
 
     if (options?.readerId) {
@@ -578,7 +559,7 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId
     return await query(sql, params);
 };
 
-export const dbCountBulkMeters = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean; status?: string }) => {
+export const dbCountBulkMeters = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean }) => {
     let sql = 'SELECT COUNT(*) as total FROM bulk_meters bm LEFT JOIN branches b ON bm.branch_id = b.id WHERE bm.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
@@ -586,11 +567,6 @@ export const dbCountBulkMeters = async (options?: { branchId?: string; searchTer
     if (options?.branchId) {
         sql += ` AND bm.branch_id = $${paramIndex++}`;
         params.push(options.branchId);
-    }
-
-    if (options?.status && options.status !== 'All') {
-        sql += ` AND bm.status = $${paramIndex++}`;
-        params.push(options.status);
     }
 
     if (options?.excludePending) {
@@ -1006,7 +982,51 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
         }
 
         // Restore pre-rollover readings when the bill is deleted so they can be re-billed/edited correctly.
-        await restoreBillReadingsForBill(bill, client);
+        if (bill.CUSTOMERKEY) {
+            // Restore bulk meter readings
+            await client.query(
+                `UPDATE bulk_meters 
+                 SET "previousReading" = $1, "currentReading" = $2, month = $3 
+                 WHERE "customerKeyNumber" = $4`,
+                [bill.PREVREAD, bill.CURRREAD, bill.month_year, bill.CUSTOMERKEY]
+            );
+
+            // Restore assigned individual sub-meters readings using reading records of that month
+            if (bill.month_year && bill.month_year.includes('-')) {
+                const [year, month] = bill.month_year.split('-').map(Number);
+                const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+                const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
+
+                const readingsRes = await client.query(
+                    `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
+                     FROM individual_customer_readings 
+                     WHERE "CUST_KEY" IN (
+                         SELECT "customerKeyNumber" FROM individual_customers 
+                         WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL
+                     )
+                     AND deleted_at IS NULL
+                     AND "READING_DATE" >= $2 AND "READING_DATE" < $3`,
+                    [bill.CUSTOMERKEY, startDate, endDate]
+                );
+
+                for (const r of readingsRes.rows) {
+                    await client.query(
+                        `UPDATE individual_customers 
+                         SET "previousReading" = $1, "currentReading" = $2, month = $3 
+                         WHERE "customerKeyNumber" = $4`,
+                        [r.PREVIOUS_READING, r.METER_READING, bill.month_year, r.CUST_KEY]
+                    );
+                }
+            }
+        } else if (bill.individual_customer_id) {
+            // Restore standalone individual customer readings
+            await client.query(
+                `UPDATE individual_customers 
+                 SET "previousReading" = $1, "currentReading" = $2, month = $3 
+                 WHERE "customerKeyNumber" = $4`,
+                [bill.PREVREAD, bill.CURRREAD, bill.month_year, bill.individual_customer_id]
+            );
+        }
 
         await client.query('UPDATE bills SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
@@ -1166,71 +1186,6 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
     return rows[0] || reading;
 };
 
-export const dbBatchCreateIndividualCustomerReadings = async (
-    readings: any[],
-    customerUpdates: Array<{ key: string; previousReading: number; currentReading: number; month: string }>,
-    client?: any
-) => {
-    if (!readings || readings.length === 0) return [];
-    
-    const allKeysSet = new Set<string>();
-    for (const r of readings) {
-        const { reading_month: _ignored, ...safeFields } = r;
-        Object.keys(safeFields).forEach(k => allKeysSet.add(k));
-    }
-    const cols = Array.from(allKeysSet);
-    
-    const valueTuples: string[] = [];
-    const params: any[] = [];
-    let paramIdx = 1;
-
-    for (const r of readings) {
-        const { reading_month: _ignored, ...safeFields } = r;
-        const placeholders: string[] = [];
-        for (const col of cols) {
-            placeholders.push(`$${paramIdx++}`);
-            params.push(safeFields[col] !== undefined ? safeFields[col] : null);
-        }
-        valueTuples.push(`(${placeholders.join(',')})`);
-    }
-
-    const insertSql = `INSERT INTO individual_customer_readings (${cols.map(k => `"${k}"`).join(',')}) VALUES ${valueTuples.join(',')} RETURNING id, "CUST_KEY"`;
-    
-    const qFunc = client ? client.query.bind(client) : query;
-    const insertedRows = await qFunc(insertSql, params);
-
-    if (customerUpdates && customerUpdates.length > 0) {
-        const latestUpdatesMap = new Map<string, { previousReading: number; currentReading: number; month: string }>();
-        for (const u of customerUpdates) {
-            latestUpdatesMap.set(u.key, { previousReading: u.previousReading, currentReading: u.currentReading, month: u.month });
-        }
-
-        const latestUpdates = Array.from(latestUpdatesMap.entries());
-        if (latestUpdates.length > 0) {
-            const updateValueTuples: string[] = [];
-            const updateParams: any[] = [];
-            let updateParamIdx = 1;
-
-            for (const [key, u] of latestUpdates) {
-                updateValueTuples.push(`($${updateParamIdx++}, $${updateParamIdx++}, $${updateParamIdx++}, $${updateParamIdx++})`);
-                updateParams.push(key, u.previousReading, u.currentReading, u.month);
-            }
-
-            await qFunc(
-                `UPDATE individual_customers AS ic
-                 SET "previousReading" = v."previousReading",
-                     "currentReading" = v."currentReading",
-                     month = v."month"
-                 FROM (VALUES ${updateValueTuples.join(',')}) AS v("customerKeyNumber", "previousReading", "currentReading", "month")
-                 WHERE ic."customerKeyNumber" = v."customerKeyNumber"`,
-                updateParams
-            );
-        }
-    }
-
-    return insertedRows?.rows || insertedRows || [];
-};
-
 
 export const dbUpdateIndividualCustomerReading = async (id: string, reading: any, readingMonth?: string) => {
     const { reading_month: _ignored, ...safeFields } = reading;
@@ -1308,85 +1263,6 @@ export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
         console.error('dbCreateBulkMeterReading error:', error);
         throw error;
     }
-};
-
-export const dbBatchCreateBulkMeterReadings = async (
-    readings: any[],
-    meterUpdates: Array<{ key: string; previousReading: number; currentReading: number; month: string }>,
-    client?: any
-) => {
-    if (!readings || readings.length === 0) return [];
-    
-    const allKeysSet = new Set<string>();
-    for (const r of readings) {
-        const { reading_month: _ignored, ...safeFields } = r;
-        Object.keys(safeFields).forEach(k => allKeysSet.add(k));
-    }
-    const cols = Array.from(allKeysSet);
-    
-    const valueTuples: string[] = [];
-    const params: any[] = [];
-    let paramIdx = 1;
-
-    for (const r of readings) {
-        const { reading_month: _ignored, ...safeFields } = r;
-        const placeholders: string[] = [];
-        for (const col of cols) {
-            placeholders.push(`$${paramIdx++}`);
-            params.push(safeFields[col] !== undefined ? safeFields[col] : null);
-        }
-        valueTuples.push(`(${placeholders.join(',')})`);
-    }
-
-    const insertSql = `INSERT INTO bulk_meter_readings (${cols.map(k => `"${k}"`).join(',')}) VALUES ${valueTuples.join(',')} RETURNING id, "CUST_KEY"`;
-    
-    const qFunc = client ? client.query.bind(client) : query;
-    const res = await qFunc(insertSql, params);
-    const insertedRows = client ? res.rows : res;
-
-    if (meterUpdates && meterUpdates.length > 0) {
-        const latestUpdatesMap = new Map<string, { previousReading: number; currentReading: number; month: string }>();
-        for (const u of meterUpdates) {
-            latestUpdatesMap.set(u.key, { previousReading: u.previousReading, currentReading: u.currentReading, month: u.month });
-        }
-
-        const latestUpdates = Array.from(latestUpdatesMap.entries());
-        if (latestUpdates.length > 0) {
-            const updateValueTuples: string[] = [];
-            const updateParams: any[] = [];
-            let updateParamIdx = 1;
-
-            for (const [key, u] of latestUpdates) {
-                updateValueTuples.push(`($${updateParamIdx++}, $${updateParamIdx++}, $${updateParamIdx++}, $${updateParamIdx++})`);
-                updateParams.push(key, u.previousReading, u.currentReading, u.month);
-            }
-
-            await qFunc(
-                `UPDATE bulk_meters AS bm
-                 SET "previousReading" = v."previousReading",
-                     "currentReading" = v."currentReading",
-                     month = v."month"
-                 FROM (VALUES ${updateValueTuples.join(',')}) AS v("customerKeyNumber", "previousReading", "currentReading", "month")
-                 WHERE bm."customerKeyNumber" = v."customerKeyNumber"`,
-                updateParams
-            );
-        }
-    }
-
-    return insertedRows || [];
-};
-
-export const dbGetExistingReadingKeysForBatch = async (
-    table: 'individual' | 'bulk',
-    custKeys: string[],
-    client?: any
-) => {
-    if (!custKeys || custKeys.length === 0) return [];
-    const qFunc = client ? client.query.bind(client) : query;
-    const tableName = table === 'individual' ? 'individual_customer_readings' : 'bulk_meter_readings';
-    const sql = `SELECT "CUST_KEY", "READING_DATE" FROM ${tableName} WHERE "CUST_KEY" = ANY($1) AND deleted_at IS NULL`;
-    const res = await qFunc(sql, [custKeys]);
-    return client ? res.rows : res;
 };
 
 
@@ -1678,25 +1554,7 @@ export const dbCreateRole = async (role: any) => {
     return rows[0] || role;
 };
 
-export const dbGetAllPermissions = async () => {
-    const defaultTokens = [
-        { name: 'bulk_meters_manage_customers', category: 'Bulk Meters', description: 'Manage assigned customers to bulk meters' },
-        { name: 'bulk_meters_edit_readings', category: 'Bulk Meters', description: 'Edit readings and recalculate bills for bulk meters' },
-        { name: 'data_entry_bulk_form', category: 'Data Entry', description: 'Enter bulk meter data using the manual form' },
-        { name: 'data_entry_individual_form', category: 'Data Entry', description: 'Enter individual customer data using the manual form' },
-        { name: 'data_entry_bulk_csv', category: 'Data Entry', description: 'Upload bulk meter data via CSV file' },
-        { name: 'data_entry_individual_csv', category: 'Data Entry', description: 'Upload individual customer data via CSV file' },
-    ];
-    for (const token of defaultTokens) {
-        await query(
-            `INSERT INTO permissions (name, category, description)
-             SELECT $1, $2, $3
-             WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE name = $1)`,
-            [token.name, token.category, token.description]
-        );
-    }
-    return await query('SELECT * FROM permissions');
-};
+export const dbGetAllPermissions = async () => await query('SELECT * FROM permissions');
 
 export const dbCreatePermission = async (permission: any) => {
     const keys = Object.keys(permission);

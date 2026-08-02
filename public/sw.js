@@ -111,9 +111,7 @@ self.addEventListener('fetch', (event) => {
           if (networkResponse.type === 'basic' || networkResponse.type === 'cors') {
             const responseToCache = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache).catch((err) => {
-                console.warn('SW Cache put skipped (quota limit or storage restricted):', err);
-              });
+              cache.put(event.request, responseToCache);
             });
           }
 

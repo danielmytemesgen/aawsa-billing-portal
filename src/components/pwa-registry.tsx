@@ -16,8 +16,8 @@ export function PwaRegistry() {
           const resp = await fetch('/api/user/role');
           const data = await resp.json();
           const role = data.role;
-          if (role !== 'reader' && role !== 'staff') {
-            console.info('PWA: non‑field role, skipping service worker registration');
+          if (role !== 'reader') {
+            console.info('PWA: non‑reader role, skipping service worker registration');
             window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
             return;
           }

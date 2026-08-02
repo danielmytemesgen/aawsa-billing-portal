@@ -23,7 +23,6 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse } from "date-fns";
 import type { Branch } from "../branches/branch-types";
 import { customerTypes, sewerageConnections } from "@/lib/billing-calculations";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { 
   Hash, 
   Book, 
@@ -38,8 +37,7 @@ import {
   GitBranch,
   Network,
   Globe,
-  Layers,
-  AlertCircle
+  Layers
 } from "lucide-react";
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_";
@@ -111,9 +109,7 @@ export function BulkMeterDataEntryForm() {
 
 
   async function onSubmit(data: BulkMeterDataEntryFormValues) {
-    // Force all manually entered bulk meters to 'Pending Approval' per requirements
-    const submitData = { ...data, status: 'Pending Approval' as const };
-    const result = await addBulkMeterToStore(submitData);
+    const result = await addBulkMeterToStore(data);
 
     if (result.success && result.data) {
       toast({
@@ -130,32 +126,10 @@ export function BulkMeterDataEntryForm() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (e.key === "Enter" && e.target instanceof HTMLInputElement && e.target.type !== "submit") {
-      e.preventDefault();
-      const formElements = Array.from(e.currentTarget.querySelectorAll("input, select, button")) as HTMLElement[];
-      const currentIndex = formElements.indexOf(e.target);
-      if (currentIndex > -1 && currentIndex < formElements.length - 1) {
-        formElements[currentIndex + 1].focus();
-      }
-    }
-  };
-
   return (
     <ScrollArea className="h-[calc(100vh-280px)] pr-4">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} onKeyDown={handleKeyDown} className="space-y-8 pb-10">
-          {Object.keys(form.formState.errors).length > 0 && form.formState.isSubmitted && (
-            <div className="sticky top-0 z-20 pb-2 animate-in fade-in slide-in-from-top-2">
-              <Alert variant="destructive" className="rounded-2xl border-destructive/30 bg-destructive/10 backdrop-blur-md shadow-lg">
-                <AlertCircle className="h-5 w-5 text-destructive" />
-                <AlertTitle className="font-bold text-sm">Form Validation Errors ({Object.keys(form.formState.errors).length})</AlertTitle>
-                <AlertDescription className="text-xs mt-1">
-                  Please check the highlighted fields ({Object.keys(form.formState.errors).join(", ")}) before submitting.
-                </AlertDescription>
-              </Alert>
-            </div>
-          )}
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-10">
           
           {/* Section: Assignment */}
           <div>

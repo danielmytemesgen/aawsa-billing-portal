@@ -42,7 +42,6 @@ import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff
 import { Checkbox } from "@/components/ui/checkbox";
 import { getAllFaultCodes } from "@/lib/fault-codes";
 import { subscribeToFaultCodes } from "@/lib/data-store";
-import { checkActualConnectivity, queueOfflineReading } from "@/lib/offline-db";
 
 
 
@@ -137,9 +136,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
   }, [branchName, staffBranchId]);
 
   React.useEffect(() => {
-    if (staffBranchId) {
-      form.setValue("branchId", staffBranchId);
-    }
+    form.reset({ ...form.getValues(), subCity: "", branchId: staffBranchId });
   }, [staffBranchId, form]);
 
   async function onSubmit(data: StaffEntryFormValues) {
@@ -148,40 +145,6 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
       assignedBulkMeterId: data.assignedBulkMeterId === UNASSIGNED_BULK_METER_VALUE ? undefined : data.assignedBulkMeterId,
       branchId: staffBranchId, // Ensure branchId is set from state
     };
-
-    const isConnected = await checkActualConnectivity();
-    if (!isConnected) {
-      await queueOfflineReading('individual', submissionData);
-      window.dispatchEvent(new CustomEvent('offline-queue-updated'));
-      toast({
-        title: "Saved Offline",
-        description: `Working offline. Data for customer ${data.name || "entry"} has been queued locally and will sync when reconnected.`,
-      });
-      form.reset({
-        assignedBulkMeterId: UNASSIGNED_BULK_METER_VALUE,
-        name: "",
-        customerKeyNumber: "",
-        instKey: "",
-        contractNumber: "",
-        customerType: undefined,
-        bookNumber: "",
-        ordinal: undefined,
-        meterSize: undefined,
-        NUMBER_OF_DIALS: undefined,
-        meterNumber: "",
-        previousReading: undefined,
-        currentReading: undefined,
-        month: "",
-        specificArea: "",
-        subCity: "",
-        branchId: staffBranchId,
-        woreda: "",
-        sewerageConnection: undefined,
-        faultCode: undefined,
-      });
-      setHasFault(false);
-      return;
-    }
 
     // Status will be set to 'Pending Approval' by addCustomerToStore server action
     const result = await addCustomerToStore(submissionData as Omit<IndividualCustomer, 'created_at' | 'updated_at' | 'calculatedBill' | 'arrears' | 'status' | 'paymentStatus'>);

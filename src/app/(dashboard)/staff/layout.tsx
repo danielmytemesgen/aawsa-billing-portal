@@ -8,7 +8,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { useRouter } from 'next/navigation';
 import { getLatestPermissionsAction } from "@/lib/actions";
-import { RealtimeNotificationListener } from "@/components/layout/realtime-notification-listener";
 import { PERMISSIONS } from '@/lib/constants/auth';import { subscribePermissionsSync } from '@/lib/permissions-sync';
 
 interface UserProfile {
@@ -194,7 +193,6 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
     const safeUser = user ? JSON.parse(JSON.stringify(user)) : null;
     return (
         <PermissionsContext.Provider value={permissionsValue}>
-            <RealtimeNotificationListener />
             <AppShell user={safeUser} userRole="staff" sidebar={<SidebarNav items={navItems} />} >
                 {children}
             </AppShell>

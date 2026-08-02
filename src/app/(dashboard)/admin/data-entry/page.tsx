@@ -4,7 +4,7 @@ import * as React from "react";
 import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, UploadCloud, Info, FileSpreadsheet, AlertCircle, Lock } from "lucide-react";
+import { FileText, UploadCloud, Info, FileSpreadsheet, AlertCircle, ChevronDown } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -29,25 +29,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import type { StaffMember } from "../staff-management/staff-types";
 
-/** Reusable locked card shown when user lacks a specific permission */
-function LockedSection({ title, description }: { title: string; description: string }) {
-  return (
-    <Card className="form-card-premium rounded-3xl animate-in fade-in duration-300">
-      <CardContent className="flex flex-col items-center justify-center py-16 gap-4 text-center">
-        <div className="p-4 bg-muted rounded-full">
-          <Lock className="h-8 w-8 text-muted-foreground" />
-        </div>
-        <div>
-          <p className="font-semibold text-lg">{title}</p>
-          <p className="text-sm text-muted-foreground mt-1">{description}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "zCoordinate", "routeKey", "ordinal", "branchId"];
-
 const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId", "xCoordinate", "yCoordinate", "zCoordinate"];
 
 // Schema for CSV upload that allows auto-generated fields to be optional
@@ -234,146 +216,116 @@ export default function AdminDataEntryPage() {
         </TabsList>
 
         <TabsContent value="manual-individual" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
-          {!hasPermission('data_entry_individual_form') ? (
-            <LockedSection
-              title="Individual Customer Form — Access Restricted"
-              description="You do not have permission to enter individual customer data using the manual form. Contact your administrator."
-            />
-          ) : (
-            <Card className="form-card-premium rounded-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary/10 rounded-xl">
-                    <FileText className="h-6 w-6 text-primary" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-xl font-bold">Individual Customer Data Entry</CardTitle>
-                    <CardDescription className="text-sm font-medium">
-                      Manually enter data for a single individual customer. Designed for quick, one-off entries.
-                    </CardDescription>
-                  </div>
+          <Card className="form-card-premium rounded-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-xl">
+                  <FileText className="h-6 w-6 text-primary" />
                 </div>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <IndividualCustomerDataEntryForm />
-              </CardContent>
-            </Card>
-          )}
+                <div>
+                  <CardTitle className="text-xl font-bold">Individual Customer Data Entry</CardTitle>
+                  <CardDescription className="text-sm font-medium">
+                    Manually enter data for a single individual customer. Designed for quick, one-off entries.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <IndividualCustomerDataEntryForm />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="manual-bulk" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
-          {!hasPermission('data_entry_bulk_form') ? (
-            <LockedSection
-              title="Bulk Meter Form — Access Restricted"
-              description="You do not have permission to enter bulk meter data using the manual form. Contact your administrator."
-            />
-          ) : (
-            <Card className="form-card-premium rounded-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary/10 rounded-xl">
-                    <FileText className="h-6 w-6 text-primary" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-xl font-bold">Bulk Meter Data Entry</CardTitle>
-                    <CardDescription className="text-sm font-medium">
-                      Manually enter data for a single bulk meter.
-                    </CardDescription>
-                  </div>
+          <Card className="form-card-premium rounded-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-xl">
+                  <FileText className="h-6 w-6 text-primary" />
                 </div>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <BulkMeterDataEntryForm />
-              </CardContent>
-            </Card>
-          )}
+                <div>
+                  <CardTitle className="text-xl font-bold">Bulk Meter Data Entry</CardTitle>
+                  <CardDescription className="text-sm font-medium">
+                    Manually enter data for a single bulk meter.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <BulkMeterDataEntryForm />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="csv-upload" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            {/* Bulk Meter CSV */}
-            {!hasPermission('data_entry_bulk_csv') ? (
-              <LockedSection
-                title="Bulk Meter CSV Upload — Access Restricted"
-                description="You do not have permission to upload bulk meter data via CSV. Contact your administrator."
-              />
-            ) : (
-              <Card className="form-card-premium rounded-3xl">
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-primary/10 rounded-xl">
-                        <UploadCloud className="h-6 w-6 text-primary" />
-                      </div>
-                      <CardTitle className="text-xl">Bulk Meter CSV Upload</CardTitle>
+            <Card className="form-card-premium rounded-3xl">
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-xl">
+                      <UploadCloud className="h-6 w-6 text-primary" />
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
-                      onClick={() => openTemplateDialog(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
-                    >
-                      <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      Template
-                    </Button>
+                    <CardTitle className="text-xl">Bulk Meter CSV Upload</CardTitle>
                   </div>
-                  <CardDescription className="pt-4 font-medium leading-relaxed">
-                    Upload multiple bulk meters at once. Ensure the CSV file structure, headers, and column order match the template exactly.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <CsvUploadSection
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
+                    onClick={() => openTemplateDialog(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
+                  >
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Template
+                  </Button>
+                </div>
+                <CardDescription className="pt-4 font-medium leading-relaxed">
+                  Upload multiple bulk meters at once. Ensure the CSV file structure, headers, and column order match the template exactly.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                  <CsvUploadSection 
                     entryType="bulk"
                     schema={bulkMeterCsvSchema}
                     addRecordFunction={handleBulkMeterCsvUpload}
                     expectedHeaders={bulkMeterCsvHeaders}
                     batchUploadFunction={batchImportBulkMetersAction}
                   />
-                </CardContent>
-              </Card>
-            )}
+              </CardContent>
+            </Card>
 
-            {/* Individual Customer CSV */}
-            {!hasPermission('data_entry_individual_csv') ? (
-              <LockedSection
-                title="Individual Customer CSV Upload — Access Restricted"
-                description="You do not have permission to upload individual customer data via CSV. Contact your administrator."
-              />
-            ) : (
-              <Card className="form-card-premium rounded-3xl">
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-primary/10 rounded-xl">
-                        <UploadCloud className="h-6 w-6 text-primary" />
-                      </div>
-                      <CardTitle className="text-xl">Individual Customer CSV Upload</CardTitle>
+            <Card className="form-card-premium rounded-3xl">
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-xl">
+                      <UploadCloud className="h-6 w-6 text-primary" />
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
-                      onClick={() => openTemplateDialog(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
-                    >
-                      <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      Template
-                    </Button>
+                    <CardTitle className="text-xl">Individual Customer CSV Upload</CardTitle>
                   </div>
-                  <CardDescription className="pt-4 font-medium leading-relaxed">
-                    Upload multiple individual customers. Ensure the <code className="bg-primary/5 px-1 rounded text-primary text-xs">customerKeyNumber</code> is unique and <code className="bg-primary/5 px-1 rounded text-primary text-xs">assignedBulkMeterId</code> exists.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <CsvUploadSection
-                    entryType="individual"
-                    schema={individualCustomerCsvSchema}
-                    addRecordFunction={handleIndividualCustomerCsvUpload}
-                    expectedHeaders={individualCustomerCsvHeaders}
-                    batchUploadFunction={batchImportIndividualCustomersAction}
-                  />
-                </CardContent>
-              </Card>
-            )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
+                    onClick={() => openTemplateDialog(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
+                  >
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Template
+                  </Button>
+                </div>
+                <CardDescription className="pt-4 font-medium leading-relaxed">
+                  Upload multiple individual customers. Ensure the <code className="bg-primary/5 px-1 rounded text-primary text-xs">customerKeyNumber</code> is unique and <code className="bg-primary/5 px-1 rounded text-primary text-xs">assignedBulkMeterId</code> exists.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CsvUploadSection
+                  entryType="individual"
+                  schema={individualCustomerCsvSchema}
+                  addRecordFunction={handleIndividualCustomerCsvUpload}
+                  expectedHeaders={individualCustomerCsvHeaders}
+                  batchUploadFunction={batchImportIndividualCustomersAction}
+                />
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>

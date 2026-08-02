@@ -7,7 +7,6 @@ import { AppShell } from "@/components/layout/app-shell";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { getLatestPermissionsAction } from "@/lib/actions";
 import { PERMISSIONS } from '@/lib/constants/auth';import { subscribePermissionsSync } from '@/lib/permissions-sync';
-import { RealtimeNotificationListener } from "@/components/layout/realtime-notification-listener";
 
 interface UserProfile {
     id: string;
@@ -169,7 +168,6 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
 
     return (
         <PermissionsContext.Provider value={permissionsValue}>
-            <RealtimeNotificationListener />
             <AppShell user={user} userRole="admin" sidebar={<SidebarNav items={navItems} />} >
                 {children}
             </AppShell>

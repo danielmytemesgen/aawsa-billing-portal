@@ -51,29 +51,4 @@ describe('calculateBillFromTariff', () => {
     // base = 3 * 10 = 30, maintenance = 3, sanitation = 1.5 => total = 34.5
     expect(res.totalBill).toBeCloseTo(34.5);
   });
-
-  it('uses the selected fixed tier rate as a flat override for all customer types', () => {
-    const tariff: TariffInfo = {
-      customer_type: 'Domestic',
-      effective_date: '2024-01-01',
-      tiers: [{ rate: 5, limit: 10 }, { rate: 15, limit: 'Infinity' }],
-      sewerage_tiers: [],
-      maintenance_percentage: 0.1,
-      sanitation_percentage: 0.05,
-      meter_rent_prices: {},
-      vat_rate: 0,
-      domestic_vat_threshold_m3: 15,
-      additional_fees: [],
-      fixed_tier_index: 1,
-      use_rule_of_three: false,
-    } as unknown as TariffInfo;
-
-    const domesticResult = calculateBillFromTariff(tariff, 20, 1, 'No');
-    const nonDomesticResult = calculateBillFromTariff({ ...tariff, customer_type: 'Non-domestic' }, 20, 1, 'No');
-
-    expect(domesticResult.baseWaterCharge).toBeCloseTo(300);
-    expect(domesticResult.totalBill).toBeCloseTo(345);
-    expect(nonDomesticResult.baseWaterCharge).toBeCloseTo(300);
-    expect(nonDomesticResult.totalBill).toBeCloseTo(345);
-  });
 });

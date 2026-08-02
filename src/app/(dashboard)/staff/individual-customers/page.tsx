@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
@@ -127,24 +126,18 @@ export default function StaffIndividualCustomersPage() {
     return { customers: [], bulkMeters: [] };
   }, [isStaffManagement, branchId, hasPermission, allCustomers, allBulkMeters]);
 
-  const [statusFilter, setStatusFilter] = React.useState<string>("All");
-
   const searchedCustomers = React.useMemo(() => {
-    let result = branchFilteredData.customers;
-    if (statusFilter && statusFilter !== 'All') {
-      result = result.filter(c => c.status === statusFilter);
-    }
     if (!searchTerm) {
-      return result;
+      return branchFilteredData.customers;
     }
-    return result.filter(customer =>
+    return branchFilteredData.customers.filter(customer =>
       customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.subCity.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.woreda.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (customer.assignedBulkMeterId && allBulkMeters.find(bm => bm.customerKeyNumber === customer.assignedBulkMeterId)?.name.toLowerCase().includes(searchTerm.toLowerCase()))
     );
-  }, [searchTerm, statusFilter, branchFilteredData.customers, allBulkMeters]);
+  }, [searchTerm, branchFilteredData.customers, allBulkMeters]);
 
   const summary = React.useMemo(() => {
     const total = branchFilteredData.customers.length;
@@ -349,32 +342,16 @@ export default function StaffIndividualCustomersPage() {
               <CardDescription>Manage individual consumer registry for {branchName || "your area"}.</CardDescription>
             </div>
           </div>
-          <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-            <div className="relative w-full md:w-64">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <Input
-                type="search"
-                placeholder="Search by key, name..."
-                className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                disabled={!branchId}
-              />
-            </div>
-
-            <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val); setPage(0); }}>
-              <SelectTrigger className="h-10 w-full sm:w-[160px] rounded-xl border-slate-200 bg-white font-semibold text-slate-700 shadow-sm">
-                <SelectValue placeholder="Status: All" />
-              </SelectTrigger>
-              <SelectContent className="rounded-xl">
-                <SelectItem value="All">All Statuses</SelectItem>
-                <SelectItem value="Active">Active</SelectItem>
-                <SelectItem value="Inactive">Inactive</SelectItem>
-                <SelectItem value="Suspended">Suspended</SelectItem>
-                <SelectItem value="Pending Approval">Pending Approval</SelectItem>
-                <SelectItem value="Rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="relative w-full md:w-72">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Input
+              type="search"
+              placeholder="Search by key, name..."
+              className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              disabled={!branchId}
+            />
           </div>
         </CardHeader>
         <CardContent className="p-0">

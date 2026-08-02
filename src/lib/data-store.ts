@@ -42,12 +42,10 @@ import {
   deleteBillAction,
   getAllIndividualCustomerReadingsAction,
   createIndividualCustomerReadingAction,
-  batchCreateIndividualCustomerReadingsAction,
   updateIndividualCustomerReadingAction,
   deleteIndividualCustomerReadingAction,
   getAllBulkMeterReadingsAction,
   createBulkMeterReadingAction,
-  batchCreateBulkMeterReadingsAction,
   updateBulkMeterReadingAction,
   deleteBulkMeterReadingAction,
   createPaymentAction,
@@ -541,8 +539,6 @@ const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<Do
     isMinOfThreeApplied: effectiveUsage !== rawUsage,
     effectiveUsage,
     rawUsage,
-    createdAt: dbCustomer.created_at || dbCustomer.createdAt || undefined,
-    updatedAt: dbCustomer.updated_at || dbCustomer.updatedAt || undefined,
     approved_at: dbCustomer.approved_at,
     xCoordinate: dbCustomer.x_coordinate ? Number(dbCustomer.x_coordinate) : undefined,
     yCoordinate: dbCustomer.y_coordinate ? Number(dbCustomer.y_coordinate) : undefined,
@@ -705,8 +701,6 @@ const mapDbBulkMeterToDomain = async (dbBulkMeter: BulkMeterRow): Promise<BulkMe
     xCoordinate: dbBulkMeter.x_coordinate ? Number(dbBulkMeter.x_coordinate) : undefined,
     yCoordinate: dbBulkMeter.y_coordinate ? Number(dbBulkMeter.y_coordinate) : undefined,
     zCoordinate: dbBulkMeter.z_coordinate ? Number(dbBulkMeter.z_coordinate) : undefined,
-    createdAt: dbBulkMeter.created_at || dbBulkMeter.createdAt || undefined,
-    updatedAt: dbBulkMeter.updated_at || dbBulkMeter.updatedAt || undefined,
     approved_by: dbBulkMeter.approvedBy,
     approved_at: dbBulkMeter.approvedAt,
     location: dbBulkMeter.subCity,
@@ -1788,24 +1782,16 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
       if (cached && cached.length > 0) {
         const cachedCustomers = cached.map((c: any) => c.data);
 
-        // Apply reader & branch isolation when offline, if user is restricted
+        // Apply reader isolation when offline, if user is restricted to assigned routes
         try {
           const userRaw = localStorage.getItem('user');
           if (userRaw) {
             const parsed = JSON.parse(userRaw || '{}');
             const perms = parsed.permissions || [];
             const readerId = (!perms.includes('customers_view_all') && perms.includes('routes_view_assigned')) ? parsed.id : undefined;
-            const userBranchId = (!perms.includes('customers_view_all') && parsed.branchId && parsed.branchId !== 'all') ? parsed.branchId : undefined;
-
-            if (readerId || userBranchId) {
+            if (readerId) {
               const matches = (rec: any) => {
-                if (userBranchId && rec.branchId && rec.branchId !== userBranchId && rec.branch_id !== userBranchId) {
-                  return false;
-                }
-                if (readerId) {
-                  return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
-                }
-                return true;
+                return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
               };
               const filtered = cachedCustomers.filter(matches);
               if (filtered.length > 0) cachedCustomers.splice(0, cachedCustomers.length, ...filtered);
@@ -1834,24 +1820,16 @@ export const initializeBulkMeters = async (force: boolean = false, options?: { l
       if (cached && cached.length > 0) {
         const cachedMeters = cached.map((c: any) => c.data);
 
-        // Reader & branch isolation for offline bulk meters
+        // Reader isolation for offline bulk meters
         try {
           const userRaw = localStorage.getItem('user');
           if (userRaw) {
             const parsed = JSON.parse(userRaw || '{}');
             const perms = parsed.permissions || [];
             const readerId = (!perms.includes('bulk_meters_view_all') && perms.includes('routes_view_assigned')) ? parsed.id : undefined;
-            const userBranchId = (!perms.includes('bulk_meters_view_all') && parsed.branchId && parsed.branchId !== 'all') ? parsed.branchId : undefined;
-
-            if (readerId || userBranchId) {
+            if (readerId) {
               const matches = (rec: any) => {
-                if (userBranchId && rec.branchId && rec.branchId !== userBranchId && rec.branch_id !== userBranchId) {
-                  return false;
-                }
-                if (readerId) {
-                  return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
-                }
-                return true;
+                return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
               };
               const filtered = cachedMeters.filter(matches);
               if (filtered.length > 0) cachedMeters.splice(0, cachedMeters.length, ...filtered);
@@ -1872,11 +1850,9 @@ export const initializeBulkMeters = async (force: boolean = false, options?: { l
   }
 };
 
-export const fetchCustomersPaginated = async (limit: number, offset: number, searchTerm?: string, branchId?: string, status?: string) => {
-  const effectiveBranch = branchId === 'All' ? undefined : branchId;
-  const effectiveStatus = status === 'All' ? undefined : status;
-  const { data, error } = await getAllCustomersAction({ limit, offset, searchTerm, branchId: effectiveBranch, status: effectiveStatus, excludePending: false });
-  const { data: count, error: countError } = await getCustomersCountAction(searchTerm, false, effectiveBranch, effectiveStatus);
+export const fetchCustomersPaginated = async (limit: number, offset: number, searchTerm?: string) => {
+  const { data, error } = await getAllCustomersAction({ limit, offset, searchTerm, excludePending: false });
+  const { data: count, error: countError } = await getCustomersCountAction(searchTerm, false);
   return { 
     customers: data ? await Promise.all(data.map(mapDbCustomerToDomain)) : [],
     totalCount: count || 0,
@@ -1889,11 +1865,9 @@ export const fetchCustomersSummary = async () => {
   return { data, error };
 };
 
-export const fetchBulkMetersPaginated = async (limit: number, offset: number, searchTerm?: string, branchId?: string, status?: string) => {
-  const effectiveBranch = branchId === 'All' ? undefined : branchId;
-  const effectiveStatus = status === 'All' ? undefined : status;
-  const { data, error } = await getAllBulkMetersAction({ limit, offset, searchTerm, branchId: effectiveBranch, status: effectiveStatus, excludePending: false });
-  const { data: count, error: countError } = await getBulkMetersCountAction(searchTerm, false, effectiveBranch, effectiveStatus);
+export const fetchBulkMetersPaginated = async (limit: number, offset: number, searchTerm?: string) => {
+  const { data, error } = await getAllBulkMetersAction({ limit, offset, searchTerm, excludePending: false });
+  const { data: count, error: countError } = await getBulkMetersCountAction(searchTerm, false);
   return { 
     bulkMeters: data ? await Promise.all(data.map(mapDbBulkMeterToDomain)) : [],
     totalCount: count || 0,
@@ -2717,50 +2691,6 @@ export const addBulkMeterReading = async (
   notifyBulkMeterReadingListeners();
 
   return { success: true, data: newReading };
-};
-
-export const addIndividualCustomerReadingsBatch = async (
-  items: Array<{
-    readingData: Omit<DomainIndividualCustomerReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates };
-  }>
-): Promise<StoreOperationResult<{ count: number }>> => {
-  if (!items || items.length === 0) return { success: true, data: { count: 0 } };
-
-  const batchPayload = items.map(item => ({
-    reading: mapDomainIndividualReadingToDb(item.readingData) as IndividualCustomerReadingInsert,
-    previousReading: item.readingData.previousReading
-  }));
-
-  const { data: result, error } = await batchCreateIndividualCustomerReadingsAction(batchPayload);
-
-  if (error || !result || !result.success) {
-    const msg = error ? (error as any).message || "Batch insert failed." : (result?.message || "Batch insert failed.");
-    return { success: false, message: msg, error };
-  }
-
-  return { success: true, data: { count: result.count } };
-};
-
-export const addBulkMeterReadingsBatch = async (
-  items: Array<{
-    readingData: Omit<DomainBulkMeterReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates };
-  }>
-): Promise<StoreOperationResult<{ count: number }>> => {
-  if (!items || items.length === 0) return { success: true, data: { count: 0 } };
-
-  const batchPayload = items.map(item => ({
-    reading: mapDomainBulkReadingToDb(item.readingData) as BulkMeterReadingInsert,
-    previousReading: item.readingData.previousReading
-  }));
-
-  const { data: result, error } = await batchCreateBulkMeterReadingsAction(batchPayload);
-
-  if (error || !result || !result.success) {
-    const msg = error ? (error as any).message || "Batch insert failed." : (result?.message || "Batch insert failed.");
-    return { success: false, message: msg, error };
-  }
-
-  return { success: true, data: { count: result.count } };
 };
 
 

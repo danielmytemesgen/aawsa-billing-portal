@@ -41,7 +41,6 @@ import { individualCustomerStatuses } from "../individual-customers/individual-c
 import type { StaffMember } from "../staff-management/staff-types";
 
 
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { 
   User, 
   Hash, 
@@ -57,8 +56,7 @@ import {
   GitBranch,
   Network,
   Crosshair,
-  Globe,
-  AlertCircle
+  Globe
 } from "lucide-react";
 
 const FormSchemaForAdminDataEntry = baseIndividualCustomerDataSchema.extend({
@@ -109,24 +107,6 @@ export function IndividualCustomerDataEntryForm() {
     }
   }, []);
 
-  const memoizedBranchItems = React.useMemo(() => {
-    return availableBranches.map((branch) => (
-      branch?.id ? (
-        <SelectItem key={branch.id} value={branch.id}>
-          {branch.name}
-        </SelectItem>
-      ) : null
-    ));
-  }, [availableBranches]);
-
-  const memoizedBulkMeterItems = React.useMemo(() => {
-    return availableBulkMeters.map((bm) => (
-      <SelectItem key={bm.customerKeyNumber} value={bm.customerKeyNumber}>
-        {bm.name}
-      </SelectItem>
-    ));
-  }, [availableBulkMeters]);
-
   const form = useForm<AdminDataEntryFormValues>({
     resolver: zodResolver(FormSchemaForAdminDataEntry),
     defaultValues: {
@@ -148,7 +128,7 @@ export function IndividualCustomerDataEntryForm() {
       subCity: "",
       woreda: "",
       sewerageConnection: undefined,
-      status: "Pending Approval",
+      status: "Active",
       paymentStatus: "Unpaid",
       xCoordinate: undefined,
       yCoordinate: undefined,
@@ -173,7 +153,6 @@ export function IndividualCustomerDataEntryForm() {
       ...data,
       assignedBulkMeterId: data.assignedBulkMeterId === UNASSIGNED_BULK_METER_VALUE ? undefined : data.assignedBulkMeterId,
       branchId: data.branchId === BRANCH_UNASSIGNED_VALUE ? undefined : data.branchId,
-      status: "Pending Approval" as const
     };
 
     const result = await addCustomerToStore(submissionData);
@@ -206,32 +185,10 @@ export function IndividualCustomerDataEntryForm() {
   };
 
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (e.key === "Enter" && e.target instanceof HTMLInputElement && e.target.type !== "submit") {
-      e.preventDefault();
-      const formElements = Array.from(e.currentTarget.querySelectorAll("input, select, button")) as HTMLElement[];
-      const currentIndex = formElements.indexOf(e.target);
-      if (currentIndex > -1 && currentIndex < formElements.length - 1) {
-        formElements[currentIndex + 1].focus();
-      }
-    }
-  };
-
   return (
     <ScrollArea className="h-[calc(100vh-280px)] pr-4">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} onKeyDown={handleKeyDown} className="space-y-8 pb-10">
-          {Object.keys(form.formState.errors).length > 0 && form.formState.isSubmitted && (
-            <div className="sticky top-0 z-20 pb-2 animate-in fade-in slide-in-from-top-2">
-              <Alert variant="destructive" className="rounded-2xl border-destructive/30 bg-destructive/10 backdrop-blur-md shadow-lg">
-                <AlertCircle className="h-5 w-5 text-destructive" />
-                <AlertTitle className="font-bold text-sm">Form Validation Errors ({Object.keys(form.formState.errors).length})</AlertTitle>
-                <AlertDescription className="text-xs mt-1">
-                  Please check the highlighted fields ({Object.keys(form.formState.errors).join(", ")}) before submitting.
-                </AlertDescription>
-              </Alert>
-            </div>
-          )}
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-10">
           
           {/* Section: Assignment */}
           <div>
@@ -256,7 +213,13 @@ export function IndividualCustomerDataEntryForm() {
                         </FormControl>
                         <SelectContent className="rounded-xl">
                           <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
-                          {memoizedBranchItems}
+                          {availableBranches.map((branch) => (
+                            branch?.id ? (
+                              <SelectItem key={branch.id} value={branch.id}>
+                                {branch.name}
+                              </SelectItem>
+                            ) : null
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -289,7 +252,11 @@ export function IndividualCustomerDataEntryForm() {
                               No bulk meters available
                             </SelectItem>
                           )}
-                          {memoizedBulkMeterItems}
+                          {availableBulkMeters.map((bm) => (
+                            <SelectItem key={bm.customerKeyNumber} value={bm.customerKeyNumber}>
+                              {bm.name}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

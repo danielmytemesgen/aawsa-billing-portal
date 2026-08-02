@@ -1,16 +1,11 @@
-import '@/lib/polyfills';
-import type { Metadata, Viewport } from 'next';
+import type { Metadata } from 'next';
+// Removed Geist and Geist_Mono imports
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import Providers from './providers';
 import { PwaRegistry } from '@/components/layout/pwa-registry';
 
-export const viewport: Viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  maximumScale: 5,
-  themeColor: '#1d4ed8',
-};
+// Removed geistSans and geistMono constant declarations
 
 export const metadata: Metadata = {
   title: 'AAWSA Billing Portal',
@@ -36,7 +31,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="antialiased">
+      <body className="antialiased"> {/* Removed font variables */}
         <Providers>
           {children}
           <Toaster />

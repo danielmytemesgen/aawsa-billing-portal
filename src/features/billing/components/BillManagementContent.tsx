@@ -37,7 +37,6 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
 import { format, subDays, isBefore } from 'date-fns';
 import { getMonthlyBillAmt } from '@/lib/billing-utils';
-import { exportBillManagementAuditToCsv, exportBillManagementAuditToXlsx } from '@/lib/export-utils';
 import {
     Loader2,
     Filter,
@@ -747,15 +746,6 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         document.body.removeChild(link);
     };
 
-    const handleExportDetailedAuditReport = (format: 'csv' | 'xlsx') => {
-        const exportSet = filteredForStats;
-        if (format === 'xlsx') {
-            exportBillManagementAuditToXlsx(exportSet, branches, 'bill_management_audit_report');
-            return;
-        }
-        exportBillManagementAuditToCsv(exportSet, branches, 'bill_management_audit_report');
-    };
-
     const role = hasPermission('bill:approve') ? 'manager' : 'staff';
 
     return (
@@ -879,24 +869,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         <CardTitle className="text-sm font-bold uppercase tracking-wider text-gray-600 flex items-center gap-2">
                             <Filter className="h-4 w-4" /> Search & Smart Filters
                         </CardTitle>
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm" className="h-8 text-xs">
-                                    <Download className="mr-2 h-3.5 w-3.5" /> Export
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                                <DropdownMenuItem onSelect={(event) => { event.preventDefault(); handleExportCSV(); }}>
-                                    Export Summary CSV
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={(event) => { event.preventDefault(); handleExportDetailedAuditReport('csv'); }}>
-                                    Export Detailed Audit CSV
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={(event) => { event.preventDefault(); handleExportDetailedAuditReport('xlsx'); }}>
-                                    Export Detailed Audit XLSX
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
+                        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleExportCSV}>
+                            <Download className="mr-2 h-3.5 w-3.5" /> Export CSV
+                        </Button>
                     </CardHeader>
                     <CardContent className="pt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="relative">

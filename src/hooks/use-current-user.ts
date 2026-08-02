@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { PERMISSIONS } from '@/lib/constants/auth';
-import { getBranches, initializeBranches, getStaffMembers, initializeStaffMembers } from '@/lib/data-store';
 
 export interface CurrentUser {
   id?: string;
@@ -9,7 +8,6 @@ export interface CurrentUser {
   permissions?: string[];
   branchName?: string;
   branchId?: string;
-  branch?: string;
   name?: string;
 }
 
@@ -17,41 +15,11 @@ export function useCurrentUser() {
   const [currentUser, setCurrentUser] = React.useState<CurrentUser | null>(null);
 
   React.useEffect(() => {
-    const readUser = async () => {
+    const readUser = () => {
       const stored = localStorage.getItem('user');
       if (!stored) return setCurrentUser(null);
       try {
-        let user: CurrentUser = JSON.parse(stored);
-
-        // If branchName or branchId is missing, resolve asynchronously
-        if ((!user.branchName || !user.branchId) && user.email) {
-          try {
-            await Promise.all([initializeBranches(), initializeStaffMembers()]);
-            const staff = getStaffMembers().find(s => s.email.toLowerCase() === user.email?.toLowerCase());
-            const branches = getBranches();
-
-            let bName = user.branchName || user.branch || staff?.branchName;
-            let bId = user.branchId || staff?.branchId;
-
-            if (bName && !bId) {
-              const b = branches.find(br => br.name.trim().toLowerCase() === bName?.trim().toLowerCase());
-              if (b) bId = b.id;
-            }
-            if (bId && !bName) {
-              const b = branches.find(br => br.id === bId);
-              if (b) bName = b.name;
-            }
-
-            if (bName || bId) {
-              user = { ...user, branchName: bName, branchId: bId };
-              localStorage.setItem('user', JSON.stringify(user));
-            }
-          } catch (e) {
-            console.warn('Failed to resolve missing user branch info', e);
-          }
-        }
-
-        setCurrentUser(user);
+        setCurrentUser(JSON.parse(stored));
       } catch (e) {
         console.error('Failed to parse user from localStorage', e);
         setCurrentUser(null);
@@ -85,6 +53,6 @@ export function useCurrentUser() {
     isManagement,
     isAdminAreaUser: isManagement,
     branchId: currentUser?.branchId,
-    branchName: currentUser?.branchName || currentUser?.branch,
+    branchName: currentUser?.branchName,
   } as const;
 }

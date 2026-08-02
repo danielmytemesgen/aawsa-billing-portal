@@ -101,66 +101,42 @@ export class OfflineDB extends Dexie {
   }
 }
 
-class InMemoryTable {
-  private store = new Map<any, any>();
-  private autoInc = 1;
-
-  async put(item: any, key?: any) {
-    const k = key || item.id || item.key || item.customerKeyNumber || item.routeKey || this.autoInc++;
-    if (!item.id && typeof k === 'number') item.id = k;
-    this.store.set(k, item);
-    return k;
-  }
-  async get(key: any) { return this.store.get(key) || null; }
-  async delete(key: any) { this.store.delete(key); }
-  async toArray() { return Array.from(this.store.values()); }
-  async bulkPut(items: any[]) { for (const i of items) await this.put(i); }
-  async add(item: any) { return await this.put(item); }
-  async update(key: any, changes: any) {
-    const existing = await this.get(key);
-    if (existing) {
-      Object.assign(existing, changes);
-      this.store.set(key, existing);
-    }
-  }
-  where(field: string) {
+class MockTable {
+  async put() {}
+  async get() { return null; }
+  async delete() {}
+  async toArray() { return []; }
+  async bulkPut() {}
+  async add() {}
+  async update() {}
+  where() {
     return {
-      equals: (val: any) => ({
-        toArray: async () => Array.from(this.store.values()).filter((item: any) => item[field] === val)
+      equals: () => ({
+        toArray: async () => []
       })
     };
   }
-  orderBy(field: string) {
+  orderBy() {
     return {
-      toArray: async () => Array.from(this.store.values()).sort((a: any, b: any) => (a[field] || 0) - (b[field] || 0))
+      toArray: async () => []
     };
   }
 }
 
-class InMemoryDB {
-  readings = new InMemoryTable();
-  meters = new InMemoryTable();
-  uploads = new InMemoryTable();
-  device_tokens = new InMemoryTable();
-  session = new InMemoryTable();
-  routes = new InMemoryTable();
-  cached_readings = new InMemoryTable();
+class MockDB {
+  readings = new MockTable();
+  meters = new MockTable();
+  uploads = new MockTable();
+  device_tokens = new MockTable();
+  session = new MockTable();
+  routes = new MockTable();
+  cached_readings = new MockTable();
   table() {
-    return new InMemoryTable();
+    return new MockTable();
   }
 }
 
-function initDB() {
-  if (typeof window === 'undefined') return new InMemoryDB() as any;
-  try {
-    return new OfflineDB();
-  } catch (e) {
-    console.warn('IndexedDB unavailable or blocked; using in-memory storage fallback:', e);
-    return new InMemoryDB() as any;
-  }
-}
-
-export const db = initDB();
+export const db = typeof window !== 'undefined' ? new OfflineDB() : (new MockDB() as any);
 
 // --- Route cache helpers ---
 export async function cacheRoutes(routesData: any[]) {
@@ -400,7 +376,7 @@ export async function checkActualConnectivity(): Promise<boolean> {
   if (!navigator.onLine) return false;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const response = await fetch('/api/health', {
       method: 'GET',
       cache: 'no-store',

@@ -11,22 +11,9 @@
 # Next.js build output
 /.next/
 /out/
-/dist/
-/.expo/
 
 # Production
 /build
-
-# Test and debug artifacts
-/test-results/
-/coverage/
-*.tmp
-*.bak
-*.orig
-*.patch
-*.html
-*.csv
-*.log
 
 # Local Environment Variables
 .env

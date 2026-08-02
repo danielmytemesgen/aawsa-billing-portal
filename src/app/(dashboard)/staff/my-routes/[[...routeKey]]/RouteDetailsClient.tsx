@@ -24,7 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List, Clock } from "lucide-react";
+import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List } from "lucide-react";
 import Link from "next/link";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle as UIDialogTitle } from "@/components/ui/dialog";
@@ -60,7 +60,6 @@ export default function RouteDetailsClient() {
     const [isLoading, setIsLoading] = React.useState(true);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [searchTerm, setSearchTerm] = React.useState("");
-    const [statusFilter, setStatusFilter] = React.useState<'all' | 'unread' | 'read'>('all');
     const [viewMode, setViewMode] = React.useState<'list' | 'map'>('list');
     const [isReadingModalOpen, setIsReadingModalOpen] = React.useState(false);
     const [selectedMeter, setSelectedMeter] = React.useState<{
@@ -310,50 +309,10 @@ export default function RouteDetailsClient() {
         }
     }, [bulkReadings, individualReadings, currentMonth]);
 
-    const routeStats = React.useMemo(() => {
-        let totalBulk = bulkMeters.length;
-        let readBulk = 0;
-        let totalIndividual = 0;
-        let readIndividual = 0;
-
-        bulkMeters.forEach(bm => {
-            if (isMeterRead(bm.customerKeyNumber, 'bulk')) {
-                readBulk++;
-            }
-            const custs = allCustomers.filter(c => c.assignedBulkMeterId === bm.customerKeyNumber);
-            totalIndividual += custs.length;
-            custs.forEach(c => {
-                if (isMeterRead(c.customerKeyNumber, 'individual')) {
-                    readIndividual++;
-                }
-            });
-        });
-
-        const unreadBulk = Math.max(0, totalBulk - readBulk);
-        const percentage = totalBulk > 0 ? Math.round((readBulk / totalBulk) * 100) : 0;
-
-        return {
-            totalBulk,
-            readBulk,
-            unreadBulk,
-            totalIndividual,
-            readIndividual,
-            unreadIndividual: Math.max(0, totalIndividual - readIndividual),
-            percentage
-        };
-    }, [bulkMeters, allCustomers, isMeterRead]);
-
     const filteredBulkMeters = React.useMemo(() => {
         let result = bulkMeters;
         
-        // 1. Filter by status filter (All / Unread / Read) for Bulk Meters
-        if (statusFilter === 'unread') {
-            result = result.filter(bm => !isMeterRead(bm.customerKeyNumber, 'bulk'));
-        } else if (statusFilter === 'read') {
-            result = result.filter(bm => isMeterRead(bm.customerKeyNumber, 'bulk'));
-        }
-
-        // 2. Filter by search term
+        // 1. Filter by search term
         if (searchTerm) {
             const lowSearch = searchTerm.toLowerCase();
             result = result.filter(bm =>
@@ -363,7 +322,7 @@ export default function RouteDetailsClient() {
             );
         }
 
-        // 3. Filter by proximity if requested
+        // 2. Filter by proximity if requested
         if (nearbyOnly) {
             // Determine threshold: relax if using a cached location
             const threshold = usingCachedLocation ? 200 : PROXIMITY_THRESHOLD;
@@ -380,7 +339,7 @@ export default function RouteDetailsClient() {
             });
         }
         
-        // 4. Sort by: Unread first, then Distance (if location available), then Read
+        // 3. Sort by: Unread first, then Distance (if location available), then Read
         return [...result].sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'bulk') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'bulk') ? 1 : 0;
@@ -396,7 +355,7 @@ export default function RouteDetailsClient() {
 
             return 0;
         });
-    }, [bulkMeters, statusFilter, allCustomers, searchTerm, isMeterRead, nearbyOnly, userLocation]);
+    }, [bulkMeters, searchTerm, isMeterRead, nearbyOnly, userLocation]);
 
     const toggleExpand = (meterId: string) => {
         const newExpanded = new Set(expandedMeters);
@@ -537,20 +496,13 @@ export default function RouteDetailsClient() {
         }
     };
 
-    const getCustomersForBulkMeter = React.useCallback((bulkMeterId: string) => {
-        const list = allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId);
-        let filtered = list;
-        if (statusFilter === 'unread') {
-            filtered = list.filter((c: IndividualCustomer) => !isMeterRead(c.customerKeyNumber, 'individual'));
-        } else if (statusFilter === 'read') {
-            filtered = list.filter((c: IndividualCustomer) => isMeterRead(c.customerKeyNumber, 'individual'));
-        }
-        return filtered.sort((a, b) => {
+    const getCustomersForBulkMeter = (bulkMeterId: string) => {
+        return allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId).sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'individual') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'individual') ? 1 : 0;
             return aRead - bRead;
         });
-    }, [allCustomers, statusFilter, isMeterRead]);
+    };
 
     const formatDistance = (meter: { xCoordinate?: number, yCoordinate?: number }) => {
         if (!userLocation || !meter.xCoordinate || !meter.yCoordinate) return null;
@@ -571,27 +523,6 @@ export default function RouteDetailsClient() {
                 <Loader2 className="h-12 w-12 animate-spin text-primary" />
                 <div className="text-lg font-medium text-muted-foreground">{syncProgress || "Loading..."}</div>
                 <p className="text-sm text-muted-foreground animate-pulse">Optimizing your offline experience</p>
-            </div>
-        );
-    }
-
-    const canViewAllRoutes = hasPermission('routes_view_all');
-    const isReaderAssigned = route?.readerId?.toLowerCase() === currentUser?.id?.toLowerCase();
-    const isBranchMatch = !currentUser?.branchId || currentUser?.branchId === 'all' || !route?.branchId || route?.branchId === currentUser?.branchId;
-    const isAuthorizedForRoute = canViewAllRoutes || (isReaderAssigned && isBranchMatch);
-
-    if (!isLoading && route && !isAuthorizedForRoute) {
-        return (
-            <div className="p-12 text-center max-w-md mx-auto">
-                <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 space-y-3">
-                    <p className="font-bold text-lg">Access Denied</p>
-                    <p className="text-sm text-rose-700">
-                        You do not have permission to view this route. Readers can only access their assigned routes within their designated branch.
-                    </p>
-                    <Button asChild variant="outline" className="mt-2 border-rose-300 hover:bg-rose-100 text-rose-900">
-                        <Link href="/staff/my-routes">Back to My Assigned Routes</Link>
-                    </Button>
-                </div>
             </div>
         );
     }
@@ -672,94 +603,6 @@ export default function RouteDetailsClient() {
                         </div>
                     </div>
                 </div>
-
-                {/* Cycle Reading Progress Card & Status Tabs */}
-                <Card className="bg-gradient-to-r from-slate-900 to-slate-800 text-white border-none shadow-md overflow-hidden">
-                    <CardContent className="p-4 sm:p-5">
-                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                            <div className="space-y-1.5 max-w-xl">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs uppercase font-bold tracking-wider text-slate-400">Reading Cycle Progress</span>
-                                    <Badge variant="outline" className={`text-[10px] px-2 py-0 border-none font-bold ${periodStatus === 'Open' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
-                                        Cycle {periodStatus}
-                                    </Badge>
-                                </div>
-                                <div className="flex items-baseline gap-2">
-                                    <span className="text-2xl font-extrabold">{routeStats.percentage}%</span>
-                                    <span className="text-xs text-slate-300">
-                                        ({routeStats.readBulk} of {routeStats.totalBulk} Bulk Meters read)
-                                    </span>
-                                </div>
-                                {/* Progress bar */}
-                                <div className="w-full bg-slate-700/80 rounded-full h-2 overflow-hidden">
-                                    <div
-                                        className="bg-emerald-400 h-full transition-all duration-500 rounded-full"
-                                        style={{ width: `${routeStats.percentage}%` }}
-                                    />
-                                </div>
-                                <div className="flex items-center gap-4 text-xs text-slate-400 pt-1">
-                                    <span>Bulk Meters: <strong className="text-slate-200">{routeStats.readBulk}/{routeStats.totalBulk} Read</strong></span>
-                                    <span>•</span>
-                                    <span>Individual Sub-meters: <strong className="text-slate-200">{routeStats.readIndividual}/{routeStats.totalIndividual} Read</strong></span>
-                                </div>
-                            </div>
-
-                            {/* Status Filter Tabs */}
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 self-start lg:self-center bg-slate-800/90 p-1.5 rounded-xl border border-slate-700">
-                                <button
-                                    type="button"
-                                    onClick={() => setStatusFilter('all')}
-                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 ${
-                                        statusFilter === 'all'
-                                            ? 'bg-blue-600 text-white shadow-sm font-bold'
-                                            : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                                    }`}
-                                >
-                                    All Bulk Meters
-                                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                        statusFilter === 'all' ? 'bg-blue-700 text-blue-100' : 'bg-slate-700 text-slate-300'
-                                    }`}>
-                                        {routeStats.totalBulk}
-                                    </span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setStatusFilter('unread')}
-                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 ${
-                                        statusFilter === 'unread'
-                                            ? 'bg-amber-500 text-amber-950 shadow-sm font-bold'
-                                            : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                                    }`}
-                                >
-                                    <Clock className="h-3.5 w-3.5" />
-                                    Unread
-                                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                        statusFilter === 'unread' ? 'bg-amber-600 text-white' : 'bg-amber-500/20 text-amber-300'
-                                    }`}>
-                                        {routeStats.unreadBulk}
-                                    </span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setStatusFilter('read')}
-                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 ${
-                                        statusFilter === 'read'
-                                            ? 'bg-emerald-500 text-emerald-950 shadow-sm font-bold'
-                                            : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                                    }`}
-                                >
-                                    <CheckCircle2 className="h-3.5 w-3.5" />
-                                    Read
-                                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                        statusFilter === 'read' ? 'bg-emerald-600 text-white' : 'bg-emerald-500/20 text-emerald-300'
-                                    }`}>
-                                        {routeStats.readBulk}
-                                    </span>
-                                </button>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
             </div>
 
             {viewMode === 'map' ? (
@@ -812,15 +655,7 @@ export default function RouteDetailsClient() {
                             ) : (
                                 <>
                                     <Gauge className="mx-auto h-12 w-12 text-muted-foreground opacity-20 mb-4" />
-                                    <p className="font-medium">
-                                        {statusFilter === 'unread' 
-                                            ? "No unread meters match your filter." 
-                                            : statusFilter === 'read' 
-                                                ? "No read meters match your filter." 
-                                                : nearbyOnly 
-                                                    ? "No meters within 50m." 
-                                                    : "No meters match your search."}
-                                    </p>
+                                    <p className="font-medium">{nearbyOnly ? "No meters within 50m." : "No meters match your search."}</p>
                                     <p className="text-xs text-muted-foreground mt-1">Try disabling the filter or moving closer to the meters.</p>
                                 </>
                             )}
@@ -841,13 +676,9 @@ export default function RouteDetailsClient() {
                                             <div className="flex items-center gap-2">
                                                 <h3 className="font-bold text-lg">{bm.name}</h3>
                                                 <Badge variant="outline" className="font-mono text-[10px] uppercase">Bulk</Badge>
-                                                {isMeterRead(bm.customerKeyNumber, 'bulk') ? (
+                                                {isMeterRead(bm.customerKeyNumber, 'bulk') && (
                                                     <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none shadow-sm flex items-center gap-1 h-5 px-1.5 rounded-sm">
                                                         <CheckCircle2 className="h-3 w-3" /> Read
-                                                    </Badge>
-                                                ) : (
-                                                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 flex items-center gap-1 h-5 px-1.5 rounded-sm">
-                                                        <Clock className="h-3 w-3 text-amber-600" /> Pending
                                                     </Badge>
                                                 )}
                                             </div>
@@ -872,14 +703,14 @@ export default function RouteDetailsClient() {
                                         >
                                             {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(bm.customerKeyNumber, 'bulk') ? 'Update' : 'Read Meter')}
                                         </Button>
-                                        {allCustomers.filter(c => c.assignedBulkMeterId === bm.customerKeyNumber).length > 0 && (
+                                        {customers.length > 0 && (
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={() => toggleExpand(bm.customerKeyNumber)}
                                                 className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
                                             >
-                                                {customers.length} Individual ({allCustomers.filter(c => c.assignedBulkMeterId === bm.customerKeyNumber && isMeterRead(c.customerKeyNumber, 'individual')).length}/{allCustomers.filter(c => c.assignedBulkMeterId === bm.customerKeyNumber).length} Read) {isExpanded ? <ChevronDown className="ml-1 h-4 w-4" /> : <ChevronRight className="ml-1 h-4 w-4" />}
+                                                {customers.length} Individual {isExpanded ? <ChevronDown className="ml-1 h-4 w-4" /> : <ChevronRight className="ml-1 h-4 w-4" />}
                                             </Button>
                                         )}
                                     </div>
@@ -896,13 +727,9 @@ export default function RouteDetailsClient() {
                                                             <div className="flex items-center gap-2">
                                                                 <h4 className="font-medium">{c.name}</h4>
                                                                 <Badge variant="outline" className="text-[9px] h-4 bg-white">Individual</Badge>
-                                                                {isMeterRead(c.customerKeyNumber, 'individual') ? (
-                                                                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none shadow-sm flex items-center gap-1 h-4 px-1.5 rounded-sm text-[9px]">
+                                                                {isMeterRead(c.customerKeyNumber, 'individual') && (
+                                                                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none shadow-sm flex items-center gap-1 h-4 px-1 rounded-sm text-[9px]">
                                                                         <CheckCircle2 className="h-2.5 w-2.5" /> Read
-                                                                    </Badge>
-                                                                ) : (
-                                                                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 flex items-center gap-1 h-4 px-1.5 rounded-sm text-[9px]">
-                                                                        <Clock className="h-2.5 w-2.5 text-amber-600" /> Pending
                                                                     </Badge>
                                                                 )}
                                                             </div>

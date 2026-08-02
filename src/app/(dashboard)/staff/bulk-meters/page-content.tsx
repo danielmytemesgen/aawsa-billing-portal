@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
@@ -126,23 +125,17 @@ export default function StaffBulkMetersPage() {
   }, [authStatus, isStaffManagement, branchId, hasPermission, allBulkMeters]);
 
 
-  const [statusFilter, setStatusFilter] = React.useState<string>("All");
-
   const searchedBulkMeters = React.useMemo(() => {
-    let result = branchFilteredBulkMeters;
-    if (statusFilter && statusFilter !== 'All') {
-      result = result.filter(bm => bm.status === statusFilter);
-    }
     if (!searchTerm) {
-      return result;
+      return branchFilteredBulkMeters;
     }
-    return result.filter(bm =>
+    return branchFilteredBulkMeters.filter(bm =>
       bm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bm.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (bm.subCity && bm.subCity.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (bm.woreda && bm.woreda.toLowerCase().includes(searchTerm.toLowerCase()))
     );
-  }, [searchTerm, statusFilter, branchFilteredBulkMeters]);
+  }, [searchTerm, branchFilteredBulkMeters]);
 
   const paginatedBulkMeters = searchedBulkMeters.slice(
     page * rowsPerPage,
@@ -330,7 +323,7 @@ export default function StaffBulkMetersPage() {
 
       <div className="mt-6 flex flex-col md:flex-row items-center gap-4">
         <div className="relative flex-grow w-full">
-          <Search className="absolute left-3.5 top-4 h-5 w-5 text-slate-400" />
+          <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
           <Input
             type="search"
             placeholder="Search by name, meter #, contract, or branch..."
@@ -339,22 +332,6 @@ export default function StaffBulkMetersPage() {
             onChange={(e) => setSearchTerm(e.target.value)}
             disabled={authStatus !== 'authorized'}
           />
-        </div>
-
-        <div className="w-full md:w-auto">
-          <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val); setPage(0); }}>
-            <SelectTrigger className="h-14 w-full sm:w-[180px] rounded-xl border-slate-200 bg-white font-semibold text-slate-700 shadow-sm">
-              <SelectValue placeholder="Status: All" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl">
-              <SelectItem value="All">All Statuses</SelectItem>
-              <SelectItem value="Active">Active</SelectItem>
-              <SelectItem value="Inactive">Inactive</SelectItem>
-              <SelectItem value="Maintenance">Maintenance</SelectItem>
-              <SelectItem value="Pending Approval">Pending Approval</SelectItem>
-              <SelectItem value="Rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
       </div>
 

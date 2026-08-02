@@ -128,27 +128,24 @@ export function calculateBillFromTariff(
 
     // --- Fixed tier override: applies to ALL customer types when configured ---
     // If fixed_tier_index is set, always bill at a single flat rate from that tier.
-    const rawFixedTierIndex = tariffConfig.fixed_tier_index !== undefined && tariffConfig.fixed_tier_index !== null
+    const fixedTierIndex = tariffConfig.fixed_tier_index !== undefined && tariffConfig.fixed_tier_index !== null
         ? Number(tariffConfig.fixed_tier_index)
-        : null;
-    const fixedTierIndex = rawFixedTierIndex !== null && Number.isInteger(rawFixedTierIndex) && rawFixedTierIndex >= 0
-        ? rawFixedTierIndex
         : null;
 
     if (fixedTierIndex !== null) {
-        // Use the configured tier, fall back to the last available tier if the index is out of range.
-        const fixedTier = sortedTiers[fixedTierIndex] || sortedTiers[sortedTiers.length - 1];
-        if (fixedTier) {
-            const rate = Number(fixedTier.rate);
-            baseWaterCharge = Number(usageForBaseWaterCharge) * rate;
-            waterTierBreakdown.push({
-                start: 0,
-                end: Infinity,
-                usage: usageForBaseWaterCharge,
-                rate: rate,
-                charge: baseWaterCharge
-            });
-        }
+        // Use the configured tier, fall back to last tier if index is out of range
+        const fixedTier = sortedTiers.length > fixedTierIndex
+            ? sortedTiers[fixedTierIndex]
+            : sortedTiers[sortedTiers.length - 1];
+        const rate = Number(fixedTier.rate);
+        baseWaterCharge = Number(usageForBaseWaterCharge) * rate;
+        waterTierBreakdown.push({
+            start: 0,
+            end: Infinity,
+            usage: usageForBaseWaterCharge,
+            rate: rate,
+            charge: baseWaterCharge
+        });
     } else if (customerType === 'Domestic') {
         let remainingUsage = usageForBaseWaterCharge;
         let lastLimit = 0;

@@ -129,69 +129,44 @@ export default function StaffMeterReadingsPage() {
       bulkReadingsRaw = [];
     }
 
-    const latestMonthYear = [...individualReadingsRaw.map(r => r.monthYear), ...bulkReadingsRaw.map(r => r.monthYear)]
-      .filter((month): month is string => Boolean(month))
-      .sort()
-      .at(-1) ?? format(new Date(), 'yyyy-MM');
+    const currentMonthYear = format(new Date(), 'yyyy-MM');
 
-    individualReadingsRaw = individualReadingsRaw.filter(r => r.monthYear === latestMonthYear);
-    bulkReadingsRaw = bulkReadingsRaw.filter(r => r.monthYear === latestMonthYear);
-
-    const sortedIndiv = individualReadingsRaw
-      .map(r => {
-        const customer = customers.find(c => c.customerKeyNumber === r.individualCustomerId);
-        const mId = r.individualCustomerId || (r as any).custKey || (r as any).meterKey || r.id;
-        return {
-          id: r.id,
-          meterId: mId,
-          meterType: 'individual' as const,
-          meterIdentifier: customer ? `${customer.name} (M: ${customer.meterNumber})` : `Cust. ID: ${mId}`,
-          readingValue: r.readingValue,
-          previousReading: r.previousReading || 0,
-          readingDate: r.readingDate,
-          monthYear: r.monthYear,
-          notes: r.notes,
-          faultCode: r.faultCode
-        };
-      })
-      .sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
-
-    // Deduplicate: Keep only the latest reading per meter
-    const individualMap = new Map<string, DisplayReading>();
-    for (const r of sortedIndiv) {
-      if (r.meterId && !individualMap.has(r.meterId)) {
-        individualMap.set(r.meterId, r);
-      }
+    if (currentUserRole === 'reader') {
+      individualReadingsRaw = individualReadingsRaw.filter(r => r.monthYear === currentMonthYear);
+      bulkReadingsRaw = bulkReadingsRaw.filter(r => r.monthYear === currentMonthYear);
     }
-    const displayedIndividualReadings = Array.from(individualMap.values());
 
-    const sortedBulk = bulkReadingsRaw
-      .map(r => {
-        const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === r.CUSTOMERKEY);
-        const mId = r.CUSTOMERKEY || (r as any).custKey || (r as any).meterKey || r.id;
-        return {
-          id: r.id,
-          meterId: mId,
-          meterType: 'bulk' as const,
-          meterIdentifier: bulkMeter ? `${bulkMeter.name} (M: ${bulkMeter.meterNumber})` : `BM ID: ${mId}`,
-          readingValue: r.readingValue,
-          previousReading: r.previousReading || 0,
-          readingDate: r.readingDate,
-          monthYear: r.monthYear,
-          notes: r.notes,
-          faultCode: r.faultCode
-        };
-      })
-      .sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
+    const displayedIndividualReadings: DisplayReading[] = individualReadingsRaw.map(r => {
+      const customer = customers.find(c => c.customerKeyNumber === r.individualCustomerId);
+      return {
+        id: r.id,
+        meterId: r.individualCustomerId,
+        meterType: 'individual' as const,
+        meterIdentifier: customer ? `${customer.name} (M: ${customer.meterNumber})` : `Cust. ID: ${r.individualCustomerId}`,
+        readingValue: r.readingValue,
+        previousReading: r.previousReading || 0,
+        readingDate: r.readingDate,
+        monthYear: r.monthYear,
+        notes: r.notes,
+        faultCode: r.faultCode
+      };
+    }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
-    // Deduplicate: Keep only the latest reading per meter
-    const bulkMap = new Map<string, DisplayReading>();
-    for (const r of sortedBulk) {
-      if (r.meterId && !bulkMap.has(r.meterId)) {
-        bulkMap.set(r.meterId, r);
-      }
-    }
-    const displayedBulkReadings = Array.from(bulkMap.values());
+    const displayedBulkReadings: DisplayReading[] = bulkReadingsRaw.map(r => {
+      const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === r.CUSTOMERKEY);
+      return {
+        id: r.id,
+        meterId: r.CUSTOMERKEY,
+        meterType: 'bulk' as const,
+        meterIdentifier: bulkMeter ? `${bulkMeter.name} (M: ${bulkMeter.meterNumber})` : `BM ID: ${r.CUSTOMERKEY}`,
+        readingValue: r.readingValue,
+        previousReading: r.previousReading || 0,
+        readingDate: r.readingDate,
+        monthYear: r.monthYear,
+        notes: r.notes,
+        faultCode: r.faultCode
+      };
+    }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
     const filteredCustomers = customers;
     const filteredBulkMeters = bulkMeters;
@@ -366,13 +341,9 @@ export default function StaffMeterReadingsPage() {
     bulkPage * bulkRowsPerPage + bulkRowsPerPage
   );
 
-  const latestMonthYear = React.useMemo(() => {
-    const months = [...individualReadings.map(r => r.monthYear), ...bulkReadings.map(r => r.monthYear)]
-      .filter((month): month is string => Boolean(month));
-    return months.sort().at(-1) ?? format(new Date(), "yyyy-MM");
-  }, [individualReadings, bulkReadings]);
-  const recentIndividualCount = individualReadings.filter(r => r.monthYear === latestMonthYear).length;
-  const recentBulkCount = bulkReadings.filter(r => r.monthYear === latestMonthYear).length;
+  const currentMonthYear = format(new Date(), "yyyy-MM");
+  const recentIndividualCount = individualReadings.filter(r => r.monthYear === currentMonthYear).length;
+  const recentBulkCount = bulkReadings.filter(r => r.monthYear === currentMonthYear).length;
 
   return (
     <div className="space-y-6">

@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { Droplets, Edit, Edit2, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, AlertTriangle, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
+import { Droplets, Edit, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, AlertTriangle, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -13,8 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { usePermissions } from "@/hooks/use-permissions";
-import { PERMISSIONS } from "@/lib/constants/auth";
 import {
   getBulkMeters, getCustomers, updateBulkMeter as updateBulkMeterInStore, deleteBulkMeter as deleteBulkMeterFromStore,
   updateCustomer as updateCustomerInStore, deleteCustomer as deleteCustomerFromStore, subscribeToBulkMeters, subscribeToCustomers,
@@ -27,11 +25,11 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import type { IndividualCustomer, IndividualCustomerStatus } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { DomainBulkMeterReading, DomainBill } from "@/lib/data-store";
 import { type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult, calculateBillFromTariff } from "@/lib/billing-calculations";
-import { calculateBillAction, BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
+// calculateBillAction removed — replaced with synchronous calculateBillFromTariff + local tariff cache
+import { closeBillingCycleAction } from "@/lib/actions";
+import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
-import { ManageAssignedCustomersDialog } from "@/components/billing/ManageAssignedCustomersDialog";
-import { EditReadingsRecalculateSection } from "@/components/billing/EditReadingsRecalculateSection";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
@@ -73,9 +71,6 @@ export default function StaffBulkMeterDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
-  const { hasPermission } = usePermissions();
-  const canManageCustomers = hasPermission(PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS);
-  const canEditReadings = hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS);
   const idRaw = params?.id;
   const bulkMeterKey = Array.isArray(idRaw) ? idRaw[0] : (idRaw as string || "");
 
@@ -83,7 +78,8 @@ export default function StaffBulkMeterDetailsPage() {
   const [associatedCustomers, setAssociatedCustomers] = useState<IndividualCustomer[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAuthorized, setIsAuthorized] = useState(true);
+  const [staffBranchId, setStaffBranchId] = React.useState<string | undefined>(undefined);
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [meterReadingHistory, setMeterReadingHistory] = useState<DomainBulkMeterReading[]>([]);
   const [billingHistory, setBillingHistory] = useState<DomainBill[]>([]);
   const [billForPrintView, setBillForPrintView] = React.useState<DomainBill | null>(null);
@@ -108,8 +104,6 @@ export default function StaffBulkMeterDetailsPage() {
   const [showSlip, setShowSlip] = React.useState(false);
   const [isPrinting, setIsPrinting] = React.useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
-  const [isManageCustomersOpen, setIsManageCustomersOpen] = React.useState(false);
-  const [isEditReadingsOpen, setIsEditReadingsOpen] = React.useState(false);
 
   // Pagination states
   const [readingHistoryPage, setReadingHistoryPage] = React.useState(0);
@@ -137,8 +131,8 @@ export default function StaffBulkMeterDetailsPage() {
   const [memoizedDetails, setMemoizedDetails] = React.useState(initialMemoizedDetails);
   const lastCalculationInputs = React.useRef<string>("");
 
-  const calculateMemoizedDetails = useCallback(async (
-    currentBulkMeter: BulkMeter | null,async 
+  const calculateMemoizedDetails = useCallback((
+    currentBulkMeter: BulkMeter | null,
     currentAssociatedCustomers: IndividualCustomer[],
     currentBranches: Branch[],
     currentBillingHistory: DomainBill[],
@@ -173,18 +167,14 @@ export default function StaffBulkMeterDetailsPage() {
     }
     lastCalculationInputs.current = currentInputs;
 
+    // Use cached local tariff — synchronous, zero network calls
     const activeTariff = getTariff(effectiveBulkMeterCustomerType, billingMonth);
     const emptyBillResult: BillCalculationResult = { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0, effectiveUsage: 0 };
 
-    const currentRequestId = ++calculationRequestId.current;
-
-    const totalBulkBillForPeriod = await calculateBillAction(
-      Math.max(0, bulkUsage),
-      effectiveBulkMeterCustomerType,
-      effectiveBulkMeterSewerageConnection,
-      currentBulkMeter.meterSize,
-      billingMonth
-    ).then(res => res.data?.totalBill ?? 0).catch(() => 0);
+    // Calculate bulk meter bill synchronously from cached tariff
+    const totalBulkBillForPeriod = activeTariff
+      ? calculateBillFromTariff(activeTariff, Math.max(0, bulkUsage), currentBulkMeter.meterSize, effectiveBulkMeterSewerageConnection).totalBill
+      : 0;
 
     const outStandingBillValue = currentBulkMeter.outStandingbill ?? 0;
 
@@ -192,6 +182,7 @@ export default function StaffBulkMeterDetailsPage() {
 
     const rawDifference = bulkUsage - totalIndividualUsage;
 
+    // Apply minimum-of-3 rule: if difference is < 3 (including negative), bill for at least 3 m³
     let differenceUsage = rawDifference;
     let isMinOfThreeApplied = false;
     if (differenceUsage < 3) {
@@ -199,6 +190,8 @@ export default function StaffBulkMeterDetailsPage() {
       isMinOfThreeApplied = true;
     }
 
+    // Only pass sewerageUsage override when: sewerage connected AND bulk usage itself was low (0-2)
+    // This preserves accurate sewerage charge for normal-range difference usage
     let sewerageUsage: number | undefined = undefined;
     if (
       effectiveBulkMeterSewerageConnection === 'Yes' &&
@@ -208,19 +201,10 @@ export default function StaffBulkMeterDetailsPage() {
       sewerageUsage = bulkUsage;
     }
 
-    const effectiveDiffUsage = Math.max(0, differenceUsage);
-    const differenceFull: BillCalculationResult = await calculateBillAction(
-      effectiveDiffUsage,
-      effectiveBulkMeterCustomerType,
-      effectiveBulkMeterSewerageConnection,
-      currentBulkMeter.meterSize,
-      billingMonth
-    ).then(res => res.data ?? ({ ...emptyBillResult, effectiveUsage: effectiveDiffUsage }))
-      .catch(() => ({ ...emptyBillResult, effectiveUsage: effectiveDiffUsage }));
-
-    if (currentRequestId !== calculationRequestId.current) {
-      return;
-    }
+    // Calculate difference bill synchronously from cached tariff
+    const differenceFull: BillCalculationResult = activeTariff
+      ? calculateBillFromTariff(activeTariff, differenceUsage, currentBulkMeter.meterSize, effectiveBulkMeterSewerageConnection, sewerageUsage)
+      : { ...emptyBillResult, effectiveUsage: differenceUsage };
     const differenceBill = differenceFull.totalBill;
     const differenceBillBreakdown = differenceFull;
 
@@ -336,6 +320,20 @@ export default function StaffBulkMeterDetailsPage() {
 
   useEffect(() => {
     let isMounted = true;
+    let localBranchId: string | undefined;
+
+    const storedUser = localStorage.getItem("user");
+    if (storedUser) {
+      try {
+        const parsedUser: UserAuth = JSON.parse(storedUser);
+        // Branch-scoped if the user has a branchId assigned — no role string comparison needed
+        if (parsedUser.branchId) {
+          if (isMounted) setStaffBranchId(parsedUser.branchId);
+          localBranchId = parsedUser.branchId;
+        }
+      } catch (e) { console.error("Failed to parse user from localStorage", e); }
+    }
+
 
     if (!bulkMeterKey) {
       setIsLoading(false);
@@ -346,92 +344,66 @@ export default function StaffBulkMeterDetailsPage() {
     }
 
     setIsLoading(true);
+    Promise.all([initializeBulkMeters(true), initializeCustomers(true), initializeBulkMeterReadings(true), initializeBills(true), initializeBranches(true)]).then(async () => {
+      if (!isMounted) return;
 
-    const loadData = async () => {
-      try {
-        await Promise.all([
-          initializeBulkMeters(true),
-          initializeCustomers(true),
-          initializeBulkMeterReadings(true),
-          initializeBills(true),
-          initializeBranches(true),
-        ]);
+      // Fetch live data for this specific meter to ensure Outstanding Bill is fresh
+      const { syncBulkMeterLive } = await import("@/lib/data-store");
+      await syncBulkMeterLive(bulkMeterKey);
 
-        if (!isMounted) return;
+      const currentGlobalMeters = getBulkMeters();
+      const currentGlobalCustomers = getCustomers();
+      const currentGlobalBranches = getBranches();
+      setBranches(currentGlobalBranches);
 
-        const { syncBulkMeterLive } = await import("@/lib/data-store");
-        await syncBulkMeterLive(bulkMeterKey);
+      const foundBM = currentGlobalMeters.find(bm => bm.customerKeyNumber === bulkMeterKey);
 
-        const currentGlobalMeters = getBulkMeters();
-        const currentGlobalCustomers = getCustomers();
-        const currentGlobalBranches = getBranches();
-        setBranches(currentGlobalBranches);
+      if (foundBM) {
+        const isUserAuthorized = localBranchId ? foundBM.branchId === localBranchId : false;
 
-        const foundBM = currentGlobalMeters.find((bm) => bm.customerKeyNumber === bulkMeterKey);
-
-        if (foundBM) {
+        if (isUserAuthorized) {
           setBulkMeter(foundBM);
-          setAssociatedCustomers(currentGlobalCustomers.filter((c) => c.assignedBulkMeterId === bulkMeterKey));
+          setAssociatedCustomers(currentGlobalCustomers.filter(c => c.assignedBulkMeterId === bulkMeterKey));
           setIsAuthorized(true);
 
-          const branchMeters = currentGlobalMeters
-            .filter((bm) => bm.branchId === foundBM.branchId)
-            .map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
+          const branchMeters = currentGlobalMeters.filter(bm => bm.branchId === localBranchId).map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
           setBranchBulkMetersForCustomerForm(branchMeters);
 
-          setMeterReadingHistory(
-            getBulkMeterReadings()
-              .filter((r) => r.CUSTOMERKEY === foundBM.customerKeyNumber)
-              .sort((a, b) => {
-                const dateA = new Date(a.readingDate).getTime();
-                const dateB = new Date(b.readingDate).getTime();
-                if (dateB !== dateA) return dateB - dateA;
-                const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                return cB - cA;
-              })
-          );
+          setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+            const dateA = new Date(a.readingDate).getTime();
+            const dateB = new Date(b.readingDate).getTime();
+            if (dateB !== dateA) return dateB - dateA;
+            const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return cB - cA;
+          }));
 
-          const { getTariff, initializeTariffs } = await import("@/lib/data-store");
+          const { getTariff, initializeTariffs } = await import('@/lib/data-store');
           await initializeTariffs();
-          const tariff = getTariff(foundBM.chargeGroup as any, format(new Date(), "yyyy-MM"));
+          const tariff = getTariff(foundBM.chargeGroup as any, format(new Date(), 'yyyy-MM'));
           setActiveTariff(tariff);
 
-          setBillingHistory(
-            getBills()
-              .filter((b) => b.CUSTOMERKEY === foundBM.customerKeyNumber)
-              .sort((a, b) => {
-                const dateA = new Date(a.billPeriodEndDate || 0).getTime();
-                const dateB = new Date(b.billPeriodEndDate || 0).getTime();
-                if (dateB !== dateA) {
-                  return dateB - dateA;
-                }
-                const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                return creationB - creationA;
-              })
-          );
-        } else {
-          setBulkMeter(null);
-          setAssociatedCustomers([]);
-          setIsAuthorized(false);
-          toast({ title: "Not Found", description: "Bulk meter not found.", variant: "destructive" });
-        }
-      } catch (error) {
-        console.error("Failed to load bulk meter details:", error);
-        if (isMounted) {
-          setBulkMeter(null);
-          setAssociatedCustomers([]);
-          setIsAuthorized(false);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
+          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+            const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+            const dateB = new Date(b.billPeriodEndDate || 0).getTime();
+            if (dateB !== dateA) {
+              return dateB - dateA;
+            }
+            const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return creationB - creationA;
+          }));
 
-    void loadData();
+        } else {
+          setBulkMeter(null); setIsAuthorized(false);
+          toast({ title: "Unauthorized", description: "You are not authorized to view this bulk meter.", variant: "destructive" });
+        }
+      } else {
+        setBulkMeter(null);
+        toast({ title: "Not Found", description: "Bulk meter not found.", variant: "destructive" });
+      }
+      setIsLoading(false);
+    });
 
     const handleStoresUpdate = () => {
       if (!isMounted) return;
@@ -440,56 +412,51 @@ export default function StaffBulkMeterDetailsPage() {
       const currentGlobalBranches = getBranches();
       setBranches(currentGlobalBranches);
 
-      const foundBM = currentGlobalMeters.find((bm) => bm.customerKeyNumber === bulkMeterKey);
+      const foundBM = currentGlobalMeters.find(bm => bm.customerKeyNumber === bulkMeterKey);
 
       if (foundBM) {
-        setBulkMeter(foundBM);
-        setAssociatedCustomers(currentGlobalCustomers.filter((c) => c.assignedBulkMeterId === bulkMeterKey));
-        setIsAuthorized(true);
+        const isUserAuthorized = localBranchId ? foundBM.branchId === localBranchId : false;
 
-        const branchMeters = currentGlobalMeters
-          .filter((bm) => bm.branchId === foundBM.branchId)
-          .map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
-        setBranchBulkMetersForCustomerForm(branchMeters);
+        if (isUserAuthorized) {
+          setBulkMeter(foundBM);
+          setAssociatedCustomers(currentGlobalCustomers.filter(c => c.assignedBulkMeterId === bulkMeterKey));
+          setIsAuthorized(true);
 
-        setMeterReadingHistory(
-          getBulkMeterReadings()
-            .filter((r) => r.CUSTOMERKEY === foundBM.customerKeyNumber)
-            .sort((a, b) => {
-              const dateA = new Date(a.readingDate).getTime();
-              const dateB = new Date(b.readingDate).getTime();
-              if (dateB !== dateA) return dateB - dateA;
-              const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-              const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-              return cB - cA;
-            })
-        );
+          const branchMeters = currentGlobalMeters.filter(bm => bm.branchId === localBranchId).map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
+          setBranchBulkMetersForCustomerForm(branchMeters);
 
-        import("@/lib/data-store").then(({ getTariff, initializeTariffs }) => {
-          initializeTariffs().then(() => {
-            const t = getTariff(foundBM.chargeGroup as any, format(new Date(), "yyyy-MM"));
-            setActiveTariff(t);
+          setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+            const dateA = new Date(a.readingDate).getTime();
+            const dateB = new Date(b.readingDate).getTime();
+            if (dateB !== dateA) return dateB - dateA;
+            const cA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const cB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return cB - cA;
+          }));
+
+          import('@/lib/data-store').then(({ getTariff, initializeTariffs }) => {
+            initializeTariffs().then(() => {
+                const t = getTariff(foundBM.chargeGroup as any, format(new Date(), 'yyyy-MM'));
+                setActiveTariff(t);
+            });
           });
-        });
 
-        setBillingHistory(
-          getBills()
-            .filter((b) => b.CUSTOMERKEY === foundBM.customerKeyNumber)
-            .sort((a, b) => {
-              const dateA = new Date(a.billPeriodEndDate || 0).getTime();
-              const dateB = new Date(b.billPeriodEndDate || 0).getTime();
-              if (dateB !== dateA) {
-                return dateB - dateA;
-              }
-              const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-              const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-              return creationB - creationA;
-            })
-        );
+          setBillingHistory(getBills().filter(b => b.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
+            const dateA = new Date(a.billPeriodEndDate || 0).getTime();
+            const dateB = new Date(b.billPeriodEndDate || 0).getTime();
+            if (dateB !== dateA) {
+              return dateB - dateA;
+            }
+            const creationA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const creationB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return creationB - creationA;
+          }));
+
+        } else {
+          setBulkMeter(null); setIsAuthorized(false);
+        }
       } else if (bulkMeter) {
-        setBulkMeter(null);
-        setAssociatedCustomers([]);
-        setIsAuthorized(false);
+        setBulkMeter(null); setIsAuthorized(false);
         toast({ title: "Bulk Meter Update", description: "The bulk meter being viewed may have been deleted or is no longer accessible.", variant: "destructive" });
       }
     };
@@ -500,14 +467,7 @@ export default function StaffBulkMeterDetailsPage() {
     const unsubMeterReadings = subscribeToBulkMeterReadings(handleStoresUpdate);
     const unsubBills = subscribeToBills(handleStoresUpdate);
 
-    return () => {
-      isMounted = false;
-      unsubBM();
-      unsubCust();
-      unsubBranches();
-      unsubMeterReadings();
-      unsubBills();
-    };
+    return () => { isMounted = false; unsubBM(); unsubCust(); unsubBranches(); unsubMeterReadings(); unsubBills(); };
   }, [bulkMeterKey, router, toast]);
 
   useEffect(() => {
@@ -938,7 +898,7 @@ export default function StaffBulkMeterDetailsPage() {
       { 'Description': 'Total Difference bill', 'Value': `ETB ${billCardDetails.totalDifferenceBill.toFixed(2)}` },
       { 'Description': 'Outstanding Bill (Previous Balance)', 'Value': `ETB ${billCardDetails.outstandingBill.toFixed(2)}` },
       { 'Description': 'Total Amount Payable', 'Value': `ETB ${billCardDetails.totalPayable.toFixed(2)}` },
-      { 'Description': 'Payment Status', 'Value': billCardDetails.paymentStatus },
+      { 'Description': 'Paid/Unpaid', 'Value': billCardDetails.paymentStatus },
       { 'Description': 'Month', 'Value': billCardDetails.month },
     ];
 
@@ -1165,12 +1125,6 @@ export default function StaffBulkMeterDetailsPage() {
                       <FileEdit className="mr-2 h-4 w-4" />
                       <span>Edit Bulk Meter</span>
                     </DropdownMenuItem>
-                    {canManageCustomers && (
-                      <DropdownMenuItem onClick={() => setIsManageCustomersOpen(true)}>
-                        <UsersIcon className="mr-2 h-4 w-4 text-blue-600 dark:text-blue-400" />
-                        <span className="font-medium text-blue-600 dark:text-blue-400">Manage Assigned Customers</span>
-                      </DropdownMenuItem>
-                    )}
                     <DropdownMenuItem onClick={handleDeleteBulkMeter} className="text-destructive focus:text-destructive focus:bg-destructive/10">
                       <Trash2 className="mr-2 h-4 w-4" />
                       <span>Delete Bulk Meter</span>
@@ -1296,46 +1250,17 @@ export default function StaffBulkMeterDetailsPage() {
 
           <Card className="shadow-lg non-printable">
             <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Reading History</CardTitle>
                   <CardDescription>Historical readings logged for this meter.</CardDescription>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {canEditReadings && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsEditReadingsOpen(!isEditReadingsOpen)}
-                      className={cn(
-                        "border-amber-500/40 text-amber-900 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40",
-                        isEditReadingsOpen && "bg-amber-100 dark:bg-amber-900/50 border-amber-500 font-bold"
-                      )}
-                    >
-                      <Edit2 className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" /> Edit Readings & Recalculate
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
-                    <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
-                  </Button>
-                </div>
+                <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
+                  <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {isEditReadingsOpen && bulkMeter && (
-                <div className="p-4 border-b border-border bg-amber-50/20 dark:bg-amber-950/10">
-                  <EditReadingsRecalculateSection
-                    bulkMeter={bulkMeter}
-                    latestBill={billingHistory[0] || null}
-                    onClose={() => setIsEditReadingsOpen(false)}
-                    onSaveSuccess={() => {
-                      initializeBulkMeters(true);
-                      initializeBills(true);
-                      initializeCustomers(true);
-                    }}
-                  />
-                </div>
-              )}
               {meterReadingHistory.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-6 italic">No historical readings found for this meter.</p>
               ) : (
@@ -1701,7 +1626,6 @@ export default function StaffBulkMeterDetailsPage() {
 
       {bulkMeter && (<BulkMeterFormDialog open={isBulkMeterFormOpen} onOpenChange={setIsBulkMeterFormOpen} onSubmit={handleSubmitBulkMeterForm} defaultValues={bulkMeter} />)}
       {bulkMeter && (<AddReadingDialog open={isAddReadingOpen} onOpenChange={setIsAddReadingOpen} onSubmit={handleAddNewReading} meter={bulkMeter} />)}
-      <ManageAssignedCustomersDialog open={isManageCustomersOpen} onOpenChange={setIsManageCustomersOpen} bulkMeter={bulkMeter} />
       <AlertDialog open={isBulkMeterDeleteDialogOpen} onOpenChange={setIsBulkMeterDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Delete Bulk Meter?</AlertDialogTitle><AlertDialogDescription>This will permanently delete {bulkMeter?.name}. Associated customers will need reassignment.</AlertDialogDescription></AlertDialogHeader>

@@ -64,12 +64,7 @@ import {
   getCustomers, subscribeToCustomers, initializeCustomers,
   getBranches, subscribeToBranches, initializeBranches,
   initializeBills, subscribeToBills,
-  getBills,
-  getStaffMembers,
-  getIndividualCustomerReadings,
-  getBulkMeterReadings,
-  initializeIndividualCustomerReadings,
-  initializeBulkMeterReadings,
+  getStaffMembers, getBills,
 } from "@/lib/data-store";
 import type { BulkMeter } from '../bulk-meters/bulk-meter-types';
 import type { IndividualCustomer } from '../individual-customers/individual-customer-types';
@@ -521,24 +516,18 @@ export default function AdminDashboardPage() {
           initializeBranches(),
           initializeBulkMeters(),
           initializeCustomers(),
-          initializeBills(),
-          initializeIndividualCustomerReadings(),
-          initializeBulkMeterReadings()
+          initializeBills()
         ]).then(async () => {
           if (isMounted) {
             await processDashboardData();
 
             // Today's activity — compute after store is warm
             const todayStr = new Date().toISOString().slice(0, 10);
-            const bills = getBills();
-            const individualReadings = getIndividualCustomerReadings();
-            const bulkReadings = getBulkMeterReadings();
-            const todayBillsCount = bills.filter((bill: any) => bill.createdAt && String(bill.createdAt).startsWith(todayStr)).length;
-            const todayReadingsCount = [...individualReadings, ...bulkReadings].filter((reading: any) => {
-              const dateValue = reading.readingDate || reading.createdAt;
-              return dateValue && String(dateValue).startsWith(todayStr);
-            }).length;
-            const todayCustomersCount = getCustomers().filter((customer: any) => customer.createdAt && String(customer.createdAt).startsWith(todayStr)).length;
+            const meters = getBulkMeters();
+            const customers = getCustomers();
+            const todayBillsCount = meters.filter((m: any) => m.billDate && String(m.billDate).startsWith(todayStr)).length;
+            const todayReadingsCount = [...meters, ...customers].filter((m: any) => m.readingDate && String(m.readingDate).startsWith(todayStr)).length;
+            const todayCustomersCount = customers.filter((c: any) => c.createdAt && String(c.createdAt).startsWith(todayStr)).length;
             if (isMounted) {
               setTodayBills(todayBillsCount);
               setTodayReadings(todayReadingsCount);

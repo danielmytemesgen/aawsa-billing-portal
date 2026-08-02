@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle, FileWarning, UploadCloud, Download } from "lucide-react";
+import { CheckCircle, FileWarning, UploadCloud } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
+
 
 interface CsvUploadSectionProps {
   entryType: "bulk" | "individual";
@@ -22,17 +23,6 @@ interface CsvUploadSectionProps {
 
 // Regex to handle commas inside quoted fields
 const CSV_SPLIT_REGEX = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
-
-/** Prevents CSV Formula Injection by neutralizing leading =, +, -, @ characters */
-function sanitizeCsvField(value: any): any {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (/^[=+\-@]/.test(trimmed)) {
-      return `'${trimmed}`;
-    }
-  }
-  return value;
-}
 
 export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, batchUploadFunction }: CsvUploadSectionProps) {
   const { toast } = useToast();
@@ -122,8 +112,7 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
         expectedHeaders.forEach((expectedHeader) => {
           const normalizedHeader = normalizeHeader(expectedHeader);
           const indexInCSV = headerIndexMap[normalizedHeader];
-          const rawVal = indexInCSV !== undefined && indexInCSV !== -1 ? (values[indexInCSV] || undefined) : undefined;
-          rowData[expectedHeader] = rawVal !== undefined ? sanitizeCsvField(rawVal) : undefined;
+          rowData[expectedHeader] = indexInCSV !== undefined && indexInCSV !== -1 ? (values[indexInCSV] || undefined) : undefined;
         });
 
         try {
@@ -215,24 +204,6 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
       }
     };
     reader.readAsText(file);
-  };
-
-  const downloadErrorLog = () => {
-    if (processingErrors.length === 0) return;
-    const csvContent = ["Line_Number,Error_Description", ...processingErrors.map((err, i) => {
-      const escapedErr = err.replace(/"/g, '""');
-      return `"${i + 1}","${escapedErr}"`;
-    })].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", `csv_upload_errors_${new Date().toISOString().slice(0,10)}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
 
@@ -350,19 +321,8 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
           {processingErrors.length > 0 && (
             <Alert variant="destructive" className="rounded-2xl border-destructive/20 bg-destructive/5 backdrop-blur-sm">
               <FileWarning className="h-5 w-5 text-destructive" />
-              <div className="flex items-center justify-between w-full pr-2">
-                <AlertTitle className="font-bold">Errors Encountered ({processingErrors.length})</AlertTitle>
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  onClick={downloadErrorLog} 
-                  className="h-8 rounded-lg gap-1 border-destructive/30 hover:bg-destructive/10 text-xs font-semibold"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download Error Log (.csv)
-                </Button>
-              </div>
-              <AlertDescription className="mt-2">
+              <AlertTitle className="font-bold">Errors Encountered ({processingErrors.length})</AlertTitle>
+              <AlertDescription>
                 <ScrollArea className="mt-3 h-[180px] w-full rounded-xl border border-destructive/10 p-4 bg-white/50 dark:bg-slate-900/50">
                   <ul className="space-y-2">
                     {processingErrors.map((error, index) => (

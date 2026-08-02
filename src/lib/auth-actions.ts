@@ -81,9 +81,8 @@ export async function loginAction(formData: FormData) {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role_name || user.role,
+        role: user.role_name,
         branchId: user.branch_id,
-        branchName: user.branch_name || user.branch || '',
         permissions: user.permissions || [],
         expires,
     };

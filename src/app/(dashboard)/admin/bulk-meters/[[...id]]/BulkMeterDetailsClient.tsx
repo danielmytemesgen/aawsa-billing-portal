@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { Droplets, Edit, Edit2, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, AlertTriangle, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
+import { Droplets, Edit, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, AlertTriangle, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -11,8 +11,6 @@ import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { usePermissions } from "@/hooks/use-permissions";
-import { PERMISSIONS } from "@/lib/constants/auth";
 import {
   getBulkMeters, getCustomers, updateBulkMeter as updateBulkMeterInStore, deleteBulkMeter as deleteBulkMeterFromStore,
   updateCustomer as updateCustomerInStore, deleteCustomer as deleteCustomerFromStore, subscribeToBulkMeters, subscribeToCustomers,
@@ -27,12 +25,10 @@ import type { IndividualCustomer, IndividualCustomerStatus } from "../../individ
 import type { Branch } from "../../branches/branch-types";
 import type { DomainBulkMeterReading, DomainBill } from "@/lib/data-store";
 import { type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult, calculateBillFromTariff } from "@/lib/billing-calculations";
-import { calculateBillAction, closeBillingCycleAction } from "@/lib/actions";
+// calculateBillAction removed — replaced with synchronous calculateBillFromTariff + local tariff cache
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "../bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "../../individual-customers/individual-customer-form-dialog";
 import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
-import { ManageAssignedCustomersDialog } from "@/components/billing/ManageAssignedCustomersDialog";
-import { EditReadingsRecalculateSection } from "@/components/billing/EditReadingsRecalculateSection";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
@@ -90,9 +86,6 @@ export default function BulkMeterDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
-  const { hasPermission } = usePermissions();
-  const canManageCustomers = hasPermission(PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS);
-  const canEditReadings = hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS);
   const idRaw = params?.id;
   const bulkMeterKey = Array.isArray(idRaw) ? idRaw[0] : (idRaw as string || "");
 
@@ -109,7 +102,6 @@ export default function BulkMeterDetailsPage() {
   const [isBulkMeterDeleteDialogOpen, setIsBulkMeterDeleteDialogOpen] = React.useState(false);
 
   const [activeTariff, setActiveTariff] = useState<any>(null);
-  const calculationRequestId = React.useRef(0);
 
   const [isCustomerFormOpen, setIsCustomerFormOpen] = React.useState(false);
   const [selectedCustomer, setSelectedCustomer] = React.useState<IndividualCustomer | null>(null);
@@ -125,8 +117,6 @@ export default function BulkMeterDetailsPage() {
 
   const [showSlip, setShowSlip] = React.useState(false);
   const [isPrinting, setIsPrinting] = React.useState(false);
-  const [isManageCustomersOpen, setIsManageCustomersOpen] = React.useState(false);
-  const [isEditReadingsOpen, setIsEditReadingsOpen] = React.useState(false);
 
   // Pagination states
   const [readingHistoryPage, setReadingHistoryPage] = React.useState(0);
@@ -157,7 +147,7 @@ export default function BulkMeterDetailsPage() {
   const [memoizedDetails, setMemoizedDetails] = React.useState(initialMemoizedDetails);
   const lastCalculationInputs = React.useRef<string>("");
 
-  const calculateMemoizedDetails = useCallback(async (
+  const calculateMemoizedDetails = useCallback((
     currentBulkMeter: BulkMeter | null,
     currentAssociatedCustomers: IndividualCustomer[],
     currentBranches: Branch[],
@@ -193,40 +183,28 @@ export default function BulkMeterDetailsPage() {
     }
     lastCalculationInputs.current = currentInputs;
 
+    // Use cached local tariff — synchronous, zero network calls
     const activeTariffForRuleCheck = getTariff(effectiveBulkMeterCustomerType, billingMonth);
     const ruleOfThreeActive = activeTariffForRuleCheck?.use_rule_of_three !== false;
 
     const emptyBillResult: BillCalculationResult = { totalBill: 0, baseWaterCharge: 0, maintenanceFee: 0, sanitationFee: 0, sewerageCharge: 0, meterRent: 0, vatAmount: 0, additionalFeesCharge: 0, effectiveUsage: 0 };
 
-    const currentRequestId = ++calculationRequestId.current;
-
-    const totalBulkBillForPeriod = await calculateBillAction(
-      Math.max(0, bulkUsage),
-      effectiveBulkMeterCustomerType,
-      effectiveBulkMeterSewerageConnection,
-      currentBulkMeter.meterSize,
-      billingMonth
-    ).then(res => res.data?.totalBill ?? 0).catch(() => 0);
+    // Calculate bulk meter bill synchronously from cached tariff
+    const totalBulkBillForPeriod = activeTariffForRuleCheck
+      ? calculateBillFromTariff(activeTariffForRuleCheck, Math.max(0, bulkUsage), currentBulkMeter.meterSize, effectiveBulkMeterSewerageConnection).totalBill
+      : 0;
 
     const outStandingBillValue = currentBulkMeter.outStandingbill ?? 0;
     const totalIndividualUsage = currentAssociatedCustomers.reduce((sum, cust) => sum + ((cust.currentReading ?? 0) - (cust.previousReading ?? 0)), 0);
     const rawDifference = bulkUsage - totalIndividualUsage;
 
+    // When Rule of 3 is ON and difference is negative, bill as 3m³ instead of blocking
     const effectiveConsForDiff = (ruleOfThreeActive && rawDifference < 0) ? 3 : rawDifference;
-    const effectiveDiffUsage = Math.max(0, effectiveConsForDiff);
 
-    const differenceFull: BillCalculationResult = await calculateBillAction(
-      effectiveDiffUsage,
-      effectiveBulkMeterCustomerType,
-      effectiveBulkMeterSewerageConnection,
-      currentBulkMeter.meterSize,
-      billingMonth
-    ).then(res => res.data ?? ({ ...emptyBillResult, effectiveUsage: effectiveDiffUsage }))
-      .catch(() => ({ ...emptyBillResult, effectiveUsage: effectiveDiffUsage }));
-
-    if (currentRequestId !== calculationRequestId.current) {
-      return; // stale response
-    }
+    // Calculate difference bill synchronously from cached tariff
+    const differenceFull: BillCalculationResult = activeTariffForRuleCheck
+      ? calculateBillFromTariff(activeTariffForRuleCheck, effectiveConsForDiff, currentBulkMeter.meterSize, effectiveBulkMeterSewerageConnection)
+      : { ...emptyBillResult, effectiveUsage: effectiveConsForDiff };
     const differenceBill = differenceFull.totalBill;
     const differenceBillBreakdown = differenceFull;
     const differenceUsage = differenceFull.effectiveUsage;
@@ -1021,7 +999,7 @@ export default function BulkMeterDetailsPage() {
 
                 <div className="flex justify-between items-end mt-1 px-1">
                   <div className="space-y-0 text-[9px] font-medium">
-                    <div>Payment Status: Unpaid</div>
+                    <div>Paid/Unpaid: Unpaid</div>
                     <div>Month: {billForPrintView?.monthYear || billCardDetails.month}</div>
                   </div>
                   <div className="print-status-box scale-[0.6] origin-bottom-right">
@@ -1081,12 +1059,6 @@ export default function BulkMeterDetailsPage() {
                       <FileEdit className="mr-2 h-4 w-4" />
                       <span>Edit Bulk Meter</span>
                     </DropdownMenuItem>
-                    {canManageCustomers && (
-                      <DropdownMenuItem onClick={() => setIsManageCustomersOpen(true)}>
-                        <UsersIcon className="mr-2 h-4 w-4 text-blue-600 dark:text-blue-400" />
-                        <span className="font-medium text-blue-600 dark:text-blue-400">Manage Assigned Customers</span>
-                      </DropdownMenuItem>
-                    )}
                     <DropdownMenuItem onClick={handleDeleteBulkMeter} className="text-destructive focus:text-destructive focus:bg-destructive/10">
                       <Trash2 className="mr-2 h-4 w-4" />
                       <span>Delete Bulk Meter</span>
@@ -1266,46 +1238,17 @@ export default function BulkMeterDetailsPage() {
 
           <Card className="shadow-lg non-printable">
             <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Reading History</CardTitle>
                   <CardDescription>Historical readings logged for this meter.</CardDescription>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {canEditReadings && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsEditReadingsOpen(!isEditReadingsOpen)}
-                      className={cn(
-                        "border-amber-500/40 text-amber-900 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40",
-                        isEditReadingsOpen && "bg-amber-100 dark:bg-amber-900/50 border-amber-500 font-bold"
-                      )}
-                    >
-                      <Edit2 className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" /> Edit Readings & Recalculate
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
-                    <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
-                  </Button>
-                </div>
+                <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
+                  <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {isEditReadingsOpen && currentBulkMeter && (
-                <div className="p-4 border-b border-border bg-amber-50/20 dark:bg-amber-950/10">
-                  <EditReadingsRecalculateSection
-                    bulkMeter={currentBulkMeter}
-                    latestBill={billingHistory[0] || null}
-                    onClose={() => setIsEditReadingsOpen(false)}
-                    onSaveSuccess={() => {
-                      initializeBulkMeters(true);
-                      initializeBills(true);
-                      initializeCustomers(true);
-                    }}
-                  />
-                </div>
-              )}
               {meterReadingHistory.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-6 italic">No historical readings found for this meter.</p>
               ) : (
@@ -1654,7 +1597,6 @@ export default function BulkMeterDetailsPage() {
 
       {currentBulkMeter && (<BulkMeterFormDialog open={isBulkMeterFormOpen} onOpenChange={setIsBulkMeterFormOpen} onSubmit={handleSubmitBulkMeterForm} defaultValues={currentBulkMeter} />)}
       {currentBulkMeter && (<AddReadingDialog open={isAddReadingOpen} onOpenChange={setIsAddReadingOpen} onSubmit={handleAddNewReading} meter={currentBulkMeter} />)}
-      <ManageAssignedCustomersDialog open={isManageCustomersOpen} onOpenChange={setIsManageCustomersOpen} bulkMeter={bulkMeter} />
       <AlertDialog open={isBulkMeterDeleteDialogOpen} onOpenChange={setIsBulkMeterDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Delete Bulk Meter?</AlertDialogTitle><AlertDialogDescription>This will permanently delete {bulkMeter?.name}. Associated customers will need reassignment.</AlertDialogDescription></AlertDialogHeader>

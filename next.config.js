@@ -1,4 +1,4 @@
-// next.config.js
+// next.config.js – simplified configuration for development (no PWA/Workbox)
 
 const publicServerIp = process.env.PUBLIC_SERVER_IP;
 
@@ -13,11 +13,8 @@ const allowedDevOrigins = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: process.env.NEXT_BUILD_TARGET === 'export' ? 'export' : 'standalone',
-  swcMinify: true,
-  transpilePackages: ['dexie'],
   typescript: { ignoreBuildErrors: false },
   experimental: {
-    optimizePackageImports: ['lucide-react', 'recharts', 'framer-motion'],
     serverActions: {
       allowedOrigins: allowedDevOrigins,
       bodySizeLimit: '10mb',

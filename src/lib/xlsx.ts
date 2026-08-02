@@ -50,8 +50,7 @@ export const arrayToCsvBlob = (data: any[], headers: string[]): Blob => {
     }).join(',');
   });
 
-  // Prepend UTF-8 BOM (\uFEFF) so Excel opens Geez / Amharic text correctly
-  const csvContent = '\uFEFF' + [headerRow, ...rows].join('\n');
+  const csvContent = [headerRow, ...rows].join('\n');
   return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
 };
 

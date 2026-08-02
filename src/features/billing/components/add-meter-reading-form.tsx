@@ -56,7 +56,6 @@ const formSchemaBase = z.object({
     required_error: "A date is required.",
   }),
   faultCode: z.string().optional(),
-  isRolloverOrReset: z.boolean().optional(),
   capturedCoordinates: z.object({
     latitude: z.number(),
     longitude: z.number(),
@@ -119,7 +118,6 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const formSchema = React.useMemo(() => {
     return formSchemaBase.refine(
       (data) => {
-        if (data.isRolloverOrReset) return true; // Allow lower readings if dial rollover or meter replacement occurred
         let lastReading = -1;
         if (data.meterType === 'individual_customer_meter') {
           const customer = customers.find(c => c.customerKeyNumber === data.entityId);
@@ -149,7 +147,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const form = useForm<AddMeterReadingFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      meterType: defaultValues?.meterType || (bulkMeters.length > 0 ? 'bulk_meter' : 'individual_customer_meter'),
+      meterType: defaultValues?.meterType || 'individual_customer_meter',
       entityId: defaultValues?.entityId || "",
       reading: defaultValues?.reading || 0,
       date: defaultValues?.date || new Date(),

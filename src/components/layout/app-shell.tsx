@@ -12,7 +12,6 @@ import {
   WifiOff,
   CheckCircle2,
   RefreshCw,
-  SignalLow,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -80,10 +79,7 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
   }
 
   const toggleOutdoorMode = () => {
-    const isOutdoor = document.documentElement.classList.toggle('theme-outdoor');
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem('aawsa-outdoor-mode', String(isOutdoor));
-    }
+    document.documentElement.classList.toggle('theme-outdoor');
   };
 
   return (
@@ -167,7 +163,7 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   const router = useRouter();
   const [appName, setAppName] = React.useState("AAWSA Billing Portal");
   const currentYear = new Date().getFullYear();
-  const { isOnline, wasOffline, isSlowConnection, pendingCount } = useNetworkStatus();
+  const { isOnline, wasOffline, pendingCount } = useNetworkStatus();
   const [syncProgress, setSyncProgress] = React.useState<{ syncing: boolean; success: number; failed: number; total: number } | null>(null);
 
   const [sessionWarning, setSessionWarning] = React.useState<{ open: boolean; secondsLeft: number }>({
@@ -224,9 +220,6 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
 
     const storedDarkMode = window.localStorage.getItem("aawsa-dark-mode-default");
     document.documentElement.classList.toggle('dark', storedDarkMode === "true");
-
-    const storedOutdoorMode = window.localStorage.getItem("aawsa-outdoor-mode");
-    document.documentElement.classList.toggle('theme-outdoor', storedOutdoorMode === "true");
 
     // Ensure session timing settings are cached client-side for use by the idle timeout hook
     (async () => {
@@ -313,11 +306,6 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
             <div className="bg-emerald-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
               <CheckCircle2 className="h-4 w-4 animate-bounce flex-shrink-0" />
               <span>Connectivity restored! Offline readings synchronized successfully.</span>
-            </div>
-          ) : isSlowConnection ? (
-            <div className="bg-yellow-600 text-white px-4 py-2 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all duration-300 shadow-inner">
-              <SignalLow className="h-4 w-4 animate-pulse flex-shrink-0" />
-              <span>Slow network connection detected. Large uploads may take longer.</span>
             </div>
           ) : null}
         </div>

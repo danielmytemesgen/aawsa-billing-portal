@@ -19,7 +19,6 @@ import { addIndividualCustomerReading, addBulkMeterReading } from '@/lib/data-st
 import { uploadReadingPhotoAction } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
 import { useCurrentUser } from '@/hooks/use-current-user';
-import { useConnectionDiagnostics } from '@/hooks/use-connection-diagnostics';
 import { 
   Loader2, 
   RefreshCw, 
@@ -57,7 +56,6 @@ export function SyncHub() {
   const [syncTotalCount, setSyncTotalCount] = React.useState(0);
   const { toast } = useToast();
   const { currentUser, isManagement } = useCurrentUser();
-  const diagnostics = useConnectionDiagnostics();
   const syncInProgress = React.useRef(false);
 
   const retryDelay = React.useRef(2000);
@@ -941,26 +939,6 @@ export function SyncHub() {
                 })}
               </div>
             )}
-          </div>
-
-          {/* Connection Diagnostics Details Panel */}
-          <div className="px-4 py-2 bg-slate-100/70 border-t border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-3">
-              <span className="font-semibold text-slate-700">Network Diagnostics:</span>
-              <span className="capitalize">Type: {diagnostics.effectiveType}</span>
-              {diagnostics.rttMs !== undefined && (
-                <span>RTT: {diagnostics.rttMs}ms</span>
-              )}
-              {diagnostics.downlinkMbps !== undefined && (
-                <span>Downlink: {diagnostics.downlinkMbps} Mbps</span>
-              )}
-              {diagnostics.saveData && (
-                <span className="text-amber-600 font-medium">Data Saver Active</span>
-              )}
-            </div>
-            <span className="font-medium text-slate-500">
-              Status: {diagnostics.online ? "Online" : "Offline"}
-            </span>
           </div>
 
           <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">

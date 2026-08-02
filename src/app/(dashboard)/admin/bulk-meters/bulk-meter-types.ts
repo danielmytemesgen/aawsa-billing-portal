@@ -23,8 +23,6 @@ export type BulkMeter = z.infer<typeof baseBulkMeterDataSchema> & {
   xCoordinate?: number;
   yCoordinate?: number;
   zCoordinate?: number;
-  createdAt?: string | null;
-  updatedAt?: string | null;
   chargeGroup: string; // Changed to string
   sewerageConnection: SewerageConnection;
   approved_by?: string | null;

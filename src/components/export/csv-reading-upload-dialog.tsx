@@ -6,14 +6,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, Dial
 import { UploadCloud, FileSpreadsheet, FileWarning, CheckCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { addIndividualCustomerReadingsBatch, addBulkMeterReadingsBatch, getIndividualCustomerReadings, getBulkMeterReadings, getCustomers, getBulkMeters, initializeCustomers, initializeBulkMeters, initializeIndividualCustomerReadings, initializeBulkMeterReadings } from "@/lib/data-store";
+import { addIndividualCustomerReading, addBulkMeterReading, getIndividualCustomerReadings, getBulkMeterReadings, getCustomers, getBulkMeters, initializeCustomers, initializeBulkMeters, initializeIndividualCustomerReadings, initializeBulkMeterReadings } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { format, parse, isValid, lastDayOfMonth } from "date-fns";
 import { z, ZodError } from "zod";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Progress } from "@/components/ui/progress";
 
 interface User {
   id?: string;
@@ -92,13 +91,11 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
   const [isCsvProcessing, setIsCsvProcessing] = React.useState(false);
   const [csvProcessingErrors, setCsvProcessingErrors] = React.useState<string[]>([]);
   const [csvSuccessCount, setCsvSuccessCount] = React.useState(0);
-  const [progress, setProgress] = React.useState<{ current: number; total: number } | null>(null);
 
   const resetState = () => {
     setCsvFile(null);
     setCsvProcessingErrors([]);
     setCsvSuccessCount(0);
-    setProgress(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -169,7 +166,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
         setCsvFile(selectedFile);
         setCsvProcessingErrors([]);
         setCsvSuccessCount(0);
-        setProgress(null);
       } else {
         toast({ variant: "destructive", title: "Invalid File Type", description: "Please upload a valid .csv or .dat file." });
         resetState();
@@ -181,7 +177,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
     if (!csvFile || !currentUser) return;
 
     setIsCsvProcessing(true);
-    setProgress(null);
     let localSuccessCount = 0;
     const localErrors: string[] = [];
 
@@ -293,9 +288,7 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
           }
         };
 
-        const itemsToBatch: Array<{ readingData: any }> = [];
-
-        for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
+        const processCsvRow = async (rowIndex: number) => {
           const values = dataRows[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
           const rowData = Object.fromEntries(
             Object.entries(headerMapping).map(([header, index]) => [header, values[index]])
@@ -309,29 +302,29 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
 
             if (!meter) {
               localErrors.push(`Row ${rowIndex + 1}: Meter '${customerKeyVal || meterKeyVal || 'unknown'}' not found.`);
-              continue;
+              return;
             }
 
             const normalizedReadingDate = normalizeReadingDate(validatedRow.READING_DATE);
             if (!normalizedReadingDate) {
               localErrors.push(`Row ${rowIndex + 1}: Invalid reading date format '${validatedRow.READING_DATE}'.`);
-              continue;
+              return;
             }
 
             const rowMeterKey = String(meter.customerKeyNumber ?? meter.meterNumber ?? '').trim();
             if (!rowMeterKey) {
               localErrors.push(`Row ${rowIndex + 1}: Unable to determine meter key for duplicate detection.`);
-              continue;
+              return;
             }
 
             if (isDuplicateReading(rowMeterKey, normalizedReadingDate)) {
               localErrors.push(`Row ${rowIndex + 1}: Duplicate reading skipped for meter '${rowMeterKey}' on ${normalizedReadingDate}.`);
-              continue;
+              return;
             }
 
             if (isDuplicateReadingMonth(rowMeterKey, normalizedReadingDate)) {
               localErrors.push(`Row ${rowIndex + 1}: Another reading already exists for meter '${rowMeterKey}' in ${normalizedReadingDate.slice(0, 7)}.`);
-              continue;
+              return;
             }
 
             let parsedDate = new Date(validatedRow.READING_DATE);
@@ -391,27 +384,29 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
               meterMultiplyFactor: validatedRow.METER_MULTIPLY_FACTOR
             };
 
+            let result;
             if (meterType === 'individual') {
-              itemsToBatch.push({
-                readingData: {
-                  individualCustomerId: meter.customerKeyNumber,
-                  custKey: validatedRow.CUST_KEY,
-                  shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
-                  ...commonPayload
-                }
+              result = await addIndividualCustomerReading({
+                individualCustomerId: meter.customerKeyNumber,
+                custKey: validatedRow.CUST_KEY,
+                shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
+                ...commonPayload
               });
             } else {
-              itemsToBatch.push({
-                readingData: {
-                  CUSTOMERKEY: meter.customerKeyNumber,
-                  custKey: validatedRow.CUST_KEY,
-                  shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
-                  ...commonPayload
-                }
+              result = await addBulkMeterReading({
+                CUSTOMERKEY: meter.customerKeyNumber,
+                custKey: validatedRow.CUST_KEY,
+                shadowUsage: (validatedRow.METER_READING ?? 0) - (validatedRow.PREVIOUS_READING ?? 0),
+                ...commonPayload
               });
             }
 
-            recordDuplicateReading(rowMeterKey, normalizedReadingDate);
+            if (result && result.success) {
+              localSuccessCount++;
+              recordDuplicateReading(rowMeterKey, normalizedReadingDate);
+            } else {
+              localErrors.push(`Row ${rowIndex + 1} (${customerKeyVal}): ${result?.message || 'Unknown error.'}`);
+            }
           } catch (error) {
             if (error instanceof ZodError) {
               const errorMessages = error.issues.map(issue => `Row ${rowIndex + 1}, Column '${issue.path.join('.')}' : ${issue.message}`).join("; ");
@@ -420,47 +415,24 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
               localErrors.push(`Row ${rowIndex + 1}: Unknown validation error. ${(error as Error).message}`);
             }
           }
+        };
+
+        const rowTasks: Promise<void>[] = [];
+        const batchSize = 20;
+        for (let i = 0; i < dataRows.length; i++) {
+          rowTasks.push(processCsvRow(i));
+          if (rowTasks.length >= batchSize) {
+            await Promise.allSettled(rowTasks);
+            rowTasks.length = 0;
+          }
         }
-
-        // Process batches in larger chunks to reduce request overhead.
-        const CHUNK_SIZE = 1000;
-        const totalItems = itemsToBatch.length;
-        setProgress({ current: 0, total: totalItems || 1 });
-
-        for (let i = 0; i < itemsToBatch.length; i += CHUNK_SIZE) {
-          const chunk = itemsToBatch.slice(i, i + CHUNK_SIZE);
-          let result;
-          if (meterType === 'individual') {
-            result = await addIndividualCustomerReadingsBatch(chunk);
-          } else {
-            result = await addBulkMeterReadingsBatch(chunk);
-          }
-
-          if (result && result.success) {
-            localSuccessCount += result.data?.count || chunk.length;
-          } else {
-            localErrors.push(`Batch ${Math.floor(i / CHUNK_SIZE) + 1} (Rows ${i + 1}-${i + chunk.length}): ${result?.message || 'Unknown batch insertion error.'}`);
-          }
-
-          const processed = Math.min(i + chunk.length, totalItems);
-          setProgress({ current: processed, total: totalItems });
-        }
-
-        // Refresh stores once after all batches finish
-        if (localSuccessCount > 0) {
-          if (meterType === 'individual') {
-            await initializeCustomers(true);
-            await initializeIndividualCustomerReadings(true);
-          } else {
-            await initializeBulkMeters(true);
-            await initializeBulkMeterReadings(true);
-          }
+        if (rowTasks.length > 0) {
+          await Promise.allSettled(rowTasks);
         }
       } catch (error) {
         localErrors.push(`CSV processing failed: ${(error as Error).message}`);
       }
 
-      setProgress(null);
       finalizeProcessing();
     };
 
@@ -530,17 +502,6 @@ export function CsvReadingUploadDialog({ open, onOpenChange, meterType, meters, 
               {isCsvProcessing ? "Processing..." : `Upload`}
             </Button>
           </div>
-
-          {isCsvProcessing && progress && (
-            <div className="space-y-1.5 py-2">
-              <div className="flex justify-between text-xs font-medium text-slate-600 dark:text-slate-300">
-                <span>Processing batch upload...</span>
-                <span>{progress.current.toLocaleString()} / {progress.total.toLocaleString()} rows ({Math.round((progress.current / (progress.total || 1)) * 100)}%)</span>
-              </div>
-              <Progress value={(progress.current / (progress.total || 1)) * 100} className="h-2" />
-            </div>
-          )}
-
           {csvSuccessCount > 0 && (
             <Alert variant="default" className="bg-green-50 dark:bg-green-900/30 border-green-300">
               <CheckCircle className="h-5 w-5 text-green-600" />

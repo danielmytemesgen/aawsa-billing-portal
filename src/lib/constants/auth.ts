@@ -27,8 +27,6 @@ export const PERMISSIONS = {
     BULK_METERS_UPDATE: 'bulk_meters_update',
     BULK_METERS_DELETE: 'bulk_meters_delete',
     BULK_METERS_APPROVE: 'bulk_meters_approve',
-    BULK_METERS_MANAGE_CUSTOMERS: 'bulk_meters_manage_customers',
-    BULK_METERS_EDIT_READINGS: 'bulk_meters_edit_readings',
 
     // Staff
     STAFF_VIEW: 'staff_view',
@@ -120,10 +118,6 @@ export const PERMISSIONS = {
 
     // Data Entry
     DATA_ENTRY_ACCESS: 'data_entry_access',
-    DATA_ENTRY_BULK_FORM: 'data_entry_bulk_form',
-    DATA_ENTRY_INDIVIDUAL_FORM: 'data_entry_individual_form',
-    DATA_ENTRY_BULK_CSV: 'data_entry_bulk_csv',
-    DATA_ENTRY_INDIVIDUAL_CSV: 'data_entry_individual_csv',
 
     // Notifications
     NOTIFICATIONS_VIEW: 'notifications_view',

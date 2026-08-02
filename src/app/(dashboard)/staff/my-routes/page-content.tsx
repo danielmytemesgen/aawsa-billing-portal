@@ -33,25 +33,11 @@ export default function MyRoutesPage() {
         load();
     }, []);
 
-    const canViewAllRoutes = hasPermission('routes_view_all');
-
     const myRoutes = React.useMemo(() => {
         if (!currentUser?.id) return [];
         const userIdRaw = currentUser.id.toLowerCase();
-        const userBranchId = currentUser.branchId;
-
-        return routes.filter(r => {
-            // Branch check: ensure route belongs to user's branch
-            const branchMatches = !userBranchId || userBranchId === 'all' || !r.branchId || r.branchId === userBranchId;
-            if (!branchMatches) return false;
-
-            // If user can view all routes in their branch, allow access
-            if (canViewAllRoutes) return true;
-
-            // Restricted field readers see only routes assigned to their reader ID
-            return r.readerId?.toLowerCase() === userIdRaw;
-        });
-    }, [routes, currentUser, canViewAllRoutes]);
+        return routes.filter(r => r.readerId?.toLowerCase() === userIdRaw);
+    }, [routes, currentUser]);
 
     const getMeterCount = (routeKey: string) => {
         return allBulkMeters.filter(bm => bm.routeKey === routeKey).length;
