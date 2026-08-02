@@ -2727,14 +2727,14 @@ export const addIndividualCustomerReadingsBatch = async (
     previousReading: item.readingData.previousReading
   }));
 
-  const { data: result, error } = await batchCreateIndividualCustomerReadingsAction(batchPayload);
+  const { success, data: result, error } = await batchCreateIndividualCustomerReadingsAction(batchPayload);
 
-  if (error || !result || !result.success) {
-    const msg = error ? (error as any).message || "Batch insert failed." : (result?.message || "Batch insert failed.");
+  if (!success || error || !result) {
+    const msg = error ? (error as any).message || "Batch insert failed." : "Batch insert failed.";
     return { success: false, message: msg, error };
   }
 
-  return { success: true, data: { count: result.count } };
+  return { success: true, data: { count: result.count ?? 0 } };
 };
 
 export const addBulkMeterReadingsBatch = async (
@@ -2749,14 +2749,14 @@ export const addBulkMeterReadingsBatch = async (
     previousReading: item.readingData.previousReading
   }));
 
-  const { data: result, error } = await batchCreateBulkMeterReadingsAction(batchPayload);
+  const { success, data: result, error } = await batchCreateBulkMeterReadingsAction(batchPayload);
 
-  if (error || !result || !result.success) {
-    const msg = error ? (error as any).message || "Batch insert failed." : (result?.message || "Batch insert failed.");
+  if (!success || error || !result) {
+    const msg = error ? (error as any).message || "Batch insert failed." : "Batch insert failed.";
     return { success: false, message: msg, error };
   }
 
-  return { success: true, data: { count: result.count } };
+  return { success: true, data: { count: result.count ?? 0 } };
 };
 
 

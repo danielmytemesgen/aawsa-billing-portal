@@ -107,7 +107,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "drizzle-kit": "^0.18.1",
-    "eslint": "9.39.2",
+    "eslint": "8.57.0",
     "eslint-config-next": "14.2.35",
     "genkit-cli": "^0.0.2",
     "husky": "^9.1.7",
@@ -115,7 +115,7 @@
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.0",
+    "typescript": "5.6.3",
     "vitest": "^4.1.10"
   },
   "overrides": {

@@ -415,7 +415,7 @@ export async function deleteBranchAction(id: string) {
   });
 }
 
-export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) {
+export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
@@ -432,13 +432,13 @@ export async function getAllCustomersAction(options?: { branchId?: string; limit
   });
 }
 
-export async function getCustomersCountAction(searchTerm?: string, excludePending?: boolean) {
+export async function getCustomersCountAction(searchTerm?: string, excludePending?: boolean, branchId?: string, status?: string) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const branchId = getEffectiveBranchId(session, undefined, 'customers_view_all');
-    return await dbCountCustomers({ branchId, searchTerm, excludePending });
+    const resolvedBranchId = getEffectiveBranchId(session, branchId, 'customers_view_all');
+    return await dbCountCustomers({ branchId: resolvedBranchId, searchTerm, excludePending, status });
   });
 }
 
@@ -561,7 +561,7 @@ export async function getCustomerByIdAction(customerKeyNumber: string) {
     return await dbGetCustomerById(customerKeyNumber);
   });
 }
-export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) {
+export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
@@ -580,13 +580,13 @@ export async function getAllBulkMetersAction(options?: { branchId?: string; limi
   });
 }
 
-export async function getBulkMetersCountAction(searchTerm?: string, excludePending?: boolean) {
+export async function getBulkMetersCountAction(searchTerm?: string, excludePending?: boolean, branchId?: string, status?: string) {
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    const branchId = getEffectiveBranchId(session, undefined, 'bulk_meters_view_all');
-    return await dbCountBulkMeters({ branchId, searchTerm, excludePending });
+    const resolvedBranchId = getEffectiveBranchId(session, branchId, 'bulk_meters_view_all');
+    return await dbCountBulkMeters({ branchId: resolvedBranchId, searchTerm, excludePending, status });
   });
 }
 
@@ -1785,6 +1785,26 @@ export async function createIndividualCustomerReadingAction(
     });
   });
 }
+
+export async function batchCreateIndividualCustomerReadingsAction(
+  items: Array<{ reading: IndividualCustomerReadingInsert; previousReading?: number }>
+) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+
+    let createdCount = 0;
+    for (const item of items || []) {
+      const rowResult = await createIndividualCustomerReadingAction(item.reading);
+      if (!rowResult || (rowResult as any).success === false) {
+        throw new Error((rowResult as any)?.message || 'Failed to create individual customer reading');
+      }
+      createdCount += 1;
+    }
+
+    return { count: createdCount };
+  });
+}
+
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
@@ -1894,6 +1914,25 @@ export async function createBulkMeterReadingAction(
       
       return result;
     });
+  });
+}
+
+export async function batchCreateBulkMeterReadingsAction(
+  items: Array<{ reading: BulkMeterReadingInsert; previousReading?: number }>
+) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+
+    let createdCount = 0;
+    for (const item of items || []) {
+      const rowResult = await createBulkMeterReadingAction(item.reading);
+      if (!rowResult || (rowResult as any).success === false) {
+        throw new Error((rowResult as any)?.message || 'Failed to create bulk meter reading');
+      }
+      createdCount += 1;
+    }
+
+    return { count: createdCount };
   });
 }
 

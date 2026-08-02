@@ -230,7 +230,7 @@ export const dbGetBranchById = async (id: string) => {
     return rows[0] ?? null;
 };
 
-export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) => {
+export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) => {
     let sql = `
         SELECT ic.*, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate 
         FROM individual_customers ic 
@@ -262,6 +262,11 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?
         sql += " AND ic.status != 'Pending Approval'";
     }
 
+    if (options?.status) {
+        sql += ` AND ic.status = $${paramIndex++}`;
+        params.push(options.status);
+    }
+
     if (options?.searchTerm) {
         // Search by Name, Meter Key, Customer Key, or Branch Name (via join)
         sql += ` AND (ic.name ILIKE $${paramIndex} OR ic."METER_KEY" ILIKE $${paramIndex} OR ic."customerKeyNumber" ILIKE $${paramIndex} OR ic."contractNumber" ILIKE $${paramIndex} OR b.name ILIKE $${paramIndex})`;
@@ -284,7 +289,7 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?
     return await query(sql, params);
 };
 
-export const dbCountCustomers = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean }) => {
+export const dbCountCustomers = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean; status?: string }) => {
     let sql = 'SELECT COUNT(*) as total FROM individual_customers ic LEFT JOIN branches b ON ic.branch_id = b.id WHERE ic.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
@@ -296,6 +301,11 @@ export const dbCountCustomers = async (options?: { branchId?: string; searchTerm
 
     if (options?.excludePending) {
         sql += " AND ic.status != 'Pending Approval'";
+    }
+
+    if (options?.status) {
+        sql += ` AND ic.status = $${paramIndex++}`;
+        params.push(options.status);
     }
 
     if (options?.searchTerm) {
@@ -506,7 +516,7 @@ export const dbGetCustomersByBookNumber = async (bookNumber: string) => {
     return await query('SELECT * FROM individual_customers WHERE "bookNumber" = $1 AND status = \'Active\' AND deleted_at IS NULL', [bookNumber]);
 };
 
-export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string }) => {
+export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) => {
     let sql = `
         SELECT bm.*, b.name as branch_name, sr.x_coordinate, sr.y_coordinate, sr.z_coordinate
         FROM bulk_meters bm 
@@ -537,6 +547,11 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId
         sql += " AND bm.status != 'Pending Approval'";
     }
 
+    if (options?.status) {
+        sql += ` AND bm.status = $${paramIndex++}`;
+        params.push(options.status);
+    }
+
     if (options?.searchTerm) {
         // Search by Name, Meter Key, Customer Key, or Branch Name
         sql += ` AND (bm.name ILIKE $${paramIndex} OR bm."METER_KEY" ILIKE $${paramIndex} OR bm."customerKeyNumber" ILIKE $${paramIndex} OR bm."contractNumber" ILIKE $${paramIndex} OR b.name ILIKE $${paramIndex})`;
@@ -559,7 +574,7 @@ export const dbGetAllBulkMeters = async (options?: { branchId?: string; readerId
     return await query(sql, params);
 };
 
-export const dbCountBulkMeters = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean }) => {
+export const dbCountBulkMeters = async (options?: { branchId?: string; searchTerm?: string; excludePending?: boolean; status?: string }) => {
     let sql = 'SELECT COUNT(*) as total FROM bulk_meters bm LEFT JOIN branches b ON bm.branch_id = b.id WHERE bm.deleted_at IS NULL';
     const params: any[] = [];
     let paramIndex = 1;
@@ -571,6 +586,11 @@ export const dbCountBulkMeters = async (options?: { branchId?: string; searchTer
 
     if (options?.excludePending) {
         sql += " AND bm.status != 'Pending Approval'";
+    }
+
+    if (options?.status) {
+        sql += ` AND bm.status = $${paramIndex++}`;
+        params.push(options.status);
     }
 
     if (options?.searchTerm) {
