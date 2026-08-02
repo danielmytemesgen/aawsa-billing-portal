@@ -1,0 +1,1455 @@
+{
+  "id": "e6838713-7611-42e8-9c5b-cd335976b202",
+  "prevId": "9adf8866-e183-4e45-ae08-8eebd9110ca8",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.bills": {
+      "name": "bills",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "gen_random_uuid()"
+        },
+        "BILLKEY": {
+          "name": "BILLKEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "CUSTOMERKEY": {
+          "name": "CUSTOMERKEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "CUSTOMERNAME": {
+          "name": "CUSTOMERNAME",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "CUSTOMERTIN": {
+          "name": "CUSTOMERTIN",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "CUSTOMERBRANCH": {
+          "name": "CUSTOMERBRANCH",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "REASON": {
+          "name": "REASON",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "CURRREAD": {
+          "name": "CURRREAD",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.000'"
+        },
+        "PREVREAD": {
+          "name": "PREVREAD",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.000'"
+        },
+        "CONS": {
+          "name": "CONS",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.000'"
+        },
+        "TOTALBILLAMOUNT": {
+          "name": "TOTALBILLAMOUNT",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.00'"
+        },
+        "THISMONTHBILLAMT": {
+          "name": "THISMONTHBILLAMT",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "OUTSTANDINGAMT": {
+          "name": "OUTSTANDINGAMT",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "PENALTYAMT": {
+          "name": "PENALTYAMT",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "DRACCTNO": {
+          "name": "DRACCTNO",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "CRACCTNO": {
+          "name": "CRACCTNO",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "individual_customer_id": {
+          "name": "individual_customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bill_period_start_date": {
+          "name": "bill_period_start_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bill_period_end_date": {
+          "name": "bill_period_end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "month_year": {
+          "name": "month_year",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "difference_usage": {
+          "name": "difference_usage",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.000'"
+        },
+        "base_water_charge": {
+          "name": "base_water_charge",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.00'"
+        },
+        "sewerage_charge": {
+          "name": "sewerage_charge",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "maintenance_fee": {
+          "name": "maintenance_fee",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "sanitation_fee": {
+          "name": "sanitation_fee",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "meter_rent": {
+          "name": "meter_rent",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "balance_carried_forward": {
+          "name": "balance_carried_forward",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "amount_paid": {
+          "name": "amount_paid",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.00'"
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payment_status": {
+          "name": "payment_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Unpaid'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Draft'"
+        },
+        "bill_number": {
+          "name": "bill_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "approval_date": {
+          "name": "approval_date",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_by": {
+          "name": "approved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vat_amount": {
+          "name": "vat_amount",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "additional_fees_charge": {
+          "name": "additional_fees_charge",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "additional_fees_breakdown": {
+          "name": "additional_fees_breakdown",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "snapshot_data": {
+          "name": "snapshot_data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch_id": {
+          "name": "branch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "bills_individual_customer_id_individual_customers_customerKeyNumber_fk": {
+          "name": "bills_individual_customer_id_individual_customers_customerKeyNumber_fk",
+          "tableFrom": "bills",
+          "tableTo": "individual_customers",
+          "columnsFrom": [
+            "individual_customer_id"
+          ],
+          "columnsTo": [
+            "customerKeyNumber"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bills_branch_id_branches_id_fk": {
+          "name": "bills_branch_id_branches_id_fk",
+          "tableFrom": "bills",
+          "tableTo": "branches",
+          "columnsFrom": [
+            "branch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "bills_id_month_year_pk": {
+          "name": "bills_id_month_year_pk",
+          "columns": [
+            "id",
+            "month_year"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.branches": {
+      "name": "branches",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location": {
+          "name": "location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contactPerson": {
+          "name": "contactPerson",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "contactPhone": {
+          "name": "contactPhone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.bulk_meters": {
+      "name": "bulk_meters",
+      "schema": "",
+      "columns": {
+        "customerKeyNumber": {
+          "name": "customerKeyNumber",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "INST_KEY": {
+          "name": "INST_KEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contractNumber": {
+          "name": "contractNumber",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meterSize": {
+          "name": "meterSize",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "METER_KEY": {
+          "name": "METER_KEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previousReading": {
+          "name": "previousReading",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currentReading": {
+          "name": "currentReading",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "month": {
+          "name": "month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "specificArea": {
+          "name": "specificArea",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subCity": {
+          "name": "subCity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "woreda": {
+          "name": "woreda",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch_id": {
+          "name": "branch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "NUMBER_OF_DIALS": {
+          "name": "NUMBER_OF_DIALS",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Active'"
+        },
+        "paymentStatus": {
+          "name": "paymentStatus",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Unpaid'"
+        },
+        "charge_group": {
+          "name": "charge_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ROUTE_KEY": {
+          "name": "ROUTE_KEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sewerage_connection": {
+          "name": "sewerage_connection",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "x_coordinate": {
+          "name": "x_coordinate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "y_coordinate": {
+          "name": "y_coordinate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "z_coordinate": {
+          "name": "z_coordinate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_by": {
+          "name": "approved_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "bulk_meters_branch_id_branches_id_fk": {
+          "name": "bulk_meters_branch_id_branches_id_fk",
+          "tableFrom": "bulk_meters",
+          "tableTo": "branches",
+          "columnsFrom": [
+            "branch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bulk_meters_ROUTE_KEY_routes_route_key_fk": {
+          "name": "bulk_meters_ROUTE_KEY_routes_route_key_fk",
+          "tableFrom": "bulk_meters",
+          "tableTo": "routes",
+          "columnsFrom": [
+            "ROUTE_KEY"
+          ],
+          "columnsTo": [
+            "route_key"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "bulk_meters_approved_by_staff_members_id_fk": {
+          "name": "bulk_meters_approved_by_staff_members_id_fk",
+          "tableFrom": "bulk_meters",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "approved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "bulk_meters_contractNumber_unique": {
+          "name": "bulk_meters_contractNumber_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "contractNumber"
+          ]
+        },
+        "bulk_meters_METER_KEY_unique": {
+          "name": "bulk_meters_METER_KEY_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "METER_KEY"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.individual_customers": {
+      "name": "individual_customers",
+      "schema": "",
+      "columns": {
+        "customerKeyNumber": {
+          "name": "customerKeyNumber",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "INST_KEY": {
+          "name": "INST_KEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contractNumber": {
+          "name": "contractNumber",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customerType": {
+          "name": "customerType",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bookNumber": {
+          "name": "bookNumber",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meterSize": {
+          "name": "meterSize",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "METER_KEY": {
+          "name": "METER_KEY",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previousReading": {
+          "name": "previousReading",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currentReading": {
+          "name": "currentReading",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "month": {
+          "name": "month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assignedBulkMeterId": {
+          "name": "assignedBulkMeterId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch_id": {
+          "name": "branch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "NUMBER_OF_DIALS": {
+          "name": "NUMBER_OF_DIALS",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Active'"
+        },
+        "paymentStatus": {
+          "name": "paymentStatus",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Unpaid'"
+        },
+        "x_coordinate": {
+          "name": "x_coordinate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "y_coordinate": {
+          "name": "y_coordinate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "z_coordinate": {
+          "name": "z_coordinate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_by": {
+          "name": "approved_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "individual_customers_assignedBulkMeterId_bulk_meters_customerKeyNumber_fk": {
+          "name": "individual_customers_assignedBulkMeterId_bulk_meters_customerKeyNumber_fk",
+          "tableFrom": "individual_customers",
+          "tableTo": "bulk_meters",
+          "columnsFrom": [
+            "assignedBulkMeterId"
+          ],
+          "columnsTo": [
+            "customerKeyNumber"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "individual_customers_branch_id_branches_id_fk": {
+          "name": "individual_customers_branch_id_branches_id_fk",
+          "tableFrom": "individual_customers",
+          "tableTo": "branches",
+          "columnsFrom": [
+            "branch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "individual_customers_approved_by_staff_members_id_fk": {
+          "name": "individual_customers_approved_by_staff_members_id_fk",
+          "tableFrom": "individual_customers",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "approved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "individual_customers_contractNumber_unique": {
+          "name": "individual_customers_contractNumber_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "contractNumber"
+          ]
+        },
+        "individual_customers_METER_KEY_unique": {
+          "name": "individual_customers_METER_KEY_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "METER_KEY"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.payments": {
+      "name": "payments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "bill_id": {
+          "name": "bill_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bill_month_year": {
+          "name": "bill_month_year",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "individual_customer_id": {
+          "name": "individual_customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "amount_paid": {
+          "name": "amount_paid",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transaction_reference": {
+          "name": "transaction_reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processed_by_staff_id": {
+          "name": "processed_by_staff_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_date": {
+          "name": "payment_date",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "payments_individual_customer_id_individual_customers_customerKeyNumber_fk": {
+          "name": "payments_individual_customer_id_individual_customers_customerKeyNumber_fk",
+          "tableFrom": "payments",
+          "tableTo": "individual_customers",
+          "columnsFrom": [
+            "individual_customer_id"
+          ],
+          "columnsTo": [
+            "customerKeyNumber"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "payments_processed_by_staff_id_staff_members_id_fk": {
+          "name": "payments_processed_by_staff_id_staff_members_id_fk",
+          "tableFrom": "payments",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "processed_by_staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.permissions": {
+      "name": "permissions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "permissions_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "32767",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "permissions_name_unique": {
+          "name": "permissions_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.role_permissions": {
+      "name": "role_permissions",
+      "schema": "",
+      "columns": {
+        "role_id": {
+          "name": "role_id",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "permission_id": {
+          "name": "permission_id",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "role_permissions_role_id_roles_id_fk": {
+          "name": "role_permissions_role_id_roles_id_fk",
+          "tableFrom": "role_permissions",
+          "tableTo": "roles",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "role_permissions_permission_id_permissions_id_fk": {
+          "name": "role_permissions_permission_id_permissions_id_fk",
+          "tableFrom": "role_permissions",
+          "tableTo": "permissions",
+          "columnsFrom": [
+            "permission_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "role_permissions_role_id_permission_id_pk": {
+          "name": "role_permissions_role_id_permission_id_pk",
+          "columns": [
+            "role_id",
+            "permission_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.roles": {
+      "name": "roles",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "roles_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "32767",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "role_name": {
+          "name": "role_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "roles_role_name_unique": {
+          "name": "roles_role_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "role_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.routes": {
+      "name": "routes",
+      "schema": "",
+      "columns": {
+        "route_key": {
+          "name": "route_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "branch_id": {
+          "name": "branch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reader_id": {
+          "name": "reader_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "routes_branch_id_branches_id_fk": {
+          "name": "routes_branch_id_branches_id_fk",
+          "tableFrom": "routes",
+          "tableTo": "branches",
+          "columnsFrom": [
+            "branch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "routes_reader_id_staff_members_id_fk": {
+          "name": "routes_reader_id_staff_members_id_fk",
+          "tableFrom": "routes",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "reader_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.staff_members": {
+      "name": "staff_members",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch": {
+          "name": "branch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role_id": {
+          "name": "role_id",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Active'"
+        },
+        "hire_date": {
+          "name": "hire_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "staff_members_role_id_roles_id_fk": {
+          "name": "staff_members_role_id_roles_id_fk",
+          "tableFrom": "staff_members",
+          "tableTo": "roles",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "staff_members_email_unique": {
+          "name": "staff_members_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.system_settings": {
+      "name": "system_settings",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.tariffs": {
+      "name": "tariffs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "customer_type": {
+          "name": "customer_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tiers": {
+          "name": "tiers",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "maintenance_percentage": {
+          "name": "maintenance_percentage",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.01'"
+        },
+        "sanitation_percentage": {
+          "name": "sanitation_percentage",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sewerage_rate_per_m3": {
+          "name": "sewerage_rate_per_m3",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vat_rate": {
+          "name": "vat_rate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0.15'"
+        },
+        "fixed_tier_index": {
+          "name": "fixed_tier_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "use_rule_of_three": {
+          "name": "use_rule_of_three",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

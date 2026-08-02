@@ -1,0 +1,1871 @@
+
+"use client";
+
+import * as React from "react";
+import Link from "next/link";
+import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from '@/lib/xlsx';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart, FileDown, RefreshCw as RefreshCwIcon } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import type { IndividualCustomer } from "../individual-customers/individual-customer-types";
+import type { BulkMeter } from "../bulk-meters/bulk-meter-types";
+import type { StaffMember } from "../staff-management/staff-types";
+import type { Branch } from "../branches/branch-types";
+import type { DateRange } from "react-day-picker";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
+import { DatePicker } from "@/components/ui/date-picker";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
+import { ReportDataView } from './report-data-view';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { calculateBillAction, deleteBillAction, getAllBranchesAction , getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllTariffsAction } from "@/lib/actions";
+import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
+import { RefreshCw } from "lucide-react";
+import { format as formatDate, parse } from "date-fns";
+import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
+import { getMonthlyBillAmt } from "@/lib/billing-utils";
+
+
+// Top-level type guards for meter reading unions (used by multiple reports)
+const isBulkReading = (r: any): r is { meterType: string; CUSTOMERKEY?: string } => {
+  return r && typeof r === 'object' && 'meterType' in r && r.meterType === 'bulk_meter';
+};
+
+const isIndividualReading = (r: any): r is { meterType: string; individualCustomerId?: string } => {
+  return r && typeof r === 'object' && 'meterType' in r && r.meterType === 'individual_customer_meter';
+};
+
+
+interface ReportFilters {
+  branchId?: string;
+  startDate?: Date;
+  endDate?: Date;
+  chargeGroup?: string;
+}
+
+interface ReportType {
+  id: string;
+  name: string;
+  description: string;
+  category?: string;
+  headers?: string[];
+  getData?: (filters: ReportFilters) => any[] | Promise<any[]>;
+  requiredPermission?: typeof PERMISSIONS[keyof typeof PERMISSIONS];
+}
+
+
+
+
+const mapCustomer = (c: any) => {
+  if (!c) return c;
+  return {
+    ...c,
+    branchId: c.branch_id || c.branchId,
+    customerType: c.customerType || c.customer_type,
+    meterNumber: c.METER_KEY || c.meterNumber,
+    createdAt: c.created_at || c.createdAt,
+    updatedAt: c.updated_at || c.updatedAt,
+  };
+};
+
+const mapBulkMeter = (bm: any) => {
+  if (!bm) return bm;
+  return {
+    ...bm,
+    branchId: bm.branch_id || bm.branchId,
+    chargeGroup: bm.charge_group || bm.chargeGroup,
+    sewerageConnection: bm.sewerage_connection || bm.sewerageConnection,
+    meterNumber: bm.METER_KEY || bm.meterNumber,
+    createdAt: bm.created_at || bm.createdAt,
+    updatedAt: bm.updated_at || bm.updatedAt,
+    bulkUsage: bm.bulk_usage !== undefined ? bm.bulk_usage : bm.bulkUsage,
+    differenceUsage: bm.difference_usage !== undefined ? bm.difference_usage : bm.differenceUsage,
+    differenceBill: bm.difference_bill !== undefined ? bm.difference_bill : bm.differenceBill,
+    totalBulkBill: bm.total_bulk_bill !== undefined ? bm.total_bulk_bill : bm.totalBulkBill,
+  };
+};
+
+const availableReports: ReportType[] = [
+  {
+    id: "customer-data-export",
+    name: "Customer Data Export (XLSX)",
+    description: "Download a comprehensive list of all individual customers with their details.",
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_CUSTOMER_DATA_EXPORT,
+    headers: [
+      "Customer Key", "Name", "Contract Number", "Customer Type", "Book Number", "Ordinal",
+      "Meter Size", "Meter Number", "Previous Reading", "Current Reading", "Month", "Specific Area",
+      "SubCity", "Woreda", "Sewerage Connection", "Assigned Bulk Meter ID", "Status", "Payment Status", "Calculated Bill",
+      "Assigned Branch Name", "Created At", "Updated At"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const branches = ((await getAllBranchesAction())?.data as any[] ?? []);
+
+      const customers = rawCustomers.map(mapCustomer);
+      let filteredData = customers;
+
+      if (branchId) {
+        filteredData = filteredData.filter(c => c.branchId === branchId);
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        filteredData = filteredData.filter(c => c.customerType === chargeGroup);
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        filteredData = filteredData.filter(c => {
+          if (!c.createdAt) return false;
+          try {
+            const customerDate = new Date(c.createdAt).getTime();
+            return customerDate >= start && customerDate <= end;
+          } catch { return false; }
+        });
+      }
+
+      const dataWithBranchName = filteredData.map(customer => {
+        const branch = customer.branchId ? branches.find(b => b.id === customer.branchId) : null;
+        return {
+          "Customer Key": customer.customerKeyNumber,
+          "Name": customer.name,
+          "Contract Number": customer.contractNumber,
+          "Customer Type": customer.customerType,
+          "Book Number": customer.bookNumber,
+          "Ordinal": customer.ordinal,
+          "Meter Size": customer.meterSize,
+          "Meter Number": customer.meterNumber,
+          "Previous Reading": customer.previousReading,
+          "Current Reading": customer.currentReading,
+          "Month": customer.month,
+          "Specific Area": customer.specificArea,
+          "SubCity": customer.subCity,
+          "Woreda": customer.woreda,
+          "Sewerage Connection": customer.sewerageConnection,
+          "Assigned Bulk Meter ID": customer.assignedBulkMeterId || "N/A",
+          "Status": customer.status,
+          "Payment Status": customer.paymentStatus,
+          "Calculated Bill": customer.calculatedBill,
+          "Assigned Branch Name": branch ? branch.name : "N/A",
+          "Created At": customer.createdAt,
+          "Updated At": customer.updatedAt,
+        };
+      });
+
+      return dataWithBranchName;
+    },
+  },
+  {
+    id: "bulk-meter-data-export",
+    name: "Bulk Meter Data Export (XLSX)",
+    description: "Download a comprehensive list of all bulk meters, including their details and readings.",
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_BULK_METER_DATA_EXPORT,
+    headers: [
+      "Customer Key", "Name", "Contract Number", "Meter Size", "Meter Number",
+      "Previous Reading", "Current Reading", "Month", "Specific Area", "SubCity", "Woreda", "Status",
+      "Payment Status", "Charge Group", "Sewerage Connection", "Assigned Branch Name", "Number of Assigned Individual Customers",
+      "Bulk Usage", "Total Individual Usage", "Total Bulk Bill", "Difference Usage", "Difference Bill"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      const rawBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      const branches = ((await getAllBranchesAction())?.data as any[] ?? []);
+      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+
+      const bulkMeters = rawBulkMeters.map(mapBulkMeter);
+      const customers = rawCustomers.map(mapCustomer);
+
+      let filteredData = bulkMeters;
+
+      if (branchId) {
+        filteredData = filteredData.filter(bm => bm.branchId === branchId);
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        filteredData = filteredData.filter(bm => bm.chargeGroup === chargeGroup);
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        filteredData = filteredData.filter(bm => {
+          if (!bm.createdAt) return false;
+          try {
+            const bmDate = new Date(bm.createdAt).getTime();
+            return bmDate >= start && bmDate <= end;
+          } catch { return false; }
+        });
+      }
+
+      const dataWithBranchName = filteredData.map((bm) => {
+        const branch = bm.branchId ? branches.find(b => b.id === bm.branchId) : null;
+
+        const associatedCustomers = customers.filter(c => c.assignedBulkMeterId === bm.customerKeyNumber);
+        const totalIndividualUsage = associatedCustomers.reduce((sum, cust) => {
+          const usage = (cust.currentReading ?? 0) - (cust.previousReading ?? 0);
+          return sum + usage;
+        }, 0);
+
+        const bulkUsage = bm.bulkUsage ?? 0;
+        // Use pre-calculated difference usage and bill fields directly from DB record!
+        const differenceUsage = bm.differenceUsage ?? (bulkUsage < totalIndividualUsage ? 3 : bulkUsage - totalIndividualUsage);
+        const differenceBill = bm.differenceBill ?? 0;
+
+        return {
+          "Customer Key": bm.customerKeyNumber,
+          "Name": bm.name,
+          "Contract Number": bm.contractNumber,
+          "Meter Size": bm.meterSize,
+          "Meter Number": bm.meterNumber,
+          "Previous Reading": bm.previousReading,
+          "Current Reading": bm.currentReading,
+          "Month": bm.month,
+          "Specific Area": bm.specificArea,
+          "SubCity": bm.subCity,
+          "Woreda": bm.woreda,
+          "Status": bm.status,
+          "Payment Status": bm.paymentStatus,
+          "Charge Group": bm.chargeGroup,
+          "Sewerage Connection": bm.sewerageConnection,
+          "Assigned Branch Name": branch ? branch.name : "N/A",
+          "Number of Assigned Individual Customers": associatedCustomers.length,
+          "Total Individual Usage": totalIndividualUsage,
+          "Bulk Usage": bulkUsage,
+          "Difference Usage": differenceUsage,
+          "Difference Bill": differenceBill,
+        };
+      });
+
+      return dataWithBranchName;
+    },
+  },
+  {
+    id: "billing-summary",
+    name: "Billing Summary Report (XLSX)",
+    description: "Summary of all generated bills, including amounts and payment statuses.",
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_BILLING_SUMMARY,
+    headers: [
+      "Bill ID", "Bill Key", "Customer Key", "Customer Name", "Customer TIN", "Branch", "Period Start", "Period End",
+      "Month/Year", "Previous Reading", "Current Reading", "Consumption", "Reason",
+      "Base Water Charge", "Sewerage Charge", "Maintenance Fee", "Sanitation Fee",
+      "Meter Rent", "Current Bill", "Penalty", "Total Bill", "Amount Paid", "Outstanding", "Due Date",
+      "Status", "Bill Number", "DR Account", "CR Account", "Notes", "Created At", "Updated At"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+
+      // Fetch all data in parallel from the live database
+      const [billsRes, bulkMetersRes, customersRes, branchesRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllBulkMetersAction(),
+        getAllCustomersAction(),
+        getAllBranchesAction(),
+      ]);
+
+      const allBills: any[]   = billsRes?.data     ?? [];
+      const bulkMeters: any[] = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
+      const customers: any[]  = (customersRes?.data  ?? []).map(mapCustomer);
+      const branches: any[]   = branchesRes?.data   ?? [];
+
+      // Fast lookup maps
+      const branchMap = new Map(branches.map((br: any) => [br.id, br.name]));
+      const bmMap     = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+      const custMap   = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+
+      // Apply branch filter
+      let billsList = allBills;
+      if (branchId) {
+        const bmInBranch   = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+        const custInBranch = new Set(customers.filter((c: any)   => c.branchId  === branchId).map((c: any)  => c.customerKeyNumber));
+        billsList = billsList.filter((b: any) =>
+          (b.CUSTOMERKEY            && bmInBranch.has(b.CUSTOMERKEY)) ||
+          (b.individual_customer_id && custInBranch.has(b.individual_customer_id))
+        );
+      }
+
+      // Apply chargeGroup filter
+      if (chargeGroup && chargeGroup !== 'all') {
+        billsList = billsList.filter((b: any) => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = bmMap.get(b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individual_customer_id) {
+            const cust = custMap.get(b.individual_customer_id);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === chargeGroup;
+        });
+      }
+
+      // Apply date filter (DB returns snake_case: bill_period_end_date)
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end   = endDate.getTime();
+        billsList = billsList.filter((b: any) => {
+          try {
+            return new Date(b.bill_period_end_date).getTime() >= start &&
+                   new Date(b.bill_period_end_date).getTime() <= end;
+          } catch { return false; }
+        });
+      }
+
+      return billsList.map((b: any) => {
+        const customerKey = b.CUSTOMERKEY || b.individual_customer_id || "";
+
+        // Resolve customer info — DB field stored in bill first, then from lookup tables
+        let customerName = b.CUSTOMERNAME || "";
+        let customerTin  = b.CUSTOMERTIN  || "";
+        let branchName   = branchMap.get(b.CUSTOMERBRANCH) || b.CUSTOMERBRANCH || "N/A";
+
+        if (b.CUSTOMERKEY) {
+          const bm = bmMap.get(b.CUSTOMERKEY);
+          if (bm) {
+            if (!customerName) customerName = bm.name            || "";
+            if (!customerTin)  customerTin  = bm.contractNumber  || "";
+            if (branchName === "N/A") branchName = branchMap.get(bm.branchId) || "N/A";
+          }
+        } else if (b.individual_customer_id) {
+          const cust = custMap.get(b.individual_customer_id);
+          if (cust) {
+            if (!customerName) customerName = cust.name           || "";
+            if (!customerTin)  customerTin  = cust.contractNumber || "";
+            if (branchName === "N/A") branchName = branchMap.get(cust.branchId) || "N/A";
+          }
+        }
+
+        // Generate BILLKEY if missing
+        let billKey = b.BILLKEY || "";
+        if (!billKey) {
+          const idHex    = (b.id || "").replace(/-/g, '').substring(0, 8);
+          const idNumeric = parseInt(idHex, 16);
+          billKey = isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
+        }
+
+        // Use DB-stored financial fields (synced by dbSyncAgingForCustomer)
+        const currentBill = parseFloat(Number(b.THISMONTHBILLAMT || b.base_water_charge || 0).toFixed(2));
+        const outstanding = parseFloat(Number(b.OUTSTANDINGAMT   || 0).toFixed(2));
+        const penalty     = parseFloat(Number(b.PENALTYAMT       || 0).toFixed(2));
+        const totalBill   = parseFloat(Number(b.TOTALBILLAMOUNT  || (currentBill + outstanding + penalty)).toFixed(2));
+        const amountPaid  = parseFloat(Number(b.amount_paid      || 0).toFixed(2));
+
+        // REASON: use stored REASON first, fall back to formatted month_year
+        let reason = b.REASON || "";
+        if (!reason && b.month_year) {
+          const parts = b.month_year.split('-');
+          reason = parts.length === 2 ? `${parseInt(parts[1])}/1/${parts[0]}` : b.month_year;
+        }
+
+        return {
+          "Bill ID":           b.id,
+          "Bill Key":          billKey,
+          "Customer Key":      customerKey,
+          "Customer Name":     customerName,
+          "Customer TIN":      customerTin,
+          "Branch":            branchName,
+          "Period Start":      b.bill_period_start_date  || "",
+          "Period End":        b.bill_period_end_date    || "",
+          "Month/Year":        b.month_year              || "",
+          "Previous Reading":  b.PREVREAD  != null ? Number(b.PREVREAD)  : "",
+          "Current Reading":   b.CURRREAD  != null ? Number(b.CURRREAD)  : "",
+          "Consumption":       b.CONS      != null ? Number(b.CONS)      : "",
+          "Reason":            reason,
+          "Base Water Charge": parseFloat(Number(b.base_water_charge || 0).toFixed(2)),
+          "Sewerage Charge":   parseFloat(Number(b.sewerage_charge   || 0).toFixed(2)),
+          "Maintenance Fee":   parseFloat(Number(b.maintenance_fee   || 0).toFixed(2)),
+          "Sanitation Fee":    parseFloat(Number(b.sanitation_fee    || 0).toFixed(2)),
+          "Meter Rent":        parseFloat(Number(b.meter_rent        || 0).toFixed(2)),
+          "Current Bill":      currentBill,
+          "Penalty":           penalty,
+          "Total Bill":        totalBill,
+          "Amount Paid":       amountPaid,
+          "Outstanding":       outstanding,
+          "Due Date":          b.due_date        || "",
+          "Status":            b.payment_status  || b.status || "",
+          "Bill Number":       b.bill_number     || "",
+          "DR Account":        b.DRACCTNO        || "",
+          "CR Account":        b.CRACCTNO        || "",
+          "Notes":             b.notes           || "",
+          "Created At":        b.created_at      || "",
+          "Updated At":        b.updated_at      || "",
+        };
+      });
+    },
+  },
+  {
+    id: "list-of-paid-bills",
+    name: "List Of Paid Bills (XLSX)",
+    description: "A filtered list showing only the bills that have been marked as 'Paid'.",
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_LIST_OF_PAID_BILLS,
+    headers: [
+      "Bill ID", "Individual Customer ID", "Customer Key", "Period Start", "Period End",
+      "Month/Year", "Previous Reading", "Current Reading", "Consumption",
+      "Base Water Charge", "Sewerage Charge", "Maintenance Fee", "Sanitation Fee",
+      "Meter Rent", "Total Bill Amount", "Amount Paid", "Outstanding Amount", "Due Date",
+      "Status", "Bill Number", "Notes", "Created At", "Updated At"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      const [billsRes, bulkMetersRes, customersRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllBulkMetersAction(),
+        getAllCustomersAction(),
+      ]);
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
+      let bills = (billsRes?.data as any[] ?? []).filter((b: any) => b.payment_status === 'Paid');
+
+      if (branchId) {
+        const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+        const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
+        bills = bills.filter((b: any) =>
+          (b.CUSTOMERKEY && bulkMetersInBranch.has(b.CUSTOMERKEY)) ||
+          (b.individual_customer_id && customersInBranch.has(b.individual_customer_id))
+        );
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+        const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+        bills = bills.filter((b: any) => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = bmMap.get(b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individual_customer_id) {
+            const cust = custMap.get(b.individual_customer_id);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === chargeGroup;
+        });
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        bills = bills.filter((b: any) => {
+          try { return new Date(b.bill_period_end_date).getTime() >= start && new Date(b.bill_period_end_date).getTime() <= end; }
+          catch { return false; }
+        });
+      }
+      return bills.map((b: any) => ({
+        "Bill ID": b.id,
+        "Individual Customer ID": b.individual_customer_id || "N/A",
+        "Customer Key": b.CUSTOMERKEY || "N/A",
+        "Period Start": b.bill_period_start_date || "",
+        "Period End": b.bill_period_end_date || "",
+        "Month/Year": b.month_year || "",
+        "Previous Reading": b.PREVREAD != null ? Number(b.PREVREAD) : "",
+        "Current Reading": b.CURRREAD != null ? Number(b.CURRREAD) : "",
+        "Consumption": b.CONS != null ? Number(b.CONS) : "",
+        "Base Water Charge": parseFloat(Number(b.base_water_charge || 0).toFixed(2)),
+        "Sewerage Charge": parseFloat(Number(b.sewerage_charge || 0).toFixed(2)),
+        "Maintenance Fee": parseFloat(Number(b.maintenance_fee || 0).toFixed(2)),
+        "Sanitation Fee": parseFloat(Number(b.sanitation_fee || 0).toFixed(2)),
+        "Meter Rent": parseFloat(Number(b.meter_rent || 0).toFixed(2)),
+        "Total Bill Amount": parseFloat(Number(b.TOTALBILLAMOUNT || 0).toFixed(2)),
+        "Amount Paid": parseFloat(Number(b.amount_paid || 0).toFixed(2)),
+        "Outstanding Amount": parseFloat(Number(b.OUTSTANDINGAMT || 0).toFixed(2)),
+        "Due Date": b.due_date || "",
+        "Status": b.payment_status || "",
+        "Bill Number": b.bill_number || "",
+        "Notes": b.notes || "",
+        "Created At": b.created_at || "",
+        "Updated At": b.updated_at || "",
+      }));
+    },
+  },
+  {
+    id: "list-of-sent-bills",
+    name: "List Of Sent Bills (XLSX)",
+    description: "A comprehensive list of all bills that have been generated, regardless of payment status.",
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_LIST_OF_SENT_BILLS,
+    headers: [
+      "Bill ID", "Individual Customer ID", "Customer Key", "Period Start", "Period End",
+      "Month/Year", "Previous Reading", "Current Reading", "Consumption",
+      "Base Water Charge", "Sewerage Charge", "Maintenance Fee", "Sanitation Fee",
+      "Meter Rent", "Total Bill Amount", "Amount Paid", "Outstanding Amount", "Due Date",
+      "Status", "Bill Number", "Notes", "Created At", "Updated At"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      const [billsRes, bulkMetersRes, customersRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllBulkMetersAction(),
+        getAllCustomersAction(),
+      ]);
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
+      let bills = (billsRes?.data as any[] ?? []);
+
+      if (branchId) {
+        const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+        const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
+        bills = bills.filter((b: any) =>
+          (b.CUSTOMERKEY && bulkMetersInBranch.has(b.CUSTOMERKEY)) ||
+          (b.individual_customer_id && customersInBranch.has(b.individual_customer_id))
+        );
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+        const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+        bills = bills.filter((b: any) => {
+          let billChargeGroup = "";
+          if (b.CUSTOMERKEY) {
+            const bm = bmMap.get(b.CUSTOMERKEY);
+            billChargeGroup = bm?.chargeGroup || "";
+          } else if (b.individual_customer_id) {
+            const cust = custMap.get(b.individual_customer_id);
+            billChargeGroup = cust?.customerType || "";
+          }
+          return billChargeGroup === chargeGroup;
+        });
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        bills = bills.filter((b: any) => {
+          try { return new Date(b.bill_period_end_date).getTime() >= start && new Date(b.bill_period_end_date).getTime() <= end; }
+          catch { return false; }
+        });
+      }
+      return bills.map((b: any) => ({
+        "Bill ID": b.id,
+        "Individual Customer ID": b.individual_customer_id || "N/A",
+        "Customer Key": b.CUSTOMERKEY || "N/A",
+        "Period Start": b.bill_period_start_date || "",
+        "Period End": b.bill_period_end_date || "",
+        "Month/Year": b.month_year || "",
+        "Previous Reading": b.PREVREAD != null ? Number(b.PREVREAD) : "",
+        "Current Reading": b.CURRREAD != null ? Number(b.CURRREAD) : "",
+        "Consumption": b.CONS != null ? Number(b.CONS) : "",
+        "Base Water Charge": parseFloat(Number(b.base_water_charge || 0).toFixed(2)),
+        "Sewerage Charge": parseFloat(Number(b.sewerage_charge || 0).toFixed(2)),
+        "Maintenance Fee": parseFloat(Number(b.maintenance_fee || 0).toFixed(2)),
+        "Sanitation Fee": parseFloat(Number(b.sanitation_fee || 0).toFixed(2)),
+        "Meter Rent": parseFloat(Number(b.meter_rent || 0).toFixed(2)),
+        "Total Bill Amount": parseFloat(Number(b.TOTALBILLAMOUNT || 0).toFixed(2)),
+        "Amount Paid": parseFloat(Number(b.amount_paid || 0).toFixed(2)),
+        "Outstanding Amount": parseFloat(Number(b.OUTSTANDINGAMT || 0).toFixed(2)),
+        "Due Date": b.due_date || "",
+        "Status": b.payment_status || "",
+        "Bill Number": b.bill_number || "",
+        "Notes": b.notes || "",
+        "Created At": b.created_at || "",
+        "Updated At": b.updated_at || "",
+      }));
+    },
+  },
+  {
+    id: "water-usage",
+    name: "Water Usage Report (XLSX)",
+    description: "Detailed water consumption report from all meter readings.",
+    category: 'Usage',
+    requiredPermission: PERMISSIONS.REPORT_WATER_USAGE,
+    headers: [
+      "Reading ID", "Meter Type", "Customer ID", "Bulk Meter ID", "Staff ID",
+      "Reading Date", "Month/Year", "Reading Value", "Is Estimate", "Notes",
+      "Created At", "Updated At"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      const [indReadingsRes, bulkReadingsRes, bulkMetersRes, customersRes] = await Promise.all([
+        getAllIndividualCustomerReadingsAction(),
+        getAllBulkMeterReadingsAction(),
+        getAllBulkMetersAction(),
+        getAllCustomersAction(),
+      ]);
+      const indReadings = ((indReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'individual' }));
+      const bulkReadings = ((bulkReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'bulk' }));
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
+      let readings: any[] = [...indReadings, ...bulkReadings];
+
+      const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+      const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+
+      if (branchId) {
+        const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+        const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
+        readings = readings.filter((r: any) =>
+          (r._readingType === 'bulk' && r.CUST_KEY && bulkMetersInBranch.has(r.CUST_KEY)) ||
+          (r._readingType === 'individual' && r.CUST_KEY && customersInBranch.has(r.CUST_KEY))
+        );
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        readings = readings.filter((r: any) => {
+          if (r._readingType === 'bulk') {
+            const bm = bmMap.get(r.CUST_KEY);
+            return bm?.chargeGroup === chargeGroup;
+          } else {
+            const cust = custMap.get(r.CUST_KEY);
+            return cust?.customerType === chargeGroup;
+          }
+        });
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        readings = readings.filter((r: any) => {
+          try { return new Date(r.READING_DATE).getTime() >= start && new Date(r.READING_DATE).getTime() <= end; }
+          catch { return false; }
+        });
+      }
+      return readings.map((r: any) => {
+        const isBulk = r._readingType === 'bulk';
+        return {
+          "Reading ID": r.id,
+          "Meter Type": isBulk ? "Bulk" : "Individual",
+          "Customer ID": !isBulk ? (r.CUST_KEY || "N/A") : "N/A",
+          "Bulk Meter ID": isBulk ? (r.CUST_KEY || "N/A") : "N/A",
+          "Staff ID": r.created_by || r.METER_READER_CODE || "N/A",
+          "Reading Date": r.READING_DATE || "",
+          "Month/Year": r.READING_DATE ? new Date(r.READING_DATE).toISOString().substring(0, 7) : "",
+          "Reading Value": r.METER_READING != null ? Number(r.METER_READING) : "",
+          "Is Estimate": r.ESTIMATED_READING_IND === 'Y' || r.is_estimate ? "Yes" : "No",
+          "Notes": r.notes || "",
+          "Created At": r.created_at || "",
+          "Updated At": r.updated_at || "",
+        };
+      });
+    },
+  },
+  {
+    id: "payment-history",
+    name: "Payment History Report (XLSX)",
+    description: "Detailed log of all payments received.",
+    category: 'Payments',
+    requiredPermission: PERMISSIONS.REPORT_PAYMENT_HISTORY,
+    headers: [
+      "Payment ID", "Bill ID", "Customer ID", "Payment Date", "Amount Paid",
+      "Payment Method", "Reference", "Processed By", "Notes",
+      "Created At", "Updated At"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      let payments = ((await getAllPaymentsAction())?.data as any[] ?? []);
+      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const customersList = rawCustomers.map(mapCustomer);
+      const custMap = new Map(customersList.map((c: any) => [c.customerKeyNumber, c]));
+
+      if (branchId) {
+        const customersInBranch = customersList.filter(c => c.branchId === branchId).map(c => c.customerKeyNumber);
+        payments = payments.filter(p => p.individualCustomerId && customersInBranch.includes(p.individualCustomerId));
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        payments = payments.filter(p => {
+          const cust = custMap.get(p.individualCustomerId);
+          return cust?.customerType === chargeGroup;
+        });
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        payments = payments.filter(p => {
+          try {
+            const paymentDate = new Date(p.paymentDate).getTime();
+            return paymentDate >= start && paymentDate <= end;
+          } catch { return false; }
+        });
+      }
+      return payments.map(p => ({
+        "Payment ID": p.id,
+        "Bill ID": p.billId,
+        "Customer ID": p.individualCustomerId || "N/A",
+        "Payment Date": p.paymentDate,
+        "Amount Paid": p.amountPaid,
+        "Payment Method": p.paymentMethod,
+        "Reference": p.transactionReference || "N/A",
+        "Processed By": p.processedByStaffId || "N/A",
+        "Notes": p.notes || "",
+        "Created At": p.createdAt,
+        "Updated At": p.updatedAt,
+      }));
+    },
+  },
+  {
+    id: "meter-reading-accuracy",
+    name: "Meter Reading Accuracy Report (XLSX)",
+    description: "Detailed export of meter readings with reader information for accuracy analysis.",
+    category: 'Usage',
+    requiredPermission: PERMISSIONS.REPORT_METER_READING_ACCURACY,
+    headers: [
+      "Reading ID", "Meter Identifier", "Meter Type", "Reading Date", "Month/Year",
+      "Reading Value", "Is Estimate", "Reader Name", "Reader Staff ID", "Notes"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup } = filters;
+      const [indReadingsRes, bulkReadingsRes, bulkMetersRes, customersRes, staffRes] = await Promise.all([
+        getAllIndividualCustomerReadingsAction(),
+        getAllBulkMeterReadingsAction(),
+        getAllBulkMetersAction(),
+        getAllCustomersAction(),
+        getAllStaffMembersAction(),
+      ]);
+      const indReadings = ((indReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'individual' }));
+      const bulkReadings = ((bulkReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'bulk' }));
+      const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
+      const staffList = (staffRes?.data as any[] ?? []);
+      const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+      const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+      const staffMap = new Map(staffList.map((s: any) => [s.id, s.name]));
+      let filteredReadings: any[] = [...indReadings, ...bulkReadings];
+
+      if (branchId) {
+        const bulkMetersInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+        const customersInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
+        filteredReadings = filteredReadings.filter((r: any) =>
+          (r._readingType === 'bulk' && r.CUST_KEY && bulkMetersInBranch.has(r.CUST_KEY)) ||
+          (r._readingType === 'individual' && r.CUST_KEY && customersInBranch.has(r.CUST_KEY))
+        );
+      }
+      if (chargeGroup && chargeGroup !== 'all') {
+        filteredReadings = filteredReadings.filter((r: any) => {
+          if (r._readingType === 'bulk') {
+            const bm = bmMap.get(r.CUST_KEY);
+            return bm?.chargeGroup === chargeGroup;
+          } else {
+            const cust = custMap.get(r.CUST_KEY);
+            return cust?.customerType === chargeGroup;
+          }
+        });
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        filteredReadings = filteredReadings.filter((r: any) => {
+          try { return new Date(r.READING_DATE).getTime() >= start && new Date(r.READING_DATE).getTime() <= end; }
+          catch { return false; }
+        });
+      }
+
+      return filteredReadings.map((r: any) => {
+        let meterIdentifier = "N/A";
+        if (r._readingType === 'individual' && r.CUST_KEY) {
+          const cust = custMap.get(r.CUST_KEY);
+          meterIdentifier = cust ? (cust.name + ' (M: ' + (cust.meterNumber || 'N/A') + ')') : ('Cust ID: ' + r.CUST_KEY);
+        } else if (r._readingType === 'bulk' && r.CUST_KEY) {
+          const bm = bmMap.get(r.CUST_KEY);
+          meterIdentifier = bm ? (bm.name + ' (M: ' + (bm.meterNumber || 'N/A') + ')') : ('BM ID: ' + r.CUST_KEY);
+        }
+        const staffId = r.created_by || r.METER_READER_CODE || "";
+        const readerName = staffMap.get(staffId) || (staffId ? ('Staff ID: ' + staffId) : "N/A");
+        return {
+          "Reading ID": r.id,
+          "Meter Identifier": meterIdentifier,
+          "Meter Type": r._readingType === 'bulk' ? 'Bulk' : 'Individual',
+          "Reading Date": r.READING_DATE || "",
+          "Month/Year": r.READING_DATE ? new Date(r.READING_DATE).toISOString().substring(0, 7) : "",
+          "Reading Value": r.METER_READING != null ? Number(r.METER_READING) : "",
+          "Is Estimate": r.ESTIMATED_READING_IND === 'Y' || r.is_estimate ? "Yes" : "No",
+          "Reader Name": readerName,
+          "Reader Staff ID": staffId || "N/A",
+          "Notes": r.notes || "",
+        };
+      });
+    },
+  },
+  {
+    id: "tariffs-data-export",
+    name: "Tariffs Data Export (XLSX)",
+    description: "Download a comprehensive list of all tariffs.",
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_TARIFFS_DATA_EXPORT,
+    headers: [
+      "Customer Type", "Year", "Tiers", "Maintenance %", "Sanitation %",
+      "Sewerage Tiers", "Meter Rent Prices", "VAT Rate", "Domestic VAT Threshold"
+    ],
+    getData: async (filters) => {
+      const { chargeGroup } = filters;
+      let tariffs = ((await getAllTariffsAction())?.data as any[] ?? []);
+      if (chargeGroup && chargeGroup !== 'all') {
+        tariffs = tariffs.filter(t => t.customer_type === chargeGroup);
+      }
+      return tariffs.map(t => ({
+        "Customer Type": t.customer_type,
+        "Year": t.year,
+        "Tiers": JSON.stringify(t.tiers),
+        "Maintenance %": t.maintenance_percentage,
+        "Sanitation %": t.sanitation_percentage,
+        "Sewerage Tiers": JSON.stringify(t.sewerage_tiers),
+        "Meter Rent Prices": JSON.stringify(t.meter_rent_prices),
+        "VAT Rate": t.vat_rate,
+        "Domestic VAT Threshold": t.domestic_vat_threshold_m3,
+      }));
+    },
+  },
+  {
+    id: "staff-data-export",
+    name: "Staff Data Export (XLSX)",
+    description: "Download a comprehensive list of all staff members.",
+    category: 'Data Export',
+    requiredPermission: PERMISSIONS.REPORT_STAFF_DATA_EXPORT,
+    headers: [
+      "Staff ID", "Name", "Email", "Branch Name", "Status", "Phone", "Hire Date", "Role"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate } = filters;
+      let staff = ((await getAllStaffMembersAction())?.data as any[] ?? []);
+      if (branchId) {
+        staff = staff.filter(s => s.branchId === branchId);
+      }
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        staff = staff.filter(s => {
+          if (!s.hireDate) return false;
+          try {
+            const hireTime = new Date(s.hireDate).getTime();
+            return hireTime >= start && hireTime <= end;
+          } catch { return false; }
+        });
+      }
+      return staff.map(s => ({
+        "Staff ID": s.id,
+        "Name": s.name,
+        "Email": s.email,
+        "Branch Name": s.branchName,
+        "Status": s.status,
+        "Phone": s.phone,
+        "Hire Date": s.hireDate,
+        "Role": s.role,
+      }));
+    },
+  },
+  {
+    id: "gl-finance-monthly",
+    name: "GL Finance Monthly Report (XLSX)",
+    description: "Monthly summary of billing components. Includes outstanding previous bills. Bulk meters are listed individually.",
+    category: 'Finance',
+    requiredPermission: PERMISSIONS.REPORT_GL_FINANCE_MONTHLY,
+    headers: [
+      "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
+      "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
+      const [billsRes, customersRes, bulkMetersRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllCustomersAction(),
+        getAllBulkMetersAction(),
+      ]);
+      const allBills = (billsRes?.data as any[] ?? []);
+      const allCustomers = (customersRes?.data as any[] ?? []).map(mapCustomer);
+      const allBulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const branchBulkMeterKeys = new Set(allBulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+      const custMap = new Map(allCustomers.map((c: any) => [c.customerKeyNumber, c]));
+      const bmMap = new Map(allBulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+
+      const extractCharges = (bill: any) => ({
+        base: Number(bill.base_water_charge) || 0,
+        sewerage: Number(bill.sewerage_charge) || 0,
+        maint: Number(bill.maintenance_fee) || 0,
+        sanit: Number(bill.sanitation_fee) || 0,
+        rent: Number(bill.meter_rent) || 0,
+        add: Number(bill.additional_fees_charge) || 0,
+        penalty: Number(bill.PENALTYAMT) || 0,
+        vat: Number(bill.vat_amount || bill.vatAmount) || 0,
+        total: Number(bill.TOTALBILLAMOUNT) || 0,
+      });
+
+      const addCharges = (row: any, c: ReturnType<typeof extractCharges>) => {
+        row["Base Water Charge"] += c.base;
+        row["Sewerage Charge"] += c.sewerage;
+        row["Maintenance Fee"] += c.maint;
+        row["Sanitation Fee"] += c.sanit;
+        row["Meter Rent"] += c.rent;
+        row["Additional Fees"] += c.add;
+        row["Penalty Amount"] += c.penalty;
+        row["VAT Amount"] += c.vat;
+        row["Total Incl VAT"] += c.total;
+        row["Total Amount"] += c.total;
+        row["Total Excl VAT"] += (c.total - c.vat);
+      };
+
+      let branchFilteredAllBills = allBills;
+      if (branchId) {
+        branchFilteredAllBills = branchFilteredAllBills.filter((bill: any) => {
+          if (bill.CUSTOMERKEY) return branchBulkMeterKeys.has(bill.CUSTOMERKEY);
+          if (bill.individual_customer_id) {
+            const customer = custMap.get(bill.individual_customer_id);
+            return customer && (customer.branchId === branchId || (customer.assignedBulkMeterId && branchBulkMeterKeys.has(customer.assignedBulkMeterId)));
+          }
+          return false;
+        });
+      }
+
+      let periodBills = branchFilteredAllBills;
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        periodBills = periodBills.filter((b: any) => {
+          try { return new Date(b.bill_period_end_date).getTime() >= start && new Date(b.bill_period_end_date).getTime() <= end; }
+          catch { return false; }
+        });
+      }
+
+      const periodBillIds = new Set(periodBills.map((b: any) => b.id));
+      const outstandingByKey: Record<string, any[]> = {};
+      branchFilteredAllBills.forEach((bill: any) => {
+        if (periodBillIds.has(bill.id)) return;
+        if (bill.payment_status === 'Paid') return;
+        const key = bill.CUSTOMERKEY || bill.individual_customer_id || '';
+        if (!key) return;
+        if (!outstandingByKey[key]) outstandingByKey[key] = [];
+        outstandingByKey[key].push(bill);
+      });
+
+      const aggregated: Record<string, any> = {};
+
+      periodBills.forEach((bill: any) => {
+        const period = bill.month_year || "";
+        let chargeGroup = "Unknown";
+        let customerKey = "";
+
+        if (bill.individual_customer_id) {
+          const cust = custMap.get(bill.individual_customer_id);
+          chargeGroup = cust?.customerType || cust?.customer_type || "Unknown";
+          customerKey = "";
+        } else if (bill.CUSTOMERKEY) {
+          const bm = bmMap.get(bill.CUSTOMERKEY);
+          chargeGroup = bm?.chargeGroup || bm?.charge_group || "Unknown";
+          customerKey = bill.CUSTOMERKEY;
+        }
+
+        const rowKey = customerKey ? (period + '-BM-' + customerKey) : (period + '-IND-' + chargeGroup);
+        const lookupKey = customerKey || bill.individual_customer_id || '';
+
+        if (!aggregated[rowKey]) {
+          aggregated[rowKey] = {
+            "Period": period,
+            "Customer Key": customerKey || "",
+            "Charge Group": chargeGroup,
+            "Base Water Charge": 0, "Sewerage Charge": 0, "Maintenance Fee": 0,
+            "Sanitation Fee": 0, "Meter Rent": 0, "Additional Fees": 0,
+            "Penalty Amount": 0, "VAT Amount": 0, "Total Excl VAT": 0,
+            "Total Incl VAT": 0, "Total Amount": 0,
+            _outstandingAdded: new Set<string>(),
+          };
+        }
+
+        addCharges(aggregated[rowKey], extractCharges(bill));
+
+        if (lookupKey && !aggregated[rowKey]._outstandingAdded.has(lookupKey)) {
+          aggregated[rowKey]._outstandingAdded.add(lookupKey);
+          const outstandingBills = outstandingByKey[lookupKey] || [];
+          outstandingBills.forEach((ob: any) => addCharges(aggregated[rowKey], extractCharges(ob)));
+        }
+      });
+
+      let resultRows = Object.values(aggregated).map((row: any) => {
+        const { _outstandingAdded, ...rest } = row;
+        return rest;
+      });
+
+      if (filterChargeGroup && filterChargeGroup !== "all") {
+        resultRows = resultRows.filter((row: any) => row["Charge Group"] === filterChargeGroup);
+      }
+
+      return resultRows.map((row: any) => {
+        const result: any = { ...row };
+        Object.keys(result).forEach(k => { if (typeof result[k] === 'number') result[k] = parseFloat(result[k].toFixed(2)); });
+        return result;
+      }).sort((a: any, b: any) => (b.Period || '').localeCompare(a.Period || ''));
+    },
+  },
+  {
+    id: "gl-finance-yearly",
+    name: "GL Finance Yearly Report (XLSX)",
+    description: "Yearly summary of billing components. Includes outstanding previous bills. Bulk meters are listed individually.",
+    category: 'Finance',
+    requiredPermission: PERMISSIONS.REPORT_GL_FINANCE_YEARLY,
+    headers: [
+      "Period", "Customer Key", "Charge Group", "Base Water Charge", "Sewerage Charge", "Maintenance Fee",
+      "Sanitation Fee", "Meter Rent", "Additional Fees", "Penalty Amount", "VAT Amount", "Total Excl VAT", "Total Incl VAT", "Total Amount"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
+      const [billsRes, customersRes, bulkMetersRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllCustomersAction(),
+        getAllBulkMetersAction(),
+      ]);
+      const allBills = (billsRes?.data as any[] ?? []);
+      const allCustomers = (customersRes?.data as any[] ?? []).map(mapCustomer);
+      const allBulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
+      const branchBulkMeterKeys = new Set(allBulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+      const custMap = new Map(allCustomers.map((c: any) => [c.customerKeyNumber, c]));
+      const bmMap = new Map(allBulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+
+      const extractCharges = (bill: any) => ({
+        base: Number(bill.base_water_charge) || 0,
+        sewerage: Number(bill.sewerage_charge) || 0,
+        maint: Number(bill.maintenance_fee) || 0,
+        sanit: Number(bill.sanitation_fee) || 0,
+        rent: Number(bill.meter_rent) || 0,
+        add: Number(bill.additional_fees_charge) || 0,
+        penalty: Number(bill.PENALTYAMT) || 0,
+        vat: Number(bill.vat_amount || bill.vatAmount) || 0,
+        total: Number(bill.TOTALBILLAMOUNT) || 0,
+      });
+
+      const addCharges = (row: any, c: ReturnType<typeof extractCharges>) => {
+        row["Base Water Charge"] += c.base;
+        row["Sewerage Charge"] += c.sewerage;
+        row["Maintenance Fee"] += c.maint;
+        row["Sanitation Fee"] += c.sanit;
+        row["Meter Rent"] += c.rent;
+        row["Additional Fees"] += c.add;
+        row["Penalty Amount"] += c.penalty;
+        row["VAT Amount"] += c.vat;
+        row["Total Incl VAT"] += c.total;
+        row["Total Amount"] += c.total;
+        row["Total Excl VAT"] += (c.total - c.vat);
+      };
+
+      let branchFilteredAllBills = allBills;
+      if (branchId) {
+        branchFilteredAllBills = branchFilteredAllBills.filter((bill: any) => {
+          if (bill.CUSTOMERKEY) return branchBulkMeterKeys.has(bill.CUSTOMERKEY);
+          if (bill.individual_customer_id) {
+            const customer = custMap.get(bill.individual_customer_id);
+            return customer && (customer.branchId === branchId || (customer.assignedBulkMeterId && branchBulkMeterKeys.has(customer.assignedBulkMeterId)));
+          }
+          return false;
+        });
+      }
+
+      let periodBills = branchFilteredAllBills;
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+        periodBills = periodBills.filter((b: any) => {
+          try { return new Date(b.bill_period_end_date).getTime() >= start && new Date(b.bill_period_end_date).getTime() <= end; }
+          catch { return false; }
+        });
+      }
+
+      const periodBillIds = new Set(periodBills.map((b: any) => b.id));
+      const outstandingByKey: Record<string, any[]> = {};
+      branchFilteredAllBills.forEach((bill: any) => {
+        if (periodBillIds.has(bill.id)) return;
+        if (bill.payment_status === 'Paid') return;
+        const key = bill.CUSTOMERKEY || bill.individual_customer_id || '';
+        if (!key) return;
+        if (!outstandingByKey[key]) outstandingByKey[key] = [];
+        outstandingByKey[key].push(bill);
+      });
+
+      const aggregated: Record<string, any> = {};
+
+      periodBills.forEach((bill: any) => {
+        const period = (bill.month_year || "").substring(0, 4); // YYYY
+        let chargeGroup = "Unknown";
+        let customerKey = "";
+
+        if (bill.individual_customer_id) {
+          const cust = custMap.get(bill.individual_customer_id);
+          chargeGroup = cust?.customerType || cust?.customer_type || "Unknown";
+          customerKey = "";
+        } else if (bill.CUSTOMERKEY) {
+          const bm = bmMap.get(bill.CUSTOMERKEY);
+          chargeGroup = bm?.chargeGroup || bm?.charge_group || "Unknown";
+          customerKey = bill.CUSTOMERKEY;
+        }
+
+        const rowKey = customerKey ? (period + '-BM-' + customerKey) : (period + '-IND-' + chargeGroup);
+        const lookupKey = customerKey || bill.individual_customer_id || '';
+
+        if (!aggregated[rowKey]) {
+          aggregated[rowKey] = {
+            "Period": period,
+            "Customer Key": customerKey || "",
+            "Charge Group": chargeGroup,
+            "Base Water Charge": 0, "Sewerage Charge": 0, "Maintenance Fee": 0,
+            "Sanitation Fee": 0, "Meter Rent": 0, "Additional Fees": 0,
+            "Penalty Amount": 0, "VAT Amount": 0, "Total Excl VAT": 0,
+            "Total Incl VAT": 0, "Total Amount": 0,
+            _outstandingAdded: new Set<string>(),
+          };
+        }
+
+        addCharges(aggregated[rowKey], extractCharges(bill));
+
+        if (lookupKey && !aggregated[rowKey]._outstandingAdded.has(lookupKey)) {
+          aggregated[rowKey]._outstandingAdded.add(lookupKey);
+          const outstandingBills = outstandingByKey[lookupKey] || [];
+          outstandingBills.forEach((ob: any) => addCharges(aggregated[rowKey], extractCharges(ob)));
+        }
+      });
+
+      let resultRows = Object.values(aggregated).map((row: any) => {
+        const { _outstandingAdded, ...rest } = row;
+        return rest;
+      });
+
+      if (filterChargeGroup && filterChargeGroup !== "all") {
+        resultRows = resultRows.filter((row: any) => row["Charge Group"] === filterChargeGroup);
+      }
+
+      return resultRows.map((row: any) => {
+        const result: any = { ...row };
+        Object.keys(result).forEach(k => { if (typeof result[k] === 'number') result[k] = parseFloat(result[k].toFixed(2)); });
+        return result;
+      }).sort((a: any, b: any) => (b.Period || '').localeCompare(a.Period || ''));
+    },
+  },
+  {
+    id: "monthly-bill-export-csv",
+    name: "Monthly Bill Export (CSV)",
+    description: "Export monthly bills in CSV format for external payment system integration.",
+    category: 'Billing',
+    requiredPermission: PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT,
+    headers: [
+      "BILLKEY", "CUSTOMERKEY", "CUSTOMERNAME", "CUSTOMERTIN", "CUSTOMERBRANCH", "REASON",
+      "CURRREAD", "PREVREAD", "CONS", "TOTALBILLAMOUNT", "THISMONTHBILLAMT",
+      "OUTSTANDINGAMT", "PENALTYAMT", "VAT_AMOUNT", "DRACCTNO", "CRACCTNO"
+    ],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate } = filters;
+
+      // Fetch all required data in parallel from the live database
+      const [billsRes, customersRes, bulkMetersRes, branchesRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllCustomersAction(),
+        getAllBulkMetersAction(),
+        getAllBranchesAction(),
+      ]);
+
+      const allBills: any[]      = billsRes?.data ?? [];
+      const customers: any[]     = (customersRes?.data ?? []).map(mapCustomer);
+      const bulkMeters: any[]    = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
+      const branches: any[]      = branchesRes?.data ?? [];
+
+      // Apply branch filter
+      let bills = allBills;
+      if (branchId) {
+        const bulkMetersInBranch = new Set(bulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
+        const customersInBranch  = new Set(customers.filter(c => c.branchId === branchId).map(c => c.customerKeyNumber));
+        bills = bills.filter(b =>
+          (b.CUSTOMERKEY && bulkMetersInBranch.has(b.CUSTOMERKEY)) ||
+          (b.individualCustomerId && customersInBranch.has(b.individualCustomerId))
+        );
+      }
+
+      // Apply date filter
+      if (startDate && endDate) {
+        const start = startDate.getTime();
+        const end   = endDate.getTime();
+        bills = bills.filter(b => {
+          try {
+            const billDate = new Date(b.billPeriodEndDate).getTime();
+            return billDate >= start && billDate <= end;
+          } catch { return false; }
+        });
+      }
+
+      // Build branch lookup map for fast resolution
+      const branchMap = new Map(branches.map((br: any) => [br.id, br.name]));
+
+      return bills.map(bill => {
+        let customerName   = bill.CUSTOMERNAME || "N/A";
+        let customerTin    = bill.CUSTOMERTIN  || "N/A";
+        let customerBranch = "N/A";
+
+        const customerKey = bill.CUSTOMERKEY || bill.individualCustomerId;
+
+        if (bill.individualCustomerId) {
+          const cust = customers.find((c: any) => c.customerKeyNumber === bill.individualCustomerId);
+          if (cust) {
+            if (!customerName || customerName === "N/A") customerName = cust.name;
+            if (!customerTin  || customerTin  === "N/A") customerTin  = cust.contractNumber || "N/A";
+            customerBranch = branchMap.get(cust.branchId) || "N/A";
+          }
+        } else if (bill.CUSTOMERKEY) {
+          const bm = bulkMeters.find((b: any) => b.customerKeyNumber === bill.CUSTOMERKEY);
+          if (bm) {
+            if (!customerName || customerName === "N/A") customerName = bm.name;
+            if (!customerTin  || customerTin  === "N/A") customerTin  = bm.contractNumber || "N/A";
+            customerBranch = branchMap.get(bm.branchId) || "N/A";
+          }
+        }
+
+        // Use DB-stored values directly — kept accurate by dbSyncAgingForCustomer
+        const thisMonthBillAmt = Number(bill.THISMONTHBILLAMT || bill.baseWaterCharge || 0);
+        // OUTSTANDINGAMT in the DB is the carry-forward from previous unpaid bills
+        const outstandingAmt   = Number(bill.OUTSTANDINGAMT || 0);
+        const penaltyAmt       = Number(bill.PENALTYAMT || 0);
+        const totalBillAmount  = Number(bill.TOTALBILLAMOUNT || (thisMonthBillAmt + outstandingAmt + penaltyAmt));
+
+        // Generate BILLKEY if missing
+        let billKeyFormatted = bill.BILLKEY;
+        if (!billKeyFormatted) {
+          const idHex    = (bill.id || "").replace(/-/g, '').substring(0, 8);
+          const idNumeric = parseInt(idHex, 16);
+          billKeyFormatted = isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
+        }
+
+        const formatExportReason = (value: string | undefined, fallbackDate?: string | undefined) => {
+          const parseMonthYear = (monthYear?: string) => {
+            if (!monthYear || !monthYear.includes('-')) return "";
+            const [year, month] = monthYear.split('-');
+            if (!year || !month) return "";
+            const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+            const monthName = date.toLocaleString('en-US', { month: 'short' });
+            return `${monthName}-${year}`;
+          };
+
+          const first = parseMonthYear(value);
+          if (first) return first;
+
+          if (fallbackDate) {
+            const date = new Date(fallbackDate);
+            if (!Number.isNaN(date.getTime())) {
+              const monthName = date.toLocaleString('en-US', { month: 'short' });
+              return `${monthName}-${date.getUTCFullYear()}`;
+            }
+          }
+
+          return "";
+        };
+
+        const reasonFormatted = formatExportReason(
+          bill.monthYear || bill.month_year || bill.REASON,
+          bill.billPeriodEndDate || bill.bill_period_end_date || bill.createdAt || bill.created_at
+        );
+
+        // Resolve branch name: from bill record first, then from customer lookup
+        const branchNameFromBill = branchMap.get(bill.CUSTOMERBRANCH) || bill.CUSTOMERBRANCH;
+        const finalBranchName    = branchNameFromBill || customerBranch;
+
+        return {
+          "BILLKEY":         billKeyFormatted,
+          "CUSTOMERKEY":     customerKey,
+          "CUSTOMERNAME":    customerName,
+          "CUSTOMERTIN":     "",
+          "CUSTOMERBRANCH":  finalBranchName,
+          "REASON":          reasonFormatted,
+          "CURRREAD":        bill.CURRREAD,
+          "PREVREAD":        bill.PREVREAD,
+          "CONS":            bill.CONS || 0,
+          "TOTALBILLAMOUNT": parseFloat(totalBillAmount.toFixed(2)),
+          "THISMONTHBILLAMT":parseFloat(thisMonthBillAmt.toFixed(2)),
+          "OUTSTANDINGAMT":  parseFloat(outstandingAmt.toFixed(2)),
+          "PENALTYAMT":      parseFloat(penaltyAmt.toFixed(2)),
+          "VAT_AMOUNT":      parseFloat(Number(bill.vat_amount ?? bill.vatAmount ?? 0).toFixed(2)),
+          "DRACCTNO":        bill.DRACCTNO || "",
+          "CRACCTNO":        bill.CRACCTNO || "",
+        };
+      });
+    },
+  },
+];
+
+
+export default function AdminReportsPage() {
+  const { hasPermission } = usePermissions();
+  const { toast } = useToast();
+  const [selectedReportId, setSelectedReportId] = React.useState<string | undefined>(undefined);
+  const [isGenerating, setIsGenerating] = React.useState(false);
+  const [branches, setBranches] = React.useState<Branch[]>([]);
+  const [selectedBranch, setSelectedBranch] = React.useState<string>("all");
+  const [selectedChargeGroup, setSelectedChargeGroup] = React.useState<string>("all");
+  const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [user, setUser] = React.useState<StaffMember | null>(null);
+
+  // --- Batch PDF Generator state ---
+  const [pdfJobs, setPdfJobs] = React.useState<any[]>([]);
+  const [isStartingPdf, setIsStartingPdf] = React.useState(false);
+  const [selectedPdfMonth, setSelectedPdfMonth] = React.useState(formatDate(new Date(), "yyyy-MM"));
+  const [selectedPdfBranch, setSelectedPdfBranch] = React.useState("all");
+
+  const [archiveCutoffDate, setArchiveCutoffDate] = React.useState<Date | undefined>();
+  const [archivableBills, setArchivableBills] = React.useState<any[]>([]);
+  const [isArchiveDeleteConfirmationOpen, setIsArchiveDeleteConfirmationOpen] = React.useState(false);
+
+  const [reportData, setReportData] = React.useState<any[] | null>(null);
+
+  const [selectedColumns, setSelectedColumns] = React.useState<Set<string>>(new Set());
+  const [isColumnSelectorOpen, setIsColumnSelectorOpen] = React.useState(false);
+
+
+  const canSelectAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL);
+  const isLockedToBranch = !canSelectAllBranches && hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH);
+  const canGenerateAll = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL);
+  const canAccessReport = React.useCallback((report: ReportType) => {
+    const requiredPermission = report.requiredPermission ?? PERMISSIONS.REPORTS_GENERATE_BRANCH;
+    return hasPermission(requiredPermission) || canGenerateAll;
+  }, [hasPermission, canGenerateAll]);
+  const accessibleReports = React.useMemo(
+    () => availableReports.filter(canAccessReport),
+    [canAccessReport],
+  );
+  const selectedReport = accessibleReports.find(report => report.id === selectedReportId);
+
+  React.useEffect(() => {
+    const initializeData = async () => {
+      setIsLoading(true);
+      // Branches are still loaded for the filter dropdown UI
+      setBranches(((await getAllBranchesAction())?.data as any[] ?? []));
+
+      const storedUser = localStorage.getItem("user");
+      if (storedUser) {
+        const parsedUser = JSON.parse(storedUser) as StaffMember;
+        setUser(parsedUser);
+        if (isLockedToBranch && parsedUser.branchId) {
+          setSelectedBranch(parsedUser.branchId);
+        }
+      }
+
+      // Load PDF jobs
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+
+      setIsLoading(false);
+    };
+    initializeData();
+  }, [isLockedToBranch]);
+
+
+  const handleStartPdfBatch = async () => {
+    setIsStartingPdf(true);
+    const result = await startBatchPdfGenerationAction(
+      selectedPdfMonth,
+      selectedPdfBranch === "all" ? null : selectedPdfBranch
+    );
+    if (result.success) {
+      toast({ title: "Job Started", description: "PDF generation is running in the background." });
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+    } else {
+      toast({ title: "Failed to Start", description: result.error, variant: "destructive" });
+    }
+    setIsStartingPdf(false);
+  };
+
+  const handleDeletePdfJob = async (id: string) => {
+    if (!confirm("Are you sure you want to remove this PDF job from the list?")) return;
+    const result = await deletePdfJobAction(id);
+    if (result.success) {
+      toast({ title: "Job Deleted", description: "The PDF job record was removed." });
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+    } else {
+      toast({ title: "Failed to Delete", description: result.error, variant: "destructive" });
+    }
+  };
+
+  React.useEffect(() => {
+    setSelectedColumns(new Set(selectedReport?.headers || []));
+  }, [selectedReport]);
+
+  const getFilteredData = React.useCallback(async () => {
+    if (!selectedReport?.getData) {
+      return [];
+    }
+
+    const data = await selectedReport.getData({
+      branchId: selectedBranch === 'all' ? undefined : selectedBranch,
+      startDate: dateRange?.from,
+      endDate: dateRange?.to,
+      chargeGroup: selectedChargeGroup,
+    });
+
+    return data;
+  }, [selectedReport, selectedBranch, dateRange, selectedChargeGroup]);
+
+  const handleGenerateReport = async () => {
+    if (!selectedReport) return;
+
+    if (!selectedReport.getData || !selectedReport.headers) {
+      toast({ variant: "destructive", title: "Report Not Implemented" });
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const data = await getFilteredData();
+      if (!data || data.length === 0) {
+        toast({ title: "No Data", description: "No data found for the selected filters." });
+        return;
+      }
+
+      const finalHeaders = Array.from(selectedColumns);
+
+      let blob: Blob;
+      let extension: string;
+
+      if (selectedReport.id === 'monthly-bill-export-csv') {
+        blob = arrayToCsvBlob(data, finalHeaders);
+        extension = 'csv';
+      } else {
+        blob = arrayToXlsxBlob(data, finalHeaders);
+        extension = 'xlsx';
+      }
+
+      const fileName = `${selectedReport.id}_${new Date().toISOString().split('T')[0]}.${extension}`;
+      downloadFile(blob, fileName);
+      toast({ title: "Report Generated", description: `${selectedReport.name} has been downloaded.` });
+    } catch (error) {
+      console.error("Error generating report:", error);
+      toast({ variant: "destructive", title: "Error Generating Report" });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleViewReport = async () => {
+    if (!selectedReport) return;
+
+    setReportData(null);
+
+    if (!selectedReport.getData || !selectedReport.headers) {
+      toast({ variant: "destructive", title: "Report Not Implemented" });
+      return;
+    }
+
+    const data = await getFilteredData();
+    if (!data || data.length === 0) {
+      toast({ title: "No Data", description: `No data found for ${selectedReport.name} with the selected filters.` });
+      return;
+    }
+
+    setReportData(data);
+  };
+
+  const handleGenerateArchiveFile = async () => {
+    if (!archiveCutoffDate) {
+      toast({ variant: "destructive", title: "Date Required", description: "Please select a cutoff date for the archive." });
+      return;
+    }
+
+    const billsToArchive = ((await getAllBillsAction())?.data as any[] ?? []).filter(b => new Date(b.billPeriodEndDate) < archiveCutoffDate);
+
+    if (billsToArchive.length === 0) {
+      toast({ title: "No Data", description: `No bills found before the selected date to archive.` });
+      setArchivableBills([]);
+      return;
+    }
+
+    setArchivableBills(billsToArchive);
+
+    const archiveHeaders = Object.keys(billsToArchive[0]);
+    const xlsxBlob = arrayToXlsxBlob(billsToArchive, archiveHeaders);
+    const fileName = `archive_bills_before_${archiveCutoffDate.toISOString().split('T')[0]}.xlsx`;
+    downloadFile(xlsxBlob, fileName);
+
+    toast({ title: "Archive File Generated", description: `${billsToArchive.length} bill records have been exported.` });
+  };
+
+  const handleConfirmArchiveDeletion = async () => {
+    if (archivableBills.length === 0) return;
+
+    setIsGenerating(true);
+    const billIdsToDelete = archivableBills.map(b => b.id);
+    let successCount = 0;
+
+    for (const billId of billIdsToDelete) {
+      const result = await deleteBillAction(billId);
+      if (result?.success) {
+        successCount++;
+      } else {
+        toast({ variant: "destructive", title: "Deletion Error", description: `Could not delete bill ID ${billId}. Aborting.` });
+        break;
+      }
+    }
+
+    toast({ title: "Archive Complete", description: `Successfully deleted ${successCount} out of ${billIdsToDelete.length} archived records from the database.` });
+
+    setIsGenerating(false);
+    setArchivableBills([]);
+    setArchiveCutoffDate(undefined);
+    setIsArchiveDeleteConfirmationOpen(false);
+  };
+
+
+  if (!hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) && !hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl md:text-3xl font-bold">Generate Reports</h1>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <UIAlertDescription>You do not have permission to generate reports.</UIAlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-8 pb-12">
+
+      {/* ── Hero Header ── */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-500 p-8 text-white shadow-xl">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
+                <BarChart3 className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-sm font-medium bg-white/20 px-3 py-1 rounded-full">AAWSA Billing Portal</span>
+            </div>
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Reports &amp; Analytics</h1>
+            <p className="mt-2 text-blue-100 text-base max-w-xl">Generate, view, and export comprehensive system reports. Manage data archiving and financial synchronization.</p>
+          </div>
+          <div className="flex flex-wrap gap-3 shrink-0">
+            <div className="bg-white/15 backdrop-blur rounded-xl px-5 py-4 text-center min-w-[100px]">
+              <div className="text-2xl font-bold">{accessibleReports.length}</div>
+              <div className="text-xs text-blue-100 mt-0.5">Report Types</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Quick-Access Cards ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { icon: FileDown,        label: 'Batch PDF',       color: 'from-violet-500 to-purple-600', desc: 'Generate invoices',    requireAll: true  },
+          { icon: TrendingUp,      label: 'Usage Trend',     color: 'from-cyan-500 to-blue-500',     desc: 'Difference analysis',  requireAll: false },
+          { icon: FileSpreadsheet, label: 'Manual Reports',  color: 'from-indigo-500 to-blue-600',   desc: 'XLSX / CSV export',    requireAll: false },
+          { icon: Archive,         label: 'Data Archiving',  color: 'from-amber-500 to-orange-500',  desc: 'Manage records',       requireAll: true  },
+        ].filter(item => !item.requireAll || canGenerateAll).map(({ icon: Icon, label, color, desc }) => (
+          <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 text-white shadow-lg cursor-default group transition-transform hover:-translate-y-0.5`}>
+            <div className="absolute -right-4 -bottom-4 h-20 w-20 rounded-full bg-white/10 group-hover:bg-white/15 transition-colors" />
+            <Icon className="h-6 w-6 mb-3 drop-shadow" />
+            <p className="font-semibold text-sm leading-tight">{label}</p>
+            <p className="text-[11px] text-white/75 mt-0.5">{desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Batch PDF Generator Card */}
+      {/* ── Section 1: Batch PDF Generator ── */}
+      {canGenerateAll && (
+      <div className="relative rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-violet-500 to-purple-600 rounded-l-2xl" />
+        <div className="pl-6 pr-6 pt-6 pb-0 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center shadow-sm shrink-0">
+            <FileDown className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-800">Batch PDF Generator</h2>
+            <p className="text-sm text-slate-500">Generate printable PDF batches for 700k+ monthly invoices.</p>
+          </div>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="pdf-month" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Month / Year</Label>
+              <DatePicker
+                date={selectedPdfMonth ? parse(selectedPdfMonth, 'yyyy-MM', new Date()) : undefined}
+                onSelect={(date) => {
+                  if (date) setSelectedPdfMonth(formatDate(date, 'yyyy-MM'));
+                }}
+                placeholder="Select Month"
+                className="w-full rounded-xl border-slate-200 bg-slate-50"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pdf-branch" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Branch</Label>
+              <Select value={selectedPdfBranch} onValueChange={setSelectedPdfBranch}>
+                <SelectTrigger id="pdf-branch" className="rounded-xl border-slate-200 bg-slate-50"><SelectValue placeholder="All Branches" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Button className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md text-white font-semibold" onClick={handleStartPdfBatch} disabled={isStartingPdf}>
+            {isStartingPdf ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
+            {isStartingPdf ? 'Starting…' : 'Start Batch PDF Generation'}
+          </Button>
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Recent PDF Jobs</h3>
+            <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+              {pdfJobs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  <FileDown className="h-8 w-8 mb-2 opacity-30" />
+                  <p className="text-sm">No recent jobs found</p>
+                </div>
+              ) : pdfJobs.map((job) => (
+                <div key={job.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-700 truncate">{job.month_year} — {job.branch_id || 'All Branches'}</p>
+                    <p className="text-xs text-slate-400">{job.generated_bills} / {job.total_bills} bills · {formatDate(new Date(job.created_at), 'HH:mm, MMM d')}</p>
+                    {job.error_message && <p className="text-xs text-red-500 mt-0.5 italic">{job.error_message}</p>}
+                    {job.file_paths && job.file_paths.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {job.file_paths.map((path: string, idx: number) => (
+                          <a key={idx} href={path} download className="flex items-center gap-1 text-violet-600 hover:text-violet-800 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-lg text-[10px] font-medium">
+                            <Download className="h-2.5 w-2.5" /> Batch {idx + 1}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide', job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : job.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-600 animate-pulse')}>{job.status}</span>
+                    {(job.status === 'completed' || job.status === 'failed') && (
+                      <button onClick={() => handleDeletePdfJob(job.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-lg hover:bg-red-50" title="Remove"><Trash2 className="h-3.5 w-3.5" /></button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {/* ── Section 2: Usage Trend ── */}
+      <div className="relative rounded-2xl border border-cyan-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-cyan-500 to-blue-500 rounded-l-2xl" />
+        <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-11 w-11 rounded-xl bg-cyan-100 text-cyan-600 flex items-center justify-center shadow-sm shrink-0"><TrendingUp className="h-5 w-5" /></div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Overall Difference Usage Trend</h2>
+              <p className="text-sm text-slate-500">Visualise bulk vs individual usage difference grouped by branch and period.</p>
+            </div>
+          </div>
+          <Link href="/admin/reports/overall-difference-usage-trend" passHref>
+            <Button className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-md font-semibold shrink-0">
+              <TrendingUp className="h-4 w-4 mr-2" /> View Trend Report
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+
+      {/* ── Section 3: Manual Report Generator ── */}
+      <div className="relative rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-indigo-500 to-blue-600 rounded-l-2xl" />
+        <div className="pl-6 pr-6 pt-6 pb-4 border-b border-slate-100 flex items-center gap-4">
+          <div className="h-11 w-11 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-sm shrink-0"><FileSpreadsheet className="h-5 w-5" /></div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-800">Manual Report Generation</h2>
+            <p className="text-sm text-slate-500">Select a report type, apply filters, and export as XLSX or CSV.</p>
+          </div>
+        </div>
+        <div className="p-6 space-y-6">
+          {/* Report-type dropdown picker */}
+          <div className="space-y-1.5">
+            <Label htmlFor="report-type" className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3 block">Select Report Type</Label>
+            <Select 
+              value={selectedReportId || undefined} 
+              onValueChange={(value) => { 
+                setSelectedReportId(value); 
+                setReportData(null); 
+              }}
+            >
+              <SelectTrigger id="report-type" className="w-full md:w-[400px] rounded-xl border-slate-200 bg-slate-50">
+                <SelectValue placeholder="Choose a report..." />
+              </SelectTrigger>
+              <SelectContent>
+                {accessibleReports.map((report, idx) => {
+                  const safeId = report.id && String(report.id).trim() !== '' ? String(report.id) : `report-fallback-${idx}`;
+                  return (
+                    <SelectItem key={safeId} value={safeId} disabled={!report.getData}>
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
+                          <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
+                          <span>{report.name.replace(' (XLSX)', '').replace(' (CSV)', '')}</span>
+                        </div>
+                        {report.category && <div className="text-xs text-slate-400 mt-0.5 ml-6">{report.category}</div>}
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Filters panel – shown when a report is selected */}
+          {selectedReport && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5 space-y-5 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div>
+                <p className="text-sm font-bold text-slate-700">{selectedReport.name.replace(' (XLSX)', '').replace(' (CSV)', '')}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{selectedReport.description}</p>
+              </div>
+              {selectedReport.getData ? (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="branch-filter" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Branch</Label>
+                      <Select value={selectedBranch} onValueChange={setSelectedBranch} disabled={isLoading || !canSelectAllBranches}>
+                        <SelectTrigger id="branch-filter" className={cn('rounded-xl border-slate-200 bg-white', !canSelectAllBranches && 'cursor-not-allowed opacity-70')}>
+                          {isLockedToBranch && <Lock className="mr-2 h-3.5 w-3.5 text-slate-400" />}<SelectValue placeholder="Select branch" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {canSelectAllBranches && <SelectItem value="all">All Branches</SelectItem>}
+                          {branches.filter(b => b && b.id && String(b.id).trim() !== '').map((branch) => (
+                            <SelectItem key={String(branch.id)} value={String(branch.id)}>{branch.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="charge-group-filter" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Charge Group</Label>
+                      <Select value={selectedChargeGroup} onValueChange={setSelectedChargeGroup}>
+                        <SelectTrigger id="charge-group-filter" className="rounded-xl border-slate-200 bg-white"><SelectValue placeholder="All charge groups" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Charge Groups</SelectItem>
+                          {customerTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Range</Label>
+                      <DateRangePicker date={dateRange} onDateChange={setDateRange} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Columns</Label>
+                      <Popover open={isColumnSelectorOpen} onOpenChange={setIsColumnSelectorOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" role="combobox" className="w-full justify-between rounded-xl border-slate-200 bg-white text-sm" disabled={!selectedReport.headers}>
+                            <span className="text-slate-600">{selectedColumns.size} / {selectedReport.headers?.length} cols</span>
+                            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-0">
+                          <Command>
+                            <CommandInput placeholder="Search columns…" />
+                            <CommandEmpty>No column found.</CommandEmpty>
+                            <CommandList>
+                              <CommandGroup>
+                                {selectedReport.headers?.map((header) => (
+                                  <CommandItem key={header} value={header} onSelect={() => {
+                                    setSelectedColumns(prev => { const s = new Set(prev); s.has(header) ? s.delete(header) : s.add(header); return s; });
+                                  }}>
+                                    <Check className={cn('mr-2 h-4 w-4', selectedColumns.has(header) ? 'opacity-100 text-indigo-500' : 'opacity-0')} />
+                                    {header.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    <Button onClick={handleViewReport} disabled={isGenerating || !selectedReportId} variant="outline" className="rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold">
+                      <Eye className="mr-2 h-4 w-4" /> Preview Data
+                    </Button>
+                    <Button onClick={handleGenerateReport} disabled={isGenerating || !selectedReportId} className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white shadow-md font-semibold">
+                      <Download className="mr-2 h-4 w-4" />
+                      {isGenerating ? 'Generating…' : `Download ${selectedReport.name.includes('CSV') ? 'CSV' : 'XLSX'}`}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-3 rounded-xl bg-blue-50 border border-blue-100 p-4">
+                  <Info className="h-5 w-5 text-blue-500 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-blue-700">Coming Soon</p>
+                    <p className="text-xs text-blue-500">This report is under development and will be available in a future update.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!selectedReportId && (
+            <div className="flex flex-col items-center justify-center py-10 text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+              <FileSpreadsheet className="h-10 w-10 mb-3 opacity-25" />
+              <p className="text-sm font-medium">Select a report type above to get started</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Report Data Preview ── */}
+      {reportData && selectedColumns.size > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-800">Preview: {selectedReport?.name.replace(' (XLSX)', '').replace(' (CSV)', '')}</h2>
+              <p className="text-xs text-slate-500 mt-0.5">{reportData.length} row{reportData.length !== 1 ? 's' : ''} · {selectedColumns.size} column{selectedColumns.size !== 1 ? 's' : ''}</p>
+            </div>
+            <Button size="sm" onClick={handleGenerateReport} disabled={isGenerating} className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-sm font-semibold text-xs">
+              <Download className="h-3.5 w-3.5 mr-1.5" /> Export
+            </Button>
+          </div>
+          <div className="p-6"><ReportDataView data={reportData} headers={Array.from(selectedColumns)} /></div>
+        </div>
+      )}
+
+      {/* ── Section 4: Advanced Data Tools ── */}
+      {canGenerateAll && (
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Settings2 className="h-4 w-4 text-slate-400" />
+          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Advanced Data Tools</h2>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+          {/* Data Archiving */}
+          <div className="relative rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+            <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-amber-400 to-orange-500 rounded-l-2xl" />
+            <div className="pl-6 pr-6 pt-5 pb-1 border-b border-slate-100 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm shrink-0"><Archive className="h-4 w-4" /></div>
+              <div>
+                <h3 className="font-bold text-slate-800">Data Archiving</h3>
+                <p className="text-xs text-slate-500">Free up storage by exporting and purging old records.</p>
+              </div>
+            </div>
+            <div className="p-6 space-y-5">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Step 1 — Export Records Before Date</Label>
+                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                  <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
+                  <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate} className="rounded-xl bg-slate-800 hover:bg-slate-900 text-white shadow-sm font-semibold">
+                    <Download className="mr-2 h-4 w-4" /> Export Archive
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-400 bg-amber-50 border border-amber-100 p-2.5 rounded-xl">Downloads an XLSX of all records before the selected date. Save this file before deleting.</p>
+              </div>
+              {archivableBills.length > 0 && (
+                <div className="space-y-3 p-4 border border-red-200 rounded-2xl bg-red-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="flex items-center gap-2 text-red-700 font-bold text-sm"><AlertCircle className="h-4 w-4" />Step 2 — Confirm Permanent Deletion</div>
+                  <p className="text-xs text-red-600 leading-relaxed">{archivableBills.length} records exported. Verify your file is saved. <strong>This cannot be undone.</strong></p>
+                  <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating} className="w-full rounded-xl font-semibold">
+                    <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+
+
+
+        </div>
+      </div>
+      )}
+
+      <AlertDialog open={isArchiveDeleteConfirmationOpen} onOpenChange={setIsArchiveDeleteConfirmationOpen}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>This action <strong>cannot be undone</strong>. You are about to permanently delete {archivableBills.length} bill records. Have you downloaded and verified the archive file?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmArchiveDeletion} className="bg-destructive hover:bg-destructive/90 rounded-xl">Yes, Delete Records</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

@@ -1,0 +1,65 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js build output
+/.next/
+/out/
+/dist/
+/.expo/
+
+# Production
+/build
+
+# Test and debug artifacts
+/test-results/
+/coverage/
+*.tmp
+*.bak
+*.orig
+*.patch
+*.html
+*.csv
+*.log
+
+# Local Environment Variables
+.env
+.env*.local
+
+# Production secrets — NEVER commit real credentials
+# Copy .env.production.example and fill in real values on the server
+.env.production
+
+# IDEs and editors
+/.vscode
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+server-error.log
+tsc.log
+
+# TypeScript
+*.tsbuildinfo
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Project Duplicates & Dumps
+/aawsa-billing-portal-main/
+*.sql

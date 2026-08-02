@@ -1,0 +1,1298 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import { BillTaskBoard } from '@/features/billing/components/BillTaskBoard';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useToast } from '@/hooks/use-toast';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
+import {
+    getAllBillsAction,
+    getBillsByMonthAction,
+    getDistinctBillingMonthsAction,
+    getUnsettledBillsAction,
+    getPaidBillsAction,
+    deleteBillAction,
+    submitBillAction,
+    approveBillAction,
+    postBillAction,
+    getBranchesLookupAction,
+    submitBillsBulkAction,
+    approveBillsBulkAction,
+    postBillsBulkAction
+} from '@/lib/actions';
+import { initializeTariffs, getTariff } from '@/lib/data-store';
+import { usePermissions } from '@/hooks/use-permissions';
+import { cn, formatDate } from '@/lib/utils';
+import { format, subDays, isBefore } from 'date-fns';
+import { getMonthlyBillAmt } from '@/lib/billing-utils';
+import { exportBillManagementAuditToCsv, exportBillManagementAuditToXlsx } from '@/lib/export-utils';
+import {
+    Loader2,
+    Filter,
+    Search,
+    Download,
+    TrendingUp,
+    AlertCircle,
+    Calendar,
+    RotateCcw,
+    ChevronLeft,
+    ChevronRight,
+    CheckCircle2,
+    Clock,
+    DollarSign,
+    PieChart,
+    MoreVertical,
+    Trash2,
+    Eye,
+    Printer,
+    ShieldAlert,
+    X,
+    RefreshCw} from 'lucide-react';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
+import { Label } from "@/components/ui/label";
+import { BillingCycleDialog } from '@/features/billing/components/billing-cycle-dialog';
+import { TablePagination } from '@/components/ui/table-pagination';
+import { DatePicker } from '@/components/ui/date-picker';
+import { parse } from 'date-fns';
+
+
+
+interface BillManagementContentProps {
+    basePath: string;
+}
+
+export function BillManagementContent({ basePath }: BillManagementContentProps) {
+    const router = useRouter();
+    const { toast } = useToast();
+    const { hasPermission } = usePermissions();
+    const [bills, setBills] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
+    const [branches, setBranches] = useState<any[]>([]);
+    const [dismissedAnomalies, setDismissedAnomalies] = useState<Set<string>>(new Set());
+
+    // Filter states
+    const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery);
+        }, 300);
+
+        return () => {
+            clearTimeout(handler);
+        };
+    }, [searchQuery]);
+
+    const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'unpaid'>('all');
+    const [branchFilter, setBranchFilter] = useState('all');
+    const [monthFilter, setMonthFilter] = useState('all');
+
+    // Pagination states
+    const [currentPage, setCurrentPage] = useState(0);
+    const [paidCurrentPage, setPaidCurrentPage] = useState(0);
+    const [itemsPerPage, setItemsPerPage] = useState(10);
+    const [paidItemsPerPage, setPaidItemsPerPage] = useState(10);
+    const [outstandingBills, setOutstandingBills] = useState<any[]>([]);
+    const [outstandingTotal, setOutstandingTotal] = useState(0);
+    const [paidBills, setPaidBills] = useState<any[]>([]);
+    const [paidTotal, setPaidTotal] = useState(0);
+    const [outstandingLoading, setOutstandingLoading] = useState(false);
+    const [paidLoading, setPaidLoading] = useState(false);
+
+
+    // Bulk Action Confirmation states
+    const [pendingBulkAction, setPendingBulkAction] = useState<{
+        type: 'submit' | 'approve' | 'post';
+        title: string;
+        description: string;
+        action: () => Promise<void>;
+    } | null>(null);
+
+    const latestMonth = React.useMemo(() => {
+        const months = Array.from(new Set(bills.map(b => b.month_year)))
+            .filter(Boolean)
+            .sort()
+            .reverse();
+        return months[0] as string;
+    }, [bills]);
+
+    const loadData = async (overrides?: { branchFilter?: string; monthFilter?: string }) => {
+        setLoading(true);
+        const effectiveBranch = overrides?.branchFilter ?? branchFilter;
+        let effectiveMonth = overrides?.monthFilter ?? monthFilter;
+
+        try {
+            await Promise.allSettled([
+                initializeTariffs()
+            ]);
+
+            if (effectiveMonth === 'all') {
+                const distinctRes = await getDistinctBillingMonthsAction();
+                if (distinctRes.data) {
+                    const months = Array.from(new Set(distinctRes.data as string[]))
+                        .filter(Boolean)
+                        .sort()
+                        .reverse();
+                    if (months.length > 0) {
+                        effectiveMonth = months[0];
+                        setMonthFilter(months[0]);
+                    }
+                }
+            }
+
+            let billsRes: any;
+            if (effectiveMonth !== 'all') {
+                billsRes = await getBillsByMonthAction(
+                    effectiveMonth,
+                    effectiveBranch === 'all' ? undefined : effectiveBranch
+                );
+            } else {
+                billsRes = await getAllBillsAction(effectiveBranch === 'all' ? undefined : { branchId: effectiveBranch });
+            }
+
+            if (billsRes?.data) {
+                setBills(billsRes.data);
+            }
+
+            const branchRes = await (async () => {
+                const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                if (isOffline) {
+                    try {
+                        const cached = localStorage.getItem('cached_branches_lookup');
+                        if (cached) return { data: JSON.parse(cached) };
+                    } catch (e) { /* ignore */ }
+                    return { data: [] };
+                }
+                try {
+                    const res = await getBranchesLookupAction();
+                    if (res && res.data) {
+                        try {
+                            localStorage.setItem('cached_branches_lookup', JSON.stringify(res.data));
+                        } catch (e) { /* ignore */ }
+                    }
+                    return res;
+                } catch (e) {
+                    console.warn("Offline: failed to fetch branches lookup in bill management", e);
+                    try {
+                        const cached = localStorage.getItem('cached_branches_lookup');
+                        if (cached) return { data: JSON.parse(cached) };
+                    } catch (err) { /* ignore */ }
+                    return { data: [] };
+                }
+            })();
+            if (branchRes.data) setBranches(branchRes.data);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    // Delete confirmation state
+    const [billToDelete, setBillToDelete] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const handleDelete = (id: string) => {
+        setBillToDelete(id);
+    };
+
+    const confirmDeleteBill = async () => {
+        if (!billToDelete) return;
+        setIsDeleting(true);
+        try {
+            const res = await deleteBillAction(billToDelete);
+            if (res.data) {
+                toast({ title: "Deleted", description: "Bill record removed successfully." });
+                await loadData();
+            } else {
+                toast({ title: "Error", description: res.error?.message || "Failed to delete", variant: "destructive" });
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsDeleting(false);
+            setBillToDelete(null);
+        }
+    };
+
+    // Filtered data for stats & dashboard (respects Search, Branch, Month)
+    const filteredForStats = bills.filter(b => {
+        const matchesSearch = (b.CUSTOMERKEY || '').toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+            (b.individual_customer_id || '').toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+            b.id.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
+        const matchesBranch = branchFilter === 'all' || b.branch_id === branchFilter;
+        const matchesMonth = monthFilter === 'all' || b.month_year === monthFilter;
+        return matchesSearch && matchesBranch && matchesMonth;
+    });
+
+    const myDrafts = filteredForStats.filter(b => b.status === 'Draft' || !b.status);
+    const pendingApprovals = filteredForStats.filter(b => b.status === 'Pending');
+    const approvedBills = filteredForStats.filter(b => b.status === 'Approved');
+    const reworkItems = filteredForStats.filter(b => b.status === 'Rework');
+    const postedBills = filteredForStats.filter(b => b.status === 'Posted');
+
+    const canViewDrafts = hasPermission('bill:view_drafts') || hasPermission('bill:manage_all');
+    const canViewPending = hasPermission('bill:view_pending') || hasPermission('bill:approve') || hasPermission('bill:manage_all');
+    const canViewRework = hasPermission('bill:rework') || hasPermission('bill:manage_all');
+    const canViewApproved = hasPermission('bill:view_approved') || hasPermission('bill:send') || hasPermission('bill:post') || hasPermission('bill:approve') || hasPermission('bill:manage_all');
+    const canViewPaid = hasPermission('bill:view_paid') || hasPermission('bill:manage_all');
+    const canViewUnpaid = hasPermission('bill:view_awaiting_payment') || hasPermission('bill:view_overdue') || hasPermission('bill:manage_all');
+
+    const canAccessPage = canViewDrafts || canViewPending || canViewRework || canViewApproved || canViewPaid || canViewUnpaid;
+
+    // Generate the Reconstructed History Map for all bills
+    // so the table can display the aging buckets accurately
+    const reconstructedHistoryMap = React.useMemo(() => {
+        const results = new Map();
+        const billsByCustomer = new Map<string, any[]>();
+
+        for (const b of bills) {
+            const key = b.CUSTOMERKEY || b.individual_customer_id;
+            if (key) {
+                if (!billsByCustomer.has(key)) billsByCustomer.set(key, []);
+                billsByCustomer.get(key)!.push(b);
+            }
+        }
+
+        const findCustomerType = (billsList: any[]) => {
+            const firstBill = billsList[0];
+            if (!firstBill) return "Non-domestic";
+            const isBulk = !!firstBill.CUSTOMERKEY;
+            if (isBulk) {
+                return firstBill.charge_group || firstBill.chargeGroup || "Non-domestic";
+            } else {
+                return firstBill.customer_type || firstBill.customerType || "Domestic";
+            }
+        };
+
+        const findActiveTariff = (customerType: string, dateStr: string) => {
+            try {
+                return getTariff(customerType as any, dateStr);
+            } catch (e) {
+                console.error(e);
+            }
+            return null;
+        };
+
+        for (const [key, customerBills] of billsByCustomer.entries()) {
+            const historyOldestFirst = [...customerBills].sort((a, b) => {
+                const dateA = new Date(a.billPeriodEndDate || a.created_at || 0).getTime();
+                const dateB = new Date(b.billPeriodEndDate || b.created_at || 0).getTime();
+                if (dateA !== dateB) return dateA - dateB;
+                const cA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const cB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                return cA - cB;
+            });
+
+            const customerType = findCustomerType(customerBills);
+
+            let carriedForwardUnpaid = 0;
+            let d30_bucket = 0;
+            let d30_60_bucket = 0;
+            let d60_bucket = 0;
+            let billIndexCounter = 0;
+
+            for (const bill of historyOldestFirst) {
+                const isVoided = bill.status === 'Deleted' || bill.status === 'Void';
+                
+                const billMonth = bill.month_year || format(new Date(bill.created_at || Date.now()), 'yyyy-MM');
+                const activeTariff = findActiveTariff(customerType, billMonth);
+
+                const threshold = activeTariff?.penalty_month_threshold ?? 3;
+                const bankRate = Number(activeTariff?.bank_lending_rate ?? 0.15);
+                const tieredRates = Array.isArray(activeTariff?.penalty_tiered_rates) ? activeTariff.penalty_tiered_rates : [];
+
+                const arrearsSum = carriedForwardUnpaid;
+
+                let penalty = 0;
+                let maxAge = 0;
+
+                if (d60_bucket > 0.01) maxAge = 3;
+                else if (d30_60_bucket > 0.01) maxAge = 2;
+                else if (d30_bucket > 0.01) maxAge = 1;
+
+                const totalMissedCycles = billIndexCounter;
+                maxAge = Math.max(maxAge, totalMissedCycles);
+
+                const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
+                if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
+
+                if (maxAge >= threshold) {
+                    const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
+                    const totalRate = bankRate + Number(applicableTier?.rate || 0);
+                    penalty = arrearsSum * totalRate;
+                }
+
+                const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
+                const totalD60AndLegacy = d60_bucket + legacyDebt;
+
+                const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
+                const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
+
+                results.set(bill.id, {
+                    d30: d30_bucket,
+                    d30_60: d30_60_bucket,
+                    d60: totalD60AndLegacy,
+                    penalty,
+                    outstanding: derivedOutstanding,
+                    currentMonthly: currentMonthlyCharge,
+                    totalPayable: derivedTotalPayable
+                });
+
+                const amtPaid = isVoided ? 0 : Number(bill.amountPaid || bill.amount_paid || bill.AMOUNTPAID || 0);
+                const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+                carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
+
+                let remainingPayment = amtPaid;
+
+                const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
+                const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
+                remainingPayment -= paidAgainstOldest;
+
+                const paidAgainstPenalty = Math.min(remainingPayment, penalty);
+                remainingPayment -= paidAgainstPenalty;
+
+                const paidAgainstD30_60 = Math.min(remainingPayment, d30_60_bucket);
+                const remaining_d30_60 = Math.max(0, d30_60_bucket - paidAgainstD30_60);
+                remainingPayment -= paidAgainstD30_60;
+
+                const paidAgainstD30 = Math.min(remainingPayment, d30_bucket);
+                const remaining_d30 = Math.max(0, d30_bucket - paidAgainstD30);
+                remainingPayment -= paidAgainstD30;
+
+                const paidAgainstCurrent = Math.min(remainingPayment, currentMonthlyCharge);
+                const remaining_current = Math.max(0, currentMonthlyCharge - paidAgainstCurrent);
+
+                d60_bucket = remaining_d60_plus_legacy + remaining_d30_60;
+                d30_60_bucket = remaining_d30;
+                d30_bucket = remaining_current;
+
+                if (carriedForwardUnpaid > 0.01) {
+                    billIndexCounter++;
+                } else {
+                    billIndexCounter = 0;
+                }
+            }
+        }
+        return results;
+    }, [bills]);
+
+    // Stats Calculations helper based on reconstructed history
+    const getBillTotalPayable = (b: any) => {
+        const recon = reconstructedHistoryMap.get(b.id);
+        if (recon) {
+            return recon.outstanding + Math.max(0, recon.currentMonthly);
+        }
+
+        const d30 = Number(b.debit30 || b.debit_30 || 0);
+        const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
+        const d60 = Number(b.debit60 || b.debit_60 || 0);
+        const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+        const penalty = Number(b.PENALTYAMT || 0);
+        const outstanding = totalUnpaidDebt + penalty;
+        const current = getMonthlyBillAmt(b);
+        return outstanding + current;
+    };
+
+    // ── Feature 2: Billing Anomaly & Fraud Detection Engine ────────────────────
+    // Runs on the current in-memory bills for the selected month.
+    const anomalyWarnings = React.useMemo(() => {
+        const warnings: { id: string; severity: 'critical' | 'warning'; icon: string; title: string; detail: string }[] = [];
+
+        if (bills.length === 0) return warnings;
+
+        // Build per-customer usage history map for spike detection (6-month average)
+        const usageByCustomer: Map<string, number[]> = new Map();
+        bills.forEach((b: any) => {
+            const key = b.CUSTOMERKEY || b.individual_customer_id;
+            if (!key) return;
+            const usage = Number(b.CONSUMPTION || b.consumption || b.UNITS || 0);
+            if (!usageByCustomer.has(key)) usageByCustomer.set(key, []);
+            usageByCustomer.get(key)!.push(usage);
+        });
+
+        // Anomaly checks on the latest month's bills only
+        const latestBills = bills.filter((b: any) => b.month_year === latestMonth);
+
+        // 1. Consumption Spike Detection (> 150% above customer average)
+        const spikeMeters: string[] = [];
+        latestBills.forEach((b: any) => {
+            const key = b.CUSTOMERKEY || b.individual_customer_id;
+            if (!key) return;
+            const history = usageByCustomer.get(key) || [];
+            if (history.length < 2) return;
+            const pastUsage = history.slice(0, -1);
+            const avg = pastUsage.reduce((s, v) => s + v, 0) / pastUsage.length;
+            const current = history[history.length - 1];
+            if (avg > 0 && current > avg * 2.5) {
+                spikeMeters.push(key);
+            }
+        });
+        if (spikeMeters.length > 0) {
+            warnings.push({
+                id: 'spike',
+                severity: 'critical',
+                icon: '📈',
+                title: `${spikeMeters.length} Consumption Spike(s) Detected`,
+                detail: `The following meter(s) show usage > 150% above their historical average and may be data-entry errors: ${spikeMeters.slice(0, 3).join(', ')}${spikeMeters.length > 3 ? ` +${spikeMeters.length - 3} more` : ''}.`
+            });
+        }
+
+        // 2. Zero-Consumption on Active Meters
+        const zeroMeters = latestBills.filter((b: any) => {
+            const usage = Number(b.CONSUMPTION || b.consumption || b.UNITS || 0);
+            return usage === 0;
+        });
+        if (zeroMeters.length > 0) {
+            warnings.push({
+                id: 'zero',
+                severity: 'warning',
+                icon: '⚠️',
+                title: `${zeroMeters.length} Meter(s) with Zero Consumption`,
+                detail: `${zeroMeters.length} meter(s) recorded 0 m³ for ${latestMonth}. Verify meter reads — these may be inactive, tampered, or missing.`
+            });
+        }
+
+        // 3. Suspiciously High Bill Amount (> 5x median bill)
+        const amounts = latestBills.map((b: any) => getBillTotalPayable(b)).filter(v => v > 0).sort((a, b) => a - b);
+        if (amounts.length >= 5) {
+            const median = amounts[Math.floor(amounts.length / 2)];
+            const highBills = latestBills.filter((b: any) => getBillTotalPayable(b) > median * 5);
+            if (highBills.length > 0) {
+                warnings.push({
+                    id: 'highamt',
+                    severity: 'warning',
+                    icon: '💰',
+                    title: `${highBills.length} Suspiciously High Bill Amount(s)`,
+                    detail: `${highBills.length} bill(s) are over 5× the median bill amount (ETB ${median.toFixed(2)}). Please review before approving.`
+                });
+            }
+        }
+
+        // 4. Negative outstanding amount anomaly (indicates rollover / data corruption)
+        const negativeDebt = latestBills.filter((b: any) => {
+            const outstanding = Number(b.OUTSTANDINGAMT || 0);
+            return outstanding < -0.01;
+        });
+        if (negativeDebt.length > 0) {
+            warnings.push({
+                id: 'negdebt',
+                severity: 'critical',
+                icon: '🔴',
+                title: `${negativeDebt.length} Negative Outstanding Amount(s)`,
+                detail: `${negativeDebt.length} bill(s) have negative OUTSTANDINGAMT — this indicates a data corruption or incorrect rollover. Immediate review required.`
+            });
+        }
+
+        return warnings.filter(w => !dismissedAnomalies.has(w.id));
+    }, [bills, latestMonth, dismissedAnomalies, getBillTotalPayable]);
+    // ────────────────────────────────────────────────────────────────────────────
+
+    const handleSubmitAll = async () => {
+        const drafts = [...myDrafts, ...reworkItems];
+        if (drafts.length === 0) return;
+
+        setPendingBulkAction({
+            type: 'submit',
+            title: 'Submit All for Approval',
+            description: `Are you sure you want to submit ${drafts.length} bills for approval?`,
+            action: async () => {
+                const ids = drafts.map(b => b.id);
+                await submitBillsBulkAction(ids);
+                toast({ title: 'All Submitted', description: `${drafts.length} bill(s) submitted for approval.` });
+                await loadData();
+            }
+        });
+    };
+
+    const handleApproveAll = async () => {
+        if (pendingApprovals.length === 0) return;
+
+        setPendingBulkAction({
+            type: 'approve',
+            title: 'Approve All Invoices',
+            description: `Are you sure you want to approve ${pendingApprovals.length} invoices? This action cannot be easily undone.`,
+            action: async () => {
+                const ids = pendingApprovals.map(b => b.id);
+                await approveBillsBulkAction(ids);
+                toast({ title: 'All Approved', description: `${pendingApprovals.length} invoice(s) approved.` });
+                await loadData();
+            }
+        });
+    };
+
+    const handlePostAll = async () => {
+        if (approvedBills.length === 0) return;
+
+        setPendingBulkAction({
+            type: 'post',
+            title: 'Post & Finalize All Bills',
+            description: `Are you sure you want to post and finalize ${approvedBills.length} bills? This will officially record them and make them active for collection.`,
+            action: async () => {
+                const ids = approvedBills.map(b => b.id);
+                await postBillsBulkAction(ids);
+                toast({ title: 'All Posted', description: `${approvedBills.length} bill(s) posted and finalized.` });
+                await loadData();
+            }
+        });
+    };
+
+    const effectiveMonthYear = monthFilter === 'all' ? latestMonth : monthFilter;
+    const effectiveBranchId = branchFilter === 'all' ? undefined : branchFilter;
+    const normalizedSearchTerm = debouncedSearchQuery.trim() || undefined;
+
+    React.useEffect(() => {
+        if (!canAccessPage) return;
+        if (!effectiveMonthYear && monthFilter !== 'all') return;
+
+        const fetchOutstanding = async () => {
+            setOutstandingLoading(true);
+            try {
+                const res = await getUnsettledBillsAction({
+                    page: currentPage,
+                    limit: itemsPerPage,
+                    searchTerm: normalizedSearchTerm,
+                    branchId: effectiveBranchId,
+                    monthYear: effectiveMonthYear,
+                    statusFilter,
+                });
+                if (res.success) {
+                    setOutstandingBills(res.bills || []);
+                    setOutstandingTotal(res.total ?? 0);
+                }
+            } catch (err) {
+                console.error('Failed to load outstanding bills', err);
+            } finally {
+                setOutstandingLoading(false);
+            }
+        };
+
+        const fetchPaid = async () => {
+            setPaidLoading(true);
+            try {
+                const res = await getPaidBillsAction({
+                    page: paidCurrentPage,
+                    limit: paidItemsPerPage,
+                    searchTerm: normalizedSearchTerm,
+                    branchId: effectiveBranchId,
+                    monthYear: effectiveMonthYear,
+                });
+                if (res.success) {
+                    setPaidBills(res.bills || []);
+                    setPaidTotal(res.total ?? 0);
+                }
+            } catch (err) {
+                console.error('Failed to load paid bills', err);
+            } finally {
+                setPaidLoading(false);
+            }
+        };
+
+        fetchOutstanding();
+        fetchPaid();
+    }, [effectiveMonthYear, effectiveBranchId, normalizedSearchTerm, statusFilter, currentPage, itemsPerPage, paidCurrentPage, paidItemsPerPage, monthFilter, canAccessPage]);
+
+    if (loading && bills.length === 0) return <div className="p-8 flex items-center gap-2"><Loader2 className="animate-spin h-5 w-5" /> Loading dashboard...</div>;
+
+    if (!canAccessPage) {
+        return (
+            <div className="p-6">
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Access Denied</AlertTitle>
+                    <UIAlertDescription>
+                        You do not have permission to access the Bill Management page.
+                    </UIAlertDescription>
+                </Alert>
+            </div>
+        );
+    }
+
+    const now = new Date();
+
+    // Aging Calculations based on unique customers in the filtered set
+    // This avoids double-counting arrears if multiple bills for the same customer are in view (e.g. 'All Months' filter)
+    const unpaidUniqueCustomers = Array.from(
+        filteredForStats.filter(b => b.payment_status === 'Unpaid').reduce((map: Map<string, any>, b: any) => {
+            const key = b.CUSTOMERKEY || b.individual_customer_id;
+            if (!map.has(key) || new Date(b.created_at) > new Date(map.get(key).created_at)) {
+                map.set(key, b);
+            }
+            return map;
+        }, new Map<string, any>()).values()
+    );
+
+    const totalOutstandingUnpaid = unpaidUniqueCustomers.reduce((sum: number, b: any) => sum + getBillTotalPayable(b), 0);
+
+
+    const totalPaidAmount = filteredForStats
+        .filter(b => b.payment_status === 'Paid')
+        .reduce((sum: number, b: any) => sum + getBillTotalPayable(b), 0);
+
+    const totalInView = totalPaidAmount + totalOutstandingUnpaid;
+    const collectionEfficiency = totalInView > 0 ? (totalPaidAmount / totalInView) * 100 : 0;
+
+    const draftTotalAmount = filteredForStats
+        .filter(b => b.status === 'Draft' || b.status === 'Rework')
+        .reduce((sum: number, b: any) => sum + getBillTotalPayable(b), 0);
+    const pendingTotalAmount = filteredForStats
+        .filter(b => b.status === 'Pending')
+        .reduce((sum: number, b: any) => sum + getBillTotalPayable(b), 0);
+    const postedBillsCount = filteredForStats.filter(b => b.status === 'Posted').length;
+
+    const myDraftsCount = filteredForStats.filter(b => b.status === 'Draft' || !b.status).length;
+    const reworkItemsCount = filteredForStats.filter(b => b.status === 'Rework').length;
+    const pendingApprovalsCount = filteredForStats.filter(b => b.status === 'Pending').length;
+
+    const aging = unpaidUniqueCustomers.reduce((acc: any, b: any) => {
+        const recon = reconstructedHistoryMap.get(b.id);
+        if (recon) {
+            acc.zeroToThirty += Number(recon.d30 || 0);
+            acc.thirtyToSixty += Number(recon.d30_60 || 0);
+            acc.sixtyPlus += Number(recon.d60 || 0);
+        } else {
+            const d30 = Number(b.debit30 || b.debit_30 || 0);
+            const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
+            const d60 = Number(b.debit60 || b.debit_60 || 0);
+            acc.zeroToThirty += d30;
+            acc.thirtyToSixty += d30_60;
+            acc.sixtyPlus += d60;
+        }
+        return acc;
+    }, { zeroToThirty: 0, thirtyToSixty: 0, sixtyPlus: 0 });
+
+    const totalAgingDebt = aging.zeroToThirty + aging.thirtyToSixty + aging.sixtyPlus;
+
+
+    // Filtered Outstanding List (Main Table) - Restricted to Recent Month or Selected Month
+    const filteredOutstanding = filteredForStats
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Unpaid')
+        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth)
+        .filter(b => {
+            const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
+            const matchesStatus = statusFilter === 'all' ||
+                (statusFilter === 'overdue' && isBillOverdue) ||
+                (statusFilter === 'unpaid' && !isBillOverdue);
+            return matchesStatus;
+        });
+
+    // Filtered Paid List (Second Table) - Restricted to Recent Month or Selected Month
+    const filteredPaid = filteredForStats
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid')
+        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth);
+
+
+
+        const handleExportCSV = () => {
+        const headers = ['Bill ID', 'Customer Key', 'Month', 'Date Billed', 'Due Date', 'Status', 'Total Payable'];
+        const exportSet = outstandingBills.length > 0 ? outstandingBills : filteredOutstanding;
+        const rows = exportSet.map(b => {
+            const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
+            return [
+                b.id,
+                b.CUSTOMERKEY || b.individual_customer_id || 'N/A',
+                b.month_year,
+                formatDate(b.created_at),
+                formatDate(b.due_date),
+                isBillOverdue ? 'Overdue' : 'Unpaid',
+                getBillTotalPayable(b).toFixed(2)
+            ];
+        });
+
+        const csvContent = "data:text/csv;charset=utf-8,"
+            + headers.join(",") + "\n"
+            + rows.map(e => e.join(",")).join("\n");
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `outstanding_bills_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    const handleExportDetailedAuditReport = (format: 'csv' | 'xlsx') => {
+        const exportSet = filteredForStats;
+        if (format === 'xlsx') {
+            exportBillManagementAuditToXlsx(exportSet, branches, 'bill_management_audit_report');
+            return;
+        }
+        exportBillManagementAuditToCsv(exportSet, branches, 'bill_management_audit_report');
+    };
+
+    const role = hasPermission('bill:approve') ? 'manager' : 'staff';
+
+    return (
+        <div className="p-6 space-y-8 w-full animate-in fade-in duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight text-gray-900">Bill Management</h1>
+                    <p className="text-muted-foreground mt-1">Review, approve and track billing workflow across branches.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    {hasPermission('billing:close_cycle') && (
+                        <Button className="h-10 bg-blue-600 hover:bg-blue-700 shadow-sm" onClick={() => setIsCycleDialogOpen(true)}>
+                            Start New Billing Cycle
+                        </Button>
+                    )}
+                </div>
+            </div>
+
+            {/* ── Feature 2: Anomaly Alert Banner ─────────────────────────── */}
+            {anomalyWarnings.length > 0 && (
+                <div className="space-y-2 animate-in fade-in duration-300">
+                    {anomalyWarnings.map(w => (
+                        <div
+                            key={w.id}
+                            className={`flex items-start gap-3 p-3.5 rounded-xl border text-sm font-medium ${
+                                w.severity === 'critical'
+                                    ? 'bg-red-50 border-red-200 text-red-800'
+                                    : 'bg-amber-50 border-amber-200 text-amber-800'
+                            }`}
+                        >
+                            <ShieldAlert className={`h-5 w-5 shrink-0 mt-0.5 ${ w.severity === 'critical' ? 'text-red-500' : 'text-amber-500'}`} />
+                            <div className="flex-1 min-w-0">
+                                <span className="font-bold mr-1.5">{w.icon} {w.title}</span>
+                                <span className="font-normal text-xs opacity-90">{w.detail}</span>
+                            </div>
+                            <button
+                                type="button"
+                                aria-label="Dismiss warning"
+                                className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+                                onClick={() => setDismissedAnomalies(prev => new Set([...prev, w.id]))}
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Summary Statistics Bar */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatsCard
+                    title="Drafts & Rework"
+                    value={`ETB ${draftTotalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    count={myDrafts.length + reworkItems.length}
+                    icon={<Clock className="h-5 w-5 text-blue-500" />}
+                    color="blue"
+                />
+                <StatsCard
+                    title="Pending Approval"
+                    value={`ETB ${pendingTotalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    count={pendingApprovals.length}
+                    icon={<AlertCircle className="h-5 w-5 text-amber-500" />}
+                    color="amber"
+                />
+                <StatsCard
+                    title="Total Outstanding"
+                    value={`ETB ${totalOutstandingUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    count={filteredOutstanding.length}
+                    icon={<DollarSign className="h-5 w-5 text-red-500" />}
+                    color="red"
+                />
+                <Card className="shadow-sm border-gray-100 overflow-hidden">
+                    <CardContent className="p-5">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Collection Efficiency</p>
+                                <h3 className="text-2xl font-bold text-gray-900">{collectionEfficiency.toFixed(1)}%</h3>
+                            </div>
+                            <div className="p-2.5 bg-green-50 rounded-xl">
+                                <TrendingUp className="h-5 w-5 text-green-600" />
+                            </div>
+                        </div>
+                        <Progress value={collectionEfficiency} className="h-1.5 mt-4 bg-gray-100" />
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Kanban Columns */}
+            <BillTaskBoard
+                myDrafts={myDrafts}
+                pendingApprovals={pendingApprovals}
+                reworkItems={reworkItems}
+                approvedBills={approvedBills}
+                postedCount={postedBillsCount}
+                role={role}
+                basePath={basePath}
+                showApprovals={canViewPending}
+                showReadyToPost={canViewApproved}
+                onSubmitAll={canViewDrafts ? handleSubmitAll : undefined}
+                onApproveAll={canViewPending ? handleApproveAll : undefined}
+                onPostAll={canViewApproved ? handlePostAll : undefined}
+            />
+
+            {/* Aging Summary & Quick Filters */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Card className="lg:col-span-1 shadow-sm border-gray-100">
+                    <CardHeader className="pb-3 border-b border-gray-50 flex flex-row items-center justify-between">
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider text-gray-600 flex items-center gap-2">
+                            <PieChart className="h-4 w-4" /> Overdue Aging (ETB)
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-5 space-y-4">
+                        <AgingBar label="Debit 30 (1 Mo)" value={aging.zeroToThirty} total={totalAgingDebt} color="bg-amber-400" />
+                        <AgingBar label="Debit 30-60 (2 Mo)" value={aging.thirtyToSixty} total={totalAgingDebt} color="bg-orange-500" />
+                        <AgingBar label="Debit 60+ (3+ Mo)" value={aging.sixtyPlus} total={totalAgingDebt} color="bg-red-600" />
+                    </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-2 shadow-sm border-gray-100">
+                    <CardHeader className="pb-3 border-b border-gray-50 flex flex-row items-center justify-between">
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider text-gray-600 flex items-center gap-2">
+                            <Filter className="h-4 w-4" /> Search & Smart Filters
+                        </CardTitle>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="h-8 text-xs">
+                                    <Download className="mr-2 h-3.5 w-3.5" /> Export
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onSelect={(event) => { event.preventDefault(); handleExportCSV(); }}>
+                                    Export Summary CSV
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={(event) => { event.preventDefault(); handleExportDetailedAuditReport('csv'); }}>
+                                    Export Detailed Audit CSV
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={(event) => { event.preventDefault(); handleExportDetailedAuditReport('xlsx'); }}>
+                                    Export Detailed Audit XLSX
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </CardHeader>
+                    <CardContent className="pt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                                placeholder="Search by ID or Meter Key..."
+                                className="pl-10 h-10"
+                                value={searchQuery}
+                                onChange={(e) => {
+                                    setSearchQuery(e.target.value);
+                                    setCurrentPage(0);
+                                    setPaidCurrentPage(0);
+                                }}
+                            />
+                        </div>
+                        <Select value={statusFilter} onValueChange={(value: string) => setStatusFilter(value as 'all' | 'overdue' | 'unpaid')}>
+                            <SelectTrigger className="h-10">
+                                <SelectValue placeholder="Status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Statuses</SelectItem>
+                                <SelectItem value="unpaid">Unpaid (Current)</SelectItem>
+                                <SelectItem value="overdue">Overdue</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Select value={branchFilter} onValueChange={(value) => {
+                            setBranchFilter(value);
+                            setCurrentPage(0);
+                            setPaidCurrentPage(0);
+                            loadData({ branchFilter: value, monthFilter });
+                        }}>
+                            <SelectTrigger className="h-10">
+                                <SelectValue placeholder="Branch" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Branches</SelectItem>
+                                {branches.map(b => (
+                                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-[10px] font-bold uppercase text-gray-400 ml-1">Filter by Month</Label>
+                            <div className="flex items-center gap-2">
+                                <DatePicker
+                                    date={monthFilter === 'all' ? undefined : parse(monthFilter, 'yyyy-MM', new Date())}
+                                    onSelect={(date) => {
+                                        if (date) {
+                                            const value = format(date, 'yyyy-MM');
+                                            setMonthFilter(value);
+                                            setCurrentPage(0);
+                                            loadData({ branchFilter, monthFilter: value });
+                                        } else {
+                                            setMonthFilter('all');
+                                            setCurrentPage(0);
+                                            loadData({ branchFilter, monthFilter: 'all' });
+                                        }
+                                    }}
+                                    placeholder="Select Month"
+                                />
+                                {monthFilter !== 'all' && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-10 px-2 text-gray-400 hover:text-gray-600"
+                                        onClick={() => {
+                                            setMonthFilter('all');
+                                            setCurrentPage(0);
+                                            setPaidCurrentPage(0);
+                                            loadData({ branchFilter, monthFilter: 'all' });
+                                        }}
+                                    >
+                                        <RotateCcw className="h-4 w-4" />
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+
+            <Card className="shadow-sm border-gray-100 overflow-hidden">
+                <CardHeader className="bg-gray-50/50 flex flex-row items-center justify-between border-b border-gray-100 py-3 px-5">
+                    <CardTitle className="text-base font-bold text-gray-700">Outstanding Bills Table</CardTitle>
+                    <div className="text-xs text-muted-foreground font-medium">
+                        Showing {outstandingTotal === 0 ? 0 : (currentPage * itemsPerPage + 1)}-{Math.min(outstandingTotal, (currentPage + 1) * itemsPerPage)} of {outstandingTotal} records
+                    </div>
+
+                </CardHeader>
+                <CardContent className="p-0">
+                    <BillTable
+                        bills={outstandingBills}
+                        onDelete={handleDelete}
+                        router={router}
+                        basePath={basePath}
+                        canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
+                        reconstructedHistoryMap={reconstructedHistoryMap}
+                    />
+
+                    {/* Pagination Controls */}
+                    <TablePagination
+                        count={outstandingTotal}
+                        page={currentPage}
+                        rowsPerPage={itemsPerPage}
+                        onPageChange={setCurrentPage}
+                        onRowsPerPageChange={(val) => {
+                            setItemsPerPage(val);
+                            setCurrentPage(0);
+                        }}
+                    />
+
+
+                    {filteredOutstanding.length === 0 && (
+                        <div className="p-12 text-center">
+                            <div className="inline-flex p-4 rounded-full bg-gray-50 mb-4">
+                                <Search className="h-8 w-8 text-gray-300" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-900">No matching bills found</h3>
+                            <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or search terms.</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Paid Bills Table */}
+            <Card className="shadow-sm border-gray-100 overflow-hidden">
+                <CardHeader className="bg-blue-50/30 flex flex-row items-center justify-between border-b border-gray-100 py-3 px-5">
+                    <CardTitle className="text-base font-bold text-blue-800 flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" /> Paid Bills Table
+                    </CardTitle>
+                    <div className="text-xs text-blue-600 font-medium">
+                        Showing {paidTotal === 0 ? 0 : (paidCurrentPage * paidItemsPerPage + 1)}-{Math.min(paidTotal, (paidCurrentPage + 1) * paidItemsPerPage)} of {paidTotal} records
+                    </div>
+
+                </CardHeader>
+                <CardContent className="p-0">
+                    <BillTable
+                        bills={paidBills}
+                        onDelete={handleDelete}
+                        router={router}
+                        basePath={basePath}
+                        canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
+                        reconstructedHistoryMap={reconstructedHistoryMap}
+                    />
+
+                    {/* Pagination Controls for Paid */}
+                    <TablePagination
+                        count={paidTotal}
+                        page={paidCurrentPage}
+                        rowsPerPage={paidItemsPerPage}
+                        onPageChange={setPaidCurrentPage}
+                        onRowsPerPageChange={(val) => {
+                            setPaidItemsPerPage(val);
+                            setPaidCurrentPage(0);
+                        }}
+                    />
+
+
+                    {filteredPaid.length === 0 && (
+                        <div className="p-12 text-center">
+                            <div className="inline-flex p-4 rounded-full bg-gray-50 mb-4">
+                                <CheckCircle2 className="h-8 w-8 text-gray-200" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-900">No paid bills found</h3>
+                            <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or search terms.</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            <BillingCycleDialog
+                open={isCycleDialogOpen}
+                onOpenChange={setIsCycleDialogOpen}
+                onComplete={() => loadData()}
+            />
+
+            {/* Bulk Action Confirmation Dialog */}
+            <AlertDialog open={!!pendingBulkAction} onOpenChange={(open) => !open && setPendingBulkAction(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{pendingBulkAction?.title}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {pendingBulkAction?.description}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={async () => {
+                                if (pendingBulkAction) {
+                                    await pendingBulkAction.action();
+                                    setPendingBulkAction(null);
+                                }
+                            }}
+                            className={pendingBulkAction?.type === 'post' ? 'bg-blue-700 hover:bg-blue-800' :
+                                pendingBulkAction?.type === 'approve' ? 'bg-green-600 hover:bg-green-700' : ''}
+                        >
+                            Confirm Action
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Delete Confirmation Dialog */}
+            <AlertDialog open={!!billToDelete} onOpenChange={(open) => !open && setBillToDelete(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Bill Record</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete this bill record? This action will restore previous meter readings and adjust customer balance accordingly.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={confirmDeleteBill}
+                            disabled={isDeleting}
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                            {isDeleting ? "Deleting..." : "Delete Record"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+        </div>
+    );
+}
+
+// Sub-components
+function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any> }) {
+    if (bills.length === 0) return null;
+
+    return (
+        <>
+            <div className="overflow-x-auto">
+                <Table>
+                    <TableHeader>
+                        <TableRow className="bg-gray-50/50">
+                            <TableHead className="w-[100px]">ID / Meter</TableHead>
+                            <TableHead>Month</TableHead>
+                            <TableHead>Date Billed</TableHead>
+                            <TableHead>Due Date</TableHead>
+                            <TableHead className="text-right">Prev. Read</TableHead>
+                            <TableHead className="text-right">Curr. Read</TableHead>
+                            <TableHead className="text-right">Usage (m³)</TableHead>
+                            <TableHead className="text-right text-orange-600 font-bold">Diff. Usage</TableHead>
+                            <TableHead className="text-right text-[10px]">Debit_30</TableHead>
+                            <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
+                            <TableHead className="text-right text-[10px]">Debit_60</TableHead>
+                            <TableHead className="text-right">Penalty</TableHead>
+                            <TableHead className="text-right">Outstanding</TableHead>
+                            <TableHead className="text-right">Current Bill</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">Total Payable</TableHead>
+                            <TableHead className="text-center">Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {bills.map((bill) => {
+                            const now = new Date();
+                            const isOverdue = bill.payment_status === 'Unpaid' && bill.due_date && isBefore(new Date(bill.due_date), now);
+                            const recon = reconstructedHistoryMap?.get(bill.id);
+
+                            const d30 = recon ? recon.d30 : Number(bill.debit_30 || bill.debit30 || 0);
+                            const d30_60 = recon ? recon.d30_60 : Number(bill.debit_30_60 || bill.debit30_60 || 0);
+                            const d60 = recon ? recon.d60 : Number(bill.debit_60 || bill.debit60 || 0);
+                            const penaltyAmt = recon ? recon.penalty : Number(bill.PENALTYAMT || 0);
+
+                            const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penaltyAmt;
+                            const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
+                            const totalPayable = currentOutstanding + currentBillAmt;
+                            
+                            const fmt = (val: number) => val > 0.01 ? val.toFixed(2) : '—';
+
+
+                            return (
+                                <TableRow key={bill.id}>
+                                    <TableCell className="font-medium text-xs">
+                                        <Link href={`${basePath}/${bill.id}`} className="text-blue-600 hover:underline">
+                                            {bill.CUSTOMERKEY || bill.individual_customer_id}
+                                        </Link>
+                                    </TableCell>
+                                    <TableCell className="text-xs">{bill.month_year}</TableCell>
+                                    <TableCell className="text-xs whitespace-nowrap">
+                                        {formatDate(bill.created_at)}
+                                    </TableCell>
+                                    <TableCell className="text-xs whitespace-nowrap">
+                                        {formatDate(bill.due_date)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-xs">{Number(bill.PREVREAD || 0).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs">{Number(bill.CURRREAD || 0).toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs">{Number(bill.CONS || 0).toFixed(2)}</TableCell>
+                                    <TableCell className={cn("text-right text-xs font-medium", (Number(bill.difference_usage) > Number(bill.CONS)) ? "text-green-600" : "text-amber-600")}>
+                                        {Number(bill.difference_usage || bill.CONS || 0).toFixed(2)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-xs text-muted-foreground">{fmt(d30)}</TableCell>
+                                    <TableCell className="text-right text-xs text-muted-foreground">{fmt(d30_60)}</TableCell>
+                                    <TableCell className="text-right text-xs text-muted-foreground">{fmt(d60)}</TableCell>
+                                    <TableCell className="text-right text-xs text-destructive font-medium">{fmt(penaltyAmt)}</TableCell>
+                                    <TableCell className="text-right text-xs font-medium">{currentOutstanding.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs font-medium">{currentBillAmt.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">
+                                        {totalPayable.toFixed(2)}
+                                    </TableCell>
+                                    <TableCell className="text-center">
+                                        <Badge
+                                            variant={bill.payment_status === 'Paid' ? 'default' : isOverdue ? 'destructive' : 'outline'}
+                                            className={cn(
+                                                "text-[10px] px-2 py-0 h-5",
+                                                bill.payment_status === 'Paid' ? "bg-blue-500 hover:bg-blue-600" :
+                                                    !isOverdue && "bg-amber-100 text-amber-800 border-amber-200"
+                                            )}
+                                        >
+                                            {bill.payment_status === 'Paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Unpaid'}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                    <MoreVertical className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end" className="w-40">
+                                                <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
+                                                    <Eye className="mr-2 h-4 w-4" /> View Details
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
+                                                    <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
+                                                </DropdownMenuItem>
+                                                {canDelete && (
+                                                    <DropdownMenuItem
+                                                        className="text-red-600 focus:text-red-600"
+                                                        onClick={() => onDelete(bill.id)}
+                                                    >
+                                                        <Trash2 className="mr-2 h-4 w-4" /> Delete Record
+                                                    </DropdownMenuItem>
+                                                )}
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        })}
+                    </TableBody>
+                </Table>
+            </div>
+            <div className="mx-4 mb-3 mt-1 p-2 rounded-md bg-muted/30 border border-dashed border-muted-foreground/30 text-[10px] text-muted-foreground italic">
+                <span className="font-semibold not-italic text-foreground/70">📝 Note: </span>
+                Debit_30 = bill 1 month old  |  Debit_30_60 = bill 2 months old  |  Debit_60 = bill 3+ months old  |  Penalty applies to bills 3+ months old only  |  Outstanding = all unpaid debt + current penalty
+            </div>
+        </>
+    );
+}
+
+function StatsCard({ title, value, count, icon, color }: { title: string, value: string, count: number, icon: React.ReactNode, color: string }) {
+    const bgColors: Record<string, string> = {
+        blue: 'bg-blue-50',
+        amber: 'bg-amber-50',
+        red: 'bg-red-50',
+        green: 'bg-green-50'
+    };
+
+    return (
+        <Card className="shadow-sm border-gray-100 overflow-hidden">
+            <CardContent className="p-5">
+                <div className="flex justify-between items-start">
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">{title}</p>
+                        <h3 className="text-2xl font-bold text-gray-900">{value}</h3>
+                        <p className="text-[10px] text-gray-400 mt-1 font-bold uppercase tracking-widest">{count} Records</p>
+                    </div>
+                    <div className={`p-2.5 ${bgColors[color]} rounded-xl`}>
+                        {icon}
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
+function AgingBar({ label, value, total, color }: { label: string, value: number, total: number, color: string }) {
+    const percentage = total > 0 ? (value / total) * 100 : 0;
+    return (
+        <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-bold">
+                <span className="text-gray-600">{label}</span>
+                <span className="text-gray-900 font-mono">ETB {value.toLocaleString()}</span>
+            </div>
+            <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                <div
+                    className={`h-full ${color} transition-all duration-500`}
+                    style={{ width: `${percentage}%` }}
+                />
+            </div>
+        </div>
+    );
+}

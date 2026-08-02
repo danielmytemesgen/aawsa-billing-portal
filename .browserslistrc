@@ -1,0 +1,11 @@
+[production]
+> 0.2%
+last 4 Chrome versions
+last 4 Firefox versions
+last 2 Safari versions
+Android >= 7
+not dead
+
+[development]
+last 2 Chrome versions
+last 2 Firefox versions
