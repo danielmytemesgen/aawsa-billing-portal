@@ -1,4 +1,3 @@
-
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -36,14 +35,17 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { getCurrentPosition, checkProximity, type Coordinates } from "@/lib/geo-utils";
+import { getCurrentPosition, checkProximity, getGpsSignalInfo, triggerProximityHaptic, sortMetersByDistance, type Coordinates } from "@/lib/geo-utils";
+import { checkDeviceHealth, type DeviceHealthStatus } from "@/lib/offline-db";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload, AlertCircle } from "lucide-react";
+import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload, AlertCircle, Search, Compass, BatteryCharging, HardDrive } from "lucide-react";
 import type { FaultCodeRow } from "@/lib/action-types";
 import { Badge } from "@/components/ui/badge";
 import { upsertSpatialRecord } from "@/lib/data-store";
-import { Camera as CameraIcon, X, Search } from "lucide-react";
-import { compressImage } from "@/lib/image-utils";
+import { Camera as CameraIcon, X } from "lucide-react";
+import { compressImage, extractImageMetadata, type ImageExifMetadata } from "@/lib/image-utils";
+import { usePermissions } from "@/hooks/use-permissions";
+import { canCreateMeterReadingForType } from "@/lib/meter-reading-permissions";
 
 // Base schema for form fields
 const formSchemaBase = z.object({
@@ -80,29 +82,56 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const [userLocation, setUserLocation] = React.useState<Coordinates | null>(initialLocation || null);
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
+  const [liveAccuracy, setLiveAccuracy] = React.useState<number | null>(null); // live GPS accuracy in meters
   const [proximityStatus, setProximityStatus] = React.useState<{ isWithinRange: boolean; distance: number; bypassed?: boolean } | null>(null);
   const [isCapturingInitialLocation, setIsCapturingInitialLocation] = React.useState(false);
   const [isCompressing, setIsCompressing] = React.useState(false);
-
   const [isSaving, setIsSaving] = React.useState(false);
   const [capturedPhoto, setCapturedPhoto] = React.useState<string | null>(null);
+  const [photoExif, setPhotoExif] = React.useState<ImageExifMetadata | null>(null);
+  const [sortByNearest, setSortByNearest] = React.useState(true);
+  const [deviceHealth, setDeviceHealth] = React.useState<DeviceHealthStatus | null>(null);
+
+  // ── Searchable meter picker state ──────────────────────────────────────────
+  const [meterSearch, setMeterSearch] = React.useState("");
+  const [meterPickerOpen, setMeterPickerOpen] = React.useState(false);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const readingInputRef = React.useRef<HTMLInputElement>(null);
+
   const { toast } = useToast();
   const cameraInputRef = React.useRef<HTMLInputElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Re-acquire location on mount or when requested
   const acquireLocation = React.useCallback(async () => {
     setIsAcquiringLocation(true);
     setLocationError(null);
+    setLiveAccuracy(null);
     try {
-      const pos = await getCurrentPosition();
+      const pos = await getCurrentPosition((accuracy) => {
+        // Live progress callback — updates signal quality bar while GPS locks in
+        setLiveAccuracy(accuracy);
+      });
       setUserLocation(pos);
+      setLiveAccuracy(pos.accuracy ?? null);
     } catch (err: any) {
       setLocationError(err.message || "Could not acquire location.");
     } finally {
       setIsAcquiringLocation(false);
     }
   }, []);
+
+  // Check device health (battery & storage usage) on mount
+  React.useEffect(() => {
+    checkDeviceHealth().then(status => setDeviceHealth(status)).catch(() => {});
+  }, []);
+
+  // Auto-refresh GPS every 60 seconds while the form is mounted to keep location fresh
+  React.useEffect(() => {
+    const intervalId = setInterval(() => {
+      if (!isAcquiringLocation) acquireLocation();
+    }, 60_000);
+    return () => clearInterval(intervalId);
+  }, [acquireLocation, isAcquiringLocation]);
 
   React.useEffect(() => {
     if (initialLocation) {
@@ -112,7 +141,6 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     }
   }, [acquireLocation, initialLocation]);
 
-  // The final schema is built dynamically inside the component to include a refinement check.
   const formSchema = React.useMemo(() => {
     return formSchemaBase.refine(
       (data) => {
@@ -137,15 +165,34 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
         return {
           message: `Reading cannot be lower than the last reading (${lastReading.toFixed(2)}).`,
           path: ["reading"],
-        }
+        };
       }
     );
   }, [customers, bulkMeters]);
 
+  const { hasPermission } = usePermissions();
+
+  const canCreateBulk = React.useMemo(() => {
+    return canCreateMeterReadingForType(hasPermission, 'bulk');
+  }, [hasPermission]);
+
+  const canCreateIndividual = React.useMemo(() => {
+    return canCreateMeterReadingForType(hasPermission, 'individual');
+  }, [hasPermission]);
+
+  const initialMeterType = React.useMemo(() => {
+    if (defaultValues?.meterType) {
+      if (defaultValues.meterType === 'bulk_meter' && canCreateBulk) return 'bulk_meter';
+      if (defaultValues.meterType === 'individual_customer_meter' && canCreateIndividual) return 'individual_customer_meter';
+    }
+    if (canCreateBulk && !canCreateIndividual) return 'bulk_meter';
+    return 'individual_customer_meter';
+  }, [defaultValues, canCreateBulk, canCreateIndividual]);
+
   const form = useForm<AddMeterReadingFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      meterType: defaultValues?.meterType || 'individual_customer_meter',
+      meterType: initialMeterType,
       entityId: defaultValues?.entityId || "",
       reading: defaultValues?.reading || 0,
       date: defaultValues?.date || new Date(),
@@ -160,35 +207,53 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const currentReadingValue = form.watch("reading");
   const [anomalyWarning, setAnomalyWarning] = React.useState<string | null>(null);
 
+  const hasCurrentTypePermission = selectedMeterType === 'bulk_meter' ? canCreateBulk : canCreateIndividual;
+
+  React.useEffect(() => {
+    if (!defaultValues?.meterType) {
+      if (canCreateBulk && !canCreateIndividual && selectedMeterType !== 'bulk_meter') {
+        form.setValue("meterType", "bulk_meter");
+      } else if (canCreateIndividual && !canCreateBulk && selectedMeterType !== 'individual_customer_meter') {
+        form.setValue("meterType", "individual_customer_meter");
+      }
+    }
+  }, [canCreateBulk, canCreateIndividual, defaultValues, selectedMeterType, form]);
+
+  // ── Live previous reading context ──────────────────────────────────────────
+  const previousReading = React.useMemo(() => {
+    if (!selectedEntityId) return null;
+    if (selectedMeterType === 'individual_customer_meter') {
+      return customers.find(c => c.customerKeyNumber === selectedEntityId)?.currentReading ?? null;
+    }
+    return bulkMeters.find(bm => bm.customerKeyNumber === selectedEntityId)?.currentReading ?? null;
+  }, [selectedEntityId, selectedMeterType, customers, bulkMeters]);
+
+  const consumption = React.useMemo(() => {
+    if (previousReading === null || currentReadingValue === undefined || currentReadingValue === null) return null;
+    return currentReadingValue - previousReading;
+  }, [currentReadingValue, previousReading]);
+
+  // Adaptive anomaly threshold: bulk meters get a higher threshold
+  const anomalyThreshold = selectedMeterType === 'bulk_meter' ? 500 : 100;
+
   React.useEffect(() => {
     if (!selectedEntityId || currentReadingValue === undefined || currentReadingValue === null) {
       setAnomalyWarning(null);
       return;
     }
-
-    let previousReading = 0;
-    if (selectedMeterType === 'individual_customer_meter') {
-      previousReading = customers.find(c => c.customerKeyNumber === selectedEntityId)?.currentReading ?? 0;
-    } else {
-      previousReading = bulkMeters.find(bm => bm.customerKeyNumber === selectedEntityId)?.currentReading ?? 0;
-    }
-
-    const usage = currentReadingValue - previousReading;
-    // Anomaly threshold: 100 units is a simple heuristic for high usage
-    if (usage > 100 && (!selectedFaultCode || selectedFaultCode === 'none')) {
-      setAnomalyWarning(`Warning: This reading indicates exceptionally high usage. Please double-check the meter dial for typos.`);
+    const usage = (currentReadingValue ?? 0) - (previousReading ?? 0);
+    if (usage > anomalyThreshold && (!selectedFaultCode || selectedFaultCode === 'none')) {
+      setAnomalyWarning(`Exceptionally high usage (${usage.toFixed(1)} m³). Please double-check the meter dial.`);
     } else {
       setAnomalyWarning(null);
     }
-  }, [currentReadingValue, selectedEntityId, selectedMeterType, customers, bulkMeters, selectedFaultCode]);
+  }, [currentReadingValue, selectedEntityId, previousReading, selectedFaultCode, anomalyThreshold]);
 
-  // Check proximity whenever location or selected meter changes
   React.useEffect(() => {
     if (!userLocation || !selectedEntityId) {
       setProximityStatus(null);
       return;
     }
-
     let targetCoords: Coordinates | null = null;
     if (selectedMeterType === 'individual_customer_meter') {
       const customer = customers.find(c => c.customerKeyNumber === selectedEntityId);
@@ -201,29 +266,42 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
         targetCoords = { latitude: bulkMeter.yCoordinate, longitude: bulkMeter.xCoordinate };
       }
     }
-
     if (targetCoords) {
-      const status = checkProximity(userLocation, targetCoords, 5); // 5 meters threshold
+      // Use 15 m threshold to accommodate urban GPS drift
+      const status = checkProximity(userLocation, targetCoords, 15);
+      
+      // Trigger haptic vibration feedback when stepping into proximity range for the first time
+      if (status.isWithinRange && !proximityStatus?.isWithinRange) {
+        triggerProximityHaptic();
+      }
+
       setProximityStatus(status);
       setIsCapturingInitialLocation(false);
       form.setValue('capturedCoordinates', undefined);
     } else {
       setProximityStatus(null);
     }
-  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form]);
+  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form, proximityStatus?.isWithinRange]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setIsCompressing(true);
     try {
-      const compressedDataUrl = await compressImage(file);
+      const [compressedDataUrl, metadata] = await Promise.all([
+        compressImage(file),
+        extractImageMetadata(file)
+      ]);
       setCapturedPhoto(compressedDataUrl);
+      setPhotoExif(metadata);
       form.setValue('meterPhoto', compressedDataUrl);
-      toast({ title: "Photo Attached", description: "Meter proof photo has been compressed and attached." });
+      toast({
+        title: "Photo Attached",
+        description: metadata.hasLocationData
+          ? "Meter proof photo attached with EXIF GPS location verified."
+          : "Meter proof photo compressed and attached."
+      });
     } catch (error) {
-      console.error("Error compressing image:", error);
       toast({ title: "Error", description: "Could not process photo file.", variant: "destructive" });
     } finally {
       setIsCompressing(false);
@@ -241,52 +319,28 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       try {
         const entityType = selectedMeterType === 'individual_customer_meter' ? 'individual_customer' : 'bulk_meter';
         const result = await upsertSpatialRecord(selectedEntityId, entityType, userLocation);
-        
         if (result.success) {
           setIsCapturingInitialLocation(true);
           setProximityStatus({ isWithinRange: true, distance: 0 });
-          toast({ 
-            title: "Position Captured", 
-            description: "Current location has been saved as the meter position in the database.",
-          });
-          // Note: The form's proximity check will now use these coordinates on next render 
-          // because the parent props (customers/bulkMeters) will be updated by the store.
+          toast({ title: "Position Captured", description: "Current location saved as meter position." });
         } else {
-          toast({ 
-            title: "Save Failed", 
-            description: result.message || "Could not save meter position.", 
-            variant: "destructive" 
-          });
+          toast({ title: "Save Failed", description: result.message || "Could not save meter position.", variant: "destructive" });
         }
-      } catch (err) {
-        console.error("Error saving initial location:", err);
-        toast({ 
-          title: "Error", 
-          description: "An unexpected error occurred while saving position.", 
-          variant: "destructive" 
-        });
+      } catch {
+        toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" });
       } finally {
         setIsSaving(false);
       }
     } else {
-      toast({ title: "Action unavailable", description: "Please ensure location is acquired and a meter is selected.", variant: "destructive" });
+      toast({ title: "Action unavailable", description: "Please acquire location and select a meter first.", variant: "destructive" });
     }
   };
 
-  // Handle fault code selection - automatically set reading to previous reading
   React.useEffect(() => {
-    if (selectedFaultCode && selectedEntityId) {
-      let previousReading = 0;
-      if (selectedMeterType === 'individual_customer_meter') {
-        const customer = customers.find(c => c.customerKeyNumber === selectedEntityId);
-        if (customer) previousReading = customer.currentReading;
-      } else {
-        const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === selectedEntityId);
-        if (bulkMeter) previousReading = bulkMeter.currentReading;
-      }
+    if (selectedFaultCode && selectedEntityId && previousReading !== null) {
       form.setValue("reading", previousReading);
     }
-  }, [selectedFaultCode, selectedEntityId, selectedMeterType, customers, bulkMeters, form]);
+  }, [selectedFaultCode, selectedEntityId, previousReading, form]);
 
   const selectedMeterInfo = React.useMemo(() => {
     if (!selectedEntityId) return null;
@@ -296,26 +350,53 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     return bulkMeters.find(bm => bm.customerKeyNumber === selectedEntityId);
   }, [selectedEntityId, selectedMeterType, customers, bulkMeters]);
 
-  const availableMeters = React.useMemo(() => {
+  // ── Searchable & Distance-Sorted meter list ──────────────────────────────
+  const allMeters = React.useMemo(() => {
+    let list: Array<{ value: string; label: string; sub?: string; address: string; xCoordinate?: number | null; yCoordinate?: number | null; distanceMeters?: number }> = [];
+
     if (selectedMeterType === 'individual_customer_meter') {
-      return customers.map(c => ({
+      list = customers.map(c => ({
         value: c.customerKeyNumber,
-        label: `${c.name} (Meter: ${c.meterNumber})`,
+        label: c.name,
+        sub: c.meterNumber,
+        address: [c.subCity, c.woreda].filter(Boolean).join(', '),
+        xCoordinate: c.xCoordinate,
+        yCoordinate: c.yCoordinate,
       }));
-    }
-    if (selectedMeterType === 'bulk_meter') {
-      return bulkMeters.map(bm => ({
+    } else {
+      list = bulkMeters.map(bm => ({
         value: bm.customerKeyNumber,
-        label: `${bm.name} (Meter: ${bm.meterNumber})`,
+        label: bm.name,
+        sub: bm.meterNumber,
+        address: [bm.subCity, bm.woreda].filter(Boolean).join(', '),
+        xCoordinate: bm.xCoordinate,
+        yCoordinate: bm.yCoordinate,
       }));
     }
-    return [];
-  }, [selectedMeterType, customers, bulkMeters]);
+
+    if (sortByNearest && userLocation) {
+      return sortMetersByDistance(list, userLocation);
+    }
+    return list;
+  }, [selectedMeterType, customers, bulkMeters, sortByNearest, userLocation]);
+
+  const filteredMeters = React.useMemo(() => {
+    const q = meterSearch.trim().toLowerCase();
+    if (!q) return allMeters.slice(0, 80); // show first 80 when no search
+    return allMeters.filter(m =>
+      m.label.toLowerCase().includes(q) ||
+      String(m.sub || '').toLowerCase().includes(q) ||
+      String(m.value || '').toLowerCase().includes(q) ||
+      m.address.toLowerCase().includes(q)
+    ).slice(0, 50);
+  }, [allMeters, meterSearch]);
 
   function handleSubmit(values: AddMeterReadingFormValues) {
-    if (!proximityStatus?.isWithinRange) {
-      return; // Safety check
+    if (!hasCurrentTypePermission) {
+      toast({ title: "Permission Denied", description: "You do not have permission to submit this reading.", variant: "destructive" });
+      return;
     }
+    if (!proximityStatus?.isWithinRange) return;
     const finalValues = {
       ...values,
       capturedCoordinates: userLocation ? {
@@ -339,30 +420,211 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     form.resetField('reading');
     form.resetField('capturedCoordinates');
     setIsCapturingInitialLocation(false);
+    setMeterSearch("");
     form.clearErrors();
   };
+
+  const photoRequired = !!(selectedFaultCode && selectedFaultCode !== 'none');
+  const photoMissing = photoRequired && !capturedPhoto;
 
   const isSubmitDisabled = isLoading ||
     !form.formState.isValid ||
     !proximityStatus?.isWithinRange ||
     isAcquiringLocation ||
-    isCompressing;
+    isCompressing ||
+    photoMissing ||
+    !hasCurrentTypePermission;
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
+      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5">
+
+        {/* ── Meter Type Tabs ── */}
         <Tabs
-          defaultValue="individual_customer_meter"
+          value={selectedMeterType}
           onValueChange={handleTabChange}
           className="w-full"
         >
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="individual_customer_meter">Individual Customer</TabsTrigger>
-            <TabsTrigger value="bulk_meter">Bulk Meter</TabsTrigger>
+            <TabsTrigger value="individual_customer_meter" disabled={!canCreateIndividual}>
+              Individual Customer {!canCreateIndividual && "🔒"}
+            </TabsTrigger>
+            <TabsTrigger value="bulk_meter" disabled={!canCreateBulk}>
+              Bulk Meter {!canCreateBulk && "🔒"}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
 
-        <div className="space-y-4">
+        {/* ── Permission Alert Banner ── */}
+        {!hasCurrentTypePermission && (
+          <Alert variant="destructive" className="py-2.5 px-3.5 text-xs flex items-center gap-2 rounded-lg border-red-200 bg-red-50 text-red-900">
+            <Lock className="h-4 w-4 shrink-0 text-red-600" />
+            <div>
+              <AlertTitle className="text-xs font-bold mb-0.5">Permission Restricted</AlertTitle>
+              <AlertDescription className="text-[11px] text-red-700">
+                You do not have permission to create {selectedMeterType === 'bulk_meter' ? 'Bulk Meter' : 'Individual Customer'} readings.
+              </AlertDescription>
+            </div>
+          </Alert>
+        )}
+
+        {/* ── Searchable Meter Picker ── */}
+        <FormField
+          control={form.control}
+          name="entityId"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="flex items-center justify-between">
+                <span>Select Meter</span>
+                {allMeters.length > 0 && (
+                  <span className="text-xs text-muted-foreground font-normal">{allMeters.length} available</span>
+                )}
+              </FormLabel>
+              <Popover
+                open={meterPickerOpen}
+                onOpenChange={(o) => {
+                  setMeterPickerOpen(o);
+                  if (o) setTimeout(() => searchInputRef.current?.focus(), 50);
+                  else setMeterSearch("");
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={meterPickerOpen}
+                      disabled={isLoading || allMeters.length === 0}
+                      className={cn(
+                        "w-full h-11 justify-between font-normal",
+                        !field.value && "text-muted-foreground"
+                      )}
+                    >
+                      {field.value
+                        ? (() => {
+                          const m = allMeters.find(x => x.value === field.value);
+                          return m ? `${m.label} — ${m.sub}` : field.value;
+                        })()
+                        : allMeters.length === 0
+                        ? "No meters available"
+                        : "Search and select a meter…"
+                      }
+                      <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </FormControl>
+                </PopoverTrigger>
+                <PopoverContent className="w-[440px] p-0 shadow-xl" align="start">
+                  {/* Search box */}
+                  <div className="flex items-center border-b px-3 py-2 gap-2">
+                    <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <input
+                      ref={searchInputRef}
+                      value={meterSearch}
+                      onChange={e => setMeterSearch(e.target.value)}
+                      placeholder="Search by name, meter no., or address…"
+                      className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                      autoComplete="off"
+                    />
+                    {meterSearch && (
+                      <button type="button" onClick={() => setMeterSearch("")} className="text-muted-foreground hover:text-foreground">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  {/* Results */}
+                  <div className="max-h-64 overflow-y-auto">
+                    {filteredMeters.length === 0 ? (
+                      <p className="text-sm text-center text-muted-foreground py-6">No meters match your search.</p>
+                    ) : (
+                      filteredMeters.map(m => (
+                        <button
+                          key={String(m.value)}
+                          type="button"
+                          className={cn(
+                            "w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0 flex items-start gap-3",
+                            field.value === m.value && "bg-blue-50 hover:bg-blue-50"
+                          )}
+                          onClick={() => {
+                            field.onChange(String(m.value));
+                            setMeterPickerOpen(false);
+                            setMeterSearch("");
+                            // Auto-focus reading field after meter selection
+                            setTimeout(() => readingInputRef.current?.focus(), 80);
+                          }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className={cn("font-semibold truncate", field.value === m.value && "text-blue-700")}>{m.label}</p>
+                            <p className="text-xs text-muted-foreground truncate">M# {m.sub} · {m.address}</p>
+                          </div>
+                          {field.value === m.value && (
+                            <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {!meterSearch && allMeters.length > 80 && (
+                    <p className="text-xs text-center text-muted-foreground py-2 border-t">
+                      Showing first 80 — type to search all {allMeters.length}
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* ── Previous Reading Context Panel ── */}
+        {selectedMeterInfo && previousReading !== null && (
+          <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meter Info</span>
+              <Badge variant="outline" className="text-xs">
+                {'customerType' in selectedMeterInfo ? selectedMeterInfo.customerType : selectedMeterInfo.chargeGroup}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="rounded-lg bg-white border border-slate-200 px-2 py-2">
+                <p className="text-[10px] text-slate-500 font-medium">Customer Key</p>
+                <p className="text-sm font-black text-slate-800 mt-0.5">{selectedMeterInfo.customerKeyNumber}</p>
+              </div>
+              <div className="rounded-lg bg-white border border-slate-200 px-2 py-2">
+                <p className="text-[10px] text-slate-500 font-medium">Meter #</p>
+                <p className="text-xs font-bold text-slate-700 mt-1 break-all">{selectedMeterInfo.meterNumber || 'N/A'}</p>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500 truncate">
+              📍 {selectedMeterInfo.subCity}, {selectedMeterInfo.woreda}, {selectedMeterInfo.specificArea}
+            </p>
+          </div>
+        )}
+
+        {/* ── Device Health Safety Alert ── */}
+        {deviceHealth && (deviceHealth.isLowBatteryWarning || deviceHealth.isHighStorageWarning) && (
+          <Alert className="bg-amber-50 border-amber-300 text-amber-900 py-2">
+            <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+            <AlertTitle className="text-xs font-bold">Device Health Warning</AlertTitle>
+            <AlertDescription className="text-[11px] space-y-1 mt-1">
+              {deviceHealth.isLowBatteryWarning && (
+                <p className="flex items-center gap-1.5 font-semibold text-amber-800">
+                  <BatteryCharging className="h-3.5 w-3.5 text-amber-600" />
+                  Battery low ({deviceHealth.batteryLevelPct}%). Plug in device before starting a long route.
+                </p>
+              )}
+              {deviceHealth.isHighStorageWarning && (
+                <p className="flex items-center gap-1.5 font-semibold text-amber-800">
+                  <HardDrive className="h-3.5 w-3.5 text-amber-600" />
+                  Local storage usage high ({deviceHealth.storageUsageMb} MB). Sync pending items to free up space.
+                </p>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* ── Location Verification ── */}
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium flex items-center gap-2">
               <MapPin className="h-4 w-4" /> Location Verification
@@ -375,278 +637,158 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
               disabled={isAcquiringLocation}
               className="h-8 text-xs"
             >
-              {isAcquiringLocation ? "Acquiring..." : "Refresh Location"}
+              {isAcquiringLocation ? "Acquiring..." : "Refresh"}
             </Button>
           </div>
 
           {locationError ? (
-            <Alert variant="destructive" className="animate-in fade-in slide-in-from-top-2 duration-300">
+            <Alert variant="destructive">
               <XCircle className="h-4 w-4" />
               <AlertTitle>Location Error</AlertTitle>
-              <AlertDescription className="text-xs space-y-3">
-                <p>{locationError}. Please check your GPS settings and try again.</p>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
+              <AlertDescription className="text-xs space-y-2">
+                <p>{locationError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => {
                     setLocationError(null);
                     setProximityStatus({ isWithinRange: true, distance: 0, bypassed: true });
                   }}
-                  className="w-full bg-white text-red-700 border-red-200 hover:bg-red-50 font-bold h-9 text-xs shadow-sm"
+                  className="w-full bg-white text-red-700 border-red-200 hover:bg-red-50 font-bold text-xs"
                 >
-                  <Unlock className="mr-2 h-4 w-4" />
-                  Bypass Location Lock (Indoor / Offline)
+                  <Unlock className="mr-2 h-4 w-4" /> Bypass (Indoor / Offline)
                 </Button>
               </AlertDescription>
             </Alert>
           ) : isAcquiringLocation ? (
-            <div className="bg-slate-50 border rounded-lg p-6 flex flex-col items-center justify-center space-y-3 animate-pulse">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-              <div className="text-center">
-                <p className="text-sm font-semibold text-slate-700">Acquiring Best Signal...</p>
-                <p className="text-[10px] text-slate-500">Connecting to satellites for precise verification</p>
+            <div className="bg-slate-50 border rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-500 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-slate-700">
+                    {liveAccuracy !== null ? 'Improving GPS accuracy…' : 'Acquiring GPS signal…'}
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    {liveAccuracy !== null
+                      ? `Current accuracy: ±${Math.round(liveAccuracy)} m — ${getGpsSignalInfo(liveAccuracy).label}`
+                      : 'Waiting for satellite lock…'}
+                  </p>
+                </div>
+                {liveAccuracy !== null && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    getGpsSignalInfo(liveAccuracy).color
+                  } border border-current bg-white`}>
+                    {getGpsSignalInfo(liveAccuracy).label}
+                  </span>
+                )}
               </div>
+              {/* Live GPS signal strength bar */}
+              <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    liveAccuracy !== null ? getGpsSignalInfo(liveAccuracy).bgColor : 'bg-blue-300 animate-pulse'
+                  }`}
+                  style={{ width: liveAccuracy !== null ? `${getGpsSignalInfo(liveAccuracy).progress}%` : '30%' }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 text-center">
+                Step outdoors or near a window for the best signal.
+              </p>
             </div>
           ) : proximityStatus ? (
-            <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
-              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest px-1">
-                <span className={cn(
-                  proximityStatus.isWithinRange ? "text-emerald-600" : proximityStatus.distance < 20 ? "text-amber-600" : "text-slate-500"
-                )}>
-                  {proximityStatus.isWithinRange ? "Ready to Read" : "Move Closer"}
-                </span>
-                <span className="text-slate-400">
-                  {proximityStatus.distance.toFixed(1)}m Away
-                </span>
-              </div>
-              
-              {/* Visual Distance Gauge */}
-              <div className="relative h-3 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-                <div 
+            <div className="space-y-2">
+              <div className="relative h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                <div
                   className={cn(
                     "h-full transition-all duration-700 ease-out",
                     proximityStatus.isWithinRange ? "bg-emerald-500" : proximityStatus.distance < 20 ? "bg-amber-400" : "bg-blue-400"
                   )}
-                  style={{ 
-                    width: `${Math.max(5, Math.min(100, (1 - (proximityStatus.distance / 50)) * 100))}%`,
-                    opacity: proximityStatus.distance > 50 ? 0.3 : 1
-                  }}
+                  style={{ width: `${Math.max(5, Math.min(100, (1 - (proximityStatus.distance / 50)) * 100))}%` }}
                 />
-                <div className="absolute top-0 left-[10%] h-full w-0.5 bg-emerald-600/30" title="5m Threshold" />
               </div>
-
-              <div className="flex flex-col gap-2">
-                <div className={cn(
-                  "w-full flex items-center gap-3 p-3 rounded-lg border shadow-sm transition-all",
-                  proximityStatus.isWithinRange 
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
-                    : proximityStatus.distance < 20
-                      ? "bg-amber-50 border-amber-200 text-amber-900"
-                      : "bg-white border-slate-200 text-slate-700"
-                )}>
-                  {proximityStatus.isWithinRange ? (
-                    <CheckCircle2 className={cn("h-5 w-5 shrink-0", proximityStatus.bypassed ? "text-amber-600" : "text-emerald-600")} />
-                  ) : (
-                    <MapPin className={cn(
-                      "h-5 w-5 shrink-0",
-                      proximityStatus.distance < 20 ? "text-amber-600 animate-pulse" : "text-blue-500"
-                    )} />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-xs font-bold">
-                      {proximityStatus.bypassed
-                        ? "Location Bypassed"
-                        : proximityStatus.isWithinRange 
-                        ? "Verification Successful" 
-                        : proximityStatus.distance < 20 
-                          ? "Almost There!" 
-                          : "Location Sync Active"}
-                    </p>
-                    <p className="text-[10px] opacity-80 leading-tight">
-                      {proximityStatus.bypassed
-                        ? "Proximity check was manually bypassed for offline mode."
-                        : proximityStatus.isWithinRange 
-                        ? "You are securely positioned at the meter site." 
-                        : `Please move ${Math.round(proximityStatus.distance - 5)}m closer to the target coordinates.`}
-                    </p>
-                    {!proximityStatus.isWithinRange && !proximityStatus.bypassed && (
-                      <Button 
-                        type="button" 
-                        variant="link" 
-                        className="p-0 h-auto text-[10px] text-amber-600 mt-1.5 font-semibold"
-                        onClick={() => setProximityStatus({ isWithinRange: true, distance: proximityStatus.distance, bypassed: true })}
-                      >
-                        Force Bypass (Indoors / Offline)
-                      </Button>
-                    )}
-                  </div>
+              <div className={cn(
+                "flex items-center gap-3 p-2.5 rounded-lg border text-sm transition-all",
+                proximityStatus.isWithinRange
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                  : "bg-amber-50 border-amber-200 text-amber-900"
+              )}>
+                {proximityStatus.isWithinRange
+                  ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  : <MapPin className="h-4 w-4 shrink-0 text-amber-600 animate-pulse" />
+                }
+                <div className="flex-1">
+                  <p className="text-xs font-bold">
+                    {proximityStatus.bypassed ? "Bypassed (Offline)" :
+                      proximityStatus.isWithinRange ? "Ready to Record" :
+                      `Move ${Math.round(Math.max(0, proximityStatus.distance - 5))}m closer`}
+                  </p>
+                  <p className="text-[10px] opacity-70">{proximityStatus.distance.toFixed(1)}m from meter</p>
                 </div>
-
-                {/* GPS Health Indicator */}
-                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-slate-50/50 border-slate-200 w-full shadow-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">GPS Signal Status:</span>
-                    <span className="text-xs font-bold text-slate-800">
-                      {userLocation?.accuracy ? (
-                        userLocation.accuracy < 10 ? "High Quality" : userLocation.accuracy < 25 ? "Good Signal" : "Weak Signal"
-                      ) : "Syncing..."}
-                    </span>
-                  </div>
-                  <div className="flex gap-0.5 items-end h-4 shrink-0">
-                    <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 50 && "bg-blue-500")} style={{height: '40%'}} />
-                    <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 25 && "bg-blue-500")} style={{height: '70%'}} />
-                    <div className={cn("w-1 rounded-t-sm bg-slate-300", userLocation?.accuracy && userLocation.accuracy < 10 && "bg-blue-500")} style={{height: '100%'}} />
-                  </div>
-                </div>
-
-                {/* GPS Weak Accuracy Warning */}
-                {userLocation?.accuracy && userLocation.accuracy > 20 && (
-                  <div className="p-3 bg-amber-50 border border-amber-250 text-amber-900 rounded-lg text-xs flex items-start gap-2 shadow-sm animate-in fade-in">
-                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold">Weak GPS Signal (Accuracy: {userLocation.accuracy.toFixed(1)}m)</p>
-                      <p className="text-[10px] opacity-90 leading-normal">
-                        Please move to a more open area or wait for signal stabilization to get a higher quality coordinate.
-                      </p>
-                    </div>
-                  </div>
+                {!proximityStatus.isWithinRange && !proximityStatus.bypassed && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="p-0 h-auto text-[10px] text-amber-600 font-semibold"
+                    onClick={() => setProximityStatus({ isWithinRange: true, distance: proximityStatus.distance, bypassed: true })}
+                  >
+                    Bypass
+                  </Button>
                 )}
               </div>
             </div>
           ) : selectedEntityId ? (
-            <Alert className="bg-blue-50 border-blue-200 text-blue-800 animate-in fade-in slide-in-from-top-2 duration-300">
+            <Alert className="bg-blue-50 border-blue-200 text-blue-800">
               <Info className="h-4 w-4 text-blue-600" />
-              <AlertTitle className="text-xs font-bold uppercase tracking-tight">New Meter Setup Required</AlertTitle>
-              <AlertDescription className="space-y-3">
-                <p className="text-[11px]">This meter doesn&apos;t have an established GPS position yet. Please stand next to the meter and capture its location.</p>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
+              <AlertTitle className="text-xs font-bold uppercase">New Meter — GPS Setup Required</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p className="text-[11px]">Stand next to the meter and capture its GPS position.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={handleCaptureInitialLocation}
                   disabled={!userLocation || isSaving}
-                  className="w-full bg-white text-blue-700 border-blue-300 hover:bg-blue-50 font-bold h-9 text-xs shadow-sm"
+                  className="w-full bg-white text-blue-700 border-blue-300 hover:bg-blue-50 font-bold text-xs"
                 >
                   <MapPin className="mr-2 h-4 w-4" />
-                  {isSaving ? "Saving..." : "Set Current Location as Meter Site"}
+                  {isSaving ? "Saving…" : "Set Current Location as Meter Site"}
                 </Button>
               </AlertDescription>
             </Alert>
           ) : (
-            <div className="p-4 border-2 border-dashed rounded-lg bg-slate-50/50 flex flex-col items-center justify-center text-center space-y-2">
-              <MapPin className="h-6 w-6 text-slate-300" />
-              <p className="text-xs text-slate-400 font-medium">Select a meter above to start verification</p>
+            <div className="p-3 border-2 border-dashed rounded-lg bg-slate-50/50 flex items-center justify-center gap-2 text-slate-400">
+              <MapPin className="h-4 w-4" />
+              <p className="text-xs font-medium">Select a meter to begin verification</p>
             </div>
-          )
-          }
+          )}
         </div>
 
-        <FormField
-          control={form.control}
-          name="entityId"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Select Meter</FormLabel>
-              <Select onValueChange={field.onChange} value={field.value || undefined} disabled={isLoading || availableMeters.length === 0}>
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder={availableMeters.length === 0 ? "No meters available for type" : "Select a meter"} />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {availableMeters.map((meter) => (
-                    (meter.value !== undefined && String(meter.value).trim() !== "") ? (
-                      <SelectItem key={String(meter.value)} value={String(meter.value)}>
-                        {meter.label}
-                      </SelectItem>
-                    ) : null
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-
-        {selectedMeterInfo && (
-          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-3">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-              <Info className="h-3 w-3" /> Technical Information
-            </h4>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-              <div>
-                <span className="text-slate-500 block text-xs">Meter Number</span>
-                <span className="font-medium text-slate-900">{selectedMeterInfo.meterNumber || "N/A"}</span>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-xs">Customer Key</span>
-                <span className="font-medium text-slate-900">{selectedMeterInfo.customerKeyNumber}</span>
-              </div>
-              <div className="col-span-2">
-                <span className="text-slate-500 block text-xs">Customer Name</span>
-                <span className="font-medium text-slate-900">{selectedMeterInfo.name}</span>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-xs">Category</span>
-                <Badge variant="outline" className="mt-0.5">
-                  {'customerType' in selectedMeterInfo ? selectedMeterInfo.customerType : selectedMeterInfo.chargeGroup}
-                </Badge>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-xs">Diameter</span>
-                <span className="font-medium text-slate-900">{selectedMeterInfo.meterSize}&quot;</span>
-              </div>
-              <div className="col-span-2">
-                <span className="text-slate-500 block text-xs">Address</span>
-                <span className="font-medium text-slate-900">
-                  {selectedMeterInfo.subCity}, {selectedMeterInfo.woreda}, {selectedMeterInfo.specificArea}
-                </span>
-              </div>
-              <div className="col-span-2">
-                <span className="text-slate-500 block text-xs">Coordinates (Y, X)</span>
-                <span className="font-medium text-slate-900 break-all">
-                  {form.watch('capturedCoordinates') ? (
-                    <span className="text-emerald-600 font-semibold">
-                      {form.watch('capturedCoordinates')?.latitude.toFixed(6)}, {form.watch('capturedCoordinates')?.longitude.toFixed(6)} (New)
-                    </span>
-                  ) : (
-                    <>
-                      {selectedMeterInfo.yCoordinate?.toFixed(6) ?? "N/A"}, {selectedMeterInfo.xCoordinate?.toFixed(6) ?? "N/A"}
-                    </>
-                  )}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className={cn("space-y-6 transition-opacity duration-300", !proximityStatus?.isWithinRange && "opacity-50 pointer-events-none")}>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-600 pb-2 border-b">
-            {!proximityStatus?.isWithinRange ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
-            {proximityStatus?.isWithinRange ? "Form Unlocked" : "Form Locked (Proximity Required)"}
+        {/* ── Reading Fields (locked until proximity OK) ── */}
+        <div className={cn("space-y-5 transition-opacity duration-300", !proximityStatus?.isWithinRange && "opacity-40 pointer-events-none")}>
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 pb-1 border-b">
+            {proximityStatus?.isWithinRange ? <Unlock className="h-3.5 w-3.5 text-emerald-600" /> : <Lock className="h-3.5 w-3.5" />}
+            {proximityStatus?.isWithinRange ? "Form unlocked — ready to enter reading" : "Form locked — proximity check required"}
           </div>
 
+          {/* Fault Code */}
           <FormField
             control={form.control}
             name="faultCode"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Reason of Code (Fault Code)</FormLabel>
+                <FormLabel>Fault Code <span className="text-muted-foreground font-normal text-xs">(optional)</span></FormLabel>
                 <Select onValueChange={field.onChange} value={field.value || undefined} disabled={isLoading || !selectedEntityId}>
                   <FormControl>
                     <SelectTrigger className="h-11 sm:h-10">
-                      <SelectValue placeholder="Select a fault code (if any)" />
+                      <SelectValue placeholder="None / Normal reading" />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
                     <SelectItem value="none">None / Normal</SelectItem>
                     {faultCodes.map((fc) => (
                       <SelectItem key={fc.code} value={fc.code}>
-                        <div className="flex items-center gap-2">
-                          <span>{fc.code} - {fc.description || fc.category || 'Fault'}</span>
-                        </div>
+                        {fc.code} — {fc.description || fc.category || 'Fault'}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -656,37 +798,53 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
             )}
           />
 
+          {/* Reading Value — prominent, auto-focused */}
           <FormField
             control={form.control}
             name="reading"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Reading Value</FormLabel>
+                <FormLabel className="flex items-center justify-between">
+                  <span>Reading Value (m³)</span>
+                </FormLabel>
                 <FormControl>
                   <Input
                     type="number"
                     step="0.01"
-                    placeholder="Enter reading value"
+                    inputMode="decimal"
+                    placeholder="Enter current meter reading"
                     {...field}
+                    ref={(el) => {
+                      // Merge react-hook-form ref + our focus ref
+                      field.ref(el);
+                      (readingInputRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+                    }}
                     disabled={isLoading || !selectedEntityId || (!!selectedFaultCode && selectedFaultCode !== 'none')}
                     className={cn(
-                      "h-11 sm:h-10",
-                      selectedFaultCode && selectedFaultCode !== 'none' ? "bg-slate-50 font-medium text-slate-500" : ""
+                      "h-14 text-xl font-bold tracking-wide",
+                      selectedFaultCode && selectedFaultCode !== 'none' ? "bg-slate-50 text-slate-400" : "",
+                      consumption !== null && consumption < 0 ? "border-rose-400 focus-visible:ring-rose-400" : "",
+                      consumption !== null && consumption > anomalyThreshold ? "border-amber-400 focus-visible:ring-amber-400" : "",
                     )}
+                    onKeyDown={(e) => {
+                      // Enter key submits if form is valid
+                      if (e.key === 'Enter' && !isSubmitDisabled) {
+                        e.preventDefault();
+                        form.handleSubmit(handleSubmit)();
+                      }
+                    }}
                   />
                 </FormControl>
                 {selectedFaultCode && selectedFaultCode !== 'none' && (
-                  <p className="text-xs text-blue-600 font-medium italic mt-2">
-                    Reading auto-set to previous reading due to fault code.
+                  <p className="text-xs text-blue-600 font-medium italic">
+                    Auto-set to previous reading due to fault code.
                   </p>
                 )}
                 {anomalyWarning && (
-                  <Alert className="mt-3 bg-amber-50 text-amber-900 border-amber-200">
-                    <Info className="h-4 w-4 text-amber-600" />
-                    <AlertTitle className="text-amber-800">Anomaly Detected</AlertTitle>
-                    <AlertDescription className="text-amber-700">
-                      {anomalyWarning}
-                    </AlertDescription>
+                  <Alert className="mt-2 bg-amber-50 text-amber-900 border-amber-200 py-2">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    <AlertTitle className="text-amber-800 text-xs font-bold">Anomaly Detected</AlertTitle>
+                    <AlertDescription className="text-amber-700 text-xs">{anomalyWarning}</AlertDescription>
                   </Alert>
                 )}
                 <FormMessage />
@@ -694,146 +852,175 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
             )}
           />
 
-            <div className="space-y-3">
-              <FormLabel>Meter Proof Photo</FormLabel>
-              {!capturedPhoto ? (
-                <div className="space-y-3">
-                  {/* Hidden inputs for Camera and File options */}
-                  <input
-                    ref={cameraInputRef}
-                    id="camera-photo-upload"
-                    name="camera-photo-upload"
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={handlePhotoUpload}
-                    disabled={isLoading || !selectedEntityId || isCompressing}
-                  />
-                  <input
-                    ref={fileInputRef}
-                    id="file-photo-upload"
-                    name="file-photo-upload"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handlePhotoUpload}
-                    disabled={isLoading || !selectedEntityId || isCompressing}
-                  />
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-28 sm:h-24 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/30 transition-all duration-300 flex flex-col gap-2 items-center justify-center rounded-xl shadow-sm"
-                      disabled={isLoading || !selectedEntityId || isCompressing}
-                      onClick={async () => {
-                        let hasCamera = true;
-                        if (typeof window !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-                          try {
-                            const devices = await navigator.mediaDevices.enumerateDevices();
-                            hasCamera = devices.some(device => device.kind === 'videoinput');
-                          } catch (err) {
-                            console.warn("Failed to check media devices:", err);
-                          }
-                        }
+          {/* Date of Reading */}
+          <FormField
+            control={form.control}
+            name="date"
+            render={({ field }) => (
+              <FormItem className="flex flex-col">
+                <FormLabel>Date of Reading</FormLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full h-11 sm:h-10 pl-3 text-left font-normal",
+                          !field.value && "text-muted-foreground"
+                        )}
+                        disabled={isLoading}
+                      >
+                        {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
+                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={field.value}
+                      onSelect={field.onChange}
+                      disabled={(date) => date > new Date() || date < new Date("2000-01-01")}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
-                        if (!hasCamera) {
-                          toast({
-                            title: "Camera Not Detected",
-                            description: "We could not find a camera on this device. Please use the 'Upload File' option to attach your photo.",
-                            variant: "destructive"
-                          });
-                        } else {
-                          cameraInputRef.current?.click();
-                        }
-                      }}
-                    >
-                      {isCompressing ? (
-                        <Loader2 className="h-8 w-8 text-slate-400 animate-spin" />
-                      ) : (
-                        <CameraIcon className="h-8 w-8 text-blue-600 animate-pulse" />
-                      )}
-                      <span className="text-xs font-bold text-slate-700">Open Camera</span>
-                    </Button>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-28 sm:h-24 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/30 transition-all duration-300 flex flex-col gap-2 items-center justify-center rounded-xl shadow-sm"
-                      disabled={isLoading || !selectedEntityId || isCompressing}
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      {isCompressing ? (
-                        <Loader2 className="h-8 w-8 text-slate-400 animate-spin" />
-                      ) : (
-                        <Upload className="h-8 w-8 text-indigo-600" />
-                      )}
-                      <span className="text-xs font-bold text-slate-700">Upload File</span>
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="relative rounded-lg overflow-hidden border">
-                  <img src={capturedPhoto} alt="Meter proof" className="w-full h-56 sm:h-48 object-cover" />
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="icon"
-                    className="absolute top-2 right-2 h-9 w-9 sm:h-8 sm:w-8 rounded-full"
-                    onClick={removePhoto}
-                  >
-                    <X className="h-5 w-5 sm:h-4 sm:w-4" />
-                  </Button>
-                </div>
+          {/* Photo capture */}
+          <div className={cn(
+            "space-y-2 rounded-xl p-3 transition-all duration-300",
+            photoMissing
+              ? "border-2 border-rose-400 bg-rose-50/60"
+              : photoRequired && capturedPhoto
+              ? "border-2 border-emerald-400 bg-emerald-50/40"
+              : "border border-transparent"
+          )}>
+            <div className="flex items-center justify-between">
+              <FormLabel className={cn(
+                "font-semibold",
+                photoMissing ? "text-rose-700" : photoRequired ? "text-slate-700" : "text-slate-700"
+              )}>
+                Meter Proof Photo{" "}
+                {photoRequired ? (
+                  <span className="text-rose-600 font-bold text-xs">* REQUIRED for fault code</span>
+                ) : (
+                  <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+                )}
+              </FormLabel>
+              {photoRequired && capturedPhoto && (
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Photo attached
+                </span>
               )}
             </div>
-        </div>
-        <FormField
-          control={form.control}
-          name="date"
-          render={({ field }) => (
-            <FormItem className="flex flex-col">
-              <FormLabel>Date of Reading</FormLabel>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <FormControl>
-                    <Button
-                      variant={"outline"}
-                      className={cn(
-                        "w-full sm:w-[240px] h-11 sm:h-10 pl-3 text-left font-normal",
-                        !field.value && "text-muted-foreground"
-                      )}
-                      disabled={isLoading}
-                    >
-                      {field.value ? (
-                        format(field.value, "PPP")
-                      ) : (
-                        <span>Pick a date</span>
-                      )}
-                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                    </Button>
-                  </FormControl>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={field.value}
-                    onSelect={field.onChange}
-                    disabled={(date) =>
-                      date > new Date() || date < new Date("2000-01-01")
+
+            {/* Alert when fault code active and no photo yet */}
+            {photoMissing && (
+              <Alert className="py-2 bg-rose-50 border-rose-300">
+                <AlertCircle className="h-4 w-4 text-rose-600" />
+                <AlertTitle className="text-rose-700 text-xs font-bold">Photo Required</AlertTitle>
+                <AlertDescription className="text-rose-600 text-xs">
+                  A fault code is selected. You must attach a proof photo before saving.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!capturedPhoto ? (
+              <div className="grid grid-cols-2 gap-2">
+                <input ref={cameraInputRef} id="camera-photo-upload" name="camera-photo-upload" type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoUpload} disabled={isLoading || !selectedEntityId || isCompressing} />
+                <input ref={fileInputRef} id="file-photo-upload" name="file-photo-upload" type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} disabled={isLoading || !selectedEntityId || isCompressing} />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(
+                    "h-20 border-dashed flex flex-col gap-1.5 rounded-xl transition-all",
+                    photoMissing
+                      ? "border-rose-400 bg-white hover:bg-rose-50 hover:border-rose-500"
+                      : "border-slate-300 hover:border-blue-400 hover:bg-blue-50/30"
+                  )}
+                  disabled={isLoading || !selectedEntityId || isCompressing}
+                  onClick={async () => {
+                    let hasCamera = true;
+                    if (typeof window !== 'undefined' && navigator.mediaDevices?.enumerateDevices) {
+                      try {
+                        const devices = await navigator.mediaDevices.enumerateDevices();
+                        hasCamera = devices.some(d => d.kind === 'videoinput');
+                      } catch { /* ignore */ }
                     }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-              <FormMessage />
-            </FormItem>
+                    if (!hasCamera) {
+                      toast({ title: "Camera Not Detected", description: "Use 'Upload File' instead.", variant: "destructive" });
+                    } else {
+                      cameraInputRef.current?.click();
+                    }
+                  }}
+                >
+                  {isCompressing ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : <CameraIcon className={cn("h-6 w-6", photoMissing ? "text-rose-500" : "text-blue-600")} />}
+                  <span className={cn("text-xs font-semibold", photoMissing ? "text-rose-600" : "text-slate-600")}>Camera</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(
+                    "h-20 border-dashed flex flex-col gap-1.5 rounded-xl transition-all",
+                    photoMissing
+                      ? "border-rose-400 bg-white hover:bg-rose-50 hover:border-rose-500"
+                      : "border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/30"
+                  )}
+                  disabled={isLoading || !selectedEntityId || isCompressing}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {isCompressing ? <Loader2 className="h-6 w-6 animate-spin text-slate-400" /> : <Upload className={cn("h-6 w-6", photoMissing ? "text-rose-500" : "text-indigo-600")} />}
+                  <span className={cn("text-xs font-semibold", photoMissing ? "text-rose-600" : "text-slate-600")}>Upload File</span>
+                </Button>
+              </div>
+            ) : (
+              <div className="relative rounded-xl overflow-hidden border-2 border-emerald-300">
+                <img src={capturedPhoto} alt="Meter proof" className="w-full h-48 object-cover" />
+                <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-sm px-3 py-1.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-white text-xs font-semibold">Proof photo attached</span>
+                  </div>
+                  {photoExif?.hasLocationData && (
+                    <Badge className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 font-bold flex items-center gap-1">
+                      <MapPin className="h-2.5 w-2.5" /> EXIF GPS Verified
+                    </Badge>
+                  )}
+                </div>
+                <Button type="button" variant="destructive" size="icon" className="absolute top-2 right-2 h-8 w-8 rounded-full shadow-md" onClick={removePhoto}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Submit ── */}
+        <Button
+          type="submit"
+          disabled={isSubmitDisabled}
+          className={cn(
+            "w-full h-12 font-bold text-base text-white shadow-md transition-all",
+            photoMissing
+              ? "bg-slate-400 cursor-not-allowed"
+              : "bg-emerald-600 hover:bg-emerald-700"
           )}
-        />
-        <Button type="submit" disabled={isSubmitDisabled} className="w-full h-11 sm:h-10 font-bold text-base sm:text-sm">
-          {isLoading ? "Submitting..." : "Add Reading"}
+        >
+          {isLoading ? (
+            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting…</>
+          ) : photoMissing ? (
+            <><AlertCircle className="mr-2 h-4 w-4" /> Attach Photo to Continue</>
+          ) : (
+            "Save Reading"
+          )}
         </Button>
+        <p className="text-center text-xs text-muted-foreground">
+          Tip: Press <kbd className="px-1.5 py-0.5 rounded border text-xs bg-slate-100">Enter</kbd> in the reading field to submit
+        </p>
       </form>
     </Form>
   );

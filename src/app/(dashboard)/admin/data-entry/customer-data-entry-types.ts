@@ -43,7 +43,7 @@ export const baseIndividualCustomerDataSchema = z.object({
   currentReading: z.coerce.number().min(0, { message: "Current Reading cannot be negative." }),
   // Validate actual month range (01-12), not just format
   month: z.string()
-    .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format." })
+    .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format (e.g., 2024-03)." })
     .refine(val => {
       const month = parseInt(val.split('-')[1], 10);
       return month >= 1 && month <= 12;
@@ -52,15 +52,20 @@ export const baseIndividualCustomerDataSchema = z.object({
       const year = parseInt(val.split('-')[0], 10);
       return year >= 2000 && year <= new Date().getFullYear() + 1;
     }, { message: "Year must be between 2000 and next year." }),
-  specificArea: z.string().min(1, { message: "Specific Area is required." }),
+  specificArea: z.string().trim().min(2, { message: "Specific Area must be at least 2 characters." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
   woreda: z.string().min(1, { message: "Woreda is required." }),
   sewerageConnection: z.enum(sewerageConnections, { errorMap: () => ({ message: "Please select sewerage connection status." }) }),
   assignedBulkMeterId: z.string().optional().describe("The ID of the bulk meter this individual customer is assigned to."),
   branchId: z.string().optional().describe("The ID of the branch this customer belongs to."),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
-  xCoordinate: z.coerce.number().optional(),
-  yCoordinate: z.coerce.number().optional(),
+  // Coordinates validated for Addis Ababa/Ethiopia region
+  xCoordinate: z.coerce.number()
+    .refine(v => v >= 3 && v <= 15, { message: "Latitude appears out of Ethiopia range (3–15°N)." })
+    .optional(),
+  yCoordinate: z.coerce.number()
+    .refine(v => v >= 33 && v <= 48, { message: "Longitude appears out of Ethiopia range (33–48°E)." })
+    .optional(),
   zCoordinate: z.coerce.number().optional(),
 });
 
@@ -77,12 +82,12 @@ export const baseBulkMeterDataSchema = z.object({
   instKey: z.string().min(1, { message: "INST_KEY is required." }),
   contractNumber: z.string().min(1, { message: "Contract Number is required." }),
   meterSize: z.coerce.number().positive({ message: "Meter Size must be a positive number (inch)." }),
-  NUMBER_OF_DIALS: z.coerce.number().int().min(1, { message: "Number of Dials must be a positive integer." }).optional(), // New field
+  NUMBER_OF_DIALS: z.coerce.number().int().min(1, { message: "Number of Dials must be a positive integer." }).optional(),
   meterNumber: z.string().min(1, { message: "Meter Number is required." }),
   previousReading: z.coerce.number().min(0, { message: "Previous Reading cannot be negative." }),
   currentReading: z.coerce.number().min(0, { message: "Current Reading cannot be negative." }),
   month: z.string()
-    .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format." })
+    .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format (e.g., 2024-03)." })
     .refine(val => {
       const month = parseInt(val.split('-')[1], 10);
       return month >= 1 && month <= 12;
@@ -91,18 +96,28 @@ export const baseBulkMeterDataSchema = z.object({
       const year = parseInt(val.split('-')[0], 10);
       return year >= 2000 && year <= new Date().getFullYear() + 1;
     }, { message: "Year must be between 2000 and next year." }),
-  specificArea: z.string().min(1, { message: "Specific Area is required." }),
+  specificArea: z.string().trim().min(2, { message: "Specific Area must be at least 2 characters." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
   woreda: z.string().min(1, { message: "Woreda is required." }),
-  phoneNumber: z.string().optional(),
+  // Ethiopian phone: 09xx, 07xx, +2519xx, +2517xx, or 2519xx/2517xx
+  phoneNumber: z.string()
+    .regex(/^(?:\+251|251|0)[79]\d{8}$/, { message: "Phone must be Ethiopian format: 09xxxxxxxx, 07xxxxxxxx, or +251xxxxxxxxx" })
+    .optional()
+    .or(z.literal(''))
+    .optional(),
   branchId: z.string().optional().describe("The ID of the branch this bulk meter belongs to."),
   chargeGroup: z.string({ required_error: "Charge group is required." }),
   sewerageConnection: z.enum(sewerageConnections).default("No"),
   routeKey: z.string().optional(),
   ordinal: z.coerce.number().int().min(1, { message: "Ordinal must be a positive integer." }).optional(),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
-  xCoordinate: z.coerce.number().optional(),
-  yCoordinate: z.coerce.number().optional(),
+  // Coordinates validated for Ethiopia region
+  xCoordinate: z.coerce.number()
+    .refine(v => v >= 3 && v <= 15, { message: "Latitude appears out of Ethiopia range (3–15°N)." })
+    .optional(),
+  yCoordinate: z.coerce.number()
+    .refine(v => v >= 33 && v <= 48, { message: "Longitude appears out of Ethiopia range (33–48°E)." })
+    .optional(),
   zCoordinate: z.coerce.number().optional(),
 });
 

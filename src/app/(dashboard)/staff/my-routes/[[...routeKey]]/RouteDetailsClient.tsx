@@ -24,7 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List } from "lucide-react";
+import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List, Clock, Filter, AlertCircle, Download, HardDrive, Lock } from "lucide-react";
 import Link from "next/link";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle as UIDialogTitle } from "@/components/ui/dialog";
@@ -39,7 +39,7 @@ import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
 import { MapPin } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
 import { canCreateMeterReadingForType } from "@/lib/meter-reading-permissions";
-import { getFailedReadings, getPendingReadings } from "@/lib/offline-db";
+import { getFailedReadings, getPendingReadings, cacheRoutePackage } from "@/lib/offline-db";
 
 export default function RouteDetailsClient() {
     const params = useParams();
@@ -61,6 +61,7 @@ export default function RouteDetailsClient() {
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [searchTerm, setSearchTerm] = React.useState("");
     const [viewMode, setViewMode] = React.useState<'list' | 'map'>('list');
+    const [meterStatusFilter, setMeterStatusFilter] = React.useState<'all' | 'unread' | 'read'>('all');
     const [isReadingModalOpen, setIsReadingModalOpen] = React.useState(false);
     const [selectedMeter, setSelectedMeter] = React.useState<{
         type: 'bulk' | 'individual',
@@ -309,10 +310,37 @@ export default function RouteDetailsClient() {
         }
     }, [bulkReadings, individualReadings, currentMonth]);
 
+    const routeCustomers = React.useMemo(() => {
+        const bulkIds = new Set(bulkMeters.map(bm => bm.customerKeyNumber));
+        return allCustomers.filter(c => c.routeKey === routeKey || (c.assignedBulkMeterId && bulkIds.has(c.assignedBulkMeterId)));
+    }, [allCustomers, routeKey, bulkMeters]);
+
+    // Route-wide Bulk Meter count metrics (Read vs Unread)
+    const routeStats = React.useMemo(() => {
+        const totalMeters = bulkMeters.length;
+        const totalRead = bulkMeters.filter(bm => isMeterRead(bm.customerKeyNumber, 'bulk')).length;
+        const totalUnread = totalMeters - totalRead;
+        const percentRead = totalMeters > 0 ? Math.round((totalRead / totalMeters) * 100) : 0;
+
+        return {
+            totalMeters,
+            totalRead,
+            totalUnread,
+            percentRead
+        };
+    }, [bulkMeters, isMeterRead]);
+
     const filteredBulkMeters = React.useMemo(() => {
         let result = bulkMeters;
         
-        // 1. Filter by search term
+        // 1. Filter by Bulk Meter Status (All / Unread / Read)
+        if (meterStatusFilter === 'unread') {
+            result = result.filter(bm => !isMeterRead(bm.customerKeyNumber, 'bulk'));
+        } else if (meterStatusFilter === 'read') {
+            result = result.filter(bm => isMeterRead(bm.customerKeyNumber, 'bulk'));
+        }
+
+        // 2. Filter by search term
         if (searchTerm) {
             const lowSearch = searchTerm.toLowerCase();
             result = result.filter(bm =>
@@ -322,7 +350,7 @@ export default function RouteDetailsClient() {
             );
         }
 
-        // 2. Filter by proximity if requested
+        // 3. Filter by proximity if requested
         if (nearbyOnly) {
             // Determine threshold: relax if using a cached location
             const threshold = usingCachedLocation ? 200 : PROXIMITY_THRESHOLD;
@@ -339,7 +367,7 @@ export default function RouteDetailsClient() {
             });
         }
         
-        // 3. Sort by: Unread first, then Distance (if location available), then Read
+        // 4. Sort by: Unread first, then Distance (if location available), then Read
         return [...result].sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'bulk') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'bulk') ? 1 : 0;
@@ -355,7 +383,7 @@ export default function RouteDetailsClient() {
 
             return 0;
         });
-    }, [bulkMeters, searchTerm, isMeterRead, nearbyOnly, userLocation]);
+    }, [bulkMeters, meterStatusFilter, searchTerm, isMeterRead, nearbyOnly, userLocation, allCustomers]);
 
     const toggleExpand = (meterId: string) => {
         const newExpanded = new Set(expandedMeters);
@@ -497,11 +525,43 @@ export default function RouteDetailsClient() {
     };
 
     const getCustomersForBulkMeter = (bulkMeterId: string) => {
-        return allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId).sort((a, b) => {
+        const customers = allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId);
+        
+        // Filter by meterStatusFilter if active
+        let filtered = customers;
+        if (meterStatusFilter === 'unread') {
+            filtered = customers.filter(c => !isMeterRead(c.customerKeyNumber, 'individual'));
+        } else if (meterStatusFilter === 'read') {
+            filtered = customers.filter(c => isMeterRead(c.customerKeyNumber, 'individual'));
+        }
+
+        return filtered.sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'individual') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'individual') ? 1 : 0;
             return aRead - bRead;
         });
+    };
+
+    const [isCachingOffline, setIsCachingOffline] = React.useState(false);
+
+    const handleDownloadOfflinePackage = async () => {
+        setIsCachingOffline(true);
+        try {
+            const allReadings = [...bulkReadings, ...individualReadings];
+            const result = await cacheRoutePackage(routeKey, bulkMeters, routeCustomers, allReadings);
+            toast({
+                title: "⚡ Route Package Saved Offline",
+                description: `Cached route ${routeKey} (${result.bulkMetersCount} bulk meters, ${result.readingsCount} historical readings) for 100% offline field reading.`,
+            });
+        } catch (e: any) {
+            toast({
+                title: "Pre-cache Error",
+                description: e.message || "Failed to cache route package offline.",
+                variant: "destructive"
+            });
+        } finally {
+            setIsCachingOffline(false);
+        }
     };
 
     const formatDistance = (meter: { xCoordinate?: number, yCoordinate?: number }) => {
@@ -541,68 +601,186 @@ export default function RouteDetailsClient() {
     return (
         <div className="p-6 space-y-6">
             <div className="flex flex-col gap-4">
-                <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="icon" asChild>
-                        <Link href="/staff/my-routes">
-                            <ArrowLeft className="h-4 w-4" />
-                        </Link>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="icon" asChild>
+                            <Link href="/staff/my-routes">
+                                <ArrowLeft className="h-4 w-4" />
+                            </Link>
+                        </Button>
+                        <div>
+                            <h1 className="text-2xl font-bold">Route: {route.routeKey}</h1>
+                            <p className="text-xs text-muted-foreground">{route.description || "Reading assignment"}</p>
+                        </div>
+                    </div>
+
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDownloadOfflinePackage}
+                        disabled={isCachingOffline}
+                        className="bg-white text-blue-700 border-blue-200 hover:bg-blue-50 font-bold text-xs shadow-sm h-9 flex items-center gap-1.5"
+                    >
+                        {isCachingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4 text-blue-600" />}
+                        {isCachingOffline ? "Caching..." : "Pre-cache Route for Offline"}
                     </Button>
-                    <h1 className="text-2xl font-bold">Route: {route.routeKey}</h1>
                 </div>
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex flex-col gap-1">
-                        <p className="text-muted-foreground">{route.description || "Reading assignment"}</p>
-                        {offlineQueueState.pending > 0 && (
-                            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1 w-fit">
-                                {offlineQueueState.pending} offline reading{offlineQueueState.pending === 1 ? '' : 's'} queued{offlineQueueState.failed > 0 ? ` • ${offlineQueueState.failed} failed` : ''}
+            {/* ─── Route Reading Progress Summary Cards (Bulk Meters Only) ─── */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Card className="bg-white border-slate-200 shadow-sm">
+                    <CardContent className="p-4 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Bulk Meters</p>
+                            <h3 className="text-2xl font-black text-slate-900 mt-1">{routeStats.totalMeters}</h3>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                                Assigned in route {route.routeKey}
                             </p>
-                        )}
+                        </div>
+                        <div className="p-3 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
+                            <Gauge className="h-6 w-6" />
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="bg-emerald-50/40 border-emerald-200 shadow-sm">
+                    <CardContent className="p-4 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-emerald-800">Read Bulk Meters</p>
+                            <h3 className="text-2xl font-black text-emerald-900 mt-1">{routeStats.totalRead}</h3>
+                            <p className="text-[11px] font-bold text-emerald-700 mt-0.5">
+                                {routeStats.percentRead}% Complete
+                            </p>
+                        </div>
+                        <div className="p-3 bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200">
+                            <CheckCircle2 className="h-6 w-6" />
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="bg-amber-50/40 border-amber-200 shadow-sm">
+                    <CardContent className="p-4 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">Unread Bulk Meters</p>
+                            <h3 className="text-2xl font-black text-amber-900 mt-1">{routeStats.totalUnread}</h3>
+                            <p className="text-[11px] font-bold text-amber-700 mt-0.5">
+                                {100 - routeStats.percentRead}% Remaining
+                            </p>
+                        </div>
+                        <div className="p-3 bg-amber-100 text-amber-700 rounded-xl border border-amber-200">
+                            <Clock className="h-6 w-6" />
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* ─── Route Overall Progress Bar ─── */}
+            <div className="bg-white p-4 border border-slate-200 rounded-xl shadow-sm space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="text-slate-700">Bulk Meters Reading Completion</span>
+                    <span className="text-emerald-700 font-mono">{routeStats.totalRead} of {routeStats.totalMeters} Bulk Meters Read ({routeStats.percentRead}%)</span>
+                </div>
+                <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200 flex">
+                    <div 
+                        className="h-full bg-gradient-to-r from-emerald-500 to-green-600 transition-all duration-500" 
+                        style={{ width: `${routeStats.percentRead}%` }} 
+                    />
+                    <div 
+                        className="h-full bg-amber-400/80 transition-all duration-500" 
+                        style={{ width: `${100 - routeStats.percentRead}%` }} 
+                    />
+                </div>
+            </div>
+
+            {/* ─── Read / Unread Status Filter Tabs & Search Controls ─── */}
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-slate-50/80 p-2 border border-slate-200 rounded-xl">
+                {/* Status Segmented Buttons */}
+                <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+                    <Button
+                        type="button"
+                        variant={meterStatusFilter === 'all' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setMeterStatusFilter('all')}
+                        className={`h-8 px-3 text-xs font-bold ${
+                            meterStatusFilter === 'all' ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600'
+                        }`}
+                    >
+                        All ({routeStats.totalMeters})
+                    </Button>
+
+                    <Button
+                        type="button"
+                        variant={meterStatusFilter === 'unread' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setMeterStatusFilter('unread')}
+                        className={`h-8 px-3 text-xs font-bold flex items-center gap-1.5 ${
+                            meterStatusFilter === 'unread' 
+                                ? 'bg-amber-600 text-white hover:bg-amber-700 shadow-sm' 
+                                : 'text-amber-700 hover:bg-amber-50'
+                        }`}
+                    >
+                        <Clock className="h-3.5 w-3.5" />
+                        Unread ({routeStats.totalUnread})
+                    </Button>
+
+                    <Button
+                        type="button"
+                        variant={meterStatusFilter === 'read' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setMeterStatusFilter('read')}
+                        className={`h-8 px-3 text-xs font-bold flex items-center gap-1.5 ${
+                            meterStatusFilter === 'read' 
+                                ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' 
+                                : 'text-emerald-700 hover:bg-emerald-50'
+                        }`}
+                    >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Read ({routeStats.totalRead})
+                    </Button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-2">
+                    <div className="relative w-full sm:w-60">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            id="find-meter-search"
+                            name="find-meter-search"
+                            placeholder="Find meter..."
+                            className="pl-8 h-9 text-xs w-full bg-white"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
                     </div>
-                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-                        <div className="relative w-full sm:w-64">
-                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="find-meter-search"
-                                name="find-meter-search"
-                                placeholder="Find meter..."
-                                className="pl-8 w-full"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex items-center bg-slate-100 p-1 rounded-md self-start sm:self-auto shrink-0">
-                            <Button 
-                                variant={nearbyOnly ? 'secondary' : 'ghost'} 
-                                size="sm" 
-                                className={`h-8 px-3 ${nearbyOnly ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : ''}`}
-                                onClick={() => setNearbyOnly(!nearbyOnly)}
-                                title={nearbyOnly ? (usingCachedLocation ? "Showing meters within ~200m (using last known location)" : "Showing meters within 50m") : "Show all meters"}
-                            >
-                                <MapPin className={`h-4 w-4 mr-1.5 ${nearbyOnly ? 'fill-current' : ''}`} /> Nearby
-                            </Button>
-                            {nearbyOnly && usingCachedLocation && (
-                                <div className="text-[11px] text-muted-foreground ml-2">(approx.)</div>
-                            )}
-                            <div className="w-px h-4 bg-slate-300 mx-1" />
-                            <Button 
-                                variant={viewMode === 'list' ? 'secondary' : 'ghost'} 
-                                size="sm" 
-                                className="h-8 px-3"
-                                onClick={() => setViewMode('list')}
-                            >
-                                <List className="h-4 w-4 mr-1.5" /> List
-                            </Button>
-                            <Button 
-                                variant={viewMode === 'map' ? 'secondary' : 'ghost'} 
-                                size="sm" 
-                                className="h-8 px-3"
-                                onClick={() => setViewMode('map')}
-                            >
-                                <MapIcon className="h-4 w-4 mr-1.5" /> Map
-                            </Button>
-                        </div>
+
+                    <div className="flex items-center bg-white p-1 rounded-lg border border-slate-200 shadow-sm self-start sm:self-auto shrink-0">
+                        <Button 
+                            variant={nearbyOnly ? 'secondary' : 'ghost'} 
+                            size="sm" 
+                            className={`h-7 text-xs px-2.5 ${nearbyOnly ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : ''}`}
+                            onClick={() => setNearbyOnly(!nearbyOnly)}
+                        >
+                            <MapPin className={`h-3.5 w-3.5 mr-1 ${nearbyOnly ? 'fill-current' : ''}`} /> Nearby
+                        </Button>
+                        <div className="w-px h-4 bg-slate-200 mx-1" />
+                        <Button 
+                            variant={viewMode === 'list' ? 'secondary' : 'ghost'} 
+                            size="sm" 
+                            className="h-7 text-xs px-2.5"
+                            onClick={() => setViewMode('list')}
+                        >
+                            <List className="h-3.5 w-3.5 mr-1" /> List
+                        </Button>
+                        <Button 
+                            variant={viewMode === 'map' ? 'secondary' : 'ghost'} 
+                            size="sm" 
+                            className="h-7 text-xs px-2.5"
+                            onClick={() => setViewMode('map')}
+                        >
+                            <MapIcon className="h-3.5 w-3.5 mr-1" /> Map
+                        </Button>
                     </div>
                 </div>
+            </div>
             </div>
 
             {viewMode === 'map' ? (
@@ -673,14 +851,30 @@ export default function RouteDetailsClient() {
                                             <Gauge className="h-6 w-6 text-blue-600" />
                                         </div>
                                         <div>
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
                                                 <h3 className="font-bold text-lg">{bm.name}</h3>
                                                 <Badge variant="outline" className="font-mono text-[10px] uppercase">Bulk</Badge>
-                                                {isMeterRead(bm.customerKeyNumber, 'bulk') && (
-                                                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none shadow-sm flex items-center gap-1 h-5 px-1.5 rounded-sm">
+                                                {isMeterRead(bm.customerKeyNumber, 'bulk') ? (
+                                                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-300 shadow-sm flex items-center gap-1 h-5 px-1.5 rounded-sm">
                                                         <CheckCircle2 className="h-3 w-3" /> Read
                                                     </Badge>
+                                                ) : (
+                                                    <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-300 shadow-sm flex items-center gap-1 h-5 px-1.5 rounded-sm">
+                                                        <Clock className="h-3 w-3" /> Pending Read
+                                                    </Badge>
                                                 )}
+
+                                                {/* Sub-customer read/unread count badge */}
+                                                {(() => {
+                                                    const rawSubs = allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bm.customerKeyNumber);
+                                                    if (rawSubs.length === 0) return null;
+                                                    const subReadCount = rawSubs.filter(c => isMeterRead(c.customerKeyNumber, 'individual')).length;
+                                                    return (
+                                                        <Badge variant="outline" className="text-[10px] font-bold bg-white text-slate-700 border-slate-300">
+                                                            {subReadCount}/{rawSubs.length} Ind. Read
+                                                        </Badge>
+                                                    );
+                                                })()}
                                             </div>
                                             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground mt-1">
                                                 <span className="flex items-center gap-1"><span className="font-semibold text-xs uppercase tracking-wider opacity-60">ID:</span> {bm.customerKeyNumber}</span>
@@ -696,19 +890,33 @@ export default function RouteDetailsClient() {
                                     <div className="flex items-center gap-2 shrink-0">
                                         <Button
                                             size="sm"
-                                            className="text-xs font-bold bg-blue-600 hover:bg-blue-700 shadow-md transition-all rounded-full h-8 px-4"
+                                            className={`text-xs font-bold shadow-md transition-all rounded-full h-8 px-4 ${
+                                                !canReadBulk
+                                                    ? 'bg-slate-200 text-slate-500 border border-slate-300 opacity-60 cursor-not-allowed'
+                                                    : isMeterRead(bm.customerKeyNumber, 'bulk')
+                                                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300'
+                                                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                            }`}
                                             onClick={() => handleReadClick(bm, 'bulk')}
                                             disabled={periodStatus === 'Closed' || !canReadBulk}
-                                            title={!canReadBulk ? 'You do not have permission to read this.' : undefined}
+                                            title={!canReadBulk ? 'Permission required: Meter Readings Create Bulk' : undefined}
                                         >
-                                            {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(bm.customerKeyNumber, 'bulk') ? 'Update' : 'Read Meter')}
+                                            {!canReadBulk ? (
+                                                <span className="flex items-center gap-1"><Lock className="h-3 w-3" /> Locked</span>
+                                            ) : periodStatus === 'Closed' ? (
+                                                <span className="flex items-center gap-1"><Lock className="h-3 w-3" /> Locked</span>
+                                            ) : isMeterRead(bm.customerKeyNumber, 'bulk') ? (
+                                                'Update'
+                                            ) : (
+                                                'Read Meter'
+                                            )}
                                         </Button>
                                         {customers.length > 0 && (
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={() => toggleExpand(bm.customerKeyNumber)}
-                                                className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                                                className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 font-bold text-xs"
                                             >
                                                 {customers.length} Individual {isExpanded ? <ChevronDown className="ml-1 h-4 w-4" /> : <ChevronRight className="ml-1 h-4 w-4" />}
                                             </Button>
@@ -749,12 +957,24 @@ export default function RouteDetailsClient() {
                                                         </div>
                                                     </div>
                                                     <Button
-                                                        className="text-[10px] h-7 px-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-full shadow-sm"
+                                                        className={`text-[10px] h-7 px-3 font-bold rounded-full shadow-sm ${
+                                                            !canReadIndividual
+                                                                ? 'bg-slate-200 text-slate-500 border border-slate-300 opacity-60 cursor-not-allowed'
+                                                                : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                                        }`}
                                                         onClick={() => handleReadClick(c, 'individual')}
                                                         disabled={periodStatus === 'Closed' || !canReadIndividual}
-                                                        title={!canReadIndividual ? 'You do not have permission to read this.' : undefined}
+                                                        title={!canReadIndividual ? 'Permission required: Meter Readings Create Individual' : undefined}
                                                     >
-                                                        {periodStatus === 'Closed' ? 'Locked' : (isMeterRead(c.customerKeyNumber, 'individual') ? 'Update' : 'Read')}
+                                                        {!canReadIndividual ? (
+                                                            <span className="flex items-center gap-1"><Lock className="h-2.5 w-2.5" /> Locked</span>
+                                                        ) : periodStatus === 'Closed' ? (
+                                                            <span className="flex items-center gap-1"><Lock className="h-2.5 w-2.5" /> Locked</span>
+                                                        ) : isMeterRead(c.customerKeyNumber, 'individual') ? (
+                                                            'Update'
+                                                        ) : (
+                                                            'Read'
+                                                        )}
                                                     </Button>
                                                 </div>
                                             ))}

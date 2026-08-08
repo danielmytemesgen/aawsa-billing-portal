@@ -86,7 +86,7 @@ export default function CustomerDashboardPage() {
                     setBills(processedBills);
 
                     const unpaidBill = processedBills.find((b: any) => b.payment_status !== "Paid");
-                    setCurrentBill(unpaidBill || null);
+                    setCurrentBill(unpaidBill || processedBills[0] || null);
 
                     const totalBills = processedBills.length;
                     const paidBills = processedBills.filter((b: any) => b.payment_status === "Paid").length;
@@ -120,7 +120,7 @@ export default function CustomerDashboardPage() {
                     setBills(processedBills);
 
                     const unpaidBill = processedBills.find((b: any) => b.payment_status !== "Paid");
-                    setCurrentBill(unpaidBill || null);
+                    setCurrentBill(unpaidBill || processedBills[0] || null);
 
                     const totalBills = processedBills.length;
                     const paidBills = processedBills.filter((b: any) => b.payment_status === "Paid").length;
@@ -189,28 +189,49 @@ export default function CustomerDashboardPage() {
             {/* Current Bill Alert */}
             {currentBill && (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }}>
-                    <Card className="border-amber-200 bg-amber-50 dark:bg-amber-900/10 shadow-lg shadow-amber-100 dark:shadow-none rounded-3xl overflow-hidden">
+                    <Card className={`rounded-3xl overflow-hidden shadow-lg ${
+                        currentBill.payment_status === 'Paid'
+                            ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/10 shadow-emerald-100 dark:shadow-none'
+                            : 'border-amber-200 bg-amber-50 dark:bg-amber-900/10 shadow-amber-100 dark:shadow-none'
+                    }`}>
                         <CardHeader className="pb-2">
-                            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-                                <div className="p-2 bg-amber-100 dark:bg-amber-800/30 rounded-xl">
-                                    <AlertCircle className="h-5 w-5" />
+                            <div className={`flex items-center gap-2 ${
+                                currentBill.payment_status === 'Paid' ? 'text-emerald-800 dark:text-emerald-200' : 'text-amber-800 dark:text-amber-200'
+                            }`}>
+                                <div className={`p-2 rounded-xl ${
+                                    currentBill.payment_status === 'Paid' ? 'bg-emerald-100 dark:bg-emerald-800/30' : 'bg-amber-100 dark:bg-amber-800/30'
+                                }`}>
+                                    {currentBill.payment_status === 'Paid' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
                                 </div>
-                                <CardTitle className="text-lg font-bold">Pending Payment</CardTitle>
+                                <CardTitle className="text-lg font-bold">
+                                    {currentBill.payment_status === 'Paid' ? 'Most Recent Bill (Paid)' : 'Pending Payment'}
+                                </CardTitle>
                             </div>
                         </CardHeader>
                         <CardContent>
                             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                                 <div>
-                                    <p className="text-amber-900 dark:text-amber-100 font-bold text-lg">
-                                        Your bill for {currentBill.month_year} is ready and due on {currentBill.due_date ? format(new Date(currentBill.due_date), "MMM dd, yyyy") : "N/A"}.
+                                    <p className={`font-bold text-lg ${
+                                        currentBill.payment_status === 'Paid' ? 'text-emerald-900 dark:text-emerald-100' : 'text-amber-900 dark:text-amber-100'
+                                    }`}>
+                                        {currentBill.payment_status === 'Paid'
+                                            ? `Your bill for ${currentBill.month_year} has been settled in full.`
+                                            : `Your bill for ${currentBill.month_year} is ready and due on ${currentBill.due_date ? format(new Date(currentBill.due_date), "MMM dd, yyyy") : "N/A"}.`
+                                        }
                                     </p>
-                                    <p className="text-amber-700 dark:text-amber-300 text-sm mt-1 font-medium">
+                                    <p className={`text-sm mt-1 font-medium ${
+                                        currentBill.payment_status === 'Paid' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
+                                    }`}>
                                         Consumption Recorded: <span className="font-bold">{currentBill.CONS || 0} m³</span>
                                     </p>
                                 </div>
                                 <div className="text-left md:text-right">
-                                    <p className="text-xs text-amber-700 dark:text-amber-400 uppercase font-black tracking-widest mb-1">Total Amount Due</p>
-                                    <p className="text-4xl font-black text-amber-900 dark:text-amber-100 tracking-tighter">
+                                    <p className={`text-xs uppercase font-black tracking-widest mb-1 ${
+                                        currentBill.payment_status === 'Paid' ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'
+                                    }`}>{currentBill.payment_status === 'Paid' ? 'Total Bill Amount' : 'Total Amount Due'}</p>
+                                    <p className={`text-4xl font-black tracking-tighter ${
+                                        currentBill.payment_status === 'Paid' ? 'text-emerald-900 dark:text-emerald-100' : 'text-amber-900 dark:text-amber-100'
+                                    }`}>
                                         ETB {(
                                             Number(currentBill.PENALTYAMT || 0) +
                                             Number(currentBill.OUTSTANDINGAMT ?? (Number(currentBill.debit_30 || 0) + Number(currentBill.debit_30_60 || 0) + Number(currentBill.debit_60 || 0))) +

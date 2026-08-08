@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, CheckCircle, ListPlus, Database, AlertCircle, XCircle, AlertTriangle } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
@@ -263,31 +263,49 @@ export default function AdminMeterReadingsPage() {
 
   const handleAddReadingSubmit = async (formData: AddMeterReadingFormValues) => {
     const readerId = currentUser?.id;
-    const { entityId, meterType, reading, date, faultCode, capturedCoordinates } = formData;
+    const { entityId, meterType, reading, date, faultCode, capturedCoordinates, meterPhoto } = formData;
+    const activeFaultCode = faultCode === 'none' ? undefined : faultCode;
 
     setIsLoading(true);
     let result;
 
     try {
       if (meterType === 'individual_customer_meter') {
+        // When a fault code is set, previousReading = readingValue (no consumption)
+        const customer = allCustomers.find(c => c.customerKeyNumber === entityId);
+        const prevReading = customer?.currentReading ?? 0;
+
         result = await addIndividualCustomerReading({
           individualCustomerId: entityId,
           readerStaffId: readerId,
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
-          faultCode: faultCode === 'none' ? undefined : faultCode,
-          notes: faultCode && faultCode !== 'none' ? `Fault: ${faultCode}. Reader: ${currentUser?.email || 'Admin'}` : `Reading entered by ${currentUser?.email || 'Admin'}`,
-          capturedCoordinates
+          previousReading: prevReading,
+          faultCode: activeFaultCode,
+          notes: activeFaultCode
+            ? `Fault: ${activeFaultCode}. Reader: ${currentUser?.email || 'Admin'}`
+            : `Reading entered by ${currentUser?.email || 'Admin'}`,
+          capturedCoordinates,
+          meter_photo: meterPhoto,
         });
       } else {
+        const bulkMeter = allBulkMeters.find(bm => bm.customerKeyNumber === entityId);
+        const prevReading = bulkMeter?.currentReading ?? 0;
+
         result = await addBulkMeterReading({
           CUSTOMERKEY: entityId,
           readerStaffId: readerId,
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
-          capturedCoordinates
+          previousReading: prevReading,
+          faultCode: activeFaultCode,
+          notes: activeFaultCode
+            ? `Fault: ${activeFaultCode}. Reader: ${currentUser?.email || 'Admin'}`
+            : `Reading entered by ${currentUser?.email || 'Admin'}`,
+          capturedCoordinates,
+          meter_photo: meterPhoto,
         });
       }
 
@@ -316,7 +334,45 @@ export default function AdminMeterReadingsPage() {
     }
   };
 
+  // CSV export helper
+  const exportReadingsToCSV = React.useCallback((data: DisplayReading[], filename: string) => {
+    if (data.length === 0) return;
+    const headers = ['Meter Identifier', 'Type', 'Reading Value', 'Previous Reading', 'Consumption (m³)', 'Reading Date', 'Month/Year', 'Notes', 'Fault Code'];
+    const rows = data.map(r => [
+      `"${(r.meterIdentifier || '').replace(/"/g, '""')}"`,
+      r.meterType === 'bulk' ? 'Bulk' : 'Individual',
+      r.readingValue ?? '',
+      r.previousReading ?? '',
+      ((r.readingValue ?? 0) - (r.previousReading ?? 0)).toFixed(2),
+      r.readingDate ?? '',
+      r.monthYear ?? '',
+      `"${(r.notes || '').replace(/"/g, '""')}"`,
+      r.faultCode || '',
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  // Determine the most recent month present across both lists
+  const mostRecentMonthYear = React.useMemo(() => {
+    const allMonths = [
+      ...individualReadings.map(r => r.monthYear),
+      ...bulkReadings.map(r => r.monthYear),
+    ].filter(Boolean);
+    if (allMonths.length === 0) return format(new Date(), "yyyy-MM");
+    return allMonths.sort().reverse()[0];
+  }, [individualReadings, bulkReadings]);
+
   const filteredIndividualReadings = individualReadings.filter(reading => {
+    if (reading.monthYear !== mostRecentMonthYear) return false;
     if (!searchTerm) return true;
     const lowerSearchTerm = searchTerm.toLowerCase();
     return reading.meterIdentifier.toLowerCase().includes(lowerSearchTerm) ||
@@ -331,6 +387,7 @@ export default function AdminMeterReadingsPage() {
   );
 
   const filteredBulkReadings = bulkReadings.filter(reading => {
+    if (reading.monthYear !== mostRecentMonthYear) return false;
     if (!searchTerm) return true;
     const lowerSearchTerm = searchTerm.toLowerCase();
     return reading.meterIdentifier.toLowerCase().includes(lowerSearchTerm) ||
@@ -585,6 +642,19 @@ export default function AdminMeterReadingsPage() {
                   <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
                 </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 gap-1.5"
+                disabled={filteredIndividualReadings.length === 0}
+                onClick={() => exportReadingsToCSV(
+                  filteredIndividualReadings,
+                  `individual-readings-${mostRecentMonthYear}.csv`
+                )}
+              >
+                <FileDown className="h-4 w-4" />
+                Export CSV ({filteredIndividualReadings.length})
+              </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
               {isLoading && paginatedIndividualReadings.length === 0 ? (
@@ -621,6 +691,19 @@ export default function AdminMeterReadingsPage() {
                   <CardDescription>View and manage all recorded readings for bulk meters.</CardDescription>
                 </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 gap-1.5"
+                disabled={filteredBulkReadings.length === 0}
+                onClick={() => exportReadingsToCSV(
+                  filteredBulkReadings,
+                  `bulk-readings-${mostRecentMonthYear}.csv`
+                )}
+              >
+                <FileDown className="h-4 w-4" />
+                Export CSV ({filteredBulkReadings.length})
+              </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
               {isLoading && paginatedBulkReadings.length === 0 ? (

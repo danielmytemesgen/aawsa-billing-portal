@@ -698,10 +698,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const totalAgingDebt = aging.zeroToThirty + aging.thirtyToSixty + aging.sixtyPlus;
 
 
-    // Filtered Outstanding List (Main Table) - Restricted to Recent Month or Selected Month
+    // Filtered Outstanding List (Main Table) - Restricted to Selected Month or All Months
     const filteredOutstanding = filteredForStats
         .filter(b => b.status === 'Posted' && b.payment_status === 'Unpaid')
-        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth)
         .filter(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
             const matchesStatus = statusFilter === 'all' ||
@@ -710,10 +709,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             return matchesStatus;
         });
 
-    // Filtered Paid List (Second Table) - Restricted to Recent Month or Selected Month
+    // Filtered Paid List (Second Table) - Restricted to Selected Month or All Months
     const filteredPaid = filteredForStats
-        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid')
-        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth);
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid');
 
 
 

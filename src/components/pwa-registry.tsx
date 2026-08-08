@@ -31,8 +31,7 @@ export function PwaRegistry() {
       const registerSW = async () => {
         try {
           const candidateUrls = [
-            new URL('sw.js', document.baseURI).toString(),
-            new URL('/sw.js', document.baseURI).toString(),
+            new URL('/sw.js', window.location.origin).toString(),
           ];
           let chosenSwUrl = null;
           for (const candidate of candidateUrls) {

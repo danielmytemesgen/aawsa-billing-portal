@@ -20,9 +20,9 @@ function setSecurityHeaders(res: NextResponse) {
       : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     // Images: self, data URIs, blob (for camera captures), and known remote hosts
-    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org https://veiethiopia.com https://www.shutterstock.com https://lh3.googleusercontent.com https://picsum.photos https://*.picsum.photos",
-    // Connections: self + any https/wss (needed for Supabase, API calls, SW)
-    "connect-src 'self' https: wss: blob:",
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org https://veiethiopia.com https://www.shutterstock.com https://lh3.googleusercontent.com https://picsum.photos https://*.picsum.photos https://*.freepik.com https://img.freepik.com https://*.unsplash.com https://images.unsplash.com",
+    // Connections: self + local dev ports + any https/wss (needed for Supabase, API calls, SW)
+    "connect-src 'self' http://127.0.0.1:* http://localhost:* https: wss: blob:",
     // Fonts: self, data URIs, and Google Fonts CDN
     "font-src 'self' data: https://fonts.gstatic.com",
     "object-src 'none'",

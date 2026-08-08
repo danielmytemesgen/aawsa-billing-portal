@@ -1,5 +1,3 @@
-
-
 "use client";
 
 import * as React from "react";
@@ -21,43 +19,78 @@ import { useToast } from "@/hooks/use-toast";
 import { baseIndividualCustomerDataSchema, meterSizeOptions, subCityOptions, woredaOptions } from "@/app/(dashboard)/admin/data-entry/customer-data-entry-types";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
 import {
   addCustomer as addCustomerToStore,
   getBulkMeters,
   subscribeToBulkMeters,
   initializeBulkMeters,
   initializeCustomers,
-  getCustomers,
   getBranches,
-  subscribeToBranches,
   initializeBranches as initializeAdminBranches
 } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
-import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
-import { customerTypes, sewerageConnections, paymentStatuses } from "@/lib/billing-calculations";
-import { individualCustomerStatuses } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
-import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
+import { customerTypes, sewerageConnections } from "@/lib/billing-calculations";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getAllFaultCodes } from "@/lib/fault-codes";
 import { subscribeToFaultCodes } from "@/lib/data-store";
-
-
+import {
+  User,
+  Hash,
+  Book,
+  Layers,
+  Activity,
+  MapPin,
+  Droplets,
+  Settings,
+  Briefcase,
+  Network,
+  TrendingUp,
+  CheckCircle2,
+  Lock,
+} from "lucide-react";
 
 interface StaffIndividualCustomerEntryFormProps {
   branchName: string;
 }
 
-const StaffEntryFormSchema = baseIndividualCustomerDataSchema; // Removed status and paymentStatus from staff form schema
+const StaffEntryFormSchema = baseIndividualCustomerDataSchema.extend({
+  assignedBulkMeterId: z
+    .string({ required_error: "Assigning to a Bulk Meter is mandatory." })
+    .min(1, { message: "Assigning to a Bulk Meter is mandatory." })
+    .refine((val) => val !== "_SELECT_NONE_BULK_METER_", {
+      message: "Assigning to a Bulk Meter is mandatory.",
+    }),
+});
 type StaffEntryFormValues = z.infer<typeof StaffEntryFormSchema>;
-
 
 const UNASSIGNED_BULK_METER_VALUE = "_SELECT_NONE_BULK_METER_";
 
+const REQUIRED_FIELDS: (keyof StaffEntryFormValues)[] = [
+  "assignedBulkMeterId",
+  "name",
+  "customerKeyNumber",
+  "instKey",
+  "contractNumber",
+  "customerType",
+  "bookNumber",
+  "ordinal",
+  "meterSize",
+  "meterNumber",
+  "previousReading",
+  "currentReading",
+  "month",
+  "specificArea",
+  "subCity",
+  "woreda",
+  "sewerageConnection",
+];
+
 export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividualCustomerEntryFormProps) {
   const { toast } = useToast();
-  const [availableBulkMeters, setAvailableBulkMeters] = React.useState<{ customerKeyNumber: string, name: string }[]>([]);
+  const [availableBulkMeters, setAvailableBulkMeters] = React.useState<{ customerKeyNumber: string; name: string }[]>([]);
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
   const [staffBranchId, setStaffBranchId] = React.useState<string | undefined>(undefined);
   const [hasFault, setHasFault] = React.useState(false);
@@ -73,7 +106,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
   const form = useForm<StaffEntryFormValues>({
     resolver: zodResolver(StaffEntryFormSchema),
     defaultValues: {
-      assignedBulkMeterId: UNASSIGNED_BULK_METER_VALUE,
+      assignedBulkMeterId: "",
       name: "",
       customerKeyNumber: "",
       instKey: "",
@@ -96,65 +129,123 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
     },
   });
 
-  const assignedBulkMeterIdValue = form.watch("assignedBulkMeterId");
-  const actualBulkMeterIsSelected = assignedBulkMeterIdValue !== UNASSIGNED_BULK_METER_VALUE && !!assignedBulkMeterIdValue;
+  const watchedValues = form.watch();
+  const prevReading = watchedValues.previousReading;
+  const currReading = watchedValues.currentReading;
+  const assignedBulkMeterIdValue = watchedValues.assignedBulkMeterId;
 
+  const isBulkMeterSelected =
+    !!assignedBulkMeterIdValue &&
+    assignedBulkMeterIdValue !== "" &&
+    assignedBulkMeterIdValue !== UNASSIGNED_BULK_METER_VALUE;
+
+  const consumption =
+    currReading !== undefined &&
+    prevReading !== undefined &&
+    !isNaN(currReading) &&
+    !isNaN(prevReading)
+      ? currReading - prevReading
+      : null;
+
+  // Track progress
+  const filledCount = REQUIRED_FIELDS.filter((field) => {
+    const val = watchedValues[field];
+    return val !== undefined && val !== "" && val !== null && val !== UNASSIGNED_BULK_METER_VALUE;
+  }).length;
+  const progressPct = Math.round((filledCount / REQUIRED_FIELDS.length) * 100);
+
+  // Initialize and filter bulk meters for staff member's branch
   React.useEffect(() => {
     setIsLoadingBulkMeters(true);
     Promise.all([
       initializeBulkMeters(),
       initializeCustomers(),
-      initializeAdminBranches()
+      initializeAdminBranches(),
     ]).then(() => {
       const allBranches = getBranches();
-      const normalizedStaffBranchName = branchName.trim().toLowerCase();
-      const staffBranch = allBranches.find(b => {
+      const allBms = getBulkMeters();
+      const normalizedStaffBranchName = (branchName || "").trim().toLowerCase();
+
+      const staffBranch = allBranches.find((b) => {
         const normalizedBranchName = b.name.trim().toLowerCase();
-        return normalizedBranchName.includes(normalizedStaffBranchName) || normalizedStaffBranchName.includes(normalizedBranchName);
+        return (
+          normalizedBranchName === normalizedStaffBranchName ||
+          normalizedBranchName.includes(normalizedStaffBranchName) ||
+          normalizedStaffBranchName.includes(normalizedBranchName)
+        );
       });
 
       if (staffBranch) {
         setStaffBranchId(staffBranch.id);
-        const branchFilteredBms = getBulkMeters().filter(bm => bm.branchId === staffBranch.id);
-        setAvailableBulkMeters(branchFilteredBms.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
-        
-        
+        form.setValue("branchId", staffBranch.id);
+
+        let filteredBms = allBms.filter(
+          (bm) => bm.branchId === staffBranch.id
+        );
+
+        // Fallback: If no bulk meters are tagged specifically to this branch, show all available bulk meters so user is never blocked
+        if (filteredBms.length === 0) {
+          filteredBms = allBms;
+        }
+
+        setAvailableBulkMeters(
+          filteredBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+        );
+      } else {
+        // Fallback if branch lookup by string name is exact mismatch
+        setAvailableBulkMeters(
+          allBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+        );
       }
       setIsLoadingBulkMeters(false);
     });
 
     const unsubscribeBMs = subscribeToBulkMeters((updatedBulkMeters) => {
       if (staffBranchId) {
-        const branchFilteredBms = updatedBulkMeters.filter(bm => bm.branchId === staffBranchId);
-        setAvailableBulkMeters(branchFilteredBms.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+        let branchFilteredBms = updatedBulkMeters.filter((bm) => bm.branchId === staffBranchId);
+        if (branchFilteredBms.length === 0) branchFilteredBms = updatedBulkMeters;
+        setAvailableBulkMeters(
+          branchFilteredBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+        );
+      } else {
+        setAvailableBulkMeters(
+          updatedBulkMeters.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+        );
       }
     });
 
     return () => {
       unsubscribeBMs();
-    }
-  }, [branchName, staffBranchId]);
+    };
+  }, [branchName]);
 
-  React.useEffect(() => {
-    form.reset({ ...form.getValues(), subCity: "", branchId: staffBranchId });
-  }, [staffBranchId, form]);
+  const handleBulkMeterChange = (value: string | undefined) => {
+    form.setValue("assignedBulkMeterId", value || "", { shouldValidate: true });
+  };
 
   async function onSubmit(data: StaffEntryFormValues) {
     const submissionData = {
       ...data,
-      assignedBulkMeterId: data.assignedBulkMeterId === UNASSIGNED_BULK_METER_VALUE ? undefined : data.assignedBulkMeterId,
-      branchId: staffBranchId, // Ensure branchId is set from state
+      assignedBulkMeterId:
+        data.assignedBulkMeterId === UNASSIGNED_BULK_METER_VALUE ? undefined : data.assignedBulkMeterId,
+      branchId: staffBranchId,
+      status: "Pending Approval" as const,
     };
 
-    // Status will be set to 'Pending Approval' by addCustomerToStore server action
-    const result = await addCustomerToStore(submissionData as Omit<IndividualCustomer, 'created_at' | 'updated_at' | 'calculatedBill' | 'arrears' | 'status' | 'paymentStatus'>);
+    const result = await addCustomerToStore(
+      submissionData as Omit<
+        IndividualCustomer,
+        "created_at" | "updated_at" | "calculatedBill" | "arrears" | "status" | "paymentStatus"
+      >
+    );
+
     if (result.success && result.data) {
       toast({
         title: "Data Entry Submitted for Approval",
-        description: `Data for customer ${result.data.name} has been recorded and is now pending approval.`,
+        description: `Customer "${result.data.name}" has been recorded and is pending approval.`,
       });
       form.reset({
-        assignedBulkMeterId: UNASSIGNED_BULK_METER_VALUE,
+        assignedBulkMeterId: "",
         name: "",
         customerKeyNumber: "",
         instKey: "",
@@ -173,117 +264,498 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
         branchId: staffBranchId,
         woreda: "",
         sewerageConnection: undefined,
-        faultCode: undefined, // Reset fault code
+        faultCode: undefined,
       });
-      setHasFault(false); // Reset fault checkbox
+      setHasFault(false);
     } else {
       toast({
         variant: "destructive",
         title: "Submission Failed",
-        description: result.message || "Could not record customer data. Please check console for errors.",
+        description: result.message || "Could not record customer data. Please check for errors.",
       });
     }
   }
 
-  const handleBulkMeterChange = (value: string | undefined) => {
-    form.setValue("assignedBulkMeterId", value);
-  };
-
-  const commonFieldDisabled = !actualBulkMeterIsSelected || form.formState.isSubmitting || isLoadingBulkMeters;
-  const submitButtonDisabled = !actualBulkMeterIsSelected || form.formState.isSubmitting || isLoadingBulkMeters;
-
-
   return (
-    <ScrollArea className="h-[calc(100vh-380px)]">
+    <ScrollArea className="h-[calc(100vh-320px)] pr-4">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 p-1">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormItem>
-              <FormLabel>Branch</FormLabel>
-              <FormControl>
-                <Input value={branchName} readOnly disabled className="bg-muted/50" />
-              </FormControl>
-            </FormItem>
-            <FormField
-              control={form.control}
-              name="assignedBulkMeterId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Assign to Bulk Meter *</FormLabel>
-                  <Select
-                    onValueChange={handleBulkMeterChange}
-                    value={field.value || UNASSIGNED_BULK_METER_VALUE}
-                    disabled={isLoadingBulkMeters || form.formState.isSubmitting}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder={isLoadingBulkMeters ? "Loading bulk meters..." : "Select a bulk meter"} />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value={UNASSIGNED_BULK_METER_VALUE}>None</SelectItem>
-                      {availableBulkMeters.length === 0 && !isLoadingBulkMeters && (
-                        <SelectItem value="no-bms-available-staff" disabled>
-                          No bulk meters available in this branch
-                        </SelectItem>
-                      )}
-                      {availableBulkMeters.map((bm) => (
-                        <SelectItem key={bm.customerKeyNumber} value={bm.customerKeyNumber}>
-                          {bm.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-10">
+
+          {/* ── Progress Indicator ─────────────────────────────────────── */}
+          <div className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {progressPct === 100 ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                ) : (
+                  <Activity className="h-4 w-4 text-primary animate-pulse" />
+                )}
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  Form Completion
+                </span>
+              </div>
+              <span
+                className={`text-xs font-bold tabular-nums ${
+                  progressPct === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-primary"
+                }`}
+              >
+                {filledCount} / {REQUIRED_FIELDS.length} required fields &nbsp;·&nbsp; {progressPct}%
+              </span>
+            </div>
+            <Progress
+              value={progressPct}
+              className={`h-2 rounded-full transition-all duration-500 ${
+                progressPct === 100 ? "[&>div]:bg-emerald-500" : ""
+              }`}
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <FormField control={form.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name *</FormLabel><FormControl><Input {...field} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="customerKeyNumber" render={({ field }) => (<FormItem><FormLabel>Cust. Key No. *</FormLabel><FormControl><Input {...field} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="instKey" render={({ field }) => (<FormItem><FormLabel>INST_KEY *</FormLabel><FormControl><Input {...field} placeholder="e.g., INST-12345" disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="contractNumber" render={({ field }) => (<FormItem><FormLabel>Contract No. *</FormLabel><FormControl><Input {...field} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
+          {/* ── Section: Assignment & Branch ───────────────────────────── */}
+          <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Branch (Display only for Staff) */}
+              <FormItem>
+                <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  Branch
+                </FormLabel>
+                <div className="premium-input-group">
+                  <Network className="h-4 w-4 text-slate-500" />
+                  <Input
+                    value={branchName || "Staff Branch"}
+                    readOnly
+                    disabled
+                    className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 cursor-not-allowed font-semibold text-slate-700 dark:text-slate-200"
+                  />
+                </div>
+              </FormItem>
 
-            <FormField control={form.control} name="customerType" render={({ field }) => (<FormItem><FormLabel>Customer Type *</FormLabel><Select onValueChange={field.onChange} value={field.value} disabled={commonFieldDisabled}><FormControl><SelectTrigger disabled={commonFieldDisabled}><SelectValue placeholder="Select type" /></SelectTrigger></FormControl><SelectContent>{customerTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="bookNumber" render={({ field }) => (<FormItem><FormLabel>Book No. *</FormLabel><FormControl><Input {...field} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="ordinal" render={({ field }) => (<FormItem><FormLabel>Ordinal *</FormLabel><FormControl><Input type="number" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
+              {/* Assign to Bulk Meter — MANDATORY */}
+              <FormField
+                control={form.control}
+                name="assignedBulkMeterId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Assign to Bulk Meter <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Layers className="h-4 w-4 text-primary" />
+                      <Select
+                        onValueChange={handleBulkMeterChange}
+                        value={field.value || undefined}
+                        disabled={isLoadingBulkMeters || form.formState.isSubmitting}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-primary/40 dark:border-primary/40 bg-primary/5 focus:ring-primary">
+                            <SelectValue
+                              placeholder={
+                                isLoadingBulkMeters ? "Loading Bulk Meters…" : "Select a Bulk Meter (Required)"
+                              }
+                            />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl">
+                          {availableBulkMeters.length === 0 && !isLoadingBulkMeters && (
+                            <SelectItem value="no-bms-available" disabled>
+                              No bulk meters found
+                            </SelectItem>
+                          )}
+                          {availableBulkMeters.map((bm) => (
+                            <SelectItem key={bm.customerKeyNumber} value={bm.customerKeyNumber}>
+                              {bm.name} ({bm.customerKeyNumber})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
 
-            <FormField
-              control={form.control}
-              name="meterSize"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Meter Size (inch) *</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value ? String(field.value) : undefined} disabled={commonFieldDisabled}>
-                    <FormControl>
-                      <SelectTrigger disabled={commonFieldDisabled}>
-                        <SelectValue placeholder="Select a size" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {meterSizeOptions.map(option => (
-                        <SelectItem key={String(option.value)} value={String(option.value)}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField control={form.control} name="NUMBER_OF_DIALS" render={({ field }) => (<FormItem><FormLabel>Number of Dials</FormLabel><FormControl><Input type="number" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="meterNumber" render={({ field }) => (<FormItem><FormLabel>METER_KEY *</FormLabel><FormControl><Input {...field} placeholder="e.g., MET-2822965" disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="previousReading" render={({ field }) => (<FormItem><FormLabel>Previous Reading *</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
+          {/* ── Lock Banner when Bulk Meter is NOT selected ───────────────── */}
+          {!isBulkMeterSelected && (
+            <div className="flex items-center gap-3 p-4 rounded-2xl border border-amber-200/80 bg-amber-50/80 dark:bg-amber-950/30 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 transition-all duration-300">
+              <Lock className="h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+              <p className="text-sm font-medium">
+                <strong>Form Locked:</strong> You must select a Bulk Meter above to unlock the rest of the customer entry form.
+              </p>
+            </div>
+          )}
 
-            <FormField control={form.control} name="currentReading" render={({ field }) => (<FormItem><FormLabel>Current Reading *</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value ?? ""} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
+          {/* ── Remaining Form Content (Locked until Bulk Meter selected) ─── */}
+          <div
+            className={`space-y-8 transition-all duration-300 ${
+              !isBulkMeterSelected ? "opacity-40 pointer-events-none filter blur-[0.3px]" : ""
+            }`}
+          >
+            {/* Customer Identity */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Full Name <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <User className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., Abebe Bekele"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="customerKeyNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Cust. Key No. <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 uppercase tracking-wider">
+                        From Ext. System
+                      </span>
+                    </div>
+                    <div className="premium-input-group">
+                      <Hash className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., CUST-00123"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="instKey"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        INST_KEY <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 uppercase tracking-wider">
+                        From Ext. System
+                      </span>
+                    </div>
+                    <div className="premium-input-group">
+                      <Hash className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., INST-45678"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="contractNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Contract No. <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Briefcase className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., CNT-2024-001"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="customerType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Customer Type <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Layers className="h-4 w-4" />
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                            <SelectValue placeholder="Select type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl">
+                          {customerTypes.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="bookNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Book No. <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Book className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., BK-042"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ordinal"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Ordinal <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Layers className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="e.g., 5"
+                          {...field}
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(
+                              e.target.value === "" ? undefined : parseInt(e.target.value, 10)
+                            )
+                          }
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="meterSize"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Meter Size (inch) <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Settings className="h-4 w-4" />
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value ? String(field.value) : undefined}
+                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                            <SelectValue placeholder="Select a size" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl">
+                          {meterSizeOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="NUMBER_OF_DIALS"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Number of Dials
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Settings className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="e.g., 5"
+                          {...field}
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(
+                              e.target.value === "" ? undefined : parseInt(e.target.value, 10)
+                            )
+                          }
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="meterNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      METER_KEY <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Activity className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., MET-2822965"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="previousReading"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Previous Reading <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Activity className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="e.g., 1234.00"
+                          {...field}
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(
+                              e.target.value === "" ? undefined : parseFloat(e.target.value)
+                            )
+                          }
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="currentReading"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Current Reading <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Activity className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="e.g., 1289.50"
+                          {...field}
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(
+                              e.target.value === "" ? undefined : parseFloat(e.target.value)
+                            )
+                          }
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
-            <div className="col-span-1 md:col-span-2 lg:col-span-3 space-y-4 rounded-md border p-4 bg-muted/20">
+            {/* Live consumption badge */}
+            {consumption !== null && (
+              <div
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all duration-300 ${
+                  consumption < 0
+                    ? "bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400"
+                    : "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400"
+                }`}
+              >
+                <TrendingUp className="h-4 w-4 flex-shrink-0" />
+                {consumption < 0 ? (
+                  <span>⚠️ Current reading is less than previous — please check values.</span>
+                ) : (
+                  <span>
+                    Consumption: <strong>{consumption.toFixed(2)} m³</strong>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Measurement Issue / Fault Checkbox */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 bg-slate-50/50 dark:bg-slate-900/30 space-y-4">
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="hasFault"
+                  id="hasFaultStaff"
                   checked={hasFault}
                   onCheckedChange={(c) => {
                     const checked = !!c;
@@ -292,9 +764,11 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                       form.setValue("faultCode", undefined);
                     }
                   }}
-                  disabled={commonFieldDisabled}
+                  disabled={!isBulkMeterSelected || form.formState.isSubmitting}
                 />
-                <FormLabel htmlFor="hasFault" className="cursor-pointer font-medium mb-0">Measurement Issue / Meter Fault?</FormLabel>
+                <label htmlFor="hasFaultStaff" className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  Measurement Issue / Meter Fault?
+                </label>
               </div>
 
               {hasFault && (
@@ -303,15 +777,21 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                   name="faultCode"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Fault Code <span className="text-destructive">*</span></FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value} disabled={commonFieldDisabled}>
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Fault Code <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                      >
                         <FormControl>
-                          <SelectTrigger className="bg-background">
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
                             <SelectValue placeholder="Select fault type" />
                           </SelectTrigger>
                         </FormControl>
-                        <SelectContent>
-                          {faultCodesList.map(fc => (
+                        <SelectContent className="rounded-xl">
+                          {faultCodesList.map((fc) => (
                             <SelectItem key={fc.code} value={fc.code}>
                               <span className="font-medium text-destructive">{fc.code}</span> - {fc.label}
                             </SelectItem>
@@ -324,68 +804,172 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                 />
               )}
             </div>
-            <FormField control={form.control} name="month" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Reading Month *</FormLabel><DatePicker date={field.value && isValid(parse(field.value, "yyyy-MM", new Date())) ? parse(field.value, "yyyy-MM", new Date()) : undefined} setDate={(date) => field.onChange(date ? format(date, "yyyy-MM") : "")} disabledTrigger={commonFieldDisabled} /><FormMessage /></FormItem>)} />
-            <FormField control={form.control} name="specificArea" render={({ field }) => (<FormItem><FormLabel>Specific Area *</FormLabel><FormControl><Input {...field} disabled={commonFieldDisabled} /></FormControl><FormMessage /></FormItem>)} />
 
-            <FormField
-              control={form.control}
-              name="subCity"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Sub-City *</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    value={field.value || undefined}
-                    disabled={commonFieldDisabled}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a Sub-City" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {subCityOptions.map(option => (
-                        <SelectItem key={String(option)} value={String(option)}>
-                          {option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="woreda"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Woreda *</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || undefined} disabled={commonFieldDisabled}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a Woreda" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {woredaOptions.map(option => (
-                        <SelectItem key={String(option)} value={String(option)}>
-                          {option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {/* Location & Infrastructure */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <FormField
+                control={form.control}
+                name="month"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                      Reading Month <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <DatePicker
+                      date={
+                        field.value && isValid(parse(field.value, "yyyy-MM", new Date()))
+                          ? parse(field.value, "yyyy-MM", new Date())
+                          : undefined
+                      }
+                      setDate={(date) => field.onChange(date ? format(date, "yyyy-MM") : "")}
+                      disabledTrigger={!isBulkMeterSelected || form.formState.isSubmitting}
+                    />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="specificArea"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Specific Area <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <MapPin className="h-4 w-4" />
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="e.g., Bole Medhanealem"
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                        />
+                      </FormControl>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="subCity"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Sub-City <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <MapPin className="h-4 w-4" />
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value || undefined}
+                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                            <SelectValue placeholder="Select a Sub-City" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl">
+                          {subCityOptions.map((option) => (
+                            <SelectItem key={String(option)} value={String(option)}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="woreda"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Woreda <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <MapPin className="h-4 w-4" />
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value || undefined}
+                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                            <SelectValue placeholder="Select a Woreda" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl">
+                          {woredaOptions.map((option) => (
+                            <SelectItem key={String(option)} value={String(option)}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="sewerageConnection"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Sewerage Conn. <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <div className="premium-input-group">
+                      <Droplets className="h-4 w-4" />
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                            <SelectValue placeholder="Select connection" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl">
+                          {sewerageConnections.map((conn) => (
+                            <SelectItem key={conn} value={conn}>
+                              {conn}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
-            <FormField control={form.control} name="sewerageConnection" render={({ field }) => (<FormItem><FormLabel>Sewerage Conn. *</FormLabel><Select onValueChange={field.onChange} value={field.value} disabled={commonFieldDisabled}><FormControl><SelectTrigger disabled={commonFieldDisabled}><SelectValue placeholder="Select connection" /></SelectTrigger></FormControl><SelectContent>{sewerageConnections.map(conn => <SelectItem key={conn} value={conn}>{conn}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
+            {/* ── Submit Button ─────────────────────────────────────────── */}
+            <div className="pt-4 flex justify-end">
+              <Button
+                type="submit"
+                className="w-full md:w-auto px-8 py-6 rounded-2xl shadow-lg hover:shadow-primary/20 transition-all duration-300 font-bold text-lg"
+                disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+              >
+                {form.formState.isSubmitting ? (
+                  <>
+                    <Activity className="mr-2 h-5 w-5 animate-spin" />
+                    Submitting Data…
+                  </>
+                ) : (
+                  "Submit Customer for Approval"
+                )}
+              </Button>
+            </div>
           </div>
-
-          <Button type="submit" className="w-full md:w-auto" disabled={submitButtonDisabled}>
-            {form.formState.isSubmitting ? "Submitting..." : "Submit for Approval"}
-          </Button>
         </form>
       </Form>
     </ScrollArea>

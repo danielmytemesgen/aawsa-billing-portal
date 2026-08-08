@@ -39,10 +39,26 @@ const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => 
         items: [{ title: "Dashboard", href: dashboardHref, iconName: "LayoutDashboard" }]
     });
 
-    // For users with assigned routes, show My Routes
-    if (hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED)) {
+    // For users with route or field reading permissions, show My Routes & Reader Monitoring
+    if (
+        hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED) || 
+        hasPermission(PERMISSIONS.ROUTES_VIEW_ALL) || 
+        hasPermission(PERMISSIONS.ROUTES_VIEW_BRANCH) || 
+        hasPermission(PERMISSIONS.ROUTES_MANAGE) || 
+        hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) || 
+        hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL)
+    ) {
+        const routeSubItems: NavItem[] = [{ title: "My Routes", href: "/staff/my-routes", iconName: "MapPin" }];
+        if (
+            hasPermission(PERMISSIONS.READER_PROGRESS_VIEW) || 
+            hasPermission(PERMISSIONS.ROUTES_MANAGE) || 
+            hasPermission(PERMISSIONS.ROUTES_VIEW_ALL) || 
+            hasPermission(PERMISSIONS.STAFF_VIEW_ALL)
+        ) {
+            routeSubItems.push({ title: "Reader Monitoring", href: "/staff/reader-progress", iconName: "Activity" });
+        }
         navItems.push({
-            items: [{ title: "My Routes", href: "/staff/my-routes", iconName: "MapPin" }]
+            items: routeSubItems
         });
     }
 
@@ -103,46 +119,6 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
     const [isLoading, setIsLoading] = React.useState(true);
     const router = useRouter();
 
-    React.useEffect(() => {
-        const fetchUser = async () => {
-            // Permissions will refresh on next navigation or reload
-
-            const storedUser = localStorage.getItem("user");
-            if (storedUser) {
-                try {
-                    const parsedUser = JSON.parse(storedUser);
-                    setUser(parsedUser);
-                } catch (e) {
-                    console.error("Failed to parse user from localStorage", e);
-                    router.replace("/");
-                }
-            } else {
-                router.replace("/");
-            }
-            setIsLoading(false);
-        };
-
-        fetchUser();
-
-        const handlePermissionsUpdate = () => {
-            const storedUser = localStorage.getItem("user");
-            if (storedUser) {
-                try {
-                    const parsedUser = JSON.parse(storedUser);
-                    setUser(parsedUser);
-                } catch (e) {
-                    console.error("Failed to parse user from localStorage", e);
-                }
-            }
-        };
-
-        const unsubscribeSync = subscribePermissionsSync(handlePermissionsUpdate);
-        window.addEventListener('user-permissions-updated', handlePermissionsUpdate);
-        return () => {
-            unsubscribeSync();
-            window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
-        };
-    }, [router]);
 
     const refreshPermissions = React.useCallback(async () => {
         // Skip the network call when offline — permissions are already cached in localStorage
@@ -165,6 +141,42 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
             console.warn('StaffLayout: failed to refresh permissions (offline?)', e);
         }
     }, []);
+
+    React.useEffect(() => {
+        const fetchUser = async () => {
+            // Permissions will refresh on next navigation or reload
+
+            const storedUser = localStorage.getItem("user");
+            if (storedUser) {
+                try {
+                    const parsedUser = JSON.parse(storedUser);
+                    setUser(parsedUser);
+                } catch (e) {
+                    console.error("Failed to parse user from localStorage", e);
+                    router.replace("/");
+                }
+            } else {
+                router.replace("/");
+            }
+            setIsLoading(false);
+        };
+
+        fetchUser();
+
+        const handlePermissionsUpdate = () => {
+            // Refresh from DB so permission changes from admin take effect immediately
+            refreshPermissions();
+        };
+
+        const unsubscribeSync = subscribePermissionsSync(handlePermissionsUpdate);
+        window.addEventListener('user-permissions-updated', handlePermissionsUpdate);
+        return () => {
+            unsubscribeSync();
+            window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
+        };
+    }, [router, refreshPermissions]);
+
+
 
     const navItems = buildStaffSidebarNavItems(user);
 

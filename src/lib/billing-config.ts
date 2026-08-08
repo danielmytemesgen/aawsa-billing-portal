@@ -50,7 +50,8 @@ export function getBillingCycleConfig(): BillingCycleConfig {
  * @param monthYear - Format: YYYY-MM
  */
 export function getBillingPeriodStartDate(monthYear: string, startDay?: number): string {
-    const day = startDay ?? BILLING_CYCLE_START_DAY;
+    const config = getBillingCycleConfig();
+    const day = startDay ?? config.cycleStartDay ?? BILLING_CYCLE_START_DAY;
     return `${monthYear}-${String(day).padStart(2, '0')}`;
 }
 
@@ -59,7 +60,8 @@ export function getBillingPeriodStartDate(monthYear: string, startDay?: number):
  * @param monthYear - Format: YYYY-MM
  */
 export function getBillingPeriodEndDate(monthYear: string, startDay?: number): string {
-    const day = startDay ?? BILLING_CYCLE_START_DAY;
+    const config = getBillingCycleConfig();
+    const day = startDay ?? config.cycleStartDay ?? BILLING_CYCLE_START_DAY;
     const [year, month] = monthYear.split('-').map(Number);
     const nextMonth = month === 12 ? 1 : month + 1;
     const nextYear = month === 12 ? year + 1 : year;

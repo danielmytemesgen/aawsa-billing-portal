@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, LogOut, ShieldCheck } from "lucide-react";
+import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, LogOut, ShieldCheck, Calendar as CalendarIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -372,100 +372,122 @@ export default function StaffSettingsPage() {
 
                     {/* Cycle Mode */}
                     <div className="space-y-2">
-                        <Label htmlFor="cycle-mode">Billing Cycle Mode</Label>
+                        <Label htmlFor="cycle-mode" className="font-semibold text-sm">Billing Cycle Mode</Label>
                         <Select value={cycleMode} onValueChange={(v) => setCycleMode(v as 'once_per_month' | 'custom' | 'unlimited')} disabled={!canUpdateSettings}>
-                            <SelectTrigger id="cycle-mode" className="w-full md:w-[280px]">
+                            <SelectTrigger id="cycle-mode" className="w-full md:w-[320px] h-10 font-medium">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="once_per_month">Once per Month (Fixed Day)</SelectItem>
-                                <SelectItem value="custom">Custom Date Range (Multiple per Month)</SelectItem>
-                                <SelectItem value="unlimited">Unlimited bill per day</SelectItem>
+                                <SelectItem value="once_per_month">📅 Once per Month (Fixed Day)</SelectItem>
+                                <SelectItem value="custom">📆 Custom Date Range (Multiple per Month)</SelectItem>
+                                <SelectItem value="unlimited">⚡ Unlimited Bills per Day</SelectItem>
                             </SelectContent>
                         </Select>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-muted-foreground mt-1">
                             {cycleMode === 'once_per_month'
-                                ? 'Cycle runs automatically from the configured day each month.'
+                                ? 'Cycle runs automatically on a fixed monthly schedule based on the configured start day.'
                                 : cycleMode === 'custom'
-                                ? 'You will pick exact start & end dates when launching each billing run.'
-                                : 'Allow generating an unlimited number of bills per day.'}
+                                ? 'Select exact start & end dates when launching each billing run to support multiple runs per month.'
+                                : 'Allows generating an unlimited number of bills per day without date range restrictions.'}
                         </p>
                     </div>
 
                     {cycleMode === 'once_per_month' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20">
-                            <div className="space-y-2">
-                                <Label htmlFor="billing-cycle-day">Cycle Start Day</Label>
-                                <Select value={billingCycleDay} onValueChange={setBillingCycleDay} disabled={!canUpdateSettings}>
-                                    <SelectTrigger id="billing-cycle-day" className="w-full">
-                                        <SelectValue placeholder="Select day" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {billingCycleDays.map(day => (
-                                            <SelectItem key={day} value={day}>Day {day}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground">Day of month the billing period starts.</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 border rounded-xl bg-slate-50/50 dark:bg-slate-900/20 shadow-sm">
+                            <div className="space-y-3">
+                                <Label htmlFor="billing-cycle-day" className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                                    <CalendarIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" /> Cycle Start Day
+                                </Label>
+                                <div className="flex flex-col gap-2">
+                                    <Select value={billingCycleDay} onValueChange={setBillingCycleDay} disabled={!canUpdateSettings}>
+                                        <SelectTrigger id="billing-cycle-day" className="w-full md:w-[220px] bg-white dark:bg-slate-800">
+                                            <SelectValue placeholder="Select day" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {billingCycleDays.map(day => (
+                                                <SelectItem key={day} value={day}>Day {day} of each month</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-xs text-muted-foreground font-medium pl-1">
+                                        Monthly Window: <span className="text-blue-600 dark:text-blue-400 font-bold">Day {billingCycleDay}</span> of current month to <span className="text-blue-600 dark:text-blue-400 font-bold">Day {billingCycleDay}</span> of next month.
+                                    </p>
+                                </div>
                             </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="due-date-offset">Due Date (days after cycle end)</Label>
-                                <Input
-                                    id="due-date-offset"
-                                    type="number"
-                                    min={1}
-                                    max={60}
-                                    value={dueDateOffset}
-                                    onChange={(e) => setDueDateOffset(e.target.value)}
-                                    disabled={!canUpdateSettings}
-                                    className="w-full"
-                                />
-                                <p className="text-xs text-muted-foreground">Bills due this many days after cycle ends.</p>
+
+                            <div className="space-y-3">
+                                <Label htmlFor="due-date-offset" className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                                    <CalendarIcon className="h-4 w-4 text-amber-600 dark:text-amber-400" /> Due Date (Payment Deadline)
+                                </Label>
+                                <div className="flex flex-col gap-2">
+                                    <div className="flex items-center gap-2">
+                                        <Input
+                                            id="due-date-offset"
+                                            type="number"
+                                            min={0}
+                                            max={90}
+                                            value={dueDateOffset}
+                                            onChange={(e) => setDueDateOffset(e.target.value)}
+                                            disabled={!canUpdateSettings}
+                                            className="w-full md:w-[160px] bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
+                                        />
+                                        <span className="text-xs font-semibold text-slate-500">Days after cycle end (0 = Same Date)</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground font-medium pl-1">
+                                        Deadline set to <span className="text-amber-600 dark:text-amber-400 font-bold">
+                                            {dueDateOffset === "0" ? "SAME DAY (0 days offset)" : `${dueDateOffset || "0"} days`}
+                                        </span> after cycle end date.
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     )}
 
                     {cycleMode === 'custom' && (
-                        <div className="p-4 border rounded-lg bg-blue-50 border-blue-200 space-y-2">
+                        <div className="p-5 border rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 space-y-3">
                             <div className="flex items-center gap-2">
-                                <Info className="h-4 w-4 text-blue-600" />
-                                <p className="text-sm font-semibold text-blue-800">Custom Date Range Mode Active</p>
+                                <Info className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                                <p className="text-sm font-bold text-blue-900 dark:text-blue-100">Custom Date Range Mode Active</p>
                             </div>
-                            <p className="text-xs text-blue-700">Start & end dates are picked per billing run — enabling multiple cycles per month.</p>
+                            <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed">
+                                Start & end dates are specified manually when running each billing cycle. This enables multiple custom billing runs per month (e.g. mid-month billing or split branch schedules).
+                            </p>
                             <div className="space-y-2 pt-2">
-                                <Label htmlFor="due-date-offset-custom">Due Date (days after cycle end)</Label>
+                                <Label htmlFor="due-date-offset-custom" className="text-xs font-bold text-blue-900 dark:text-blue-100">Payment Deadline (Days after cycle end, 0 = Same Date)</Label>
                                 <Input
                                     id="due-date-offset-custom"
                                     type="number"
-                                    min={1}
+                                    min={0}
                                     max={60}
                                     value={dueDateOffset}
                                     onChange={(e) => setDueDateOffset(e.target.value)}
                                     disabled={!canUpdateSettings}
-                                    className="w-full md:w-[160px]"
+                                    className="w-full md:w-[180px] bg-white dark:bg-slate-800"
                                 />
                             </div>
                         </div>
                     )}
 
                     {cycleMode === 'unlimited' && (
-                        <div className="p-4 border rounded-lg bg-green-50 border-green-200 space-y-2">
+                        <div className="p-5 border rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 space-y-3">
                             <div className="flex items-center gap-2">
-                                <Info className="h-4 w-4 text-green-600" />
-                                <p className="text-sm font-semibold text-green-800">Unlimited Bills per Day Active</p>
+                                <Info className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                                <p className="text-sm font-bold text-emerald-900 dark:text-emerald-100">Unlimited Bills per Day Active</p>
                             </div>
-                            <p className="text-xs text-green-700">You can generate as many bills as required at any time for any billing period.</p>
+                            <p className="text-xs text-emerald-800 dark:text-emerald-200 leading-relaxed">
+                                You can generate as many billing runs as required at any time without cycle frequency locks or restriction on bill generation dates.
+                            </p>
                             <div className="space-y-2 pt-2">
-                                <Label htmlFor="due-date-offset-custom">Due Date (days after cycle end)</Label>
+                                <Label htmlFor="due-date-offset-unlimited" className="text-xs font-bold text-emerald-900 dark:text-emerald-100">Payment Deadline (Days after cycle end, 0 = Same Date)</Label>
                                 <Input
-                                    id="due-date-offset-custom"
+                                    id="due-date-offset-unlimited"
                                     type="number"
-                                    min={1}
+                                    min={0}
                                     max={60}
                                     value={dueDateOffset}
                                     onChange={(e) => setDueDateOffset(e.target.value)}
                                     disabled={!canUpdateSettings}
-                                    className="w-full md:w-[160px]"
+                                    className="w-full md:w-[180px] bg-white dark:bg-slate-800"
                                 />
                             </div>
                         </div>

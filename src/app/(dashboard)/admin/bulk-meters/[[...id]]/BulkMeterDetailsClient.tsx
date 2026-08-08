@@ -91,8 +91,12 @@ export default function BulkMeterDetailsPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
-  const canManageCustomers = hasPermission(PERMISSIONS.BULK_METERS_UPDATE);
-  const canEditReadings = hasPermission(PERMISSIONS.BULK_METERS_UPDATE);
+  const canManageCustomers = hasPermission(PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS);
+  const canEditReadings =
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE);
   const idRaw = params?.id;
   const bulkMeterKey = Array.isArray(idRaw) ? idRaw[0] : (idRaw as string || "");
 

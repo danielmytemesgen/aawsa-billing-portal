@@ -507,7 +507,6 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     // Filtered Outstanding List (Main Table) - Restricted to Recent Month or Selected Month
     const filteredOutstanding = filteredForStats
         .filter(b => b.status === 'Posted' && b.payment_status === 'Unpaid')
-        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth)
         .filter(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
             const matchesStatus = statusFilter === 'all' ||
@@ -518,8 +517,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
     // Filtered Paid List (Second Table) - Restricted to Recent Month or Selected Month
     const filteredPaid = filteredForStats
-        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid')
-        .filter(b => monthFilter !== 'all' || b.month_year === latestMonth);
+        .filter(b => b.status === 'Posted' && b.payment_status === 'Paid');
 
     const paginatedOutstanding = filteredOutstanding.slice(
         currentPage * itemsPerPage,

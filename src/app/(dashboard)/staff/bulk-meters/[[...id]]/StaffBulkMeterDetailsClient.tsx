@@ -40,6 +40,11 @@ import html2canvas from "html2canvas";
 import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
 import { calculateDebtAging, getMonthlyBillAmt } from "@/lib/billing-utils";
+import { PERMISSIONS } from "@/lib/constants/auth";
+import { usePermissions } from "@/hooks/use-permissions";
+import { EditReadingsRecalculateSection } from "@/components/billing/EditReadingsRecalculateSection";
+import { ManageAssignedCustomersDialog } from "@/components/billing/ManageAssignedCustomersDialog";
+import { Edit2 } from "lucide-react";
 
 interface UserAuth {
   id?: string;
@@ -92,6 +97,15 @@ export default function StaffBulkMeterDetailsPage() {
   const [selectedCustomer, setSelectedCustomer] = React.useState<IndividualCustomer | null>(null);
   const [customerToDelete, setCustomerToDelete] = React.useState<IndividualCustomer | null>(null);
   const [isCustomerDeleteDialogOpen, setIsCustomerDeleteDialogOpen] = React.useState(false);
+  const { hasPermission } = usePermissions();
+  const canManageCustomers = hasPermission(PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS);
+  const canEditReadings =
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE);
+  const [isEditReadingsOpen, setIsEditReadingsOpen] = React.useState(false);
+  const [isManageCustomersOpen, setIsManageCustomersOpen] = React.useState(false);
   const [isAddReadingOpen, setIsAddReadingOpen] = React.useState(false);
 
   const [branchBulkMetersForCustomerForm, setBranchBulkMetersForCustomerForm] = useState<{ customerKeyNumber: string, name: string }[]>([]);
@@ -1125,6 +1139,12 @@ export default function StaffBulkMeterDetailsPage() {
                       <FileEdit className="mr-2 h-4 w-4" />
                       <span>Edit Bulk Meter</span>
                     </DropdownMenuItem>
+                    {canManageCustomers && (
+                      <DropdownMenuItem onClick={() => setIsManageCustomersOpen(true)}>
+                        <UsersIcon className="mr-2 h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        <span className="font-medium text-blue-600 dark:text-blue-400">Manage Assigned Customers</span>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={handleDeleteBulkMeter} className="text-destructive focus:text-destructive focus:bg-destructive/10">
                       <Trash2 className="mr-2 h-4 w-4" />
                       <span>Delete Bulk Meter</span>
@@ -1250,17 +1270,46 @@ export default function StaffBulkMeterDetailsPage() {
 
           <Card className="shadow-lg non-printable">
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" />Reading History</CardTitle>
                   <CardDescription>Historical readings logged for this meter.</CardDescription>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
-                  <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {canEditReadings && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditReadingsOpen(!isEditReadingsOpen)}
+                      className={cn(
+                        "border-amber-500/40 text-amber-900 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40",
+                        isEditReadingsOpen && "bg-amber-100 dark:bg-amber-900/50 border-amber-500 font-bold"
+                      )}
+                    >
+                      <Edit2 className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" /> Edit Readings & Recalculate
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
+                    <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
+              {isEditReadingsOpen && bulkMeter && (
+                <div className="p-4 border-b border-border bg-amber-50/20 dark:bg-amber-950/10">
+                  <EditReadingsRecalculateSection
+                    bulkMeter={bulkMeter}
+                    latestBill={billingHistory[0] || null}
+                    onClose={() => setIsEditReadingsOpen(false)}
+                    onSaveSuccess={() => {
+                      initializeBulkMeters(true);
+                      initializeBills(true);
+                      initializeCustomers(true);
+                    }}
+                  />
+                </div>
+              )}
               {meterReadingHistory.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-6 italic">No historical readings found for this meter.</p>
               ) : (
@@ -1655,6 +1704,9 @@ export default function StaffBulkMeterDetailsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {bulkMeter && (
+        <ManageAssignedCustomersDialog open={isManageCustomersOpen} onOpenChange={setIsManageCustomersOpen} bulkMeter={bulkMeter} />
+      )}
     </div>
   );
 }

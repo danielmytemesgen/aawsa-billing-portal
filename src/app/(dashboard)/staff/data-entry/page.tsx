@@ -19,6 +19,8 @@ import {
   addCustomer,
   initializeBulkMeters,
   initializeCustomers,
+  initializeBranches,
+  getBranches,
   getCustomers
 } from "@/lib/data-store";
 import { generateCustomerKeys } from "@/lib/utils";
@@ -52,15 +54,35 @@ export default function StaffDataEntryPage() {
     const storedUser = localStorage.getItem("user");
     if (storedUser) {
       try {
-        const parsedUser: User = JSON.parse(storedUser);
-        setCurrentUser(parsedUser as StaffMember);
-        const roleLower = parsedUser.role.toLowerCase();
-        if (["staff", "reader", "staff management"].includes(roleLower) && parsedUser.branchId && parsedUser.branchName) {
-          setStaffBranchName(parsedUser.branchName);
-          setStaffBranchId(parsedUser.branchId);
-        } else if (["staff", "reader", "staff management"].includes(roleLower) && !parsedUser.branchId) {
-          setStaffBranchName("Unassigned Branch");
+        const parsedUser: any = JSON.parse(storedUser);
+        setCurrentUser(parsedUser);
+
+        const bName = parsedUser.branchName || parsedUser.branch || parsedUser.branch_name || parsedUser.assignedBranch || parsedUser.subCity;
+        const bId = parsedUser.branchId || parsedUser.branch_id;
+
+        if (bName && bName !== "Your Branch") {
+          setStaffBranchName(bName);
         }
+        if (bId) {
+          setStaffBranchId(bId);
+        }
+
+        // Initialize admin branches to resolve branchId and exact branchName if needed
+        initializeBranches().then(() => {
+          const allBranches = getBranches();
+          const targetName = bName || staffBranchName;
+          if (targetName && targetName !== "Your Branch") {
+            const found = allBranches.find(b => {
+              const bLower = b.name.trim().toLowerCase();
+              const tLower = targetName.trim().toLowerCase();
+              return bLower === tLower || bLower.includes(tLower) || tLower.includes(bLower);
+            });
+            if (found) {
+              setStaffBranchName(found.name);
+              setStaffBranchId(found.id);
+            }
+          }
+        });
       } catch (e) {
         console.error("Failed to parse user from localStorage", e);
         setStaffBranchName("Error: Branch Undefined");

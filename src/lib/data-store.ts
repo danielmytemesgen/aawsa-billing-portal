@@ -611,7 +611,7 @@ const mapDomainCustomerToInsert = async (
     sewerageConnection: customer.sewerageConnection!,
     assignedBulkMeterId: customer.assignedBulkMeterId,
     branch_id: customer.branchId,
-    status: customer.status || 'Active',
+    status: customer.status || 'Pending Approval',
     paymentStatus: customer.paymentStatus || 'Unpaid',
     calculatedBill: bill,
     x_coordinate: customer.xCoordinate,
@@ -744,7 +744,7 @@ const mapDomainBulkMeterToInsert = async (bm: Partial<BulkMeter>): Promise<BulkM
     ROUTE_KEY: bm.routeKey || null,
     ordinal: bm.ordinal || null,
     phoneNumber: bm.phoneNumber,
-    status: bm.status || 'Active',
+    status: bm.status || 'Pending Approval',
     // tolerate an extra 'Pending' status coming from older data; DB types may allow it
     paymentStatus: (bm.paymentStatus as any) || 'Unpaid',
     charge_group: bm.chargeGroup as "Domestic" | "Non-domestic" || 'Non-domestic',
@@ -2613,7 +2613,17 @@ export const addIndividualCustomerReading = async (
   customers = customers.map(c => c.customerKeyNumber === customer.customerKeyNumber ? updatedCustomer : c);
   notifyCustomerListeners();
 
-  individualCustomerReadings = [newReading, ...individualCustomerReadings];
+  const monthStr = newReading.monthYear || (newReading.readingDate ? String(newReading.readingDate).slice(0, 7) : '');
+  const existingIdx = individualCustomerReadings.findIndex(r => 
+    r.individualCustomerId === newReading.individualCustomerId && 
+    (r.monthYear === monthStr || (r.readingDate && String(r.readingDate).slice(0, 7) === monthStr))
+  );
+
+  if (existingIdx >= 0) {
+    individualCustomerReadings[existingIdx] = { ...individualCustomerReadings[existingIdx], ...newReading };
+  } else {
+    individualCustomerReadings = [newReading, ...individualCustomerReadings];
+  }
   notifyIndividualCustomerReadingListeners();
 
   return { success: true, data: newReading };
@@ -2709,7 +2719,17 @@ export const addBulkMeterReading = async (
   bulkMeters = bulkMeters.map(bm => bm.customerKeyNumber === bulkMeter.customerKeyNumber ? updatedBulkMeter : bm);
   notifyBulkMeterListeners();
 
-  bulkMeterReadings = [newReading, ...bulkMeterReadings];
+  const monthStr = newReading.monthYear || (newReading.readingDate ? String(newReading.readingDate).slice(0, 7) : '');
+  const existingIdx = bulkMeterReadings.findIndex(r => 
+    r.CUSTOMERKEY === newReading.CUSTOMERKEY && 
+    (r.monthYear === monthStr || (r.readingDate && String(r.readingDate).slice(0, 7) === monthStr))
+  );
+
+  if (existingIdx >= 0) {
+    bulkMeterReadings[existingIdx] = { ...bulkMeterReadings[existingIdx], ...newReading };
+  } else {
+    bulkMeterReadings = [newReading, ...bulkMeterReadings];
+  }
   notifyBulkMeterReadingListeners();
 
   return { success: true, data: newReading };

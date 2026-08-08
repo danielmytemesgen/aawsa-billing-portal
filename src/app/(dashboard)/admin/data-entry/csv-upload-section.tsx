@@ -28,6 +28,9 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
   const { toast } = useToast();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [file, setFile] = React.useState<File | null>(null);
+  const [isDragOver, setIsDragOver] = React.useState(false);
+  const [previewRowCount, setPreviewRowCount] = React.useState<number | null>(null);
+  const [missingHeaderWarnings, setMissingHeaderWarnings] = React.useState<string[]>([]);
   const [isProcessing, setIsProcessing] = React.useState(false);
   const [processingProgress, setProcessingProgress] = React.useState(0);
   const [processingErrors, setProcessingErrors] = React.useState<string[]>([]);
@@ -35,6 +38,9 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
 
   const resetState = () => {
     setFile(null);
+    setIsDragOver(false);
+    setPreviewRowCount(null);
+    setMissingHeaderWarnings([]);
     setIsProcessing(false);
     setProcessingProgress(0);
     setProcessingErrors([]);
@@ -44,20 +50,44 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
     }
   };
 
+  const parseAndPreviewFile = (selectedFile: File) => {
+    // Quick preview: count data rows and check headers
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = (e.target?.result as string || '').replace(/\uFEFF/g, '');
+      const lines = text.split(/\r\n|\n/).map(l => l.trim()).filter(l => l !== '' && !l.startsWith('#'));
+      const rowCount = Math.max(0, lines.length - 1);
+      setPreviewRowCount(rowCount);
+
+      // Header check
+      if (lines.length > 0) {
+        const normalizeHeader = (h: string) => h.trim().replace(/[\s_-]+/g, '').toLowerCase();
+        const csvHeaders = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        const normalizedCsv = new Set(csvHeaders.map(normalizeHeader));
+        const missing = expectedHeaders.filter(h => !normalizedCsv.has(normalizeHeader(h)));
+        setMissingHeaderWarnings(missing);
+      }
+    };
+    reader.readAsText(selectedFile);
+  };
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setProcessingErrors([]);
     setSuccessCount(0);
     setIsProcessing(false);
+    setPreviewRowCount(null);
+    setMissingHeaderWarnings([]);
 
     const selectedFile = event.target.files?.[0];
     if (selectedFile) {
-      // File size limit: 10MB
-      if (selectedFile.size > 10 * 1024 * 1024) {
-        toast({ variant: "destructive", title: "File Too Large", description: "CSV file must be under 10MB." });
+      // File size limit: 50MB (supports 50,000+ records)
+      if (selectedFile.size > 50 * 1024 * 1024) {
+        toast({ variant: "destructive", title: "File Too Large", description: "CSV file must be under 50MB." });
         return;
       }
       if (selectedFile.type === "text/csv" || selectedFile.name.endsWith(".csv")) {
         setFile(selectedFile);
+        parseAndPreviewFile(selectedFile);
       } else {
         toast({ variant: "destructive", title: "Invalid File Type", description: "Please upload a valid .csv file." });
       }
@@ -97,15 +127,20 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
 
       const missingHeaders = expectedHeaders.filter(h => !(normalizeHeader(h) in headerIndexMap));
       if (missingHeaders.length > 0) {
-        console.warn("Some expected headers are missing from CSV:", missingHeaders);
+        localErrors.push(`Missing expected columns: ${missingHeaders.join(', ')}. Please ensure your CSV matches the template.`);
+        setProcessingErrors(localErrors);
+        setIsProcessing(false);
+        return;
       }
 
       const totalRows = lines.length - 1;
 
       // ─────────────────────────────────────────────────────────────────
-      // PHASE 1: Validate all rows client-side (no server calls)
+      // PHASE 1: Asynchronous non-blocking client-side row validation
       // ─────────────────────────────────────────────────────────────────
       const validatedRows: any[] = [];
+      const validationChunkSize = 250;
+
       for (let rowIndex = 1; rowIndex < lines.length; rowIndex++) {
         const values = lines[rowIndex].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ''));
         const rowData: Record<string, any> = {};
@@ -126,48 +161,65 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
             localErrors.push(`Row ${rowIndex + 1}: Validation failed. ${(error as Error).message}`);
           }
         }
-        // Update progress during validation phase (0–30%)
-        setProcessingProgress(Math.round((rowIndex / totalRows) * 30));
+
+        // Yield main thread every 250 rows to keep UI tab silky smooth
+        if (rowIndex % validationChunkSize === 0) {
+          setProcessingProgress(Math.round((rowIndex / totalRows) * 20));
+          await new Promise((res) => setTimeout(res, 0));
+        }
       }
 
-      setProcessingProgress(35);
+      setProcessingProgress(20);
 
       // ─────────────────────────────────────────────────────────────────
-      // PHASE 2: Send to server — batch (1 call) or sequential fallback
+      // PHASE 2: Chunked Server Processing (500 records per HTTP batch)
       // ─────────────────────────────────────────────────────────────────
       if (validatedRows.length > 0) {
         if (batchUploadFunction) {
-          // Fast path: send ALL rows in a single Server Action call
-          try {
-            const result = await batchUploadFunction(validatedRows);
-            if (result?.success) {
-              localSuccessCount = result.inserted ?? validatedRows.length;
-              if (result.errors && result.errors.length > 0) {
-                localErrors.push(...result.errors);
+          const CHUNK_SIZE = 500;
+          const totalChunks = Math.ceil(validatedRows.length / CHUNK_SIZE);
+
+          for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+            const startIdx = chunkIdx * CHUNK_SIZE;
+            const chunkRows = validatedRows.slice(startIdx, startIdx + CHUNK_SIZE);
+
+            try {
+              const result = await batchUploadFunction(chunkRows);
+              if (result?.success) {
+                localSuccessCount += result.inserted ?? chunkRows.length;
+                if (result.errors && result.errors.length > 0) {
+                  localErrors.push(...result.errors);
+                }
+              } else {
+                const details = result?.errors?.length
+                  ? result.errors.join('; ')
+                  : (result as any)?.error?.message || JSON.stringify(result);
+                localErrors.push(`Batch ${chunkIdx + 1}/${totalChunks} failed: ${details}`);
               }
-            } else {
-              const details = result?.errors?.length
-                ? result.errors.join('; ')
-                : (result as any)?.error?.message || JSON.stringify(result);
-              localErrors.push(`Batch upload failed: ${details}`);
+            } catch (err: any) {
+              let message = 'Unknown error occurred';
+              if (err?.message) {
+                message = err.message;
+              } else if (err?.error?.message) {
+                message = err.error.message;
+              } else if (typeof err === 'string') {
+                message = err;
+              } else if (err?.digest) {
+                message = `Server error (digest: ${err.digest}). Check server logs for details.`;
+              }
+              localErrors.push(`Batch ${chunkIdx + 1}/${totalChunks} error: ${message}`);
+              console.error(`CSV batch ${chunkIdx + 1} upload exception:`, err);
             }
-          } catch (err: any) {
-            // Handle various error formats from Next.js Server Actions
-            let message = 'Unknown error occurred';
-            if (err?.message) {
-              message = err.message;
-            } else if (err?.error?.message) {
-              message = err.error.message;
-            } else if (typeof err === 'string') {
-              message = err;
-            } else if (err?.digest) {
-              // Next.js production error with digest
-              message = `Server error (digest: ${err.digest}). Check server logs for details.`;
-            }
-            localErrors.push(`Batch upload error: ${message}`);
-            console.error('CSV batch upload exception:', err);
+
+            // Calculate progress (20% to 100%)
+            const currentProgress = 20 + Math.round(((chunkIdx + 1) / totalChunks) * 80);
+            setProcessingProgress(currentProgress);
+            setSuccessCount(localSuccessCount);
+            setProcessingErrors([...localErrors]);
+
+            // Yield between chunks
+            await new Promise((res) => setTimeout(res, 0));
           }
-          setProcessingProgress(100);
         } else {
           // Fallback: legacy row-by-row with concurrency limit of 15
           const concurrencyLimit = 15;
@@ -186,11 +238,13 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
                 localErrors.push(`Row ${rowIndex + 2}: An unexpected error occurred. ${(error as Error).message}`);
               }
             }));
-            setProcessingProgress(35 + Math.round(((i + chunk.length) / validatedRows.length) * 65));
+            setProcessingProgress(20 + Math.round(((i + chunk.length) / validatedRows.length) * 80));
+            setSuccessCount(localSuccessCount);
           }
         }
       }
 
+      setProcessingProgress(100);
       setSuccessCount(localSuccessCount);
       setProcessingErrors(localErrors);
       setIsProcessing(false);
@@ -212,11 +266,21 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
       {/* File Drop/Selection Zone */}
       <div 
         className={`relative group border-2 border-dashed rounded-3xl p-10 transition-all duration-300 text-center
-          ${file ? 'border-primary/50 bg-primary/5' : 'border-slate-200 dark:border-slate-800 hover:border-primary/30 hover:bg-slate-50 dark:hover:bg-slate-900/30'}`}
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          ${
+            isDragOver
+              ? 'border-primary bg-primary/10 scale-[1.01] shadow-lg shadow-primary/20'
+              : file
+                ? 'border-primary/50 bg-primary/5'
+                : 'border-slate-200 dark:border-slate-800 hover:border-primary/30 hover:bg-slate-50 dark:hover:bg-slate-900/30'
+          }`}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(false); }}
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          setIsDragOver(false);
+          setPreviewRowCount(null);
+          setMissingHeaderWarnings([]);
           const droppedFile = e.dataTransfer.files?.[0];
           if (droppedFile) {
             if (droppedFile.size > 10 * 1024 * 1024) {
@@ -225,6 +289,7 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
             }
             if (droppedFile.type === "text/csv" || droppedFile.name.endsWith(".csv")) {
               setFile(droppedFile);
+              parseAndPreviewFile(droppedFile);
             } else {
               toast({ variant: "destructive", title: "Invalid File Type", description: "Please upload a valid .csv file." });
             }
@@ -247,10 +312,12 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
           
           <div>
             <h3 className="text-lg font-bold text-slate-700 dark:text-slate-200">
-              {file ? file.name : "Choose CSV File"}
+              {file ? file.name : (isDragOver ? "Drop your file here!" : "Choose CSV File")}
             </h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              {file ? `${(file.size / 1024).toFixed(2)} KB • Ready to process` : "Drag and drop or click to browse files"}
+              {file
+                ? `${(file.size / 1024).toFixed(2)} KB${previewRowCount !== null ? ` • ${previewRowCount} data row${previewRowCount !== 1 ? 's' : ''} detected` : ''} • Ready to process`
+                : (isDragOver ? "Release to upload" : "Drag and drop or click to browse files")}
             </p>
           </div>
 
@@ -270,6 +337,23 @@ export function CsvUploadSection({ schema, addRecordFunction, expectedHeaders, b
           )}
         </div>
       </div>
+
+      {/* Missing headers warning */}
+      {missingHeaderWarnings.length > 0 && file && !isProcessing && (
+        <Alert className="rounded-2xl border-amber-200 bg-amber-50/80 dark:bg-amber-900/10 dark:border-amber-800/30">
+          <FileWarning className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+          <AlertTitle className="text-amber-800 dark:text-amber-300 font-bold">Missing Columns Detected</AlertTitle>
+          <AlertDescription className="text-amber-700 dark:text-amber-400 text-sm">
+            The following expected columns are missing from your CSV header:
+            <ul className="mt-1 list-disc list-inside">
+              {missingHeaderWarnings.map((h, i) => (
+                <li key={i} className="font-mono text-xs">{h}</li>
+              ))}
+            </ul>
+            <p className="mt-1.5">Download the Template to see the correct column names.</p>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Action Button */}
       <div className="flex justify-center">

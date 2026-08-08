@@ -63,7 +63,8 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
                 try {
                     const { data } = await getPhotosByReadingIdAction(reading.id);
                     if (data && data.length > 0) {
-                        setPhotoData(data[0].photo_data);
+                        // Server converts bytea Buffer → base64 data-URL string
+                        setPhotoData(data[0].photo_data || data[0].photo_url || null);
                     }
                 } catch (err) {
                     console.error("Failed to fetch photo for dialog:", err);
@@ -227,7 +228,7 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
                                         </div>
                                     ) : photoData ? (
                                         <img 
-                                            src={photoData.startsWith('data:') ? photoData : `data:image/webp;base64,${photoData}`} 
+                                            src={typeof photoData === 'string' ? photoData : ''} 
                                             alt="Meter Reading Proof" 
                                             className="w-full h-auto object-contain max-h-[400px]"
                                         />

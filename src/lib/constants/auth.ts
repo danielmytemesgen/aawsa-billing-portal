@@ -27,6 +27,9 @@ export const PERMISSIONS = {
     BULK_METERS_UPDATE: 'bulk_meters_update',
     BULK_METERS_DELETE: 'bulk_meters_delete',
     BULK_METERS_APPROVE: 'bulk_meters_approve',
+    BULK_METERS_MANAGE_CUSTOMERS: 'bulk_meters_manage_customers',
+    BULK_METERS_EDIT_READINGS: 'bulk_meters_edit_readings',
+    BULK_METERS_EDIT_READINGS_VIEW: 'bulk_meters_edit_readings_view',
 
     // Staff
     STAFF_VIEW: 'staff_view',
@@ -67,6 +70,7 @@ export const PERMISSIONS = {
     REPORT_STAFF_DATA_EXPORT: 'report:staff_data_export',
     REPORT_GL_FINANCE_MONTHLY: 'report:gl_finance_monthly',
     REPORT_GL_FINANCE_YEARLY: 'report:gl_finance_yearly',
+    REPORT_GL_MONTHLY_SUMMARY_BY_CODE: 'report:gl_monthly_summary_by_code',
     REPORT_MONTHLY_BILL_EXPORT: 'report:monthly_bill_export',
     // Branch-scoped report permissions
     REPORT_BRANCH_CUSTOMER_DATA_EXPORT: 'report:branch_customer_data_export',
@@ -115,6 +119,8 @@ export const PERMISSIONS = {
     METER_READINGS_UPLOAD_BULK: 'meter_readings_upload_bulk',
     METER_READINGS_CREATE_BULK: 'meter_readings_create_bulk',
     METER_READINGS_CREATE_INDIVIDUAL: 'meter_readings_create_individual',
+    METER_READINGS_EDIT_RECALCULATE_VIEW: 'meter_readings_edit_recalculate_view',
+    METER_READINGS_EDIT_RECALCULATE: 'meter_readings_edit_recalculate',
 
     // Data Entry
     DATA_ENTRY_ACCESS: 'data_entry_access',
@@ -129,10 +135,12 @@ export const PERMISSIONS = {
     KNOWLEDGE_BASE_VIEW: 'knowledge_base_view',
     KNOWLEDGE_BASE_MANAGE: 'knowledge_base_manage',
 
-    // Routes
+    // Routes & Reader Monitoring
     ROUTES_VIEW_ALL: 'routes_view_all',
+    ROUTES_VIEW_BRANCH: 'routes_view_branch',
     ROUTES_VIEW_ASSIGNED: 'routes_view_assigned',
     ROUTES_MANAGE: 'routes_manage',
+    READER_PROGRESS_VIEW: 'reader_progress_view',
 
     // Fault Codes
     FAULT_CODES_VIEW: 'fault_codes_view',

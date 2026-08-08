@@ -1,4 +1,4 @@
-﻿
+
 "use client";
 
 import * as React from "react";
@@ -304,6 +304,145 @@ const availableStaffReports: ReportType[] = [
         const branchFromBill=(branchMap.get(bill.CUSTOMERBRANCH) as string)||bill.CUSTOMERBRANCH;
         return { "BILLKEY": bk, "CUSTOMERKEY": customerKey, "CUSTOMERNAME": customerName, "CUSTOMERTIN": "", "CUSTOMERBRANCH": branchFromBill||customerBranch, "REASON": reasonFormatted, "CURRREAD": bill.CURRREAD, "PREVREAD": bill.PREVREAD, "CONS": bill.CONS||0, "TOTALBILLAMOUNT": parseFloat(total.toFixed(2)), "THISMONTHBILLAMT": parseFloat(thisM.toFixed(2)), "OUTSTANDINGAMT": parseFloat(out.toFixed(2)), "PENALTYAMT": parseFloat(pen.toFixed(2)), "VAT_AMOUNT": parseFloat(Number(bill.vat_amount??bill.vatAmount??0).toFixed(2)), "DRACCTNO": bill.DRACCTNO||"", "CRACCTNO": bill.CRACCTNO||"" };
       });
+    },
+  },
+  {
+    id: "gl-monthly-summary-by-code",
+    name: "GL Monthly Summary by GL Code (XLSX)",
+    description: "Monthly summary of billing amounts broken down and grouped by Branch and GL Code (WNDGL, WDGL, WBORGL, SNTGL, SEWERGL, WPFNTGL, MTRRNTGL, MNTGL, FIREGL). Shows COUNT, TOTAL_AMOUNT, VAT_AMOUNT and WITH_OUT_VAT per GL code per period.",
+    category: 'Finance',
+    requiredPermission: PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE,
+    headers: ["COUNT", "BRANCH", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"],
+    getData: async (filters) => {
+      const { branchId, startDate, endDate } = filters;
+      const [billsRes, bulkMetersRes, customersRes, branchesRes] = await Promise.all([
+        getAllBillsAction(),
+        getAllBulkMetersAction(),
+        getAllCustomersAction(),
+        getAllBranchesAction(),
+      ]);
+      let allBills: any[]     = billsRes?.data ?? [];
+      const bulkMeters: any[] = (bulkMetersRes?.data ?? []).map((bm: any) => ({ ...bm, branchId: bm.branch_id || bm.branchId, customerKeyNumber: bm.customerKeyNumber, chargeGroup: bm.charge_group || bm.chargeGroup }));
+      const customers: any[]  = (customersRes?.data ?? []).map((c: any) => ({ ...c, branchId: c.branch_id || c.branchId, customerKeyNumber: c.customerKeyNumber, customerType: c.customer_type || c.customerType }));
+      const branches: any[]   = branchesRes?.data ?? [];
+
+      const branchMap  = new Map(branches.map((br: any) => [br.id, br.code || br.short_code || br.name]));
+      const bmMap      = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+      const custMap    = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+
+      const getBillMeta = (b: any) => {
+        let bId = b.CUSTOMERBRANCH || '';
+        let cGroup = '';
+        if (b.CUSTOMERKEY && bmMap.has(b.CUSTOMERKEY)) {
+          const bm = bmMap.get(b.CUSTOMERKEY);
+          if (!bId || bId === 'N/A') bId = bm?.branchId || '';
+          cGroup = bm?.chargeGroup || bm?.customerType || '';
+        } else if (b.individual_customer_id && custMap.has(b.individual_customer_id)) {
+          const cust = custMap.get(b.individual_customer_id);
+          if (!bId || bId === 'N/A') bId = cust?.branchId || '';
+          cGroup = cust?.customerType || '';
+        }
+        return { branchId: bId, chargeGroup: cGroup };
+      };
+
+      if (branchId) allBills = allBills.filter((b: any) => getBillMeta(b).branchId === branchId);
+      if (startDate && endDate) {
+        const start = startDate.getTime(), end = endDate.getTime();
+        allBills = allBills.filter((b: any) => { try { const d = new Date(b.bill_period_end_date || b.created_at); return d.getTime() >= start && d.getTime() <= end; } catch { return false; } });
+      }
+
+      const formatPeriod = (monthYearStr: string) => {
+        if (!monthYearStr || !monthYearStr.includes('-')) return monthYearStr || '';
+        const [yr, mo] = monthYearStr.split('-').map(Number);
+        if (!yr || !mo) return monthYearStr;
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const mName = monthNames[mo - 1] || 'Jan';
+        const shortYr = String(yr).slice(-2);
+        return `${shortYr}-${mName}`;
+      };
+
+      const getBranchCode = (val: string): string => {
+        if (!val) return 'AD';
+        const v = val.trim().toUpperCase();
+        if (['AD', 'AK', 'AR', 'GS', 'GU', 'KO', 'LK', 'MG', 'MK', 'NS'].includes(v)) return v;
+
+        if (v.includes('ADDIS')) return 'AD';
+        if (v.includes('AKAKI')) return 'AK';
+        if (v.includes('ARADA')) return 'AR';
+        if (v.includes('GERD') || v.includes('SHOLA')) return 'GS';
+        if (v.includes('GULLELE') || v.includes('GULELE')) return 'GU';
+        if (v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
+        if (v.includes('LIDETA')) return 'LK';
+        if (v.includes('MEGENAGNA')) return 'MG';
+        if (v.includes('MEKANISA')) return 'MK';
+        if (v.includes('NIFAS') || v.includes('NEFAS')) return 'NS';
+
+        const clean = v.replace(/[^A-Z]/g, '');
+        return clean.length >= 2 ? clean.substring(0, 2) : 'AD';
+      };
+
+      const grouped: Record<string, { count: number; branch: string; glCode: string; period: string; totalAmount: number; vatAmount: number; withoutVat: number; }> = {};
+
+      for (const b of allBills) {
+        const { branchId: bBrId, chargeGroup: cGroup } = getBillMeta(b);
+        const rawBranchName = branchMap.get(bBrId) || bBrId || 'AD';
+        const branchCode = getBranchCode(rawBranchName);
+        const rawPeriod = (b.month_year || '').substring(0, 7);
+        const periodStr = formatPeriod(rawPeriod);
+
+        const cgLower = (cGroup || '').toLowerCase();
+        let baseWaterGlCode = 'WNDGL';
+        if (cgLower.includes('borehole')) baseWaterGlCode = 'WBORGL';
+        else if (cgLower.includes('fountain')) baseWaterGlCode = 'WPFNTGL';
+        else if (cgLower.includes('domestic') && !cgLower.includes('non')) baseWaterGlCode = 'WDGL';
+
+        let baseWater = Number(b.base_water_charge ?? b.baseWaterCharge ?? 0);
+        const sewerage = Number(b.sewerage_charge ?? b.sewerageCharge ?? 0);
+        const sanitation = Number(b.sanitation_fee ?? b.sanitationFee ?? 0);
+        const meterRent = Number(b.meter_rent ?? b.meterRent ?? 0);
+        const maintenance = Number(b.maintenance_fee ?? b.maintenanceFee ?? 0);
+        const additional = Number(b.additional_fees_charge ?? b.additionalFeesCharge ?? 0) + Number(b.PENALTYAMT ?? 0);
+        const vat = Number(b.vat_amount ?? b.vatAmount ?? 0);
+
+        if (baseWater === 0 && Number(b.THISMONTHBILLAMT || 0) > 0 && sewerage === 0 && sanitation === 0 && meterRent === 0 && maintenance === 0) {
+          baseWater = Number(b.THISMONTHBILLAMT);
+        }
+
+        const addItem = (glCode: string, amount: number, vatAmt: number = 0) => {
+          if (amount <= 0 && vatAmt <= 0) return;
+          const key = `${periodStr}|${branchCode}|${glCode}`;
+          if (!grouped[key]) grouped[key] = { count: 0, branch: branchCode, glCode, totalAmount: 0, vatAmount: 0, withoutVat: 0, period: periodStr };
+          grouped[key].count += 1;
+          grouped[key].totalAmount += (amount + vatAmt);
+          grouped[key].vatAmount += vatAmt;
+          grouped[key].withoutVat += amount;
+        };
+
+        addItem(baseWaterGlCode, baseWater, vat);
+        addItem('SEWERGL', sewerage, 0);
+        addItem('SNTGL', sanitation, 0);
+        addItem('MTRRNTGL', meterRent, 0);
+        addItem('MNTGL', maintenance, 0);
+        addItem('FIREGL', additional, 0);
+      }
+
+      return Object.values(grouped)
+        .map(row => ({
+          "COUNT":        row.count,
+          "BRANCH":       row.branch,
+          "GL_CODE":      row.glCode,
+          "TOTAL_AMOUNT": parseFloat(row.totalAmount.toFixed(2)),
+          "VAT_AMOUNT":   parseFloat(row.vatAmount.toFixed(2)),
+          "WITH_OUT_VAT": parseFloat(row.withoutVat.toFixed(2)),
+          "PERIOD":       row.period,
+        }))
+        .sort((a: any, b: any) => {
+          const pd = (b.PERIOD || '').localeCompare(a.PERIOD || '');
+          if (pd !== 0) return pd;
+          const bd = (a.BRANCH || '').localeCompare(b.BRANCH || '');
+          if (bd !== 0) return bd;
+          return (a.GL_CODE || '').localeCompare(b.GL_CODE || '');
+        });
     },
   },
 ];

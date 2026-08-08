@@ -1,6 +1,6 @@
 
 import * as React from "react";
-import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle, Download, Printer, Terminal, ArrowRight, Wrench, Check, RotateCcw, FileText, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCircle, RefreshCcw, Search, Loader2, CalendarRange, AlertTriangle, Download, Printer, Terminal, ArrowRight, Wrench, Check, RotateCcw, FileText, AlertCircle, ChevronDown, ChevronUp, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -32,11 +32,12 @@ import {
     resetStuckBillingJobsAction,
     createBulkMeterReadingAction,
     createIndividualCustomerReadingAction,
-    getBulkMeterByIdAction
+    getBulkMeterByIdAction,
+    logSecurityEventAction
 } from "@/lib/actions";
 import { format, parse } from "date-fns";
 import { DatePicker } from "@/components/ui/date-picker";
-import { BILLING_DUE_DATE_OFFSET_DAYS } from "@/lib/billing-config";
+import { BILLING_CYCLE_START_DAY, BILLING_DUE_DATE_OFFSET_DAYS, getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
 
 interface BillingCycleDialogProps {
     open: boolean;
@@ -56,9 +57,22 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     const [searchTerm, setSearchTerm] = React.useState("");
     const [negativeConsumptionWarning, setNegativeConsumptionWarning] = React.useState<string | null>(null);
 
+    // Recommendation 1: Confirmation gate before job starts
+    const [showConfirmStep, setShowConfirmStep] = React.useState(false);
+    const [pendingCarryBalance, setPendingCarryBalance] = React.useState(true);
+
+    // Recommendation 2: Already-billed indicator
+    const [alreadyBilledCount, setAlreadyBilledCount] = React.useState<number | null>(null);
+    const [isCheckingOverlap, setIsCheckingOverlap] = React.useState(false);
+
+    // Recommendation 3: Dry-run mode
+    const [isDryRun, setIsDryRun] = React.useState(false);
+    const [dryRunResult, setDryRunResult] = React.useState<{metersInScope: number; skipped: number; period: string; dueDate: string} | null>(null);
+
     // Cycle config read from settings
     const [cycleMode, setCycleModeState] = React.useState<'once_per_month' | 'custom' | 'unlimited'>('once_per_month');
     const [dueDateOffsetDays, setDueDateOffsetDays] = React.useState(BILLING_DUE_DATE_OFFSET_DAYS);
+    const [cycleStartDay, setCycleStartDay] = React.useState<number>(BILLING_CYCLE_START_DAY);
 
     // Custom date range fields
     const [customStartDate, setCustomStartDate] = React.useState("");
@@ -100,6 +114,30 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
     }
     const [parsedErrors, setParsedErrors] = React.useState<ParsedJobError[]>([]);
 
+    const periodPreview = React.useMemo(() => {
+        try {
+            if (cycleMode === 'once_per_month') {
+                const startDate = getBillingPeriodStartDate(monthYear, cycleStartDay);
+                const endDate = getBillingPeriodEndDate(monthYear, cycleStartDay);
+                const dueDateObj = calculateDueDate(endDate, dueDateOffsetDays);
+                const dueDateStr = format(dueDateObj, "yyyy-MM-dd");
+                const isSameDay = dueDateOffsetDays === 0;
+                return { startDate, endDate, dueDateStr, isSameDay };
+            } else {
+                const defaultStart = getBillingPeriodStartDate(monthYear, cycleStartDay);
+                const defaultEnd = getBillingPeriodEndDate(monthYear, cycleStartDay);
+                const startDate = customStartDate || defaultStart;
+                const endDate = customEndDate || defaultEnd;
+                const dueDateObj = calculateDueDate(endDate, dueDateOffsetDays);
+                const dueDateStr = format(dueDateObj, "yyyy-MM-dd");
+                const isSameDay = dueDateOffsetDays === 0;
+                return { startDate, endDate, dueDateStr, isSameDay };
+            }
+        } catch (e) {
+            return null;
+        }
+    }, [monthYear, cycleMode, customStartDate, customEndDate, dueDateOffsetDays, cycleStartDay]);
+
     // Cleanup polling on unmount
     React.useEffect(() => {
         return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
@@ -118,24 +156,52 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             setIsBulk(false);
             setAllowOverlap(false);
             setJobErrors([]);
+            setShowConfirmStep(false);
+            setDryRunResult(null);
+            setAlreadyBilledCount(null);
 
-            // Read cycle config from database
+            // Read live cycle config from database
             getSystemSettingsAction().then(res => {
                 if (res.data) {
                     const s = res.data as Record<string, string>;
                     if (s.billing_cycle_mode) setCycleModeState(s.billing_cycle_mode as 'once_per_month' | 'custom' | 'unlimited');
+                    if (s.billing_cycle_start_day) setCycleStartDay(parseInt(s.billing_cycle_start_day, 10) || BILLING_CYCLE_START_DAY);
                     if (s.billing_due_date_offset) setDueDateOffsetDays(parseInt(s.billing_due_date_offset, 10));
                 }
             });
-
-            // Default custom dates to current month bounds
-            const today = new Date();
-            const y = today.getFullYear();
-            const m = String(today.getMonth() + 1).padStart(2, '0');
-            setCustomStartDate(`${y}-${m}-01`);
-            setCustomEndDate(`${y}-${m}-${new Date(y, today.getMonth() + 1, 0).getDate()}`);
         }
     }, [open]);
+
+    // Keep custom dates synced when monthYear or cycleStartDay changes
+    React.useEffect(() => {
+        if (monthYear) {
+            const start = getBillingPeriodStartDate(monthYear, cycleStartDay);
+            const end = getBillingPeriodEndDate(monthYear, cycleStartDay);
+            setCustomStartDate(start);
+            setCustomEndDate(end);
+        }
+    }, [monthYear, cycleStartDay]);
+
+    // Recommendation 2: Auto-check already-billed count when month or bulk mode changes
+    React.useEffect(() => {
+        if (!open || !isBulk || bulkMeters.length === 0) {
+            setAlreadyBilledCount(null);
+            return;
+        }
+        setIsCheckingOverlap(true);
+        // Count meters that have an existing posted/draft bill for this monthYear
+        const count = bulkMeters.filter(m =>
+            m.latestBillMonth === monthYear || m.latestBillMonthYear === monthYear
+        ).length;
+        setAlreadyBilledCount(count);
+        setIsCheckingOverlap(false);
+    }, [open, isBulk, monthYear, bulkMeters]);
+
+    // Reset confirmation gate and dry-run when key params change
+    React.useEffect(() => {
+        setShowConfirmStep(false);
+        setDryRunResult(null);
+    }, [monthYear, isBulk, cycleMode, customStartDate, customEndDate, selectedBranch, allowOverlap]);
 
     async function loadMeters() {
         setIsLoadingMeters(true);
@@ -178,7 +244,23 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         (m.customerKeyNumber?.toLowerCase() || "").includes(searchTerm.toLowerCase())
     );
 
-    const handleRunCycle = async (carryBalance: boolean) => {
+    // Recommendation 3: Dry-run simulation
+    const handleDryRun = async () => {
+        if (!isBulk && !selectedMeterId) {
+            toast({ variant: "destructive", title: "Error", description: "Please select a meter." });
+            return;
+        }
+        setDryRunResult(null);
+        const metersInScope = isBulk ? filteredMeters.length : 1;
+        const skipped = alreadyBilledCount ?? 0;
+        const period = periodPreview ? `${periodPreview.startDate} → ${periodPreview.endDate}` : monthYear;
+        const dueDate = periodPreview ? periodPreview.dueDateStr : monthYear;
+        setDryRunResult({ metersInScope, skipped, period, dueDate });
+        toast({ title: "🔍 Dry Run Complete", description: `${metersInScope} meter(s) in scope. ${skipped} already billed (would be skipped). No data was written.` });
+    };
+
+    // Recommendation 1: Show confirmation gate first, then execute
+    const handleRequestRunCycle = (carryBalance: boolean) => {
         if (!isBulk && !selectedMeterId) {
             toast({ variant: "destructive", title: "Error", description: "Please select a meter." });
             return;
@@ -203,6 +285,17 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
             }
         }
 
+        // Show confirmation gate
+        setPendingCarryBalance(carryBalance);
+        setShowConfirmStep(true);
+    };
+
+    const handleRunCycle = async (carryBalance: boolean) => {
+        if (!isBulk && !selectedMeterId) {
+            toast({ variant: "destructive", title: "Error", description: "Please select a meter." });
+            return;
+        }
+
         setIsProcessing(true);
         setProcessedCount(0);
         setNegativeConsumptionWarning(null);
@@ -212,8 +305,10 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
         setEta(null);
         setTerminalLogs([`[${new Date().toLocaleTimeString()}] 🚀 Initiated billing job for month ${monthYear}`]);
 
-        // Build period override for custom/unlimited mode
-        const periodOverride = (cycleMode === 'custom' || cycleMode === 'unlimited')
+        // Build period override from live DB computed period preview
+        const periodOverride = periodPreview
+            ? { periodStartDate: periodPreview.startDate, periodEndDate: periodPreview.endDate }
+            : (cycleMode === 'custom' || cycleMode === 'unlimited')
             ? { periodStartDate: customStartDate, periodEndDate: customEndDate }
             : {};
 
@@ -402,6 +497,24 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                         description,
                         variant: hasIssues ? "destructive" : "default"
                     });
+
+                    // Recommendation 4: Admin summary notification logged to security event
+                    try {
+                        await logSecurityEventAction({
+                            event: 'Billing Cycle Completed',
+                            details: {
+                                month: monthYear,
+                                jobId: currentJobId,
+                                successCount: job.processed_items,
+                                skippedOverlap: overlapSkipped.length,
+                                errorCount: otherErrors.length,
+                                periodRange: periodPreview ? `${periodPreview.startDate} to ${periodPreview.endDate}` : monthYear,
+                                dueDate: periodPreview?.dueDateStr ?? 'N/A',
+                                completedAt: new Date().toISOString(),
+                            }
+                        });
+                    } catch (_) { /* non-critical */ }
+
                     onComplete?.();
                     setIsProcessing(false);
 
@@ -782,9 +895,120 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                                     </Select>
                                 </div>
                             )}
-                            <p className={`text-[10px] italic ${cycleMode === 'unlimited' ? 'text-green-600' : 'text-blue-600'}`}>
-                                Due date: {dueDateOffsetDays} days after period end. Configured in Settings → Billing Settings.
-                            </p>
+                        </div>
+                    )}
+
+                    {/* Pre-Run Validation & Period Summary Card */}
+                    {periodPreview && !currentJobId && (
+                        <div className="p-3.5 border rounded-xl bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+                            <div className="flex items-center justify-between font-bold text-slate-800 dark:text-slate-200 border-b pb-1.5 border-slate-200/60 dark:border-slate-800">
+                                <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                                    <CheckCircle className="h-4 w-4" /> Pre-Run Period Validation Summary
+                                </span>
+                                <Badge variant="outline" className="text-[10px] bg-white dark:bg-slate-800">
+                                    {isBulk ? `${filteredMeters.length} Meters In Scope` : "Single Meter"}
+                                </Badge>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-slate-600 dark:text-slate-400 font-medium text-[11px]">
+                                <div>
+                                    <span className="text-slate-400 block text-[10px]">Billing Period Range</span>
+                                    <span className="font-bold text-slate-900 dark:text-white">{periodPreview.startDate} → {periodPreview.endDate}</span>
+                                </div>
+                                <div>
+                                    <span className="text-slate-400 block text-[10px]">Payment Due Date</span>
+                                    <span className="font-bold text-amber-600 dark:text-amber-400">
+                                        {periodPreview.dueDateStr} {periodPreview.isSameDay ? "(Same Day)" : `(+${dueDateOffsetDays}d offset)`}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Recommendation 2: Already-billed indicator */}
+                            {isBulk && alreadyBilledCount !== null && alreadyBilledCount > 0 && (
+                                <div className="flex items-start gap-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="font-semibold text-amber-800 dark:text-amber-300 text-[11px]">{alreadyBilledCount} meter(s) already billed for {monthYear}</p>
+                                        <p className="text-amber-700 dark:text-amber-400 text-[10px]">
+                                            {allowOverlap
+                                                ? 'Allow Overlap is ON — existing bills will be overwritten.'
+                                                : 'These will be skipped. Enable "Allow Overlap" to overwrite them.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Recommendation 3: Dry-run result display */}
+                            {dryRunResult && (
+                                <div className="flex items-start gap-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                                    <CheckCircle className="h-3.5 w-3.5 text-blue-600 shrink-0 mt-0.5" />
+                                    <div className="space-y-0.5">
+                                        <p className="font-semibold text-blue-800 dark:text-blue-300 text-[11px]">🔍 Dry Run — No data written</p>
+                                        <p className="text-blue-700 dark:text-blue-400 text-[10px]">
+                                            {dryRunResult.metersInScope} meter(s) in scope · {dryRunResult.skipped} already billed (would skip) ·
+                                            Period: {dryRunResult.period} · Due: {dryRunResult.dueDate}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Recommendation 3: Dry-run button */}
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full text-[11px] border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                                onClick={handleDryRun}
+                                disabled={isProcessing}
+                            >
+                                <Search className="h-3 w-3 mr-1.5" />
+                                Simulate (Dry Run) — Preview Without Billing
+                            </Button>
+
+                            {/* Recommendation 1: Confirmation gate inline card */}
+                            {showConfirmStep && (
+                                <div className="p-3 bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-xl space-y-3 animate-in fade-in duration-200">
+                                    <div className="flex items-center gap-2 text-red-700 dark:text-red-400 font-bold text-[12px]">
+                                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                                        Confirm Billing Run
+                                    </div>
+                                    <div className="text-[11px] text-red-700 dark:text-red-300 space-y-1">
+                                        <p>You are about to run a <strong>{isBulk ? 'bulk' : 'single meter'}</strong> billing cycle for <strong>{monthYear}</strong>.</p>
+                                        <ul className="list-disc list-inside space-y-0.5 text-red-600 dark:text-red-400">
+                                            <li>Period: <strong>{periodPreview.startDate} → {periodPreview.endDate}</strong></li>
+                                            <li>Due Date: <strong>{periodPreview.dueDateStr}</strong></li>
+                                            <li>Meters in scope: <strong>{isBulk ? filteredMeters.length : 1}</strong></li>
+                                            {alreadyBilledCount !== null && alreadyBilledCount > 0 && (
+                                                <li className="text-amber-700 dark:text-amber-400">
+                                                    {alreadyBilledCount} already billed — will be {allowOverlap ? 'overwritten' : 'skipped'}
+                                                </li>
+                                            )}
+                                        </ul>
+                                        <p className="font-semibold text-red-800 dark:text-red-200 pt-1">This action generates bills and cannot be undone. Proceed?</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="flex-1 text-[11px] border-red-300 text-red-700 hover:bg-red-100"
+                                            onClick={() => setShowConfirmStep(false)}
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            className="flex-1 text-[11px] bg-red-600 hover:bg-red-700 text-white font-bold"
+                                            onClick={() => {
+                                                setShowConfirmStep(false);
+                                                handleRunCycle(pendingCarryBalance);
+                                            }}
+                                        >
+                                            ✅ Yes, Run Billing Now
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1074,11 +1298,11 @@ export function BillingCycleDialog({ open, onOpenChange, onComplete }: BillingCy
                     </Button>
                     <Button
                         className="bg-blue-600 hover:bg-blue-700 text-white font-semibold flex-1 sm:flex-none"
-                        onClick={() => handleRunCycle(true)}
-                        disabled={isProcessing}
+                        onClick={() => handleRequestRunCycle(true)}
+                        disabled={isProcessing || showConfirmStep}
                     >
-                        {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
-                        Print Bill for {monthYear}
+                        {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4 fill-white" />}
+                        {isProcessing ? "Processing Billing Cycle..." : `Run Billing Cycle for ${monthYear}`}
                     </Button>
                 </DialogFooter>
             </DialogContent>

@@ -11,6 +11,7 @@ import {
   resetSingleFailedReading,
   db,
   checkActualConnectivity,
+  checkDeviceHealth,
   resetFailedUploads,
   resetSingleFailedUpload,
   UploadEntry
@@ -23,6 +24,7 @@ import {
   Loader2, 
   RefreshCw, 
   AlertCircle, 
+  AlertTriangle,
   CheckCircle2, 
   RotateCcw, 
   Calendar, 
@@ -47,8 +49,10 @@ export function SyncHub() {
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [pendingCount, setPendingCount] = React.useState(0);
   const [failedCount, setFailedCount] = React.useState(0);
+  const [conflictCount, setConflictCount] = React.useState(0);
   const [pendingList, setPendingList] = React.useState<any[]>([]);
   const [failedList, setFailedList] = React.useState<any[]>([]);
+  const [conflictIds, setConflictIds] = React.useState<Set<number>>(new Set());
   const [isQueueOpen, setIsQueueOpen] = React.useState(false);
   const [lastSyncResult, setLastSyncResult] = React.useState<{ success: number; failed: number } | null>(null);
   const [syncProgressPercent, setSyncProgressPercent] = React.useState(0);
@@ -65,6 +69,42 @@ export function SyncHub() {
   // Sidebar Context
   const { state: sidebarState, isMobile } = useSidebar();
   const isCollapsed = sidebarState === "collapsed" && !isMobile;
+
+  /**
+   * Conflict Detection — scans pending readings and flags duplicates.
+   * A conflict is: two or more queue entries targeting the SAME meter
+   * (same meterKey/CUSTOMERKEY/individualCustomerId) in the SAME billing month.
+   */
+  const detectConflicts = React.useCallback(async (allPending: any[]): Promise<Set<number>> => {
+    // Build a map: "meterKey:YYYY-MM" → first item id
+    const seen = new Map<string, number>();
+    const conflicted = new Set<number>();
+
+    for (const item of allPending) {
+      if (!item.id) continue;
+      const p = item.payload || {};
+      // Resolve meter identifier (bulk uses CUSTOMERKEY, individual uses individualCustomerId)
+      const meterId: string = item.meterKey || p.CUSTOMERKEY || p.individualCustomerId || p.meterSerial || '';
+      if (!meterId) continue;
+
+      // Resolve billing month from readingDate (format: YYYY-MM-DD or YYYY-MM)
+      const rawDate: string = p.readingDate || p.reading_date || '';
+      const billingMonth = rawDate.length >= 7 ? rawDate.slice(0, 7) : '';
+      if (!billingMonth) continue;
+
+      const key = `${meterId}:${billingMonth}`;
+      if (seen.has(key)) {
+        // Both the first occurrence and this one are conflicts
+        const firstId = seen.get(key)!;
+        conflicted.add(firstId);
+        conflicted.add(item.id);
+      } else {
+        seen.set(key, item.id);
+      }
+    }
+
+    return conflicted;
+  }, []);
 
   const checkPending = React.useCallback(async () => {
     const [pending, failed, pendingUploads, failedUploads] = await Promise.all([
@@ -98,7 +138,17 @@ export function SyncHub() {
     setFailedCount(filteredFailed.length + failedUploads.length);
     setPendingList([...filteredPending, ...pendingUploads]);
     setFailedList([...filteredFailed, ...failedUploads]);
-  }, [currentUser, isManagement]);
+
+    // Run conflict detection on all pending readings
+    const allPendingForConflict = filteredPending; // only reading items, not photos
+    const detected = await detectConflicts(allPendingForConflict);
+    setConflictIds(detected);
+    setConflictCount(detected.size);
+    if (detected.size > 0 && !syncInProgress.current) {
+      // Surfaced once per checkPending cycle — not inside sync to avoid spam
+      console.warn(`[SyncHub] ${detected.size} conflict(s) detected in offline queue (duplicate meter readings for same billing period).`);
+    }
+  }, [currentUser, isManagement, detectConflicts]);
 
   const runSync = React.useCallback(async () => {
     // Connection Check using active /api/health endpoint ping
@@ -147,8 +197,29 @@ export function SyncHub() {
       detail: { syncing: true, success: 0, failed: 0, total: totalToSync, progress: 0 }
     }));
 
+    // Refresh conflict detection before sync
+    const currentConflicts = await detectConflicts(pending);
+    setConflictIds(currentConflicts);
+    setConflictCount(currentConflicts.size);
+
+    if (currentConflicts.size > 0) {
+      toast({
+        variant: 'destructive',
+        title: '⚠️ Conflict Detected in Queue',
+        description: `${currentConflicts.size} reading(s) appear to be duplicates for the same meter and billing period. They have been skipped — please review them in the queue and discard the incorrect entry before syncing.`,
+      });
+    }
+
     for (const reading of pending) {
       if (!reading.id) continue;
+
+      // Skip conflicted items — require manual resolution
+      if (currentConflicts.has(reading.id)) {
+        await markAsFailed(reading.id, 'Duplicate reading conflict detected for the same meter and billing period. Please discard the incorrect entry.');
+        failed++;
+        continue;
+      }
+
       await markAsSyncing(reading.id);
 
       try {
@@ -158,10 +229,6 @@ export function SyncHub() {
         } else {
           result = await addBulkMeterReading(reading.payload, { skipOfflineFallback: true });
         }
-
-        // #region agent log
-        fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'B',location:'sync-hub.tsx:phase1-result',message:'Reading sync result',data:{readingId:reading.id,localId:reading.localId,type:reading.type,success:result.success,hasData:!!result.data,serverId:result.data?.id,message:result.message},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
 
         if (result.success && result.data) {
           const serverId = result.data.id;
@@ -202,50 +269,56 @@ export function SyncHub() {
     }
 
     // --- PHASE 2: Sync decoupled uploads (photos, larger payloads) ---
-    const uploadsToSync: UploadEntry[] = await db.uploads.where('status').equals('pending').toArray();
-    // #region agent log
-    fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'C',location:'sync-hub.tsx:phase2-start',message:'Photo upload queue state',data:{pendingUploadCount:uploadsToSync.length,skippedNoReadingId:uploadsToSync.filter((u: UploadEntry) => !u.readingId).length,skippedNoPhoto:uploadsToSync.filter((u: UploadEntry) => !u.photoData).length},timestamp:Date.now()})}).catch(() => {});
-    // #endregion
-    for (const upload of uploadsToSync) {
-      if (!upload.id || !upload.readingId || !upload.photoData) {
-        if (upload.photoData && !upload.readingId) {
-          console.warn('SyncHub: pending upload missing readingId, waiting for linked reading sync', upload.id, upload.readingLocalId);
-        }
-        continue;
-      }
-      await db.uploads.update(upload.id, { status: 'uploading' });
-
-      try {
-        const result = await uploadReadingPhotoAction(
-          String(upload.readingId),
-          upload.readingType || 'individual',
-          upload.photoData
-        );
-
-        if (result && !result.error) {
-          await db.uploads.delete(upload.id);
-          success++;
-        } else {
-          const errMsg = result?.error?.message || 'Failed to upload photo';
-          await db.uploads.update(upload.id, { status: 'failed', errorMessage: errMsg });
-          failed++;
-          if (errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('timeout')) {
-            hasNetworkError = true;
+    // Smart Battery Saver: defer heavy photo uploads if battery is low (<= 15%) and not charging
+    const health = await checkDeviceHealth();
+    if (health.isLowBatteryWarning) {
+      console.warn(`[SyncHub] Low battery warning (${health.batteryLevelPct}%). Deferring heavy photo uploads to save battery until plugged into power.`);
+      toast({
+        title: "🔋 Low Battery — Photo Sync Deferred",
+        description: `Battery is low (${health.batteryLevelPct}%). Photo uploads will resume when device is plugged into power. Meter reading values have been synced.`,
+      });
+    } else {
+      const uploadsToSync: UploadEntry[] = await db.uploads.where('status').equals('pending').toArray();
+      for (const upload of uploadsToSync) {
+        if (!upload.id || !upload.readingId || !upload.photoData) {
+          if (upload.photoData && !upload.readingId) {
+            console.warn('SyncHub: pending upload missing readingId, waiting for linked reading sync', upload.id, upload.readingLocalId);
           }
+          continue;
         }
-      } catch (err: any) {
-        await db.uploads.update(upload.id, { status: 'failed', errorMessage: err.message || 'Network error' });
-        failed++;
-        hasNetworkError = true;
-      }
+        await db.uploads.update(upload.id, { status: 'uploading' });
 
-      window.dispatchEvent(new Event('offline-queue-updated'));
-      const progressPercent = totalToSync > 0 ? Math.round(((success + failed) / totalToSync) * 100) : 100;
-      setSyncCompletedCount(success + failed);
-      setSyncProgressPercent(progressPercent);
-      window.dispatchEvent(new CustomEvent('sync-progress', {
-        detail: { syncing: true, success, failed, total: totalToSync, progress: progressPercent }
-      }));
+        try {
+          const result = await uploadReadingPhotoAction(
+            String(upload.readingId),
+            upload.photoData
+          );
+
+          if (result && !result.error) {
+            await db.uploads.delete(upload.id);
+            success++;
+          } else {
+            const errMsg = result?.error?.message || 'Failed to upload photo';
+            await db.uploads.update(upload.id, { status: 'failed', errorMessage: errMsg });
+            failed++;
+            if (errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('timeout')) {
+              hasNetworkError = true;
+            }
+          }
+        } catch (err: any) {
+          await db.uploads.update(upload.id, { status: 'failed', errorMessage: err.message || 'Network error' });
+          failed++;
+          hasNetworkError = true;
+        }
+
+        window.dispatchEvent(new Event('offline-queue-updated'));
+        const progressPercent = totalToSync > 0 ? Math.round(((success + failed) / totalToSync) * 100) : 100;
+        setSyncCompletedCount(success + failed);
+        setSyncProgressPercent(progressPercent);
+        window.dispatchEvent(new CustomEvent('sync-progress', {
+          detail: { syncing: true, success, failed, total: totalToSync, progress: progressPercent }
+        }));
+      }
     }
 
     setLastSyncResult({ success, failed });
@@ -532,6 +605,23 @@ export function SyncHub() {
       runSync();
     }
 
+    // End-of-Day (5:00 PM) Unsynced Queue Reminder
+    const checkEndOfDayReminder = () => {
+      const currentHour = new Date().getHours();
+      if (currentHour >= 17) { // 5:00 PM or later
+        getPendingReadings().then(pending => {
+          if (pending.length > 0) {
+            toast({
+              title: "⚠️ End-of-Day Sync Reminder",
+              description: `You have ${pending.length} unsynced reading(s) remaining on your device. Please sync before leaving your branch site.`,
+              variant: "destructive",
+            });
+          }
+        }).catch(() => {});
+      }
+    };
+    checkEndOfDayReminder();
+
     const pollInterval = setInterval(() => {
       if (typeof navigator !== 'undefined' && navigator.onLine && !syncInProgress.current) {
         getPendingReadings().then(rawPending => {
@@ -567,7 +657,7 @@ export function SyncHub() {
     };
   }, [checkPending, runSync, currentUser, isManagement]);
 
-  if (pendingCount === 0 && failedCount === 0 && !isSyncing) return null;
+  if (pendingCount === 0 && failedCount === 0 && conflictCount === 0 && !isSyncing) return null;
 
   return (
     <>
@@ -583,6 +673,8 @@ export function SyncHub() {
           >
             {isSyncing ? (
               <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+            ) : conflictCount > 0 ? (
+              <AlertTriangle className="h-5 w-5 text-orange-600 animate-pulse" />
             ) : failedCount > 0 ? (
               <AlertCircle className="h-5 w-5 text-amber-600 animate-pulse" />
             ) : (
@@ -590,9 +682,9 @@ export function SyncHub() {
             )}
             
             <span className={`absolute -top-1.5 -right-1.5 flex h-5 min-w-5 px-1 items-center justify-center rounded-full text-[9px] font-bold text-white shadow-md border ${
-              failedCount > 0 ? 'bg-amber-600 border-amber-400' : 'bg-blue-600 border-blue-400'
+              conflictCount > 0 ? 'bg-orange-600 border-orange-400' : failedCount > 0 ? 'bg-amber-600 border-amber-400' : 'bg-blue-600 border-blue-400'
             }`}>
-              {pendingCount + failedCount}
+              {pendingCount + failedCount + conflictCount}
             </span>
           </div>
         </div>
@@ -600,20 +692,22 @@ export function SyncHub() {
         <div 
           onClick={() => setIsQueueOpen(true)}
           className={`w-full flex flex-col gap-2 p-3 border rounded-xl shadow-sm bg-white/70 hover:bg-white hover:border-slate-350 hover:shadow transition-all cursor-pointer select-none group ${
-            failedCount > 0 && !isSyncing ? 'border-amber-250 bg-amber-50/40 hover:bg-amber-50/70' : 'border-slate-200'
+            conflictCount > 0 && !isSyncing ? 'border-orange-300 bg-orange-50/40 hover:bg-orange-50/70' : failedCount > 0 && !isSyncing ? 'border-amber-250 bg-amber-50/40 hover:bg-amber-50/70' : 'border-slate-200'
           }`}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               {isSyncing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+              ) : conflictCount > 0 ? (
+                <AlertTriangle className="h-3.5 w-3.5 text-orange-600" />
               ) : failedCount > 0 ? (
                 <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
               ) : (
                 <RefreshCw className="h-3.5 w-3.5 text-blue-600" />
               )}
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 leading-none">
-                {isSyncing ? "Syncing..." : (failedCount > 0 ? "Sync Alerts" : "Offline Queue")}
+                {isSyncing ? "Syncing..." : conflictCount > 0 ? "⚠ Conflicts" : (failedCount > 0 ? "Sync Alerts" : "Offline Queue")}
               </span>
             </div>
             
@@ -626,6 +720,11 @@ export function SyncHub() {
             <span className="text-xs font-black text-slate-900 leading-tight">
               {pendingCount} Items Pending
             </span>
+            {conflictCount > 0 && (
+              <span className="text-[10px] font-bold text-orange-700">
+                • {conflictCount} duplicate conflict(s)
+              </span>
+            )}
             {failedCount > 0 && (
               <span className="text-[10px] font-bold text-amber-700">
                 • {failedCount} sync issue(s)
@@ -720,6 +819,21 @@ export function SyncHub() {
           </DialogHeader>
 
           <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
+            {/* ─── CONFLICT ALERT BANNER ─── */}
+            {conflictCount > 0 && (
+              <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-xl shadow-sm">
+                <AlertTriangle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-orange-800">Duplicate Reading Conflict</p>
+                  <p className="text-xs text-orange-700 mt-0.5 leading-relaxed">
+                    <strong>{conflictCount}</strong> queue item(s) appear to be duplicate readings for the same meter and billing month.
+                    They are highlighted in orange below and will <strong>not</strong> be synced automatically.
+                    Please review each one and discard the incorrect entry using the <Trash2 className="h-3 w-3 inline" /> button before syncing again.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {pendingList.length === 0 && failedList.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <CheckCircle2 className="h-16 w-16 text-emerald-500 mb-3 animate-bounce" />
@@ -743,10 +857,15 @@ export function SyncHub() {
                   const value = isPhotoOnly ? null : item.payload.readingValue;
                   const faultCode = isPhotoOnly ? null : item.payload.faultCode;
                   
+                  const isConflict = !isPhotoOnly && item.id && conflictIds.has(item.id);
                   return (
                     <div 
                       key={isPhotoOnly ? `upload-pending-${item.id}` : `reading-pending-${item.id}`} 
-                      className="flex items-start gap-4 p-4 bg-blue-50/30 hover:bg-blue-50/60 border border-blue-100 rounded-xl transition-all relative overflow-hidden group shadow-sm"
+                      className={`flex items-start gap-4 p-4 border rounded-xl transition-all relative overflow-hidden group shadow-sm ${
+                        isConflict
+                          ? 'bg-orange-50/40 hover:bg-orange-50/70 border-orange-200'
+                          : 'bg-blue-50/30 hover:bg-blue-50/60 border-blue-100'
+                      }`}
                     >
                       <div className="flex-shrink-0">
                         {photoData ? (
@@ -776,6 +895,13 @@ export function SyncHub() {
                           }`}>
                             {isPhotoOnly ? 'Photo Proof' : (item.type === 'bulk' ? 'Bulk' : 'Individual')}
                           </span>
+
+                          {/* Conflict badge — appears when this item is a duplicate */}
+                          {!isPhotoOnly && item.id && conflictIds.has(item.id) && (
+                            <span className="text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-300 rounded px-1.5 py-0.5 flex items-center gap-1 animate-pulse">
+                              <AlertTriangle className="h-2.5 w-2.5" /> Duplicate Conflict
+                            </span>
+                          )}
                           
                           {isPhotoOnly ? (
                             <span className={`text-[10px] font-bold border rounded px-1.5 py-0.5 flex items-center gap-1 ${
@@ -787,8 +913,13 @@ export function SyncHub() {
                               {item.status === 'uploading' ? 'Uploading Photo...' : 'Awaiting Photo Sync'}
                             </span>
                           ) : (
-                            <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 flex items-center gap-1 animate-pulse">
-                              <Loader2 className="h-2.5 w-2.5 animate-spin" /> Awaiting Sync
+                            <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 flex items-center gap-1 ${
+                              item.id && conflictIds.has(item.id)
+                                ? 'text-orange-700 bg-orange-50 border border-orange-200'
+                                : 'text-blue-600 bg-blue-50 border border-blue-200 animate-pulse'
+                            }`}>
+                              {!(item.id && conflictIds.has(item.id)) && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+                              {item.id && conflictIds.has(item.id) ? 'Review Required' : 'Awaiting Sync'}
                             </span>
                           )}
                         </div>

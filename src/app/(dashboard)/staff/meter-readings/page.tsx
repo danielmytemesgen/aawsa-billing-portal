@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Activity, ListPlus, Database } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Activity, ListPlus, Database, FileDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
@@ -34,8 +34,7 @@ import {
   getStaffMembers,
   initializeStaffMembers,
   getBranches,
-  initializeBranches,
-  getBills
+  initializeBranches
 } from "@/lib/data-store";
 import type { FaultCodeRow } from "@/lib/action-types";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
@@ -109,7 +108,12 @@ export default function StaffMeterReadingsPage() {
     let customers = getCustomers();
     let bulkMeters = getBulkMeters();
 
-    const canViewAll = hasPermission('meter_readings_view_all');
+    const canViewAll = 
+      hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      hasPermission('meter_readings_view_all') ||
+      hasPermission('meter_readings:view_all') ||
+      hasPermission('*') ||
+      hasPermission('all');
     const branchId = currentUser?.branchId;
 
     if (!canViewAll && branchId) {
@@ -131,7 +135,8 @@ export default function StaffMeterReadingsPage() {
 
     const currentMonthYear = format(new Date(), 'yyyy-MM');
 
-    if (currentUserRole === 'reader') {
+    const isFieldReaderOnly = !canViewAll && !hasPermission('meter_readings_analytics_view') && !hasPermission('reports_generate_all');
+    if (isFieldReaderOnly) {
       individualReadingsRaw = individualReadingsRaw.filter(r => r.monthYear === currentMonthYear);
       bulkReadingsRaw = bulkReadingsRaw.filter(r => r.monthYear === currentMonthYear);
     }
@@ -168,11 +173,7 @@ export default function StaffMeterReadingsPage() {
       };
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
-    const filteredCustomers = customers;
-    const filteredBulkMeters = bulkMeters;
-    
-    // NOTE: setAllCustomers / setAllBulkMeters updates won't be called here to avoid deep loops
-    // but the readings map correctly to what they can view.
+    // Readings are mapped to what the user's branch/role allows.
 
     setIndividualReadings(displayedIndividualReadings);
     setBulkReadings(displayedBulkReadings);
@@ -242,7 +243,12 @@ export default function StaffMeterReadingsPage() {
   }, [toast, combineAndSortReadings]);
 
   React.useEffect(() => {
-    const canViewAll = hasPermission('meter_readings_view_all');
+    const canViewAll = 
+      hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      hasPermission('meter_readings_view_all') ||
+      hasPermission('meter_readings:view_all') ||
+      hasPermission('*') ||
+      hasPermission('all');
     const branchId = currentUser?.branchId;
 
     if (!canViewAll && branchId) {
@@ -259,32 +265,48 @@ export default function StaffMeterReadingsPage() {
 
   const handleAddReadingSubmit = async (formData: AddMeterReadingFormValues) => {
     const readerId = currentUser?.id || currentUser?.email || 'N/A';
-    const { entityId, meterType, reading, date, faultCode, capturedCoordinates } = formData;
+    const { entityId, meterType, reading, date, faultCode, capturedCoordinates, meterPhoto } = formData;
+    const activeFaultCode = faultCode === 'none' ? undefined : faultCode;
 
     setIsLoading(true);
     let result;
 
     try {
       if (meterType === 'individual_customer_meter') {
+        const customer = allCustomers.find(c => c.customerKeyNumber === entityId);
+        const prevReading = customer?.currentReading ?? 0;
+
         result = await addIndividualCustomerReading({
           individualCustomerId: entityId,
           readerStaffId: readerId,
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
+          previousReading: prevReading,
           capturedCoordinates: capturedCoordinates,
-
-          faultCode: faultCode === 'none' ? undefined : faultCode,
-          notes: faultCode && faultCode !== 'none' ? `Fault: ${faultCode}. Reader: ${currentUser?.email || readerId}` : `Reading entered by ${currentUser?.email || readerId}`,
+          faultCode: activeFaultCode,
+          notes: activeFaultCode
+            ? `Fault: ${activeFaultCode}. Reader: ${currentUser?.email || readerId}`
+            : `Reading entered by ${currentUser?.email || readerId}`,
+          meter_photo: meterPhoto,
         });
       } else {
+        const bulkMeter = allBulkMeters.find(bm => bm.customerKeyNumber === entityId);
+        const prevReading = bulkMeter?.currentReading ?? 0;
+
         result = await addBulkMeterReading({
           CUSTOMERKEY: entityId,
           readerStaffId: readerId,
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
           readingValue: reading,
+          previousReading: prevReading,
+          faultCode: activeFaultCode,
+          notes: activeFaultCode
+            ? `Fault: ${activeFaultCode}. Reader: ${currentUser?.email || readerId}`
+            : `Reading entered by ${currentUser?.email || readerId}`,
           capturedCoordinates: capturedCoordinates,
+          meter_photo: meterPhoto,
         });
       }
 
@@ -313,7 +335,45 @@ export default function StaffMeterReadingsPage() {
     }
   };
 
+  // CSV export helper
+  const exportReadingsToCSV = React.useCallback((data: DisplayReading[], filename: string) => {
+    if (data.length === 0) return;
+    const headers = ['Meter Identifier', 'Type', 'Reading Value', 'Previous Reading', 'Consumption (m³)', 'Reading Date', 'Month/Year', 'Notes', 'Fault Code'];
+    const rows = data.map(r => [
+      `"${(r.meterIdentifier || '').replace(/"/g, '""')}"`,
+      r.meterType === 'bulk' ? 'Bulk' : 'Individual',
+      r.readingValue ?? '',
+      r.previousReading ?? '',
+      ((r.readingValue ?? 0) - (r.previousReading ?? 0)).toFixed(2),
+      r.readingDate ?? '',
+      r.monthYear ?? '',
+      `"${(r.notes || '').replace(/"/g, '""')}"`,
+      r.faultCode || '',
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  // Determine the most recent month present across both lists
+  const mostRecentMonthYear = React.useMemo(() => {
+    const allMonths = [
+      ...individualReadings.map(r => r.monthYear),
+      ...bulkReadings.map(r => r.monthYear),
+    ].filter(Boolean);
+    if (allMonths.length === 0) return format(new Date(), "yyyy-MM");
+    return allMonths.sort().reverse()[0];
+  }, [individualReadings, bulkReadings]);
+
   const filteredIndividualReadings = individualReadings.filter(reading => {
+    if (reading.monthYear !== mostRecentMonthYear) return false;
     if (!searchTerm) return true;
     const lowerSearchTerm = searchTerm.toLowerCase();
     return reading.meterIdentifier.toLowerCase().includes(lowerSearchTerm) ||
@@ -328,6 +388,7 @@ export default function StaffMeterReadingsPage() {
   );
 
   const filteredBulkReadings = bulkReadings.filter(reading => {
+    if (reading.monthYear !== mostRecentMonthYear) return false;
     if (!searchTerm) return true;
     const lowerSearchTerm = searchTerm.toLowerCase();
     return reading.meterIdentifier.toLowerCase().includes(lowerSearchTerm) ||
@@ -515,6 +576,19 @@ export default function StaffMeterReadingsPage() {
                     <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
                   </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 gap-1.5"
+                  disabled={filteredIndividualReadings.length === 0}
+                  onClick={() => exportReadingsToCSV(
+                    filteredIndividualReadings,
+                    `individual-readings-${mostRecentMonthYear}.csv`
+                  )}
+                >
+                  <FileDown className="h-4 w-4" />
+                  Export CSV ({filteredIndividualReadings.length})
+                </Button>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
                 {isLoading && paginatedIndividualReadings.length === 0 ? (
@@ -552,6 +626,19 @@ export default function StaffMeterReadingsPage() {
                   <CardDescription>View and manage all recorded readings for bulk meters.</CardDescription>
                 </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 gap-1.5"
+                disabled={filteredBulkReadings.length === 0}
+                onClick={() => exportReadingsToCSV(
+                  filteredBulkReadings,
+                  `bulk-readings-${mostRecentMonthYear}.csv`
+                )}
+              >
+                <FileDown className="h-4 w-4" />
+                Export CSV ({filteredBulkReadings.length})
+              </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
               {isLoading && paginatedBulkReadings.length === 0 ? (

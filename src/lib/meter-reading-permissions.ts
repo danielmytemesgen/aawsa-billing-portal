@@ -6,20 +6,32 @@ export function canCreateMeterReadingForType(
   hasPermission: (permission: string) => boolean,
   type: MeterReadingType
 ) {
-  const createPermissions = {
-    bulk: [
-      PERMISSIONS.METER_READINGS_CREATE_BULK,
-      PERMISSIONS.METER_READINGS_CREATE,
-      PERMISSIONS.METER_READINGS_ADD_MANUAL,
-      PERMISSIONS.METER_READINGS_UPLOAD_BULK,
-    ],
-    individual: [
-      PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL,
-      PERMISSIONS.METER_READINGS_CREATE,
-      PERMISSIONS.METER_READINGS_ADD_MANUAL,
-      PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL,
-    ],
-  } as const;
+  // Super-admin wildcard check
+  if (hasPermission('*') || hasPermission('all') || hasPermission('admin')) {
+    return true;
+  }
 
-  return createPermissions[type].some((permission) => hasPermission(permission));
+  if (type === 'bulk') {
+    return (
+      hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+      hasPermission('meter_readings:create_bulk') ||
+      hasPermission('meter_readings_create_bulk') ||
+      hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) ||
+      hasPermission('meter_readings:upload_bulk') ||
+      hasPermission('meter_readings_upload_bulk')
+    );
+  }
+
+  if (type === 'individual') {
+    return (
+      hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+      hasPermission('meter_readings:create_individual') ||
+      hasPermission('meter_readings_create_individual') ||
+      hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) ||
+      hasPermission('meter_readings:upload_individual') ||
+      hasPermission('meter_readings_upload_individual')
+    );
+  }
+
+  return false;
 }

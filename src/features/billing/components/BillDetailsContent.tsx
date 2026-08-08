@@ -34,6 +34,7 @@ import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
 
 import { usePermissions } from '@/hooks/use-permissions';
+import { PERMISSIONS } from '@/lib/constants/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -966,7 +967,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         return permissions.some(p => hasPermission(p));
     };
 
-    const canEdit = (bill.status === 'Draft' || bill.status === 'Rework') && checkBillPermission('bill:create', 'bill:update');
+    const canEdit = (bill.status === 'Draft' || bill.status === 'Rework') &&
+      (hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
+       hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
+       hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
+       hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE));
 
     return (
         <div className="p-6 space-y-6 container mx-auto max-w-6xl no-print">

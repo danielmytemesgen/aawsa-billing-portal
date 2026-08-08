@@ -29,6 +29,9 @@ const PERMISSIONS = [
     { name: 'bulk_meters_update', category: 'Bulk Meter Management' },
     { name: 'bulk_meters_delete', category: 'Bulk Meter Management' },
     { name: 'bulk_meters_approve', category: 'Bulk Meter Management' },
+    { name: 'bulk_meters_manage_customers', category: 'Bulk Meter Management' },
+    { name: 'bulk_meters_edit_readings', category: 'Bulk Meter Management' },
+    { name: 'bulk_meters_edit_readings_view', category: 'Bulk Meter Management' },
     { name: 'staff_view', category: 'Staff Management' },
     { name: 'staff_view_all', category: 'Staff Management' },
     { name: 'staff_view_branch', category: 'Staff Management' },
@@ -74,12 +77,17 @@ const PERMISSIONS = [
     { name: 'knowledge_base_view', category: 'Knowledge Base' },
     { name: 'knowledge_base_manage', category: 'Knowledge Base' },
     { name: 'routes_view_all', category: 'Route Management' },
+    { name: 'routes_view_branch', category: 'Route Management' },
     { name: 'routes_view_assigned', category: 'Route Management' },
+    { name: 'reader_progress_view', category: 'Route Management' },
     { name: 'payments_view', category: 'Bill Management' },
     { name: 'payments_create', category: 'Bill Management' },
     { name: 'payments_delete', category: 'Bill Management' },
     { name: 'tariffs_view', category: 'Settings' },
-    { name: 'tariffs_manage', category: 'Settings' }
+    { name: 'tariffs_manage', category: 'Settings' },
+    { name: 'meter_readings_edit_recalculate_view', category: 'Meter Readings' },
+    { name: 'meter_readings_edit_recalculate', category: 'Meter Readings' },
+    { name: 'report:gl_monthly_summary_by_code', category: 'Reporting' }
 ];
 
 async function sync() {

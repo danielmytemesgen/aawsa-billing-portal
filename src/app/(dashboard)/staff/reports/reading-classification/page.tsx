@@ -246,7 +246,8 @@ export default function ReadingClassificationPage() {
             });
 
             const currentMonthYear = format(new Date(), 'yyyy-MM');
-            const finalReadings = currentUserRole === 'reader'
+            const isFieldReaderOnly = !hasPermission('reports_generate_all') && !hasPermission('meter_readings_view_all') && !hasPermission('meter_readings_analytics_view');
+            const finalReadings = isFieldReaderOnly
                 ? filteredProcessed.filter(r => r.month === currentMonthYear)
                 : filteredProcessed;
 

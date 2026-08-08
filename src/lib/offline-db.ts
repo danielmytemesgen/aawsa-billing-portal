@@ -498,3 +498,86 @@ export async function resetSingleFailedUpload(id: number) {
   return await db.uploads.update(id, { status: 'pending', errorMessage: undefined });
 }
 
+export interface DeviceHealthStatus {
+  batteryLevelPct: number | null; // 0 to 100
+  isCharging: boolean | null;
+  storageUsageMb: number;
+  isLowBatteryWarning: boolean;
+  isHighStorageWarning: boolean;
+}
+
+/**
+ * Inspects device battery level and local storage usage for field reading safety warnings.
+ */
+export async function checkDeviceHealth(): Promise<DeviceHealthStatus> {
+  let batteryLevelPct: number | null = null;
+  let isCharging: boolean | null = null;
+
+  if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+    try {
+      const battery: any = await (navigator as any).getBattery();
+      batteryLevelPct = Math.round(battery.level * 100);
+      isCharging = battery.charging;
+    } catch {
+      // Battery API unavailable or blocked
+    }
+  }
+
+  const usageBytes = await estimateStorageUsageBytes();
+  const storageUsageMb = parseFloat((usageBytes / (1024 * 1024)).toFixed(1));
+
+  return {
+    batteryLevelPct,
+    isCharging,
+    storageUsageMb,
+    isLowBatteryWarning: batteryLevelPct !== null && batteryLevelPct <= 15 && isCharging === false,
+    isHighStorageWarning: storageUsageMb >= 80,
+  };
+}
+
+/**
+ * Prefetches and caches a complete route package into IndexedDB for 100% offline field work.
+ */
+export async function cacheRoutePackage(routeKey: string, bulkMeters: any[], customers: any[], readings: any[]) {
+  const now = Date.now();
+  
+  // 1. Cache Route Metadata
+  await db.routes.put({
+    routeKey,
+    data: { routeKey, bulkMeterCount: bulkMeters.length, customerCount: customers.length, cachedAt: now },
+    lastUpdated: now
+  });
+
+  // 2. Cache Bulk Meters & Individual Customers
+  for (const bm of bulkMeters) {
+    await db.meters.put({
+      customerKeyNumber: bm.customerKeyNumber,
+      type: 'bulk',
+      data: bm,
+      lastUpdated: now
+    });
+  }
+
+  for (const c of customers) {
+    await db.meters.put({
+      customerKeyNumber: c.customerKeyNumber,
+      type: 'individual',
+      data: c,
+      lastUpdated: now
+    });
+  }
+
+  // 3. Cache Historical Readings
+  for (const r of readings) {
+    const key = r.id || r.localId || `${r.CUSTOMERKEY || r.individualCustomerId}:${r.monthYear}`;
+    await db.cached_readings.put({
+      id: String(key),
+      type: r.CUSTOMERKEY ? 'bulk' : 'individual',
+      data: r,
+      lastUpdated: now
+    });
+  }
+
+  return { routeKey, bulkMetersCount: bulkMeters.length, customersCount: customers.length, readingsCount: readings.length };
+}
+

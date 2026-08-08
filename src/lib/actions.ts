@@ -186,31 +186,39 @@ const generateBillKey = (billId: string) => {
 };
 
 /**
- * Determines the effective branch ID to filter by, enforcing strict isolation.
- * If the session user is assigned to a branch, they are restricted to that branch.
- * Only Head Office users (no branchId in session) can see all branches.
- */
-/**
- * Determines the effective branch ID to filter by, enforcing strict isolation.
- * If the session user is assigned to a branch, they are restricted to that branch,
- * UNLESS they have the appropriate 'view_all' permission.
+ * Determines the effective branch ID to filter by, enforcing permission-based access.
+ *
+ * Rules:
+ * 1. If the session user has the specified permissionViewAll (or superadmin '*'),
+ *    they can see cross-branch data (or apply an explicit optionsBranchId filter if provided).
+ * 2. If the session user lacks permissionViewAll and is assigned to a specific branch,
+ *    they are locked to their assigned branchId.
+ * 3. Otherwise, apply any explicit optionsBranchId filter provided.
  */
 function getEffectiveBranchId(session: any, optionsBranchId?: string, permissionViewAll?: string): string | undefined {
-  const perms = session.permissions || [];
-  
-  // 1. If user has the specific 'view_all' permission, they can use the requested branchId from options.
-  if (permissionViewAll && perms.includes(permissionViewAll)) {
-    return optionsBranchId;
+  const perms = session?.permissions || [];
+  const role = (session?.role || '').toLowerCase();
+
+  // Check if user has wildcard or the specific view_all permission
+  const hasViewAll = 
+    perms.includes('*') || 
+    perms.includes('all') || 
+    perms.includes('admin') || 
+    (permissionViewAll && perms.includes(permissionViewAll));
+
+  if (hasViewAll) {
+    // User has permission to see ALL branches!
+    // Return optionsBranchId if explicitly set (and not 'all'), otherwise undefined (all branches)
+    return (optionsBranchId && optionsBranchId !== 'all') ? optionsBranchId : undefined;
   }
-  
-  // 2. If user is tied to a specific branch AND doesn't have the override permission, they are LOCKED to it.
-  if (session.branchId && session.branchId !== 'all') {
+
+  // User lacks view_all permission — restrict to their assigned branch if present
+  if (session?.branchId && session.branchId !== 'all') {
     return session.branchId;
   }
-  
-  // 3. Otherwise there is no branch restriction to apply.
-  // Callers that need isolation should rely on explicit permission checks.
-  return undefined;
+
+  // Fallback to explicit options filter if provided
+  return (optionsBranchId && optionsBranchId !== 'all') ? optionsBranchId : undefined;
 }
 
 
@@ -307,6 +315,34 @@ export async function checkPermission(permission?: string) {
     throw new Error(`Forbidden: Missing permission ${permission}`);
   }
 
+  return { ...session, permissions: perms };
+}
+
+/**
+ * Checks that the logged-in user has AT LEAST ONE of the given permissions.
+ * Throws if they have none. Returns the session + full permissions on success.
+ *
+ * Use this when multiple different permissions should all grant access to the
+ * same action (e.g. a dedicated permission OR a broader catch-all permission).
+ */
+export async function checkPermissionAny(...permissions: string[]) {
+  const session = await getSession();
+  if (!session || !session.id) {
+    throw new Error('User not authenticated');
+  }
+  const perms = await dbGetStaffPermissions(session.id);
+
+  // bill:manage_all bypasses any bill: permission in the list
+  if (perms.includes('bill:manage_all') && permissions.some(p => p.startsWith('bill:'))) {
+    return { ...session, permissions: perms };
+  }
+
+  const granted = permissions.some(p => perms.includes(p));
+  if (!granted) {
+    const attempted = permissions.join(' | ');
+    await logPermissionDenial(`Missing all of: ${attempted}`, attempted, { ...session, permissions: perms });
+    throw new Error(`Forbidden: requires one of [${attempted}]`);
+  }
   return { ...session, permissions: perms };
 }
 
@@ -417,8 +453,8 @@ export async function deleteBranchAction(id: string) {
 
 export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    // Use checkPermission (live DB permissions) for branch isolation to reflect role changes immediately
+    const session = await checkPermission();
 
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.CUSTOMERS_VIEW_ALL);
     
@@ -434,10 +470,8 @@ export async function getAllCustomersAction(options?: { branchId?: string; limit
 
 export async function getCustomersCountAction(searchTerm?: string, excludePending?: boolean, branchId?: string, status?: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const resolvedBranchId = getEffectiveBranchId(session, branchId, 'customers_view_all');
+    const session = await checkPermission();
+    const resolvedBranchId = getEffectiveBranchId(session, branchId, PERMISSIONS.CUSTOMERS_VIEW_ALL);
     return await dbCountCustomers({ branchId: resolvedBranchId, searchTerm, excludePending, status });
   });
 }
@@ -455,10 +489,10 @@ export async function getCustomersSummaryAction() {
 export async function createCustomerAction(customer: IndividualCustomerInsert) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
-    // If user has restricted creation permission, it must be for their branch and pending approval
+    // All data entry creations default to Pending Approval
+    customer.status = customer.status || 'Pending Approval';
     if (session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED)) {
       customer.branch_id = customer.branch_id || (customer as any).branchId || session.branchId;
-      customer.status = 'Pending Approval';
     } else {
       // For non-restricted users, ensure branchId from form is mapped to branch_id
       customer.branch_id = customer.branch_id || (customer as any).branchId;
@@ -563,8 +597,8 @@ export async function getCustomerByIdAction(customerKeyNumber: string) {
 }
 export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    // Use checkPermission (live DB permissions) for branch isolation to reflect role changes immediately
+    const session = await checkPermission();
 
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BULK_METERS_VIEW_ALL);
     
@@ -582,10 +616,8 @@ export async function getAllBulkMetersAction(options?: { branchId?: string; limi
 
 export async function getBulkMetersCountAction(searchTerm?: string, excludePending?: boolean, branchId?: string, status?: string) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
-
-    const resolvedBranchId = getEffectiveBranchId(session, branchId, 'bulk_meters_view_all');
+    const session = await checkPermission();
+    const resolvedBranchId = getEffectiveBranchId(session, branchId, PERMISSIONS.BULK_METERS_VIEW_ALL);
     return await dbCountBulkMeters({ branchId: resolvedBranchId, searchTerm, excludePending, status });
   });
 }
@@ -613,10 +645,10 @@ export async function getBulkMeterByIdAction(customerKeyNumber: string) {
 export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
-    // If user has restricted creation permission, it must be for their branch and pending approval
+    // All data entry creations default to Pending Approval
+    bulkMeter.status = bulkMeter.status || 'Pending Approval';
     if (session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED)) {
       bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId || session.branchId;
-      bulkMeter.status = 'Pending Approval';
     } else {
       // For non-restricted users, ensure branchId from form is mapped to branch_id
       bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId;
@@ -1769,9 +1801,7 @@ export async function createIndividualCustomerReadingAction(
       if (meterPhoto && result?.id) {
         await dbCreateMeterReadingPhoto({
           reading_id: String(result.id),
-          reading_type: 'individual',
           photo_data: meterPhoto,
-          uploaded_by: session?.id ?? null,
         }, client);
       }
 
@@ -1900,9 +1930,7 @@ export async function createBulkMeterReadingAction(
       if (meterPhoto && result?.id) {
         await dbCreateMeterReadingPhoto({
           reading_id: String(result.id),
-          reading_type: 'bulk',
           photo_data: meterPhoto,
-          uploaded_by: session?.id ?? null,
         }, client);
       }
 
@@ -1944,22 +1972,25 @@ export async function getPhotosByReadingIdAction(readingId: string) {
 }
 export async function uploadReadingPhotoAction(
   readingId: string,
-  readingType: 'individual' | 'bulk',
   photoData: string
 ) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
     return await dbCreateMeterReadingPhoto({
       reading_id: readingId,
-      reading_type: readingType,
       photo_data: photoData,
-      uploaded_by: session?.id ?? null,
     });
   });
 }
 export async function getAssignedCustomerReadingsAction(bulkMeterId: string, monthYear: string) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.BILL_UPDATE);
+    // View OR edit permission grants access to read assigned readings
+    await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW,
+      PERMISSIONS.BULK_METERS_EDIT_READINGS,
+      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW,
+      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE
+    );
     const [year, month] = monthYear.split('-').map(Number);
     const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
@@ -2062,7 +2093,10 @@ export async function getAssignedCustomerReadingsAction(bulkMeterId: string, mon
 
 export async function recalculateBulkBillAction(bulkMeterId: string, monthYear: string) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.BILL_UPDATE);
+    await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_EDIT_READINGS,
+      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE
+    );
 
     const {
       dbGetBillById,
@@ -2164,7 +2198,10 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
   }>;
 }) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BILL_UPDATE);
+    const session = await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_EDIT_READINGS,
+      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE
+    );
     
     const {
       dbGetBillById,
@@ -3034,8 +3071,18 @@ export async function getCustomerReadingsAction(
 export async function getAllRoutesAction(options?: { branchId?: string }) {
   const session = await getSession();
   
-  // If user is a Reader, check if reading period is open
-  if (session?.role === 'Reader' || session?.role === 'Staff') {
+  const perms = session?.permissions || [];
+  const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || (session?.role || '').toLowerCase() === 'admin';
+
+  // If user is field/meter reading staff (lacks admin view-all), enforce reading period status check
+  if (!isSuperAdmin && (
+    perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) || 
+    perms.includes(PERMISSIONS.METER_READINGS_CREATE) || 
+    perms.includes(PERMISSIONS.METER_READINGS_CREATE_BULK) || 
+    perms.includes(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+    perms.includes('meter_readings_create_bulk') ||
+    perms.includes('meter_readings_create_individual')
+  )) {
     const status = await getReadingPeriodStatusAction();
     if (status === 'Closed') {
       return []; // Return no routes if closed for field staff
@@ -4403,106 +4450,124 @@ export async function batchImportBulkMetersAction(rows: any[]) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
 
-      const preparedRows = rows.map((row: any) => {
-        const r = { ...row };
-        // Batch CSV imports always require approval, regardless of permission level
-        r.branch_id = r.branch_id || r.branchId || session.branchId;
-        r.status = 'Pending Approval';
-        // Ensure required keys exist when importing in batch mode. Single-row flows
-        // generate keys on the client, but batch uploads must be resilient server-side.
-        if (!r.customerKeyNumber) {
-          r.customerKeyNumber = `BM-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
-        }
-        if (!r.instKey) {
-          r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
-        }
-        // Normalize to DB column names
-        if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
-        if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
-        if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
-        const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
-        delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
-        delete r.branchId;
-        return { row: r, spatial, key: r.customerKeyNumber };
-      });
-
-      const insertedKeys: string[] = [];
-      const errors: string[] = [];
-
-      console.log(`[BatchImportBulkMeters] Starting import of ${preparedRows.length} rows`);
-
-      await withTransaction(async (client) => {
-        let transactionDead = false;
-
-        for (const { row, spatial, key } of preparedRows) {
-          if (transactionDead) {
-            errors.push(`Meter ${key}: skipped — transaction was aborted by an earlier critical error`);
-            continue;
-          }
-
-          const spName = `sp_row_${insertedKeys.length + errors.length}`;
-          const guard = await savepointGuard(client, spName, async () => {
-            // Normalize keys to DB column names to avoid inserting unknown columns
-            const normalizedRow: Record<string, any> = {};
-            for (const k of Object.keys(row)) {
-              const v = (row as any)[k];
-              switch (k) {
-                case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
-                case 'meter_key': normalizedRow['METER_KEY'] = v; break;
-                case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
-                case 'instKey': normalizedRow['INST_KEY'] = v; break;
-                case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
-                case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
-                case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
-                case 'branchId': normalizedRow['branch_id'] = v; break;
-                case 'branch_id': normalizedRow['branch_id'] = v; break;
-                case 'chargeGroup': normalizedRow['charge_group'] = v; break;
-                case 'charge_group': normalizedRow['charge_group'] = v; break;
-                case 'sewerageConnection': normalizedRow['sewerage_connection'] = v; break;
-                case 'sewerage_connection': normalizedRow['sewerage_connection'] = v; break;
-                case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-                case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-                default: normalizedRow[k] = v; break;
-              }
-            }
-            const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
-            const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
-            const values = Object.values(normalizedRow);
-            const result = await client.query(
-              `INSERT INTO bulk_meters (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
-              values
-            );
-            if (result.rowCount === 1) {
-              if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
-                await dbUpsertSpatialRecord(key, 'bulk_meter', spatial, client);
-              }
-              insertedKeys.push(key);
-            } else {
-              errors.push(`Meter ${key}: already exists`);
-            }
-          }, '[BatchImportBulkMeters]');
-
-          if (!guard.ok) {
-            errors.push(`Meter ${key}: ${guard.errMsg}`);
-            if (guard.transactionDead) transactionDead = true;
-          }
-        }
-      });
-
-      console.log(`[BatchImportBulkMeters] Complete: inserted=${insertedKeys.length}, errors=${errors.length}`);
-
-      try {
-        await logSecurityEventAction({
-          event: 'Batch Import Bulk Meters',
-          details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
-        });
-      } catch (logErr) {
-        console.warn('Failed to log batch import event:', logErr);
+    const preparedRows = rows.map((row: any) => {
+      const r = { ...row };
+      r.branch_id = r.branch_id || r.branchId || session.branchId;
+      r.status = 'Pending Approval';
+      if (!r.customerKeyNumber) {
+        r.customerKeyNumber = `BM-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
       }
+      if (!r.instKey) {
+        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+      }
+      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
+      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
+      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
+      delete r.branchId;
 
-      // Ensure all errors are strings for serialization
-      const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
-      return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
+      const normalizedRow: Record<string, any> = {};
+      for (const k of Object.keys(r)) {
+        const v = r[k];
+        switch (k) {
+          case 'meterNumber': case 'meter_key': case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
+          case 'instKey': case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
+          case 'routeKey': case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
+          case 'branchId': case 'branch_id': normalizedRow['branch_id'] = v; break;
+          case 'chargeGroup': case 'charge_group': normalizedRow['charge_group'] = v; break;
+          case 'sewerageConnection': case 'sewerage_connection': normalizedRow['sewerage_connection'] = v; break;
+          case 'numberOfDials': case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+          default: normalizedRow[k] = v; break;
+        }
+      }
+      return { row: normalizedRow, spatial, key: normalizedRow['customerKeyNumber'] };
+    });
+
+    const insertedKeys: string[] = [];
+    const errors: string[] = [];
+
+    console.log(`[BatchImportBulkMeters] Processing batch of ${preparedRows.length} rows`);
+
+    await withTransaction(async (client) => {
+      const MINI_BATCH = 50;
+      for (let i = 0; i < preparedRows.length; i += MINI_BATCH) {
+        const batch = preparedRows.slice(i, i + MINI_BATCH);
+        
+        // Collect all distinct column names in this mini-batch
+        const colSet = new Set<string>();
+        batch.forEach(b => Object.keys(b.row).forEach(k => colSet.add(k)));
+        const cols = Array.from(colSet);
+        const colNamesStr = cols.map(c => `"${c}"`).join(', ');
+
+        const values: any[] = [];
+        const valueTuples: string[] = [];
+        let paramIdx = 1;
+
+        batch.forEach(item => {
+          const tuplePlaceholders = cols.map(c => {
+            values.push(item.row[c] !== undefined ? item.row[c] : null);
+            return `$${paramIdx++}`;
+          });
+          valueTuples.push(`(${tuplePlaceholders.join(', ')})`);
+        });
+
+        const sql = `INSERT INTO bulk_meters (${colNamesStr}) VALUES ${valueTuples.join(', ')} ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`;
+        
+        try {
+          const res = await client.query(sql, values);
+          const insertedInThisBatch = new Set((res.rows || []).map((r: any) => r.customerKeyNumber));
+          
+          for (const item of batch) {
+            if (insertedInThisBatch.has(item.key)) {
+              insertedKeys.push(item.key);
+              if (item.spatial.xCoordinate != null || item.spatial.yCoordinate != null || item.spatial.zCoordinate != null) {
+                await dbUpsertSpatialRecord(item.key, 'bulk_meter', item.spatial, client);
+              }
+            } else {
+              errors.push(`Meter ${item.key}: already exists`);
+            }
+          }
+        } catch (err: any) {
+          // Fallback to row-by-row on unexpected batch failure
+          for (const item of batch) {
+            try {
+              const itemCols = Object.keys(item.row).map(c => `"${c}"`).join(', ');
+              const itemPlaceholders = Object.keys(item.row).map((_, idx) => `$${idx + 1}`).join(', ');
+              const itemValues = Object.values(item.row);
+              const singleRes = await client.query(
+                `INSERT INTO bulk_meters (${itemCols}) VALUES (${itemPlaceholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`,
+                itemValues
+              );
+              if (singleRes.rows?.length > 0) {
+                insertedKeys.push(item.key);
+                if (item.spatial.xCoordinate != null || item.spatial.yCoordinate != null || item.spatial.zCoordinate != null) {
+                  await dbUpsertSpatialRecord(item.key, 'bulk_meter', item.spatial, client);
+                }
+              } else {
+                errors.push(`Meter ${item.key}: already exists`);
+              }
+            } catch (singleErr: any) {
+              errors.push(`Meter ${item.key}: ${singleErr?.message || 'Insert failed'}`);
+            }
+          }
+        }
+      }
+    });
+
+    console.log(`[BatchImportBulkMeters] Complete: inserted=${insertedKeys.length}, errors=${errors.length}`);
+
+    try {
+      await logSecurityEventAction({
+        event: 'Batch Import Bulk Meters',
+        details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
+      });
+    } catch (logErr) {
+      console.warn('Failed to log batch import event:', logErr);
+    }
+
+    const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
+    return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
   });
 }
 
@@ -4515,104 +4580,125 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
 
-      const preparedRows = rows.map((row: any) => {
-        const r = { ...row };
-        // Batch CSV imports always require approval, regardless of permission level
-        r.branch_id = r.branch_id || r.branchId || session.branchId;
-        r.status = 'Pending Approval';
-        // Ensure required keys exist for batch imports
-        if (!r.customerKeyNumber) {
-          r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
-        }
-        if (!r.instKey) {
-          r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
-        }
-        if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
-        if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
-        if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
-        const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
-        delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
-        delete r.branchId;
-        return { row: r, spatial, key: r.customerKeyNumber };
-      });
-
-      const insertedKeys: string[] = [];
-      const errors: string[] = [];
-
-      console.log(`[BatchImportIndividualCustomers] Starting import of ${preparedRows.length} rows`);
-
-      await withTransaction(async (client) => {
-        let transactionDead = false;
-
-        for (const { row, spatial, key } of preparedRows) {
-          if (transactionDead) {
-            errors.push(`Customer ${key}: skipped — transaction was aborted by an earlier critical error`);
-            continue;
-          }
-
-          const spName = `sp_row_${insertedKeys.length + errors.length}`;
-          const guard = await savepointGuard(client, spName, async () => {
-            // Normalize keys to DB column names before insert
-            const normalizedRow: Record<string, any> = {};
-            for (const k of Object.keys(row)) {
-              const v = (row as any)[k];
-              switch (k) {
-                case 'meterNumber': normalizedRow['METER_KEY'] = v; break;
-                case 'meter_key': normalizedRow['METER_KEY'] = v; break;
-                case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
-                case 'instKey': normalizedRow['INST_KEY'] = v; break;
-                case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
-                case 'routeKey': normalizedRow['ROUTE_KEY'] = v; break;
-                case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
-                case 'assignedBulkMeterId': normalizedRow['assignedBulkMeterId'] = v; break;
-                case 'branchId': normalizedRow['branch_id'] = v; break;
-                case 'branch_id': normalizedRow['branch_id'] = v; break;
-                case 'chargeGroup': normalizedRow['charge_group'] = v; break;
-                case 'charge_group': normalizedRow['charge_group'] = v; break;
-                case 'sewerageConnection': normalizedRow['sewerageConnection'] = v; break;
-                case 'numberOfDials': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-                case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-                default: normalizedRow[k] = v; break;
-              }
-            }
-            const colNames = Object.keys(normalizedRow).map((k: string) => `"${k}"`).join(', ');
-            const placeholders = Object.keys(normalizedRow).map((_: any, i: number) => `$${i + 1}`).join(', ');
-            const values = Object.values(normalizedRow);
-            const result = await client.query(
-              `INSERT INTO individual_customers (${colNames}) VALUES (${placeholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING`,
-              values
-            );
-            if (result.rowCount === 1) {
-              if (spatial.xCoordinate != null || spatial.yCoordinate != null || spatial.zCoordinate != null) {
-                await dbUpsertSpatialRecord(key, 'individual_customer', spatial, client);
-              }
-              insertedKeys.push(key);
-            } else {
-              errors.push(`Customer ${key}: already exists`);
-            }
-          }, '[BatchImportIndividualCustomers]');
-
-          if (!guard.ok) {
-            errors.push(`Customer ${key}: ${guard.errMsg}`);
-            if (guard.transactionDead) transactionDead = true;
-          }
-        }
-      });
-
-      console.log(`[BatchImportIndividualCustomers] Complete: inserted=${insertedKeys.length}, errors=${errors.length}`);
-
-      try {
-        await logSecurityEventAction({
-          event: 'Batch Import Individual Customers',
-          details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
-        });
-      } catch (logErr) {
-        console.warn('Failed to log batch import event:', logErr);
+    const preparedRows = rows.map((row: any) => {
+      const r = { ...row };
+      r.branch_id = r.branch_id || r.branchId || session.branchId;
+      r.status = 'Pending Approval';
+      if (!r.customerKeyNumber) {
+        r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
       }
+      if (!r.instKey) {
+        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+      }
+      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
+      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
+      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
+      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
+      delete r.branchId;
 
-      // Ensure all errors are strings for serialization
-      const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
-      return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
+      const normalizedRow: Record<string, any> = {};
+      for (const k of Object.keys(r)) {
+        const v = r[k];
+        switch (k) {
+          case 'meterNumber': case 'meter_key': case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
+          case 'instKey': case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
+          case 'routeKey': case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
+          case 'assignedBulkMeterId': normalizedRow['assignedBulkMeterId'] = v; break;
+          case 'branchId': case 'branch_id': normalizedRow['branch_id'] = v; break;
+          case 'chargeGroup': case 'charge_group': normalizedRow['charge_group'] = v; break;
+          case 'sewerageConnection': case 'sewerage_connection': normalizedRow['sewerageConnection'] = v; break;
+          case 'numberOfDials': case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
+          default: normalizedRow[k] = v; break;
+        }
+      }
+      return { row: normalizedRow, spatial, key: normalizedRow['customerKeyNumber'] };
+    });
+
+    const insertedKeys: string[] = [];
+    const errors: string[] = [];
+
+    console.log(`[BatchImportIndividualCustomers] Processing batch of ${preparedRows.length} rows`);
+
+    await withTransaction(async (client) => {
+      const MINI_BATCH = 50;
+      for (let i = 0; i < preparedRows.length; i += MINI_BATCH) {
+        const batch = preparedRows.slice(i, i + MINI_BATCH);
+        
+        // Collect all distinct column names in this mini-batch
+        const colSet = new Set<string>();
+        batch.forEach(b => Object.keys(b.row).forEach(k => colSet.add(k)));
+        const cols = Array.from(colSet);
+        const colNamesStr = cols.map(c => `"${c}"`).join(', ');
+
+        const values: any[] = [];
+        const valueTuples: string[] = [];
+        let paramIdx = 1;
+
+        batch.forEach(item => {
+          const tuplePlaceholders = cols.map(c => {
+            values.push(item.row[c] !== undefined ? item.row[c] : null);
+            return `$${paramIdx++}`;
+          });
+          valueTuples.push(`(${tuplePlaceholders.join(', ')})`);
+        });
+
+        const sql = `INSERT INTO individual_customers (${colNamesStr}) VALUES ${valueTuples.join(', ')} ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`;
+        
+        try {
+          const res = await client.query(sql, values);
+          const insertedInThisBatch = new Set((res.rows || []).map((r: any) => r.customerKeyNumber));
+          
+          for (const item of batch) {
+            if (insertedInThisBatch.has(item.key)) {
+              insertedKeys.push(item.key);
+              if (item.spatial.xCoordinate != null || item.spatial.yCoordinate != null || item.spatial.zCoordinate != null) {
+                await dbUpsertSpatialRecord(item.key, 'individual_customer', item.spatial, client);
+              }
+            } else {
+              errors.push(`Customer ${item.key}: already exists`);
+            }
+          }
+        } catch (err: any) {
+          // Fallback to row-by-row on unexpected batch failure
+          for (const item of batch) {
+            try {
+              const itemCols = Object.keys(item.row).map(c => `"${c}"`).join(', ');
+              const itemPlaceholders = Object.keys(item.row).map((_, idx) => `$${idx + 1}`).join(', ');
+              const itemValues = Object.values(item.row);
+              const singleRes = await client.query(
+                `INSERT INTO individual_customers (${itemCols}) VALUES (${itemPlaceholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`,
+                itemValues
+              );
+              if (singleRes.rows?.length > 0) {
+                insertedKeys.push(item.key);
+                if (item.spatial.xCoordinate != null || item.spatial.yCoordinate != null || item.spatial.zCoordinate != null) {
+                  await dbUpsertSpatialRecord(item.key, 'individual_customer', item.spatial, client);
+                }
+              } else {
+                errors.push(`Customer ${item.key}: already exists`);
+              }
+            } catch (singleErr: any) {
+              errors.push(`Customer ${item.key}: ${singleErr?.message || 'Insert failed'}`);
+            }
+          }
+        }
+      }
+    });
+
+    console.log(`[BatchImportIndividualCustomers] Complete: inserted=${insertedKeys.length}, errors=${errors.length}`);
+
+    try {
+      await logSecurityEventAction({
+        event: 'Batch Import Individual Customers',
+        details: { inserted: insertedKeys.length, errors: errors.length, total: rows.length }
+      });
+    } catch (logErr) {
+      console.warn('Failed to log batch import event:', logErr);
+    }
+
+    const sanitizedErrors = errors.map(e => typeof e === 'string' ? e : String(e));
+    return { success: true, inserted: insertedKeys.length, errors: sanitizedErrors };
   });
 }
 
@@ -4630,7 +4716,13 @@ export async function getAssignedCustomersForBulkMeterAction(
   pageSize: number = 5
 ) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+      PERMISSIONS.CUSTOMERS_VIEW_ALL,
+      PERMISSIONS.CUSTOMERS_VIEW_BRANCH,
+      PERMISSIONS.BULK_METERS_VIEW_ALL,
+      PERMISSIONS.BULK_METERS_VIEW_BRANCH
+    );
     const offset = (page - 1) * pageSize;
     const [rows, countResult] = await Promise.all([
       query(
@@ -4660,7 +4752,13 @@ export async function getUnassignedIndividualCustomersAction(
   pageSize: number = 5
 ) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+      PERMISSIONS.CUSTOMERS_VIEW_ALL,
+      PERMISSIONS.CUSTOMERS_VIEW_BRANCH,
+      PERMISSIONS.BULK_METERS_VIEW_ALL,
+      PERMISSIONS.BULK_METERS_VIEW_BRANCH
+    );
     const offset = (page - 1) * pageSize;
     const baseWhere = `"assignedBulkMeterId" IS NULL AND deleted_at IS NULL AND status != 'Pending Approval'`;
     const searchParams: any[] = [];
@@ -4693,7 +4791,11 @@ export async function getUnassignedIndividualCustomersAction(
 /** Assigns an individual customer to a bulk meter by setting assignedBulkMeterId. */
 export async function assignCustomerToBulkMeterAction(customerKeyNumber: string, bulkMeterId: string) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+      PERMISSIONS.CUSTOMERS_UPDATE,
+      PERMISSIONS.BULK_METERS_UPDATE
+    );
     await dbUpdateCustomer(customerKeyNumber, { assignedBulkMeterId: bulkMeterId } as any);
     revalidatePath('/staff/bill-management');
     revalidatePath('/admin/dashboard');
@@ -4704,7 +4806,11 @@ export async function assignCustomerToBulkMeterAction(customerKeyNumber: string,
 /** Removes an individual customer from their current bulk meter assignment. */
 export async function unassignCustomerFromBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+      PERMISSIONS.CUSTOMERS_UPDATE,
+      PERMISSIONS.BULK_METERS_UPDATE
+    );
     await query(
       `UPDATE individual_customers SET "assignedBulkMeterId" = NULL WHERE "customerKeyNumber" = $1`,
       [customerKeyNumber]

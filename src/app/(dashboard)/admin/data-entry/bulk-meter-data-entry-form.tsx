@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { bulkMeterDataEntrySchema, type BulkMeterDataEntryFormValues, meterSizeOptions, subCityOptions, woredaOptions } from "./customer-data-entry-types";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
 import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, initializeCustomers, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, getBulkMeters } from "@/lib/data-store";
 import { generateBulkMeterKeys } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -37,8 +38,32 @@ import {
   GitBranch,
   Network,
   Globe,
-  Layers
+  Layers,
+  TrendingUp,
+  CheckCircle2,
 } from "lucide-react";
+
+// Section header helper
+const SectionHeader = ({ icon: Icon, title, description }: { icon: React.ElementType; title: string; description?: string }) => (
+  <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+    <div className="p-1.5 bg-primary/10 rounded-lg flex-shrink-0">
+      <Icon className="h-4 w-4 text-primary" />
+    </div>
+    <div>
+      <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">{title}</h3>
+      {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+    </div>
+  </div>
+);
+
+// Required fields tracked for progress
+const REQUIRED_FIELDS_BULK: (keyof BulkMeterDataEntryFormValues)[] = [
+  "name", "customerKeyNumber", "instKey", "contractNumber",
+  "meterNumber", "meterSize",
+  "previousReading", "currentReading", "month",
+  "specificArea", "subCity", "woreda",
+  "chargeGroup", "sewerageConnection",
+];
 
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_";
 
@@ -97,9 +122,23 @@ export function BulkMeterDataEntryForm() {
     },
   });
 
-  const xValue = form.watch("xCoordinate");
-  const yValue = form.watch("yCoordinate");
+  const watchedValues = form.watch();
+  const xValue = watchedValues.xCoordinate;
+  const yValue = watchedValues.yCoordinate;
+  const prevReading = watchedValues.previousReading;
+  const currReading = watchedValues.currentReading;
   const hasCoordinates = !!(xValue && yValue);
+
+  const consumption = (currReading !== undefined && prevReading !== undefined && !isNaN(currReading) && !isNaN(prevReading))
+    ? (currReading - prevReading)
+    : null;
+
+  // Progress
+  const filledCount = REQUIRED_FIELDS_BULK.filter((f) => {
+    const val = watchedValues[f];
+    return val !== undefined && val !== "" && val !== null;
+  }).length;
+  const progressPct = Math.round((filledCount / REQUIRED_FIELDS_BULK.length) * 100);
 
   const openExternalMap = () => {
     if (hasCoordinates) {
@@ -130,9 +169,37 @@ export function BulkMeterDataEntryForm() {
     <ScrollArea className="h-[calc(100vh-280px)] pr-4">
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-10">
-          
+
+          {/* ── Progress Indicator ─────────────────────────────────────── */}
+          <div className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {progressPct === 100 ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                ) : (
+                  <Activity className="h-4 w-4 text-primary animate-pulse" />
+                )}
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  Form Completion
+                </span>
+              </div>
+              <span className={`text-xs font-bold tabular-nums ${
+                progressPct === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-primary"
+              }`}>
+                {filledCount} / {REQUIRED_FIELDS_BULK.length} required fields &nbsp;·&nbsp; {progressPct}%
+              </span>
+            </div>
+            <Progress
+              value={progressPct}
+              className={`h-2 rounded-full transition-all duration-500 ${
+                progressPct === 100 ? "[&>div]:bg-emerald-500" : ""
+              }`}
+            />
+          </div>
+
           {/* Section: Assignment */}
           <div>
+            <SectionHeader icon={Network} title="Branch Assignment" description="Assign this bulk meter to an administrative branch" />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
@@ -173,6 +240,7 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Meter Identity */}
           <div>
+            <SectionHeader icon={Package} title="Meter Identity" description="Unique identifiers and contract information" />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -249,6 +317,7 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Meter Specs */}
           <div>
+            <SectionHeader icon={Settings} title="Meter Specifications" description="Technical specs including size and dial count" />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -327,6 +396,21 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Usage */}
           <div>
+            <SectionHeader icon={Activity} title="Meter Readings" description="Enter the billing period readings" />
+            {/* Live consumption hint */}
+            {consumption !== null && (
+              <div className={`mb-4 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border ${
+                consumption < 0
+                  ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400'
+              }`}>
+                <TrendingUp className="h-4 w-4 flex-shrink-0" />
+                {consumption < 0
+                  ? <span>⚠️ Current reading is less than previous — please check values.</span>
+                  : <span>Consumption: <strong>{consumption.toFixed(2)} m³</strong></span>
+                }
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -404,6 +488,7 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Location & Contact */}
           <div>
+            <SectionHeader icon={MapPin} title="Location & Contact" description="Physical address and contact information" />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -496,6 +581,7 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Infrastructure */}
           <div>
+            <SectionHeader icon={Layers} title="Infrastructure & Billing" description="Sewerage, charge group, and route classification" />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}

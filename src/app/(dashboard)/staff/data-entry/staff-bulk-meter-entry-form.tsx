@@ -68,13 +68,14 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
     // Initialize branch based on provided branchName
     initializeBranches().then(() => {
       const allBranches = getBranches();
-      const normalizedStaffBranchName = branchName.trim().toLowerCase();
+      const normalizedStaffBranchName = (branchName || "").trim().toLowerCase();
       const staffBranch = allBranches.find(b => {
         const normalizedBranchName = b.name.trim().toLowerCase();
-        return normalizedBranchName.includes(normalizedStaffBranchName) || normalizedStaffBranchName.includes(normalizedBranchName);
+        return normalizedBranchName === normalizedStaffBranchName || normalizedBranchName.includes(normalizedStaffBranchName) || normalizedStaffBranchName.includes(normalizedBranchName);
       });
       if (staffBranch) {
         setStaffBranchId(staffBranch.id);
+        form.setValue("branchId", staffBranch.id);
       }
     });
 
@@ -91,6 +92,7 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
     const bulkMeterDataForStore = {
       ...data,
       branchId: staffBranchId,
+      status: "Pending Approval" as const,
     };
 
     const result = await addBulkMeterToStore(bulkMeterDataForStore);

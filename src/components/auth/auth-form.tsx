@@ -224,7 +224,8 @@ export function AuthForm() {
 
         const role = result.user.role.toLowerCase().trim();
         const permissions = result.user.permissions || [];
-        const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+        const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || permissions.includes('*') || permissions.includes('all') || permissions.includes('admin');
+        const hasFieldReaderPerms = permissions.includes('meter_readings_create_bulk') || permissions.includes('meter_readings_create_individual') || permissions.includes('meter_readings_create') || permissions.includes('routes_view_assigned');
 
         if (isManagement) {
           // Automatically sync billing aging debt in the background for management users
@@ -241,7 +242,7 @@ export function AuthForm() {
             router.push("/admin/dashboard");
           }
         } else {
-          if (role === 'reader') {
+          if (hasFieldReaderPerms) {
             try {
               setSyncState("caching_routes");
               await fetchRoutes(true);

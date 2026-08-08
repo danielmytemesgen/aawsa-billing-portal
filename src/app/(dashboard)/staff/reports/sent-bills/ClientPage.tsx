@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
+import { getEffectiveBranchId } from "@/lib/branch-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { ReportPrintSummaryDialog } from "@/components/reports/ReportPrintSummaryDialog";
@@ -62,7 +63,7 @@ export default function StaffSentBillsReportPage() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching bill records..." });
     try {
-      const normalizedBranchId = currentUser.branchId === 'all' ? undefined : currentUser.branchId;
+      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -104,7 +105,7 @@ export default function StaffSentBillsReportPage() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching records across all pages..." });
     try {
-      const normalizedBranchId = currentUser.branchId === 'all' ? undefined : currentUser.branchId;
+      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -172,7 +173,7 @@ export default function StaffSentBillsReportPage() {
 
     const fetchBills = async () => {
       setIsLoading(true);
-      const normalizedBranchId = currentUser.branchId === 'all' ? undefined : currentUser.branchId;
+      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({

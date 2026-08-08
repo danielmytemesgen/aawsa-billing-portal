@@ -15,6 +15,8 @@ import {
 import { updateBulkMeter as updateBulkMeterInStore, updateCustomer as updateCustomerInStore } from "@/lib/data-store";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { DomainBill } from "@/lib/data-store";
+import { PERMISSIONS } from "@/lib/constants/auth";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface EditReadingsRecalculateSectionProps {
   bulkMeter: BulkMeter;
@@ -30,6 +32,15 @@ export function EditReadingsRecalculateSection({
   onSaveSuccess,
 }: EditReadingsRecalculateSectionProps) {
   const { toast } = useToast();
+  const { hasPermission } = usePermissions();
+  const canView =
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE);
+  const canSave =
+    hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
+    hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE);
 
   const monthYear = (latestBill as any)?.month_year || latestBill?.monthYear || bulkMeter.month || format(new Date(), "yyyy-MM");
   const dateBilledVal = latestBill?.createdAt || (latestBill as any)?.created_at;
@@ -261,9 +272,16 @@ export function EditReadingsRecalculateSection({
 
   return (
     <div className="bg-[#fffdf5] dark:bg-amber-950/20 p-4 sm:p-5 rounded-xl border border-amber-200/80 dark:border-amber-900/40 space-y-4 my-4 shadow-sm">
-      <h4 className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-2 text-base sm:text-lg">
-        <Edit2 className="h-5 w-5 text-amber-600 dark:text-amber-400" /> Edit Readings & Recalculate
-      </h4>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-2 text-base sm:text-lg">
+          <Edit2 className="h-5 w-5 text-amber-600 dark:text-amber-400" /> Edit Readings &amp; Recalculate
+        </h4>
+        {!canSave && (
+          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+            🔍 View Only
+          </span>
+        )}
+      </div>
 
       {/* Main Bulk Meter Readings */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -273,7 +291,9 @@ export function EditReadingsRecalculateSection({
             type="number"
             value={bulkPrevRead}
             onChange={(e) => setBulkPrevRead(parseFloat(e.target.value) || 0)}
-            className="h-10 border-amber-300 dark:border-amber-800 bg-white dark:bg-amber-950/40"
+            readOnly={!canSave}
+            disabled={!canSave}
+            className="h-10 border-amber-300 dark:border-amber-800 bg-white dark:bg-amber-950/40 disabled:opacity-70 disabled:cursor-not-allowed"
           />
         </div>
         <div className="space-y-1">
@@ -282,7 +302,9 @@ export function EditReadingsRecalculateSection({
             type="number"
             value={bulkCurrRead}
             onChange={(e) => setBulkCurrRead(parseFloat(e.target.value) || 0)}
-            className="h-10 border-amber-300 dark:border-amber-800 bg-white dark:bg-amber-950/40"
+            readOnly={!canSave}
+            disabled={!canSave}
+            className="h-10 border-amber-300 dark:border-amber-800 bg-white dark:bg-amber-950/40 disabled:opacity-70 disabled:cursor-not-allowed"
           />
         </div>
       </div>
@@ -294,12 +316,14 @@ export function EditReadingsRecalculateSection({
             ASSIGNED INDIVIDUAL CUSTOMER READINGS
             {isLoadingAssigned && <span className="text-amber-600 font-normal normal-case">(loading…)</span>}
           </h5>
-          <label className="cursor-pointer">
-            <input type="file" accept=".csv,.txt" onChange={handleFileUploadAssignedReadings} className="hidden" />
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-300 bg-white dark:bg-amber-900/30 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors shadow-sm cursor-pointer">
-              <Upload className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400" /> Upload CSV
-            </span>
-          </label>
+          {canSave && (
+            <label className="cursor-pointer">
+              <input type="file" accept=".csv,.txt" onChange={handleFileUploadAssignedReadings} className="hidden" />
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-300 bg-white dark:bg-amber-900/30 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors shadow-sm cursor-pointer">
+                <Upload className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400" /> Upload CSV
+              </span>
+            </label>
+          )}
         </div>
 
         {!isLoadingAssigned && assignedReadings.length === 0 && (
@@ -335,7 +359,9 @@ export function EditReadingsRecalculateSection({
                           type="number"
                           value={edits.previous}
                           onChange={(e) => handleAssignedReadingChange(row.customerKeyNumber, "previous", e.target.value)}
-                          className="w-24 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1 text-right text-xs bg-white dark:bg-amber-950/60 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          readOnly={!canSave}
+                          disabled={!canSave}
+                          className="w-24 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1 text-right text-xs bg-white dark:bg-amber-950/60 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-70 disabled:cursor-not-allowed disabled:bg-gray-50"
                         />
                       </td>
                       <td className="px-3 py-2 text-right">
@@ -343,7 +369,9 @@ export function EditReadingsRecalculateSection({
                           type="number"
                           value={edits.current}
                           onChange={(e) => handleAssignedReadingChange(row.customerKeyNumber, "current", e.target.value)}
-                          className="w-24 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1 text-right text-xs bg-white dark:bg-amber-950/60 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          readOnly={!canSave}
+                          disabled={!canSave}
+                          className="w-24 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1 text-right text-xs bg-white dark:bg-amber-950/60 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-70 disabled:cursor-not-allowed disabled:bg-gray-50"
                         />
                       </td>
                       <td className={`px-3 py-2 text-right font-mono font-bold ${usage < 0 ? "text-red-600" : "text-gray-800 dark:text-gray-200"}`}>
@@ -426,39 +454,41 @@ export function EditReadingsRecalculateSection({
             onClick={onClose}
             className="rounded-lg h-9 px-4 border-gray-300"
           >
-            <X className="mr-1.5 h-4 w-4" /> Cancel
+            <X className="mr-1.5 h-4 w-4" /> Close
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={handleRecalculate}
-            disabled={isCalculating}
-            className="rounded-lg h-9 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200"
-          >
-            {isCalculating ? (
-              <>
-                <RefreshCcw className="mr-1.5 h-4 w-4 animate-spin" /> Calculating...
-              </>
-            ) : (
-              "Check Preview"
-            )}
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={isSaving}
-            className="rounded-lg h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm"
-          >
-            {isSaving ? (
-              <>
-                <RefreshCcw className="mr-1.5 h-4 w-4 animate-spin" /> Saving...
-              </>
-            ) : (
-              <>
-                <Save className="mr-1.5 h-4 w-4" /> Save Changes
-              </>
-            )}
-          </Button>
+          {canSave ? (
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleRecalculate}
+                disabled={isCalculating}
+                className="rounded-lg h-9 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200"
+              >
+                {isCalculating ? (
+                  <><RefreshCcw className="mr-1.5 h-4 w-4 animate-spin" /> Calculating...</>
+                ) : (
+                  "Check Preview"
+                )}
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="rounded-lg h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm"
+              >
+                {isSaving ? (
+                  <><RefreshCcw className="mr-1.5 h-4 w-4 animate-spin" /> Saving...</>
+                ) : (
+                  <><Save className="mr-1.5 h-4 w-4" /> Save Changes</>
+                )}
+              </Button>
+            </>
+          ) : (
+            <span className="text-xs text-blue-600 dark:text-blue-400 italic self-center">
+              ⚠️ You have view-only access. Contact your admin to enable editing.
+            </span>
+          )}
         </div>
       </div>
 

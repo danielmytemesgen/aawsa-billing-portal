@@ -50,6 +50,7 @@ import { Badge } from "@/components/ui/badge";
 import { format } from 'date-fns';
 import { usePermissions } from "@/hooks/use-permissions";
 import { PERMISSIONS } from "@/lib/constants/auth";
+import { getEffectiveBranchId } from "@/lib/branch-permissions";
 import { ReaderReport } from "./reader-report";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
 
@@ -111,19 +112,14 @@ export default function StaffDashboardPage() {
         const assignedPermissions = Array.isArray(parsedUser.permissions) ? parsedUser.permissions : [];
         const hasDashboardAccess = assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
 
-        // Redirect Staff Management role to their dedicated dashboard
-        if (role === 'staff management') {
-          router.replace('/staff/staff-management-dashboard');
-          return;
-        }
+        const isFieldReader = 
+          assignedPermissions.includes('meter_readings_create_bulk') || 
+          assignedPermissions.includes('meter_readings_create_individual') || 
+          assignedPermissions.includes('meter_readings_create') || 
+          assignedPermissions.includes('routes_view_assigned');
 
-        if (role === 'head office management') {
-          router.replace('/admin/head-office-dashboard');
-          return;
-        }
-
-        // Allow legacy staff/reader roles and custom roles that have dashboard access.
-        if (role === 'staff' || role === 'reader' || hasDashboardAccess) {
+        // Allow any role that has dashboard access or meter reading field permissions
+        if (hasDashboardAccess || isFieldReader) {
           const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
 
           if (parsedUser.branchId && hasValidBranchName) {
@@ -443,15 +439,18 @@ export default function StaffDashboardPage() {
       };
     }
 
-    const currentMonthYear = format(new Date(), 'yyyy-MM');
+    const currentMonthYear = dashboardMetrics?.latestMonth || format(new Date(), 'yyyy-MM');
 
-    const branchBMs = staffBranchId
-      ? allBulkMeters.filter(bm => bm.branchId === staffBranchId)
+    // Determine effective branch: undefined = all branches (view_all perm), string = own branch only
+    const effectiveBranchId = getEffectiveBranchId(hasPermission, 'dashboard', staffBranchId);
+
+    const branchBMs = effectiveBranchId
+      ? allBulkMeters.filter(bm => bm.branchId === effectiveBranchId)
       : allBulkMeters;
     const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
-    const branchCustomers = staffBranchId
+    const branchCustomers = effectiveBranchId
       ? allCustomers.filter(customer =>
-          customer.branchId === staffBranchId ||
+          customer.branchId === effectiveBranchId ||
           (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
         )
       : allCustomers;
@@ -629,8 +628,14 @@ export default function StaffDashboardPage() {
     );
   }
 
-  // Render Reader Dashboard for users who strictly have the reader role
-  if (currentUserRole === 'reader') {
+  const isDedicatedReader = 
+    (hasPermission('meter_readings_create_bulk') || hasPermission('meter_readings_create_individual') || hasPermission('meter_readings_create')) &&
+    !hasPermission('dashboard_view_all') &&
+    !hasPermission('staff_view_all') &&
+    !hasPermission('bill:manage_all');
+
+  // Render Reader Dashboard for users who strictly have field reader capabilities without managerial view_all perms
+  if (isDedicatedReader) {
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         {readingPeriodStatus === 'Closed' && (

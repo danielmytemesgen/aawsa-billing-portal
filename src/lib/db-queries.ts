@@ -877,6 +877,7 @@ export const dbGetAllBills = async (options?: { branchId?: string; readerId?: st
         FROM bills b
         LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
         LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+        LEFT JOIN routes r ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = r.route_key
     `;
     const params: any[] = [];
     let paramIndex = 1;
@@ -884,7 +885,6 @@ export const dbGetAllBills = async (options?: { branchId?: string; readerId?: st
     const whereClauses = ['b.deleted_at IS NULL'];
 
     if (options?.readerId) {
-        sql += ' LEFT JOIN routes r ON bm."ROUTE_KEY" = r.route_key';
         whereClauses.push(`r.reader_id = $${paramIndex}`);
         params.push(options.readerId);
         paramIndex++;
@@ -1173,7 +1173,7 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
         FROM individual_customer_readings r
         JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
         LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
-        LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
+        LEFT JOIN routes ro ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = ro.route_key
         WHERE r.deleted_at IS NULL
     `;
     const params: any[] = [];
@@ -1192,18 +1192,43 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
 };
 
 export const dbCreateIndividualCustomerReading = async (reading: any, client?: any) => {
-    const { reading_month: _ignored, ...safeFields } = reading;
-    const keys = Object.keys(safeFields);
-    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
-    const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const params = keys.map(k => safeFields[k]);
-    
-    if (client) {
-        const res = await client.query(sql, params);
-        return res.rows[0] || reading;
+    try {
+        const { reading_month: _ignored, ...safeFields } = reading;
+        const custKey = safeFields.CUST_KEY || safeFields.individual_customer_id || safeFields.individualCustomerId;
+        const rDate = safeFields.READING_DATE || safeFields.reading_date;
+        const monthYear = safeFields.month_year || safeFields.monthYear || (rDate ? String(rDate).slice(0, 7) : null);
+
+        const executor = client || { query };
+
+        // Check if a reading record already exists for this individual customer in the same billing month
+        if (custKey && monthYear) {
+            const checkSql = `SELECT id FROM individual_customer_readings WHERE "CUST_KEY" = $1 AND (LEFT("READING_DATE"::text, 7) = $2 OR LEFT("reading_date"::text, 7) = $2) AND deleted_at IS NULL LIMIT 1`;
+            const checkRes = await executor.query(checkSql, [custKey, monthYear]);
+            const existingRow = checkRes.rows ? checkRes.rows[0] : checkRes[0];
+
+            if (existingRow && existingRow.id) {
+                // Update existing reading value instead of creating duplicate reading
+                const keys = Object.keys(safeFields).filter(k => k !== 'id' && k !== 'created_at');
+                const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+                const updateSql = `UPDATE individual_customer_readings SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`;
+                const params = [...keys.map(k => safeFields[k]), existingRow.id];
+                const updateRes = await executor.query(updateSql, params);
+                return (updateRes.rows ? updateRes.rows[0] : updateRes[0]) || existingRow;
+            }
+        }
+
+        // Otherwise insert new reading
+        const keys = Object.keys(safeFields);
+        const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
+        const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
+        const params = keys.map(k => safeFields[k]);
+        
+        const res = await executor.query(sql, params);
+        return (res.rows ? res.rows[0] : res[0]) || reading;
+    } catch (error) {
+        console.error('dbCreateIndividualCustomerReading error:', error);
+        throw error;
     }
-    const rows: any = await query(sql, params);
-    return rows[0] || reading;
 };
 
 
@@ -1268,17 +1293,37 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
 export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
     try {
         const { reading_month: _ignored, ...safeFields } = reading;
+        const custKey = safeFields.CUST_KEY || safeFields.CUSTOMERKEY;
+        const rDate = safeFields.READING_DATE || safeFields.reading_date;
+        const monthYear = safeFields.month_year || safeFields.monthYear || (rDate ? String(rDate).slice(0, 7) : null);
+
+        const executor = client || { query };
+
+        // Check if a reading record already exists for this bulk meter in the same billing month
+        if (custKey && monthYear) {
+            const checkSql = `SELECT id FROM bulk_meter_readings WHERE "CUST_KEY" = $1 AND LEFT("READING_DATE"::text, 7) = $2 AND deleted_at IS NULL LIMIT 1`;
+            const checkRes = await executor.query(checkSql, [custKey, monthYear]);
+            const existingRow = checkRes.rows ? checkRes.rows[0] : checkRes[0];
+
+            if (existingRow && existingRow.id) {
+                // Update existing reading value instead of creating duplicate reading
+                const keys = Object.keys(safeFields).filter(k => k !== 'id' && k !== 'created_at');
+                const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+                const updateSql = `UPDATE bulk_meter_readings SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`;
+                const params = [...keys.map(k => safeFields[k]), existingRow.id];
+                const updateRes = await executor.query(updateSql, params);
+                return (updateRes.rows ? updateRes.rows[0] : updateRes[0]) || existingRow;
+            }
+        }
+
+        // Otherwise insert new reading
         const keys = Object.keys(safeFields);
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO bulk_meter_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
         const params = keys.map(k => safeFields[k]);
         
-        if (client) {
-            const res = await client.query(sql, params);
-            return res.rows[0] || reading;
-        }
-        const rows: any = await query(sql, params);
-        return rows[0] || reading;
+        const res = await executor.query(sql, params);
+        return (res.rows ? res.rows[0] : res[0]) || reading;
     } catch (error) {
         console.error('dbCreateBulkMeterReading error:', error);
         throw error;
@@ -1326,15 +1371,17 @@ export const dbGetBulkMeterReadingsByMeter = async (meterKey: string) => {
 
 export const dbCreateMeterReadingPhoto = async (photo: {
     reading_id: string;
-    reading_type: 'individual' | 'bulk';
-    photo_data: string;
-    uploaded_by?: string | null;
-    notes?: string | null;
+    photo_data?: string | null;   // base64 string — stored as bytea
+    photo_url?: string | null;    // optional URL reference
 }, client?: any) => {
-    const keys = Object.keys(photo);
-    const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
-    const sql = `INSERT INTO meter_reading_photos (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const params = keys.map(k => (photo as any)[k]);
+    // Convert base64 string to Buffer for bytea storage
+    const photoDataBuffer = photo.photo_data
+        ? Buffer.from(photo.photo_data.replace(/^data:[^;]+;base64,/, ''), 'base64')
+        : null;
+
+    const sql = `INSERT INTO meter_reading_photos (reading_id, photo_url, photo_data)
+                 VALUES ($1, $2, $3) RETURNING id, reading_id, photo_url, captured_at`;
+    const params = [photo.reading_id, photo.photo_url ?? null, photoDataBuffer];
 
     if (client) {
         const res = await client.query(sql, params);
@@ -1969,8 +2016,29 @@ export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
 };
 
 export const dbGetDashboardMetrics = async (branchId?: string) => {
-    // Always use the current calendar month (YYYY-MM)
-    const latestMonth = new Date().toISOString().substring(0, 7);
+    // Dynamically get the most recent month with bill information present in the database
+    let latestMonth = new Date().toISOString().substring(0, 7);
+    try {
+        const latestMonthRes: any = await query(`
+            SELECT MAX(month_year) as latest_month 
+            FROM bills 
+            WHERE month_year IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL
+        `);
+        if (latestMonthRes && latestMonthRes[0]?.latest_month) {
+            latestMonth = latestMonthRes[0].latest_month;
+        } else {
+            const anyMonthRes: any = await query(`
+                SELECT MAX(month_year) as latest_month 
+                FROM bills 
+                WHERE month_year IS NOT NULL AND deleted_at IS NULL
+            `);
+            if (anyMonthRes && anyMonthRes[0]?.latest_month) {
+                latestMonth = anyMonthRes[0].latest_month;
+            }
+        }
+    } catch (err) {
+        console.warn("Failed to fetch latest bill month_year, falling back to current calendar month:", err);
+    }
 
     const params = [latestMonth];
     let branchFilter = '';

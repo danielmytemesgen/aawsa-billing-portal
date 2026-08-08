@@ -99,8 +99,8 @@ export default function AdminDataEntryPage() {
       finalData.instKey = data.instKey || generated.instKey;
     }
 
-    // Admins can upload directly as 'Active', others are 'Pending Approval'
-    const status: BulkMeterStatus = 'Active';
+    // Every data entry defaults to 'Pending Approval'
+    const status: BulkMeterStatus = 'Pending Approval';
     const bulkMeterDataWithStatus = { ...finalData, status } as any;
     return await addBulkMeter(bulkMeterDataWithStatus);
   };
@@ -117,8 +117,8 @@ export default function AdminDataEntryPage() {
       finalData.instKey = data.instKey || generated.instKey;
     }
 
-    // Admins can upload directly as 'Active', others are 'Pending Approval'
-    const status: IndividualCustomerStatus = 'Active';
+    // Every data entry defaults to 'Pending Approval'
+    const status: IndividualCustomerStatus = 'Pending Approval';
     const customerDataForStore = {
       ...finalData,
       status,
