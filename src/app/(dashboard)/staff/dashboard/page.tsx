@@ -24,7 +24,7 @@ import {
 } from 'recharts';
 import { motion } from "framer-motion";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
-import { getBranchesLookupAction, getReadingPeriodStatusAction, getDashboardMetricsAction } from "@/lib/actions";
+import { getBranchesLookupAction, getReadingPeriodStatusAction, getReadingPeriodDetailsAction, getDashboardMetricsAction, type ReadingPeriodDetails } from "@/lib/actions";
 import {
   initializeBranches,
   initializeBulkMeters,
@@ -92,6 +92,7 @@ export default function StaffDashboardPage() {
   const [allBulkReadings, setAllBulkReadings] = React.useState<any[]>([]);
   const [dashboardMetrics, setDashboardMetrics] = React.useState<any>(null);
   const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed' | 'Ready for New Reading'>('Open');
+  const [periodDetails, setPeriodDetails] = React.useState<ReadingPeriodDetails | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
 
   // State for toggling views
@@ -273,7 +274,7 @@ export default function StaffDashboardPage() {
       await fetchDashboardMetrics();
       setIsLoading(false);
 
-      // 2. Fetch reading period status (non-blocking)
+      // 2. Fetch reading period status & details (non-blocking)
       const fetchPeriodStatus = async () => {
         const isOfflineStatus = typeof window !== 'undefined' && !window.navigator.onLine;
         if (isOfflineStatus) {
@@ -281,13 +282,14 @@ export default function StaffDashboardPage() {
           setReadingPeriodStatus((cached as any) || 'Open');
         } else {
           try {
-            const status = await getReadingPeriodStatusAction();
-            setReadingPeriodStatus(status);
-            if (status) {
-              localStorage.setItem('cached_period_status', status);
+            const details = await getReadingPeriodDetailsAction();
+            if (details) {
+              setPeriodDetails(details);
+              setReadingPeriodStatus(details.status);
+              localStorage.setItem('cached_period_status', details.status);
             }
           } catch (err) {
-            console.warn("Offline: failed to fetch reading period status, assuming Open", err);
+            console.warn("Offline: failed to fetch reading period details, assuming Open", err);
             const cached = localStorage.getItem('cached_period_status');
             setReadingPeriodStatus((cached as any) || 'Open');
           }
@@ -685,14 +687,22 @@ export default function StaffDashboardPage() {
             <div className="absolute -bottom-6 -left-6 h-28 w-28 rounded-full bg-amber-200/20 blur-2xl pointer-events-none" />
 
             <div className="relative z-10 px-5 pt-5 pb-4">
-              <div className="flex items-center gap-2.5 mb-4">
-                <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
-                  <AlertTriangle className="h-5 w-5 text-rose-600" />
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="h-5 w-5 text-rose-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected (My Assigned Routes)</p>
+                    <p className="text-xs text-rose-500">{readerAnomalies.length} meter{readerAnomalies.length > 1 ? 's require' : ' requires'} attention</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected (My Assigned Routes)</p>
-                  <p className="text-xs text-rose-500">{readerAnomalies.length} meter{readerAnomalies.length > 1 ? 's require' : ' requires'} attention</p>
-                </div>
+                {periodDetails?.startDate && (
+                  <div className="flex items-center gap-1.5 bg-rose-100/90 text-rose-900 px-3 py-1 rounded-xl text-xs font-bold border border-rose-200 shadow-sm">
+                    <Calendar className="h-3.5 w-3.5 text-rose-600" />
+                    <span>Current Cycle: {periodDetails.startDate} – {periodDetails.endDate}</span>
+                  </div>
+                )}
               </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {readerAnomalies.map((a) => (

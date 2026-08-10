@@ -39,7 +39,12 @@ import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
 import { MapPin } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
 import { canCreateMeterReadingForType } from "@/lib/meter-reading-permissions";
-import { getFailedReadings, getPendingReadings, cacheRoutePackage } from "@/lib/offline-db";
+import {
+    getFailedReadings,
+    getPendingReadings,
+    cacheRoutePackage,
+    getCachedHistoricalReadings
+} from "@/lib/offline-db";
 
 export default function RouteDetailsClient() {
     const params = useParams();
@@ -78,6 +83,7 @@ export default function RouteDetailsClient() {
     const [periodStatus, setPeriodStatus] = React.useState<'Open' | 'Closed' | 'Ready for New Reading'>('Closed');
     const [periodStartDate, setPeriodStartDate] = React.useState<string>('');
     const [periodEndDate, setPeriodEndDate] = React.useState<string>('');
+    const [pendingOfflineMeterKeys, setPendingOfflineMeterKeys] = React.useState<Set<string>>(new Set());
     const [syncProgress, setSyncProgress] = React.useState<string | null>(null);
     const [locationError, setLocationError] = React.useState<string | null>(null);
     const [offlineQueueState, setOfflineQueueState] = React.useState({ pending: 0, failed: 0 });
@@ -227,12 +233,43 @@ export default function RouteDetailsClient() {
                 const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
                 if (isOffline) {
                     const cached = localStorage.getItem('cached_period_status');
-                    if (cached) {
-                        setPeriodStatus(cached as any);
+                    const cachedStartDay = localStorage.getItem('cached_period_start_day');
+                    const cachedEndDay = localStorage.getItem('cached_period_end_day');
+
+                    // Recalculate dates from cached day numbers each time (handles month roll-over offline)
+                    if (cachedStartDay && cachedEndDay) {
+                        const now = new Date();
+                        const yr = now.getFullYear();
+                        const mo = now.getMonth();
+                        const lastDay = new Date(yr, mo + 1, 0).getDate();
+                        const sDay = Math.min(parseInt(cachedStartDay), lastDay);
+                        const eDay = parseInt(cachedEndDay);
+                        const startStr = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(sDay).padStart(2, '0')}`;
+                        let endStr: string;
+                        if (eDay >= sDay) {
+                            const eDayEffective = Math.min(eDay, lastDay);
+                            endStr = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(eDayEffective).padStart(2, '0')}`;
+                        } else {
+                            const nextMo = mo + 1;
+                            const nextYr = nextMo > 11 ? yr + 1 : yr;
+                            const nextMoIdx = nextMo > 11 ? 0 : nextMo;
+                            const lastDayNext = new Date(nextYr, nextMoIdx + 1, 0).getDate();
+                            const eDayEffective = Math.min(eDay, lastDayNext);
+                            endStr = `${nextYr}-${String(nextMoIdx + 1).padStart(2, '0')}-${String(eDayEffective).padStart(2, '0')}`;
+                        }
+                        setPeriodStartDate(startStr);
+                        setPeriodEndDate(endStr);
+                        localStorage.setItem('cached_period_start_date', startStr);
+                        localStorage.setItem('cached_period_end_date', endStr);
+                    } else {
                         const cachedStart = localStorage.getItem('cached_period_start_date');
                         const cachedEnd = localStorage.getItem('cached_period_end_date');
                         if (cachedStart) setPeriodStartDate(cachedStart);
                         if (cachedEnd) setPeriodEndDate(cachedEnd);
+                    }
+
+                    if (cached) {
+                        setPeriodStatus(cached as any);
                         return cached;
                     }
                     return 'Closed';
@@ -244,6 +281,9 @@ export default function RouteDetailsClient() {
                         setPeriodStartDate(details.startDate || '');
                         setPeriodEndDate(details.endDate || '');
                         localStorage.setItem('cached_period_status', details.status);
+                        // Cache day numbers for offline monthly recalculation
+                        localStorage.setItem('cached_period_start_day', String(details.startDay || 1));
+                        localStorage.setItem('cached_period_end_day', String(details.endDay || 20));
                         if (details.startDate) localStorage.setItem('cached_period_start_date', details.startDate);
                         if (details.endDate) localStorage.setItem('cached_period_end_date', details.endDate);
                         return details.status;
@@ -285,7 +325,28 @@ export default function RouteDetailsClient() {
             setFaultCodesForForm(getFaultCodes());
             setBulkReadings(getBulkMeterReadings());
             setIndividualReadings(getIndividualCustomerReadings());
-            
+
+            // Load any pending offline readings from IndexedDB so meters that were
+            // read offline (not yet synced) show the correct "Read" / "Update" state.
+            try {
+                const pendingOffline = await getPendingReadings();
+                const offlineKeys = new Set<string>(
+                    pendingOffline
+                        .filter((r: { routeKey?: string | null }) => !r.routeKey || r.routeKey === routeKey)
+                        .map((r: { meterKey?: string | null; payload?: any }) => {
+                            const key = r.meterKey ||
+                                r.payload?.CUSTOMERKEY ||
+                                r.payload?.individualCustomerId ||
+                                r.payload?.entityId || '';
+                            return key as string;
+                        })
+                        .filter(Boolean)
+                );
+                setPendingOfflineMeterKeys(offlineKeys);
+            } catch (e) {
+                console.warn('Could not load pending offline readings from IndexedDB:', e);
+            }
+
             setSyncProgress("Complete");
         } catch (error) {
             console.error("Failed to initialize route data:", error);
@@ -313,6 +374,10 @@ export default function RouteDetailsClient() {
     const currentMonth = React.useMemo(() => format(new Date(), 'yyyy-MM'), []);
 
     const isMeterRead = React.useCallback((meterId: string, type: 'bulk' | 'individual') => {
+        // 1. If the meter has a pending offline reading queued in IndexedDB, count it as Read
+        //    so the badge and button flip immediately even without server confirmation.
+        if (pendingOfflineMeterKeys.has(meterId)) return true;
+
         const list = type === 'bulk' ? bulkReadings : individualReadings;
         const matchIdKey = type === 'bulk' ? 'CUSTOMERKEY' : 'individualCustomerId';
 
@@ -323,7 +388,9 @@ export default function RouteDetailsClient() {
 
                 const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
                 if (!rDateStr) {
-                    return r.monthYear === currentMonth;
+                    // No date: fall back to month-year check against current cycle month
+                    const cycleMonth = periodStartDate.slice(0, 7);
+                    return r.monthYear === cycleMonth;
                 }
 
                 const formattedRDate = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
@@ -339,7 +406,7 @@ export default function RouteDetailsClient() {
         } else {
             return individualReadings.some(r => (r.individualCustomerId === meterId || r.customerKeyNumber === meterId) && r.monthYear === currentMonth);
         }
-    }, [bulkReadings, individualReadings, currentMonth, periodStartDate, periodEndDate]);
+    }, [bulkReadings, individualReadings, currentMonth, periodStartDate, periodEndDate, pendingOfflineMeterKeys]);
 
     const routeCustomers = React.useMemo(() => {
         const bulkIds = new Set(bulkMeters.map(bm => bm.customerKeyNumber));
@@ -506,20 +573,36 @@ export default function RouteDetailsClient() {
                 setSelectedMeter(null);
 
                 // Optimistically update the local readings state so the "Read" badge
-                // flips immediately in the UI — even in offline mode before sync.
+                // flips immediately in the UI — both online and offline, before sync.
+                const submittedReadingDate = format(values.date, 'yyyy-MM-dd');
                 const submittedMonthYear = format(values.date, 'yyyy-MM');
                 if (values.meterType === 'bulk_meter') {
                     setBulkReadings(prev => {
-                        const already = prev.some(r => r.CUSTOMERKEY === values.entityId && r.monthYear === submittedMonthYear);
+                        const already = prev.some(r => (r.CUSTOMERKEY === values.entityId || r.customerKeyNumber === values.entityId) && r.readingDate === submittedReadingDate);
                         if (already) return prev;
-                        return [...prev, { CUSTOMERKEY: values.entityId, monthYear: submittedMonthYear, readingValue: values.reading }];
+                        return [...prev, {
+                            CUSTOMERKEY: values.entityId,
+                            customerKeyNumber: values.entityId,
+                            monthYear: submittedMonthYear,
+                            readingDate: submittedReadingDate,
+                            readingValue: values.reading
+                        }];
                     });
+                    // Also track as pending offline key so isMeterRead returns true immediately
+                    setPendingOfflineMeterKeys(prev => new Set([...prev, values.entityId]));
                 } else {
                     setIndividualReadings(prev => {
-                        const already = prev.some(r => r.individualCustomerId === values.entityId && r.monthYear === submittedMonthYear);
+                        const already = prev.some(r => (r.individualCustomerId === values.entityId || r.customerKeyNumber === values.entityId) && r.readingDate === submittedReadingDate);
                         if (already) return prev;
-                        return [...prev, { individualCustomerId: values.entityId, monthYear: submittedMonthYear, readingValue: values.reading }];
+                        return [...prev, {
+                            individualCustomerId: values.entityId,
+                            customerKeyNumber: values.entityId,
+                            monthYear: submittedMonthYear,
+                            readingDate: submittedReadingDate,
+                            readingValue: values.reading
+                        }];
                     });
+                    setPendingOfflineMeterKeys(prev => new Set([...prev, values.entityId]));
                 }
 
                 // Also refresh from the in-memory store (covers online case)

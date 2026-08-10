@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
@@ -54,6 +54,7 @@ import { PERMISSIONS } from "@/lib/constants/auth";
 import { DatReadingExportDialog } from "@/features/export/components/dat-reading-export-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { ReadingPeriodToggle } from "@/features/admin/components/reading-period-toggle";
+import { getReadingPeriodDetailsAction, ReadingPeriodDetails } from "@/lib/actions";
 
 interface User {
   id?: string;
@@ -75,6 +76,7 @@ export default function AdminMeterReadingsPage() {
   const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
   const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
   const [faultCodesForForm, setFaultCodesForForm] = React.useState<FaultCodeRow[]>([]);
+  const [periodDetails, setPeriodDetails] = React.useState<ReadingPeriodDetails | null>(null);
   const [anomalies, setAnomalies] = React.useState<{
     key: string;
     name: string;
@@ -175,6 +177,9 @@ export default function AdminMeterReadingsPage() {
       setAllStaff(getStaffMembers());
       setAllBills(getBills());
       combineAndSortReadings();
+      getReadingPeriodDetailsAction().then(details => {
+        if (details && isMounted) setPeriodDetails(details);
+      }).catch(e => console.warn("Failed to load period details for anomalies", e));
       setIsLoading(false);
     }).catch(error => {
       if (!isMounted) return;
@@ -426,15 +431,14 @@ export default function AdminMeterReadingsPage() {
           {hasPermission('meter_readings_analytics_view') && (
             <div className="flex items-center gap-2">
               <Button
-                variant={activeTab === 'analytics' ? 'default' : 'default'}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
                 onClick={() => setActiveTab(activeTab === 'analytics' ? 'individual' : 'analytics')}
               >
                 <BarChart className="mr-2 h-4 w-4" /> Reading Analytics
               </Button>
               <Link href="/admin/reports/reading-classification" passHref>
-                <Button variant="outline" className="bg-white">
-                  <FileSpreadsheet className="mr-2 h-4 w-4 text-muted-foreground" /> Reading Analytics Report
+                <Button className="bg-purple-600 hover:bg-purple-700 text-white shadow-md shadow-purple-200">
+                  <FileSpreadsheet className="mr-2 h-4 w-4" /> Reading Analytics Report
                 </Button>
               </Link>
             </div>
@@ -442,7 +446,7 @@ export default function AdminMeterReadingsPage() {
           {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
+                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-200" disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
                   <PlusCircle className="mr-2 h-4 w-4" /> Add Reading
                 </Button>
               </DropdownMenuTrigger>
@@ -473,7 +477,7 @@ export default function AdminMeterReadingsPage() {
           {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
+                <Button className="bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-200" disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
                   <Download className="mr-2 h-4 w-4" /> Export
                 </Button>
               </DropdownMenuTrigger>
@@ -505,14 +509,22 @@ export default function AdminMeterReadingsPage() {
           <div className="absolute -top-8 -right-8 h-40 w-40 rounded-full bg-rose-200/30 blur-2xl pointer-events-none" />
           <div className="absolute -bottom-6 -left-6 h-28 w-28 rounded-full bg-amber-200/20 blur-2xl pointer-events-none" />
           <div className="relative z-10 px-5 pt-5 pb-4">
-            <div className="flex items-center gap-2.5 mb-4">
-              <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="h-5 w-5 text-rose-600" />
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle className="h-5 w-5 text-rose-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected</p>
+                  <p className="text-xs text-rose-500">{anomalies.length} meter{anomalies.length > 1 ? 's require' : ' requires'} attention</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-black text-rose-900 uppercase tracking-wide">⚠ Consumption Anomalies Detected</p>
-                <p className="text-xs text-rose-500">{anomalies.length} meter{anomalies.length > 1 ? 's require' : ' requires'} attention</p>
-              </div>
+              {periodDetails?.startDate && (
+                <div className="flex items-center gap-1.5 bg-rose-100/90 text-rose-900 px-3 py-1 rounded-xl text-xs font-bold border border-rose-200 shadow-sm">
+                  <Calendar className="h-3.5 w-3.5 text-rose-600" />
+                  <span>Current Reading Cycle: {periodDetails.startDate} – {periodDetails.endDate}</span>
+                </div>
+              )}
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
               {anomalies.map((a) => (

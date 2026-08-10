@@ -92,6 +92,14 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const [photoExif, setPhotoExif] = React.useState<ImageExifMetadata | null>(null);
   const [sortByNearest, setSortByNearest] = React.useState(true);
   const [deviceHealth, setDeviceHealth] = React.useState<DeviceHealthStatus | null>(null);
+  const [isBypassed, setIsBypassed] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('meter_reading_location_bypassed') === 'true';
+    }
+    return false;
+  });
+
+  const isFormUnlocked = isBypassed || Boolean(proximityStatus?.isWithinRange) || Boolean(locationError) || !userLocation;
 
   // ── Searchable meter picker state ──────────────────────────────────────────
   const [meterSearch, setMeterSearch] = React.useState("");
@@ -250,7 +258,20 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     }
   }, [currentReadingValue, selectedEntityId, previousReading, selectedFaultCode, anomalyThreshold]);
 
+  const handleBypassLocation = React.useCallback(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('meter_reading_location_bypassed', 'true');
+    }
+    setIsBypassed(true);
+    setLocationError(null);
+    setProximityStatus({ isWithinRange: true, distance: 0, bypassed: true });
+  }, []);
+
   React.useEffect(() => {
+    if (isBypassed) {
+      setProximityStatus({ isWithinRange: true, distance: 0, bypassed: true });
+      return;
+    }
     if (!userLocation || !selectedEntityId) {
       setProximityStatus(null);
       return;
@@ -268,21 +289,17 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       }
     }
     if (targetCoords) {
-      // Use 15 m threshold to accommodate urban GPS drift
       const status = checkProximity(userLocation, targetCoords, 15);
-      
-      // Trigger haptic vibration feedback when stepping into proximity range for the first time
       if (status.isWithinRange && !proximityStatus?.isWithinRange) {
         triggerProximityHaptic();
       }
-
       setProximityStatus(status);
       setIsCapturingInitialLocation(false);
       form.setValue('capturedCoordinates', undefined);
     } else {
       setProximityStatus(null);
     }
-  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form, proximityStatus?.isWithinRange]);
+  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form, proximityStatus?.isWithinRange, isBypassed]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -421,8 +438,8 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     form.clearErrors();
   };
 
-  const photoRequired = !!(selectedFaultCode && selectedFaultCode !== 'none');
-  const photoMissing = photoRequired && !capturedPhoto;
+  const photoRequired = false;
+  const photoMissing = false;
 
   const isSubmitDisabled = isLoading ||
     !form.formState.isValid ||
@@ -648,16 +665,33 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setLocationError(null);
-                    setProximityStatus({ isWithinRange: true, distance: 0, bypassed: true });
-                  }}
+                  onClick={handleBypassLocation}
                   className="w-full bg-white text-red-700 border-red-200 hover:bg-red-50 font-bold text-xs"
                 >
                   <Unlock className="mr-2 h-4 w-4" /> Bypass (Indoor / Offline)
                 </Button>
               </AlertDescription>
             </Alert>
+          ) : isBypassed ? (
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-blue-50/80 border-blue-200 text-blue-900 text-xs">
+              <div className="flex items-center gap-2 font-semibold">
+                <Unlock className="h-4 w-4 text-blue-600" />
+                <span>Bypassed (Indoor / Offline Mode)</span>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 text-[10px] text-blue-700 underline p-0"
+                onClick={() => {
+                  if (typeof window !== 'undefined') localStorage.removeItem('meter_reading_location_bypassed');
+                  setIsBypassed(false);
+                  acquireLocation();
+                }}
+              >
+                Re-check GPS
+              </Button>
+            </div>
           ) : isAcquiringLocation ? (
             <div className="bg-slate-50 border rounded-xl p-4 space-y-3">
               <div className="flex items-center gap-3">
@@ -739,18 +773,30 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
               <Info className="h-4 w-4 text-blue-600" />
               <AlertTitle className="text-xs font-bold uppercase">New Meter — GPS Setup Required</AlertTitle>
               <AlertDescription className="space-y-2">
-                <p className="text-[11px]">Stand next to the meter and capture its GPS position.</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCaptureInitialLocation}
-                  disabled={!userLocation || isSaving}
-                  className="w-full bg-white text-blue-700 border-blue-300 hover:bg-blue-50 font-bold text-xs"
-                >
-                  <MapPin className="mr-2 h-4 w-4" />
-                  {isSaving ? "Saving…" : "Set Current Location as Meter Site"}
-                </Button>
+                <p className="text-[11px]">Stand next to the meter and capture its GPS position, or bypass location.</p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCaptureInitialLocation}
+                    disabled={!userLocation || isSaving}
+                    className="flex-1 bg-white text-blue-700 border-blue-300 hover:bg-blue-50 font-bold text-xs"
+                  >
+                    <MapPin className="mr-1.5 h-3.5 w-3.5" />
+                    {isSaving ? "Saving…" : "Set Meter GPS"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBypassLocation}
+                    className="bg-white text-slate-700 border-slate-300 hover:bg-slate-50 font-bold text-xs"
+                  >
+                    <Unlock className="mr-1.5 h-3.5 w-3.5 text-amber-600" />
+                    Bypass
+                  </Button>
+                </div>
               </AlertDescription>
             </Alert>
           ) : (
@@ -761,11 +807,11 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
           )}
         </div>
 
-        {/* ── Reading Fields (locked until proximity OK) ── */}
-        <div className={cn("space-y-5 transition-opacity duration-300", !proximityStatus?.isWithinRange && "opacity-40 pointer-events-none")}>
+        {/* ── Reading Fields (unlocked if proximity OK, bypassed, location error, or new meter) ── */}
+        <div className={cn("space-y-5 transition-opacity duration-300", !isFormUnlocked && "opacity-40 pointer-events-none")}>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 pb-1 border-b">
-            {proximityStatus?.isWithinRange ? <Unlock className="h-3.5 w-3.5 text-emerald-600" /> : <Lock className="h-3.5 w-3.5" />}
-            {proximityStatus?.isWithinRange ? "Form unlocked — ready to enter reading" : "Form locked — proximity check required"}
+            {isFormUnlocked ? <Unlock className="h-3.5 w-3.5 text-emerald-600" /> : <Lock className="h-3.5 w-3.5" />}
+            {isFormUnlocked ? "Form unlocked — ready to enter reading" : "Form locked — proximity check required"}
           </div>
 
           {/* Fault Code */}
@@ -897,34 +943,17 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
               : "border border-transparent"
           )}>
             <div className="flex items-center justify-between">
-              <FormLabel className={cn(
-                "font-semibold",
-                photoMissing ? "text-rose-700" : photoRequired ? "text-slate-700" : "text-slate-700"
-              )}>
-                Meter Proof Photo{" "}
-                {photoRequired ? (
-                  <span className="text-rose-600 font-bold text-xs">* REQUIRED for fault code</span>
-                ) : (
-                  <span className="text-muted-foreground font-normal text-xs">(optional)</span>
-                )}
+              <FormLabel className="font-semibold text-slate-700">
+                Meter Proof Photo <span className="text-muted-foreground font-normal text-xs">(optional)</span>
               </FormLabel>
-              {photoRequired && capturedPhoto && (
+              {capturedPhoto && (
                 <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
                   <CheckCircle2 className="h-3.5 w-3.5" /> Photo attached
                 </span>
               )}
             </div>
 
-            {/* Alert when fault code active and no photo yet */}
-            {photoMissing && (
-              <Alert className="py-2 bg-rose-50 border-rose-300">
-                <AlertCircle className="h-4 w-4 text-rose-600" />
-                <AlertTitle className="text-rose-700 text-xs font-bold">Photo Required</AlertTitle>
-                <AlertDescription className="text-rose-600 text-xs">
-                  A fault code is selected. You must attach a proof photo before saving.
-                </AlertDescription>
-              </Alert>
-            )}
+
 
             {!capturedPhoto ? (
               <div className="grid grid-cols-2 gap-2">
@@ -1000,19 +1029,12 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
         <Button
           type="submit"
           disabled={isSubmitDisabled}
-          className={cn(
-            "w-full h-12 font-bold text-base text-white shadow-md transition-all",
-            photoMissing
-              ? "bg-slate-400 cursor-not-allowed"
-              : "bg-emerald-600 hover:bg-emerald-700"
-          )}
+          className="w-full h-12 font-bold text-base text-white shadow-md transition-all bg-emerald-600 hover:bg-emerald-700"
         >
           {isLoading ? (
             <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting…</>
-          ) : photoMissing ? (
-            <><AlertCircle className="mr-2 h-4 w-4" /> Attach Photo to Continue</>
           ) : (
-            "Save Reading"
+            <><CheckCircle2 className="mr-2 h-4 w-4" /> Save Reading</>
           )}
         </Button>
         <p className="text-center text-xs text-muted-foreground">

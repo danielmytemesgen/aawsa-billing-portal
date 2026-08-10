@@ -15,6 +15,7 @@ import {
   getBulkMeterReadings,
   getIndividualCustomerReadings
 } from "@/lib/data-store";
+import { getReadingPeriodDetailsAction } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,9 @@ export default function MyRoutesPage() {
     const [indReadings, setIndReadings] = React.useState<any[]>([]);
     const [allCustomers, setAllCustomers] = React.useState<any[]>([]);
 
+    const [periodStartDate, setPeriodStartDate] = React.useState<string>('');
+    const [periodEndDate, setPeriodEndDate] = React.useState<string>('');
+
     React.useEffect(() => {
         const load = async () => {
             setIsLoading(true);
@@ -44,7 +48,13 @@ export default function MyRoutesPage() {
                 initializeBulkMeters(),
                 initializeCustomers(),
                 initializeBulkMeterReadings(),
-                initializeIndividualCustomerReadings()
+                initializeIndividualCustomerReadings(),
+                getReadingPeriodDetailsAction().then(details => {
+                    if (details) {
+                        setPeriodStartDate(details.startDate || '');
+                        setPeriodEndDate(details.endDate || '');
+                    }
+                }).catch(e => console.warn("Failed to fetch period details for routes", e))
             ]);
             setBulkReadings(getBulkMeterReadings());
             setIndReadings(getIndividualCustomerReadings());
@@ -99,9 +109,20 @@ export default function MyRoutesPage() {
         const routeBulkKeys = new Set(routeBulkMeters.map(bm => bm.customerKeyNumber));
         const routeCustomers = allCustomers.filter(c => c.assignedBulkMeterId && routeBulkKeys.has(c.assignedBulkMeterId));
 
-        const bulkReadCount = bulkReadings.filter(r => r.CUSTOMERKEY && routeBulkKeys.has(r.CUSTOMERKEY) && r.monthYear === currentMonthYear).length;
+        const isRead = (r: any) => {
+            const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
+            if (periodStartDate) {
+                if (!rDateStr) return r.monthYear === currentMonthYear;
+                const formattedRDate = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
+                if (periodEndDate) return formattedRDate >= periodStartDate && formattedRDate <= periodEndDate;
+                return formattedRDate >= periodStartDate;
+            }
+            return r.monthYear === currentMonthYear;
+        };
+
+        const bulkReadCount = bulkReadings.filter(r => r.CUSTOMERKEY && routeBulkKeys.has(r.CUSTOMERKEY) && isRead(r)).length;
         const indCustomerKeys = new Set(routeCustomers.map(c => c.customerKeyNumber));
-        const indReadCount = indReadings.filter(r => r.individualCustomerId && indCustomerKeys.has(r.individualCustomerId) && r.monthYear === currentMonthYear).length;
+        const indReadCount = indReadings.filter(r => r.individualCustomerId && indCustomerKeys.has(r.individualCustomerId) && isRead(r)).length;
 
         const totalMeters = routeBulkMeters.length + routeCustomers.length;
         const totalRead = bulkReadCount + indReadCount;
