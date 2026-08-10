@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { BILLING_CYCLE_MODE_KEY, BILLING_DUE_DATE_OFFSET_KEY, BILLING_CYCLE_DAY_KEY } from "@/lib/billing-config";
-import { getSystemSettingsAction, getSessionSettingsAction, updateBillingSettingsAction } from '@/lib/actions';
+import { getSystemSettingsAction, getSessionSettingsAction, updateBillingSettingsAction, getReadingPeriodDetailsAction, updateReadingPeriodStatusAction, updateReadingPeriodDetailsAction, ReadingPeriodStatus } from '@/lib/actions';
 import { logoutAction } from "@/lib/auth-actions";
 import { getSessionActionDescription, getSessionActionTitle } from "@/lib/session-management";
 
@@ -44,6 +44,11 @@ export default function AdminSettingsPage() {
   const [defaultCurrency, setDefaultCurrency] = React.useState("ETB");
   const [enableDarkMode, setEnableDarkMode] = React.useState(false);
   const [enableOverdueReminders, setEnableOverdueReminders] = React.useState(false);
+
+  // Meter Reading Period settings
+  const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<ReadingPeriodStatus>('Open');
+  const [readingStartDate, setReadingStartDate] = React.useState("");
+  const [readingEndDate, setReadingEndDate] = React.useState("");
 
   // Billing cycle settings
   const [cycleMode, setCycleMode] = React.useState<'once_per_month' | 'custom' | 'unlimited'>('once_per_month');
@@ -97,13 +102,21 @@ export default function AdminSettingsPage() {
     if (storedDarkMode) setEnableDarkMode(storedDarkMode === "true");
     if (storedEnableOverdueReminders) setEnableOverdueReminders(storedEnableOverdueReminders === "true");
 
-    // Load billing cycle settings from database
+    // Load billing cycle & reading period settings from database
     getSystemSettingsAction().then(res => {
       if (res.data) {
         const s = res.data as Record<string, string>;
         if (s.billing_cycle_mode) setCycleMode(s.billing_cycle_mode as 'once_per_month' | 'custom' | 'unlimited');
         if (s.billing_cycle_start_day) setBillingCycleDay(s.billing_cycle_start_day);
         if (s.billing_due_date_offset) setDueDateOffset(s.billing_due_date_offset);
+      }
+    });
+
+    getReadingPeriodDetailsAction().then(details => {
+      if (details) {
+        setReadingPeriodStatus(details.status);
+        setReadingStartDate(details.startDate || "");
+        setReadingEndDate(details.endDate || "");
       }
     });
 
@@ -145,6 +158,17 @@ export default function AdminSettingsPage() {
 
     // Billing cycle — save to database
     await updateBillingSettingsAction({ cycleMode, startDay: billingCycleDay, dueDateOffset });
+
+    // Reading Period details — save to database
+    if (typeof updateReadingPeriodStatusAction === 'function') {
+      await updateReadingPeriodStatusAction(readingPeriodStatus, readingStartDate, readingEndDate);
+    } else {
+      await updateReadingPeriodDetailsAction({
+        status: readingPeriodStatus,
+        startDate: readingStartDate,
+        endDate: readingEndDate,
+      });
+    }
 
     localStorage.setItem(NOTIFY_NEW_BILL_KEY, String(notifyOnNewBill));
     localStorage.setItem(NOTIFY_OVERDUE_KEY, String(notifyOnOverdue));
@@ -363,6 +387,73 @@ export default function AdminSettingsPage() {
               Enable Dark Mode by Default
             </Label>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CalendarIcon className="h-5 w-5 text-blue-600" />
+            Meter Reading Period Settings
+          </CardTitle>
+          <CardDescription>Configure meter reading start date, end date, and global field status stored in system settings.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="reading-period-status-select" className="font-semibold text-sm">Reading Period Status</Label>
+            <Select value={readingPeriodStatus} onValueChange={(v) => setReadingPeriodStatus(v as ReadingPeriodStatus)} disabled={!canUpdateSettings}>
+              <SelectTrigger id="reading-period-status-select" className="w-full md:w-[320px] h-10 font-medium">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Open">🟢 Open (Active Reading Period)</SelectItem>
+                <SelectItem value="Ready for New Reading">🟡 Ready for New Reading</SelectItem>
+                <SelectItem value="Closed">🔴 Closed (Locked)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              {readingPeriodStatus === 'Open'
+                ? 'Field staff and readers can view assigned routes and submit meter readings.'
+                : readingPeriodStatus === 'Ready for New Reading'
+                ? 'Period parameters are configured and ready for launching the next cycle.'
+                : 'Field meter reading is currently locked globally.'}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border rounded-xl bg-slate-50/50 dark:bg-slate-900/20 shadow-sm">
+            <div className="space-y-2">
+              <Label htmlFor="sys-reading-start-date" className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                <CalendarIcon className="h-4 w-4 text-blue-600" /> Reading Start Date
+              </Label>
+              <Input
+                id="sys-reading-start-date"
+                type="date"
+                value={readingStartDate}
+                onChange={(e) => setReadingStartDate(e.target.value)}
+                disabled={!canUpdateSettings}
+                className="bg-white dark:bg-slate-800"
+              />
+              <p className="text-xs text-muted-foreground">Start date for the meter reading window.</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sys-reading-end-date" className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                <CalendarIcon className="h-4 w-4 text-blue-600" /> Reading End Date (Auto-Recurring)
+              </Label>
+              <Input
+                id="sys-reading-end-date"
+                type="date"
+                value={readingEndDate}
+                onChange={(e) => setReadingEndDate(e.target.value)}
+                disabled={!canUpdateSettings}
+                className="bg-white dark:bg-slate-800"
+              />
+              <p className="text-xs text-muted-foreground">End date of reading cycle (Day {readingEndDate ? parseInt(readingEndDate.slice(8, 10)) : 20} of every month).</p>
+            </div>
+          </div>
+          <p className="text-xs text-blue-700 dark:text-blue-300 font-medium bg-blue-50 dark:bg-blue-950/40 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+            🔄 <strong>Auto-Recurring Monthly Schedule:</strong> Once set, the start day (Day {readingStartDate ? parseInt(readingStartDate.slice(8, 10)) : 1}) and end day (Day {readingEndDate ? parseInt(readingEndDate.slice(8, 10)) : 20}) automatically recur for every active month without needing to re-enter dates.
+          </p>
         </CardContent>
       </Card>
 

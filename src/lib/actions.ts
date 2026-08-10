@@ -160,20 +160,135 @@ import type {
   LogOptions, CustomerAuthResult,
 } from './action-types';
 
-export async function getReadingPeriodStatusAction() {
-  const status = await dbGetSystemSetting('reading_period_status');
-  return status ?? 'Open'; // Default to Open if not set
+export type ReadingPeriodStatus = 'Open' | 'Closed' | 'Ready for New Reading';
+
+export interface ReadingPeriodDetails {
+  status: ReadingPeriodStatus;
+  startDate: string;
+  endDate: string;
+  startDay: number;
+  endDay: number;
+  isRecurring: boolean;
 }
 
-export async function updateReadingPeriodStatusAction(status: 'Open' | 'Closed') {
-  const session = await getSession();
-  if (!session || session.role !== 'Admin') {
-    throw new Error("Unauthorized");
+export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDetails> {
+  const status = (await dbGetSystemSetting('reading_period_status')) as ReadingPeriodStatus || 'Open';
+  const rawStart = (await dbGetSystemSetting('reading_period_start_date')) || '';
+  const rawEnd = (await dbGetSystemSetting('reading_period_end_date')) || '';
+  const rawStartDay = await dbGetSystemSetting('reading_period_start_day');
+  const rawEndDay = await dbGetSystemSetting('reading_period_end_day');
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  let startDay = 1;
+  if (rawStartDay && !isNaN(parseInt(rawStartDay))) {
+    startDay = parseInt(rawStartDay);
+  } else if (rawStart && rawStart.length >= 10) {
+    const dayFromDate = parseInt(rawStart.slice(8, 10));
+    if (!isNaN(dayFromDate)) startDay = dayFromDate;
   }
-  const result = await dbUpdateSystemSetting('reading_period_status', status);
+
+  let endDay = 20;
+  if (rawEndDay && !isNaN(parseInt(rawEndDay))) {
+    endDay = parseInt(rawEndDay);
+  } else if (rawEnd && rawEnd.length >= 10) {
+    const dayFromDate = parseInt(rawEnd.slice(8, 10));
+    if (!isNaN(dayFromDate)) endDay = dayFromDate;
+  }
+
+  startDay = Math.max(1, Math.min(31, startDay));
+  endDay = Math.max(1, Math.min(31, endDay));
+
+  const lastDayOfCurrentMonth = new Date(year, month + 1, 0).getDate();
+  const effectiveStartDayNum = Math.min(startDay, lastDayOfCurrentMonth);
+  const effectiveStartDateObj = new Date(year, month, effectiveStartDayNum);
+  const startDateStr = format(effectiveStartDateObj, 'yyyy-MM-dd');
+
+  let effectiveEndDateObj: Date;
+  if (endDay >= startDay) {
+    const effectiveEndDayNum = Math.min(endDay, lastDayOfCurrentMonth);
+    effectiveEndDateObj = new Date(year, month, effectiveEndDayNum);
+  } else {
+    const nextMonthObj = new Date(year, month + 1, 1);
+    const lastDayOfNextMonth = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth() + 1, 0).getDate();
+    const effectiveEndDayNum = Math.min(endDay, lastDayOfNextMonth);
+    effectiveEndDateObj = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth(), effectiveEndDayNum);
+  }
+  const endDateStr = format(effectiveEndDateObj, 'yyyy-MM-dd');
+
+  return {
+    status,
+    startDate: startDateStr,
+    endDate: endDateStr,
+    startDay,
+    endDay,
+    isRecurring: true,
+  };
+}
+
+export async function getReadingPeriodStatusAction(): Promise<ReadingPeriodStatus> {
+  const status = await dbGetSystemSetting('reading_period_status');
+  return (status as ReadingPeriodStatus) ?? 'Open';
+}
+
+export async function updateReadingPeriodStatusAction(
+  status: ReadingPeriodStatus,
+  startDate?: string,
+  endDate?: string,
+  startDayInput?: number | string,
+  endDayInput?: number | string
+) {
+  const session = await getSession();
+  if (!session || !session.id) {
+    throw new Error("Unauthorized: Invalid session");
+  }
+  await dbUpdateSystemSetting('reading_period_status', status);
+
+  if (startDate !== undefined) {
+    await dbUpdateSystemSetting('reading_period_start_date', startDate);
+    if (!startDayInput && startDate.length >= 10) {
+      const parsed = parseInt(startDate.slice(8, 10));
+      if (!isNaN(parsed)) startDayInput = parsed;
+    }
+  }
+
+  if (endDate !== undefined) {
+    await dbUpdateSystemSetting('reading_period_end_date', endDate);
+    if (!endDayInput && endDate.length >= 10) {
+      const parsed = parseInt(endDate.slice(8, 10));
+      if (!isNaN(parsed)) endDayInput = parsed;
+    }
+  }
+
+  if (startDayInput !== undefined && startDayInput !== null) {
+    await dbUpdateSystemSetting('reading_period_start_day', String(startDayInput));
+  }
+
+  if (endDayInput !== undefined && endDayInput !== null) {
+    await dbUpdateSystemSetting('reading_period_end_day', String(endDayInput));
+  }
+
   revalidatePath('/admin');
   revalidatePath('/staff');
-  return result;
+  return { success: true };
+}
+
+export async function updateReadingPeriodDetailsAction(payload: {
+  status: ReadingPeriodStatus;
+  startDate?: string;
+  endDate?: string;
+  startDay?: number | string;
+  endDay?: number | string;
+}) {
+  return await updateReadingPeriodStatusAction(
+    payload.status,
+    payload.startDate,
+    payload.endDate,
+    payload.startDay,
+    payload.endDay
+  );
 }
 
 // Internal helper — PublicTables is only needed internally now that all types are in action-types.ts

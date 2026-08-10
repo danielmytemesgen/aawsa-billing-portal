@@ -91,7 +91,7 @@ export default function StaffDashboardPage() {
   const [allIndividualReadings, setAllIndividualReadings] = React.useState<any[]>([]);
   const [allBulkReadings, setAllBulkReadings] = React.useState<any[]>([]);
   const [dashboardMetrics, setDashboardMetrics] = React.useState<any>(null);
-  const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed'>('Open');
+  const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<'Open' | 'Closed' | 'Ready for New Reading'>('Open');
   const [isLoading, setIsLoading] = React.useState(true);
 
   // State for toggling views
@@ -278,18 +278,18 @@ export default function StaffDashboardPage() {
         const isOfflineStatus = typeof window !== 'undefined' && !window.navigator.onLine;
         if (isOfflineStatus) {
           const cached = localStorage.getItem('cached_period_status');
-          setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+          setReadingPeriodStatus((cached as any) || 'Open');
         } else {
           try {
             const status = await getReadingPeriodStatusAction();
-            setReadingPeriodStatus(status as 'Open' | 'Closed');
+            setReadingPeriodStatus(status);
             if (status) {
               localStorage.setItem('cached_period_status', status);
             }
           } catch (err) {
             console.warn("Offline: failed to fetch reading period status, assuming Open", err);
             const cached = localStorage.getItem('cached_period_status');
-            setReadingPeriodStatus((cached as 'Open' | 'Closed') || 'Open');
+            setReadingPeriodStatus((cached as any) || 'Open');
           }
         }
       };

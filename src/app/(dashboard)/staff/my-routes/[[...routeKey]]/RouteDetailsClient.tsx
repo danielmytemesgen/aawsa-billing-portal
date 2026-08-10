@@ -19,7 +19,7 @@ import {
     initializeIndividualCustomerReadings,
     fetchRoutes as dbFetchRoutes
 } from "@/lib/data-store";
-import { getReadingPeriodStatusAction } from "@/lib/actions";
+import { getReadingPeriodStatusAction, getReadingPeriodDetailsAction } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,7 +75,9 @@ export default function RouteDetailsClient() {
     const [userLocation, setUserLocation] = React.useState<Coordinates | null>(null);
     const [usingCachedLocation, setUsingCachedLocation] = React.useState(false);
     const [pathHistory, setPathHistory] = React.useState<Coordinates[]>([]);
-    const [periodStatus, setPeriodStatus] = React.useState<'Open' | 'Closed'>('Closed');
+    const [periodStatus, setPeriodStatus] = React.useState<'Open' | 'Closed' | 'Ready for New Reading'>('Closed');
+    const [periodStartDate, setPeriodStartDate] = React.useState<string>('');
+    const [periodEndDate, setPeriodEndDate] = React.useState<string>('');
     const [syncProgress, setSyncProgress] = React.useState<string | null>(null);
     const [locationError, setLocationError] = React.useState<string | null>(null);
     const [offlineQueueState, setOfflineQueueState] = React.useState({ pending: 0, failed: 0 });
@@ -220,29 +222,37 @@ export default function RouteDetailsClient() {
             // First, fetch route metadata and meters (Targeted)
             setSyncProgress("Loading meters...");
             
-            // Period status caching logic
+            // Period status and dates caching logic
             const fetchPeriodStatus = async () => {
                 const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
                 if (isOffline) {
                     const cached = localStorage.getItem('cached_period_status');
                     if (cached) {
-                        setPeriodStatus(cached as 'Open' | 'Closed');
+                        setPeriodStatus(cached as any);
+                        const cachedStart = localStorage.getItem('cached_period_start_date');
+                        const cachedEnd = localStorage.getItem('cached_period_end_date');
+                        if (cachedStart) setPeriodStartDate(cachedStart);
+                        if (cachedEnd) setPeriodEndDate(cachedEnd);
                         return cached;
                     }
                     return 'Closed';
                 }
                 try {
-                    const status = await getReadingPeriodStatusAction();
-                    if (status) {
-                        setPeriodStatus(status);
-                        localStorage.setItem('cached_period_status', status);
-                        return status;
+                    const details = await getReadingPeriodDetailsAction();
+                    if (details) {
+                        setPeriodStatus(details.status || 'Open');
+                        setPeriodStartDate(details.startDate || '');
+                        setPeriodEndDate(details.endDate || '');
+                        localStorage.setItem('cached_period_status', details.status);
+                        if (details.startDate) localStorage.setItem('cached_period_start_date', details.startDate);
+                        if (details.endDate) localStorage.setItem('cached_period_end_date', details.endDate);
+                        return details.status;
                     }
                 } catch (e) {
-                    console.warn("Failed to fetch period status, using cache if available:", e);
+                    console.warn("Failed to fetch period details, using cache if available:", e);
                     const cached = localStorage.getItem('cached_period_status');
                     if (cached) {
-                        setPeriodStatus(cached as 'Open' | 'Closed');
+                        setPeriodStatus(cached as any);
                         return cached;
                     }
                 }
@@ -303,12 +313,33 @@ export default function RouteDetailsClient() {
     const currentMonth = React.useMemo(() => format(new Date(), 'yyyy-MM'), []);
 
     const isMeterRead = React.useCallback((meterId: string, type: 'bulk' | 'individual') => {
-        if (type === 'bulk') {
-            return bulkReadings.some(r => r.CUSTOMERKEY === meterId && r.monthYear === currentMonth);
-        } else {
-            return individualReadings.some(r => r.individualCustomerId === meterId && r.monthYear === currentMonth);
+        const list = type === 'bulk' ? bulkReadings : individualReadings;
+        const matchIdKey = type === 'bulk' ? 'CUSTOMERKEY' : 'individualCustomerId';
+
+        if (periodStartDate) {
+            return list.some(r => {
+                const id = r[matchIdKey] || r.customerKeyNumber || r.CUST_KEY;
+                if (id !== meterId) return false;
+
+                const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
+                if (!rDateStr) {
+                    return r.monthYear === currentMonth;
+                }
+
+                const formattedRDate = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
+                if (periodEndDate) {
+                    return formattedRDate >= periodStartDate && formattedRDate <= periodEndDate;
+                }
+                return formattedRDate >= periodStartDate;
+            });
         }
-    }, [bulkReadings, individualReadings, currentMonth]);
+
+        if (type === 'bulk') {
+            return bulkReadings.some(r => (r.CUSTOMERKEY === meterId || r.customerKeyNumber === meterId) && r.monthYear === currentMonth);
+        } else {
+            return individualReadings.some(r => (r.individualCustomerId === meterId || r.customerKeyNumber === meterId) && r.monthYear === currentMonth);
+        }
+    }, [bulkReadings, individualReadings, currentMonth, periodStartDate, periodEndDate]);
 
     const routeCustomers = React.useMemo(() => {
         const bulkIds = new Set(bulkMeters.map(bm => bm.customerKeyNumber));
