@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2, Calendar, LayoutGrid, Info, ArrowUpRight, TrendingUp, Layers } from "lucide-react";
+import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2, Calendar, LayoutGrid, Info, ArrowUpRight, TrendingUp, Layers, Pencil, Unlock, AlertTriangle } from "lucide-react";
 import type { TariffTier, TariffInfo, SewerageTier } from "@/lib/billing-calculations";
 import {
   getTariff, initializeTariffs, subscribeToTariffs, updateTariff, addTariff
@@ -189,6 +189,12 @@ export default function TariffManagementPage() {
   const [isNewVersionDialogOpen, setIsNewVersionDialogOpen] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
   const [pendingReset, setPendingReset] = React.useState<{ fieldName: keyof TariffInfo; feeName: string; resetValue: number } | null>(null);
+  const [allowHistoricalEdit, setAllowHistoricalEdit] = React.useState(false);
+
+  // Reset historical edit unlock when navigating to a different tariff version
+  React.useEffect(() => {
+    setAllowHistoricalEdit(false);
+  }, [currentEffectiveDate, currentTariffType]);
 
   // Get unique effective dates for the current tariff type
   const availableDates = React.useMemo(() => {
@@ -216,7 +222,7 @@ export default function TariffManagementPage() {
   const activeSewerageTiers = activeTariffInfo ? getDisplayTiersFromData(activeTariffInfo, 'sewerage') : [];
 
   const isLatestTariff = availableDates.length > 0 && currentEffectiveDate === availableDates[0];
-  const canUpdateTariffs = hasPermission(PERMISSIONS.TARIFFS_MANAGE) && isLatestTariff;
+  const canUpdateTariffs = hasPermission(PERMISSIONS.TARIFFS_MANAGE) && (isLatestTariff || allowHistoricalEdit);
 
   React.useEffect(() => {
     setIsDataLoading(true);
@@ -697,12 +703,45 @@ export default function TariffManagementPage() {
         </div>
 
         {!isLatestTariff && (
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-            <Info className="h-4 w-4 text-amber-600 flex-shrink-0" />
-            <p className="text-sm font-bold text-amber-700">View-only: historical archive</p>
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex-wrap">
+            <div className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-amber-600 flex-shrink-0" />
+              <p className="text-sm font-bold text-amber-700">
+                {allowHistoricalEdit ? 'Historical edit unlocked — changes will modify archived rates' : 'View-only: historical archive'}
+              </p>
+            </div>
+            {hasPermission(PERMISSIONS.TARIFFS_MANAGE) && (
+              <Button
+                size="sm"
+                variant={allowHistoricalEdit ? 'destructive' : 'outline'}
+                className={allowHistoricalEdit
+                  ? 'h-8 text-xs font-bold border-red-300 hover:bg-red-600'
+                  : 'h-8 text-xs font-bold border-amber-300 text-amber-700 hover:bg-amber-100 bg-white'
+                }
+                onClick={() => setAllowHistoricalEdit(prev => !prev)}
+              >
+                {allowHistoricalEdit
+                  ? <><Lock className="mr-1.5 h-3.5 w-3.5" /> Lock (Read-only)</>
+                  : <><Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit Historical</>
+                }
+              </Button>
+            )}
           </div>
         )}
       </div>
+
+      {/* Caution banner when editing historical data */}
+      {!isLatestTariff && allowHistoricalEdit && (
+        <div className="flex items-start gap-3 p-4 bg-orange-50 border-l-4 border-orange-500 rounded-xl shadow-sm">
+          <AlertTriangle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-black text-orange-800">You are editing a historical tariff ({currentEffectiveDate})</p>
+            <p className="text-xs text-orange-700 mt-0.5 font-medium">
+              Changes here modify archived rates. This may affect historical bill recalculations. Proceed with caution.
+            </p>
+          </div>
+        </div>
+      )}
 
       {isDataLoading ? <p>Loading tariffs...</p> : !activeTariffInfo ?
         (<Card className="shadow-lg mt-4 border-dashed border-amber-500"><CardHeader><CardTitle className="text-amber-600">No Tariff Found</CardTitle><CardDescription>There is no tariff data for {currentTariffType} effective on {currentEffectiveDate}.</CardDescription></CardHeader></Card>) : (

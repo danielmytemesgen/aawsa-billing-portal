@@ -43,6 +43,7 @@ import { SessionWarningDialog } from './session-warning-dialog';
 
 import { useNetworkStatus } from '@/hooks/use-network-status';
 import { logoutAction } from '@/lib/auth-actions';
+import { isReaderStaff } from '@/lib/meter-reading-permissions';
 
 interface UserProfile {
   id: string;
@@ -243,7 +244,7 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
   }, []);
 
   React.useEffect(() => {
-    if (typeof window !== 'undefined' && navigator.onLine && user && user.role.toLowerCase() === 'reader') {
+    if (typeof window !== 'undefined' && navigator.onLine && isReaderStaff(user)) {
       const prefetchRoutes = async () => {
         try {
           await Promise.all([

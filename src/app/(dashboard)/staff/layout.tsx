@@ -30,7 +30,7 @@ const buildStaffSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => 
     const navItems: NavItemGroup[] = [];
 
     // Route Staff Management to their dedicated dashboard
-    const dashboardHref = userRoleLower === 'staff management'
+    const dashboardHref = (userRoleLower.includes('management') || userRoleLower.includes('manager')) && hasPermission(PERMISSIONS.STAFF_VIEW_ALL)
         ? '/staff/staff-management-dashboard'
         : '/staff/dashboard';
 

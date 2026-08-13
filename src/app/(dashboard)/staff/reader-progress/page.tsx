@@ -15,8 +15,15 @@ import {
   initializeBulkMeters,
   initializeCustomers,
   initializeBulkMeterReadings,
-  initializeIndividualCustomerReadings
+  initializeIndividualCustomerReadings,
+  subscribeToIndividualCustomerReadings,
+  subscribeToBulkMeterReadings,
+  subscribeToCustomers,
+  subscribeToBulkMeters,
+  subscribeToStaffMembers,
+  subscribeToRoutes,
 } from "@/lib/data-store";
+import { useDataRefresh } from "@/lib/data-refresh-context";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,6 +61,8 @@ export default function ReaderSupervisorMonitoringPage() {
   const [bulkReadings, setBulkReadings] = React.useState<any[]>([]);
   const [indReadings, setIndReadings] = React.useState<any[]>([]);
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
+  const { isRefreshing, refresh: triggerRefresh } = useDataRefresh();
+  const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
 
   React.useEffect(() => {
     const userStr = localStorage.getItem("user");
@@ -88,7 +97,31 @@ export default function ReaderSupervisorMonitoringPage() {
       setIndReadings(getIndividualCustomerReadings());
       setIsLoading(false);
     };
-    loadData();
+      loadData();
+
+      // ── Real-time updates & listener ───────────────────────────────────────
+      const handleDataRefreshed = () => {
+        loadData();
+        setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      };
+      window.addEventListener('data-refreshed', handleDataRefreshed);
+
+      const unsubInd = subscribeToIndividualCustomerReadings(() => setIndReadings(getIndividualCustomerReadings()));
+      const unsubBulk = subscribeToBulkMeterReadings(() => setBulkReadings(getBulkMeterReadings()));
+      const unsubCust = subscribeToCustomers((updated) => setCustomersList(updated));
+      const unsubBM = subscribeToBulkMeters((updated) => setBulkMetersList(updated));
+      const unsubStaff = subscribeToStaffMembers((updated) => setStaffList(updated));
+      const unsubRoutes = subscribeToRoutes((updated) => setRoutesList(updated));
+
+      return () => {
+        window.removeEventListener('data-refreshed', handleDataRefreshed);
+        unsubInd();
+        unsubBulk();
+        unsubCust();
+        unsubBM();
+        unsubStaff();
+        unsubRoutes();
+      };
   }, []);
 
   const currentMonthYear = format(new Date(), 'yyyy-MM');
@@ -232,10 +265,20 @@ export default function ReaderSupervisorMonitoringPage() {
               Back to Routes
             </Link>
           </Button>
-          <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
-            <Activity className="h-7 w-7 text-blue-600" />
-            Live Reader Supervisor Monitoring
-          </h1>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
+              <Activity className="h-7 w-7 text-blue-600" />
+              Live Reader Supervisor Monitoring
+            </h1>
+            <button
+              onClick={() => triggerRefresh()}
+              title="Refresh data now"
+              className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer"
+            >
+              <Clock className={`h-2.5 w-2.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : 'Live Data'}
+            </button>
+          </div>
           <p className="text-muted-foreground">Track real-time reading progress and field completion rates for your branch.</p>
         </div>
         <Badge variant="outline" className="self-start sm:self-auto bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 text-sm font-semibold flex items-center gap-1.5">

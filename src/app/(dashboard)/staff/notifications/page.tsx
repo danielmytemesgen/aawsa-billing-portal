@@ -86,7 +86,7 @@ export default function StaffNotificationsPage() {
         defaultValues: {
             title: "",
             message: "",
-            target_branch_id: user?.role?.toLowerCase() === 'staff management' ? user.branchId : ALL_STAFF_VALUE,
+            target_branch_id: (user?.role?.toLowerCase().includes('management') || user?.role?.toLowerCase().includes('manager')) ? user.branchId : ALL_STAFF_VALUE,
         },
 
     });
@@ -138,7 +138,7 @@ export default function StaffNotificationsPage() {
             form.reset({
                 title: "",
                 message: "",
-                target_branch_id: user?.role?.toLowerCase() === 'staff management' ? user.branchId : ALL_STAFF_VALUE,
+                target_branch_id: (user?.role?.toLowerCase().includes('management') || user?.role?.toLowerCase().includes('manager')) ? user.branchId : ALL_STAFF_VALUE,
             });
         } else {
             toast({ variant: "destructive", title: "Failed to Send", description: result.message });
@@ -198,7 +198,7 @@ export default function StaffNotificationsPage() {
     const canViewNotifications = hasPermission('notifications_view') || hasPermission('notifications_view_all');
     const canEditNotifications = hasPermission('notifications_edit');
     const canDeleteNotifications = hasPermission('notifications_delete');
-    const isBranchManager = user?.role?.toLowerCase() === 'staff management' && user.branchId;
+    const isBranchManager = (user?.role?.toLowerCase().includes('management') || user?.role?.toLowerCase().includes('manager')) && user.branchId;
     const canCreateSms = hasPermission('sms_send') || hasPermission('notifications_create');
 
     if (!canViewNotifications) {

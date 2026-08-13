@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText } from "lucide-react";
+import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, Download, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,8 @@ import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from 
 import { IndividualCustomerTable } from "./individual-customer-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { individualCustomerStatuses, type IndividualCustomerStatus } from "./individual-customer-types";
 import {
   getCustomers,
   addCustomer as addCustomerToStore,
@@ -52,15 +54,23 @@ export default function IndividualCustomersPage() {
   const [totalCount, setTotalCount] = React.useState(0);
   const [summary, setSummary] = React.useState({ total: 0, active: 0, inactive: 0 });
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<IndividualCustomerStatus | 'All'>('All');
+  const [isExporting, setIsExporting] = React.useState(false);
 
   const fetchSummaryStats = React.useCallback(async () => {
     const { data } = await fetchCustomersSummary();
     if (data) setSummary(data);
   }, []);
 
-  const fetchData = React.useCallback(async (p: number, rpp: number, search: string) => {
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {
     setIsLoading(true);
-    const { customers: paginatedCustomers, totalCount: count, error } = await fetchCustomersPaginated(rpp, p * rpp, search);
+    const { customers: paginatedCustomers, totalCount: count, error } = await fetchCustomersPaginated(
+      rpp,
+      p * rpp,
+      search,
+      undefined, // branchId — handled server-side
+      status && status !== 'All' ? status : undefined,
+    );
     if (!error) {
       setCustomers(paginatedCustomers);
       setTotalCount(count);
@@ -84,9 +94,9 @@ export default function IndividualCustomersPage() {
   }, [searchTerm]);
 
   React.useEffect(() => {
-    fetchData(page, rowsPerPage, debouncedSearch);
+    fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
     fetchSummaryStats();
-  }, [page, rowsPerPage, debouncedSearch, fetchData, fetchSummaryStats]);
+  }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData, fetchSummaryStats]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -193,6 +203,63 @@ export default function IndividualCustomersPage() {
     return fallbackLocation || "";
   };
 
+  const handleExport = async (format: 'csv' | 'xlsx') => {
+    setIsExporting(true);
+    toast({ title: "Preparing Export", description: "Fetching all matching records..." });
+    try {
+      const { customers: allCustomers } = await fetchCustomersPaginated(
+        10000, 0, debouncedSearch, undefined,
+        statusFilter !== 'All' ? statusFilter : undefined,
+      );
+
+      if (!allCustomers || allCustomers.length === 0) {
+        toast({ title: "No Data", description: "No customers match the current filters.", variant: "destructive" });
+        return;
+      }
+
+      const rows = allCustomers.map(c => ({
+        'Customer Key': c.customerKeyNumber || '',
+        'Name': c.name || '',
+        'Status': c.status || '',
+        'Branch': getBranchNameFromList(c.branchId, '') || '',
+        'Route Key': c.routeKey || '',
+        'Meter Number': c.meterNumber || '',
+        'Contract No': c.contractNumber || '',
+        'Phone': c.phoneNumber || '',
+        'Woreda': c.woreda || '',
+        'Location': c.location || '',
+        'Current Reading': c.currentReading ?? '',
+        'Previous Reading': c.previousReading ?? '',
+        'Calculated Bill': c.calculatedBill ?? '',
+        'Payment Status': c.paymentStatus || '',
+      }));
+
+      if (format === 'csv') {
+        const headers = Object.keys(rows[0]).join(',');
+        const lines = rows.map(r => Object.values(r).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        const csvContent = [headers, ...lines].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `individual_customers_${statusFilter}_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click(); URL.revokeObjectURL(url);
+      } else {
+        const XLSX = await import('xlsx');
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Customers');
+        XLSX.writeFile(wb, `individual_customers_${statusFilter}_${new Date().toISOString().slice(0,10)}.xlsx`);
+      }
+
+      toast({ title: "Export Complete", description: `${allCustomers.length} records exported to ${format.toUpperCase()}.` });
+    } catch (err) {
+      console.error('Export error:', err);
+      toast({ title: "Export Failed", description: "Could not generate file.", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-8 pb-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -272,25 +339,94 @@ export default function IndividualCustomersPage() {
       </div>
 
       <Card className="shadow-md border-slate-200/60 overflow-hidden">
-        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-              <UserCog className="h-4 w-4" />
+        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col gap-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                <UserCog className="h-4 w-4" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Customer Database</CardTitle>
+                <CardDescription>Manage your individual consumer registry.</CardDescription>
+              </div>
             </div>
-            <div>
-              <CardTitle className="text-lg">Customer Database</CardTitle>
-              <CardDescription>Manage your individual consumer registry.</CardDescription>
+            {/* Search + Export row */}
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-grow md:w-72">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <Input
+                  type="search"
+                  placeholder="Search by key, name..."
+                  className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-10 px-4 flex-shrink-0 gap-2 border-slate-200 shadow-sm rounded-xl font-medium hover:bg-slate-50"
+                    disabled={isExporting}
+                  >
+                    <Download className="h-4 w-4 text-slate-500" />
+                    {isExporting ? 'Exporting...' : 'Export'}
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem onClick={() => handleExport('csv')} className="gap-2 cursor-pointer">
+                    <Download className="h-4 w-4" /> Export CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExport('xlsx')} className="gap-2 cursor-pointer">
+                    <Download className="h-4 w-4" /> Export Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
-          <div className="relative w-full md:w-72">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <Input
-              type="search"
-              placeholder="Search by key, name..."
-              className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+
+          {/* Status filter pills */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-slate-500 mr-1">Filter:</span>
+            {(['All', ...individualCustomerStatuses] as const).map((status) => {
+              const active = statusFilter === status;
+              const colors: Record<string, string> = {
+                All: 'bg-slate-800 text-white border-slate-800',
+                Active: 'bg-emerald-500 text-white border-emerald-500',
+                Inactive: 'bg-slate-400 text-white border-slate-400',
+                Suspended: 'bg-orange-500 text-white border-orange-500',
+                'Pending Approval': 'bg-blue-500 text-white border-blue-500',
+                Rejected: 'bg-red-500 text-white border-red-500',
+              };
+              const inactiveColors: Record<string, string> = {
+                All: 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
+                Active: 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400',
+                Inactive: 'bg-white text-slate-500 border-slate-200 hover:border-slate-400',
+                Suspended: 'bg-white text-orange-600 border-orange-200 hover:border-orange-400',
+                'Pending Approval': 'bg-white text-blue-600 border-blue-200 hover:border-blue-400',
+                Rejected: 'bg-white text-red-600 border-red-200 hover:border-red-400',
+              };
+              return (
+                <button
+                  key={status}
+                  onClick={() => { setStatusFilter(status); setPage(0); }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all duration-150 shadow-sm ${
+                    active ? colors[status] : inactiveColors[status]
+                  }`}
+                >
+                  {status}
+                  {active && status !== 'All' && (
+                    <X className="h-3 w-3 opacity-80" onClick={(e) => { e.stopPropagation(); setStatusFilter('All'); setPage(0); }} />
+                  )}
+                </button>
+              );
+            })}
+            {statusFilter !== 'All' && (
+              <span className="ml-1 text-xs text-slate-400 italic">
+                {totalCount} {statusFilter} customer{totalCount !== 1 ? 's' : ''}
+              </span>
+            )}
           </div>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">

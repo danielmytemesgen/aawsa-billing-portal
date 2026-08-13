@@ -61,7 +61,9 @@ export default function PaidBillsReportPage() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching paid bill records..." });
     try {
-      const branchIdToFilter = currentUser?.role?.toLowerCase() === 'staff management' ? currentUser.branchId : selectedBranchId;
+      const roleLower = (currentUser?.role || '').toLowerCase();
+      const isBranchMgr = roleLower.includes('management') || roleLower.includes('manager');
+      const branchIdToFilter = isBranchMgr ? currentUser?.branchId : selectedBranchId;
       const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
@@ -103,7 +105,9 @@ export default function PaidBillsReportPage() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching paid bill records across all pages..." });
     try {
-      const branchIdToFilter = currentUser?.role?.toLowerCase() === 'staff management' ? currentUser.branchId : selectedBranchId;
+      const roleLower = (currentUser?.role || '').toLowerCase();
+      const isBranchMgr = roleLower.includes('management') || roleLower.includes('manager');
+      const branchIdToFilter = isBranchMgr ? currentUser?.branchId : selectedBranchId;
       const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
@@ -142,7 +146,7 @@ export default function PaidBillsReportPage() {
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      if (parsedUser.role?.toLowerCase() === 'staff management' && parsedUser.branchId) {
+      if ((parsedUser.role?.toLowerCase().includes('management') || parsedUser.role?.toLowerCase().includes('manager')) && parsedUser.branchId) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }
@@ -182,7 +186,9 @@ export default function PaidBillsReportPage() {
   React.useEffect(() => {
     const fetchBills = async () => {
       setIsLoading(true);
-      const branchIdToFilter = currentUser?.role?.toLowerCase() === 'staff management' ? currentUser.branchId : selectedBranchId;
+      const roleLower = (currentUser?.role || '').toLowerCase();
+      const isBranchMgr = roleLower.includes('management') || roleLower.includes('manager');
+      const branchIdToFilter = isBranchMgr ? currentUser?.branchId : selectedBranchId;
       const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 

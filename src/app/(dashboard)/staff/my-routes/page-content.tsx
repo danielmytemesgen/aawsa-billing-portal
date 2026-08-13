@@ -13,14 +13,20 @@ import {
   getBulkMeters,
   getCustomers,
   getBulkMeterReadings,
-  getIndividualCustomerReadings
+  getIndividualCustomerReadings,
+  subscribeToIndividualCustomerReadings,
+  subscribeToBulkMeterReadings,
+  subscribeToCustomers,
+  subscribeToBulkMeters,
 } from "@/lib/data-store";
+import { useDataRefresh } from "@/lib/data-refresh-context";
+import { useNetworkQuality } from "@/lib/network-quality";
 import { getReadingPeriodDetailsAction } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { MapPin, ArrowRight, Loader2, AlertCircle, CheckCircle2, Clock, Activity, BarChart3, Gauge } from "lucide-react";
+import { MapPin, ArrowRight, Loader2, AlertCircle, CheckCircle2, Clock, Activity, BarChart3, Gauge, WifiOff } from "lucide-react";
 import Link from "next/link";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
@@ -37,6 +43,12 @@ export default function MyRoutesPage() {
     const [indReadings, setIndReadings] = React.useState<any[]>([]);
     const [allCustomers, setAllCustomers] = React.useState<any[]>([]);
 
+    const { isRefreshing, refresh: triggerRefresh, networkQuality, isOnline } = useDataRefresh();
+    const { quality: liveQuality } = useNetworkQuality();
+    const effectiveQuality = (!isOnline || liveQuality === 'offline' || networkQuality === 'offline')
+        ? 'offline'
+        : (liveQuality === 'weak' || networkQuality === 'weak') ? 'weak' : 'strong';
+    const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
     const [periodStartDate, setPeriodStartDate] = React.useState<string>('');
     const [periodEndDate, setPeriodEndDate] = React.useState<string>('');
 
@@ -62,6 +74,37 @@ export default function MyRoutesPage() {
             setIsLoading(false);
         };
         load();
+
+        // ── Real-time updates & listener ─────────────────────────────────────────
+        // On weak/offline: skip full HTTP re-fetch, pull from in-memory store
+        const handleDataRefreshed = () => {
+          const currentOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+          const conn = typeof navigator !== 'undefined' ? (navigator as any).connection : null;
+          const effType = conn?.effectiveType ?? 'unknown';
+          const isWeak = !currentOnline || effType === '2g' || effType === 'slow-2g' || (conn?.downlink != null && conn.downlink < 1);
+          if (!isWeak && currentOnline) {
+            load();
+          } else {
+            setBulkReadings(getBulkMeterReadings());
+            setIndReadings(getIndividualCustomerReadings());
+            setAllCustomers(getCustomers());
+          }
+          setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+
+        const unsubInd = subscribeToIndividualCustomerReadings(() => setIndReadings(getIndividualCustomerReadings()));
+        const unsubBulk = subscribeToBulkMeterReadings(() => setBulkReadings(getBulkMeterReadings()));
+        const unsubCust = subscribeToCustomers((updated) => setAllCustomers(updated));
+        const unsubBM = subscribeToBulkMeters(() => load());
+
+        return () => {
+          window.removeEventListener('data-refreshed', handleDataRefreshed);
+          unsubInd();
+          unsubBulk();
+          unsubCust();
+          unsubBM();
+        };
     }, []);
 
     const canViewAllRoutes = 
@@ -166,10 +209,32 @@ export default function MyRoutesPage() {
             <MobileReaderIntro userName={currentUser?.name} />
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
-                        <MapPin className="h-7 w-7 text-blue-600" />
-                        My Assigned Routes
-                    </h1>
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                        <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
+                            <MapPin className="h-7 w-7 text-blue-600" />
+                            My Assigned Routes
+                        </h1>
+                        <button
+                            onClick={() => triggerRefresh()}
+                            title="Refresh data now"
+                            disabled={effectiveQuality === 'offline'}
+                            className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            <Clock className={`h-2.5 w-2.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                            {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : (effectiveQuality === 'offline' ? 'Cached' : 'Live Data')}
+                        </button>
+                        {effectiveQuality === 'offline' && (
+                            <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold">
+                                <WifiOff className="h-2.5 w-2.5" /> Offline
+                            </span>
+                        )}
+                        {effectiveQuality === 'weak' && (
+                            <span className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                Weak Signal
+                            </span>
+                        )}
+                    </div>
                     <p className="text-muted-foreground">Track completion progress and record meter readings for your routes.</p>
                 </div>
                 {isSupervisor && (
@@ -181,6 +246,26 @@ export default function MyRoutesPage() {
                     </Button>
                 )}
             </div>
+
+            {/* ─── Network Quality Banner ─────────────────────────────────── */}
+            {effectiveQuality === 'offline' && (
+                <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 text-sm">
+                    <WifiOff className="h-5 w-5 mt-0.5 flex-shrink-0 text-red-600" />
+                    <div>
+                        <p className="font-bold">No Connection — Offline Mode</p>
+                        <p className="text-xs mt-0.5 text-red-700">Route data is loaded from your device cache. Open a route to submit readings — they will sync automatically when you reconnect.</p>
+                    </div>
+                </div>
+            )}
+            {effectiveQuality === 'weak' && (
+                <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm">
+                    <span className="mt-1.5 h-2 w-2 rounded-full bg-amber-500 flex-shrink-0 animate-pulse" />
+                    <div>
+                        <p className="font-bold">Slow Connection Detected</p>
+                        <p className="text-xs mt-0.5 text-amber-700">The app is using reduced sync mode to save data. Open a route and tap <strong>"Save Offline Now!"</strong> to ensure all meter data is available offline.</p>
+                    </div>
+                </div>
+            )}
 
             {myRoutes.length === 0 ? (
                 <Card className="p-12 text-center border-dashed border-2 bg-muted/20">

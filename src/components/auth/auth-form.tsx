@@ -136,10 +136,10 @@ export function AuthForm() {
               
               setTimeout(() => {
                 if (isManagement) {
-                  if (offlineRole === 'head office management') router.push("/admin/head-office-dashboard");
-                  else if (offlineRole === 'staff management') router.push("/admin/staff-management-dashboard");
+                  if (offlineRole.includes('head office')) router.push("/admin/head-office-dashboard");
+                  else if (offlineRole.includes('management') || offlineRole.includes('manager')) router.push("/admin/staff-management-dashboard");
                   else router.push("/admin/dashboard");
-                } else if (offlineRole === 'staff management') router.push("/staff/staff-management-dashboard");
+                } else if (offlineRole.includes('management') || offlineRole.includes('manager')) router.push("/staff/staff-management-dashboard");
                 else router.push("/staff/dashboard");
               }, 500);
               
@@ -234,9 +234,9 @@ export function AuthForm() {
           });
 
           // Route to role-specific dashboard
-          if (role === 'head office management') {
+          if (role.includes('head office')) {
             router.push("/admin/head-office-dashboard");
-          } else if (role === 'staff management') {
+          } else if (role.includes('management') || role.includes('manager')) {
             router.push("/admin/staff-management-dashboard");
           } else {
             router.push("/admin/dashboard");
@@ -289,7 +289,7 @@ export function AuthForm() {
               });
             }
           }
-          if (role === 'staff management') {
+          if (role.includes('management') || role.includes('manager')) {
             router.push("/staff/staff-management-dashboard");
           } else {
             router.push("/staff/dashboard");

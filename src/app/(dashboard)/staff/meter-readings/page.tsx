@@ -42,6 +42,7 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import type { DisplayReading } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import type { Route } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
+import { useDataRefresh } from "@/lib/data-refresh-context";
 import { format } from "date-fns";
 import { CsvReadingUploadDialog } from "@/features/export/components/csv-reading-upload-dialog";
 import { ReaderReport } from "@/app/(dashboard)/staff/dashboard/reader-report";
@@ -66,6 +67,8 @@ export default function StaffMeterReadingsPage() {
   const [isIndividualCsvModalOpen, setIsIndividualCsvModalOpen] = React.useState(false);
   const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
+  const { isRefreshing, refresh: triggerRefresh } = useDataRefresh();
+  const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
   const currentUserRole = React.useMemo(() => {
     if (typeof window === 'undefined') return null;
     const storedUser = localStorage.getItem('user');
@@ -232,8 +235,18 @@ export default function StaffMeterReadingsPage() {
     const unsubBulkReadings = subscribeToBulkMeterReadings(() => { if (isMounted) combineAndSortReadings(); });
     const unsubFaultCodes = subscribeToFaultCodes(() => { if (isMounted) combineAndSortReadings(); });
 
+    // ── Listen for background data refresh events ─────────────────────────
+    const handleDataRefreshed = () => {
+      if (isMounted) {
+        combineAndSortReadings();
+        setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      }
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('data-refreshed', handleDataRefreshed);
       unsubCust();
       unsubBM();
       unsubIndiReadings();
@@ -410,7 +423,17 @@ export default function StaffMeterReadingsPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Meter Readings Management</h1>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-3xl font-bold tracking-tight">Meter Readings Management</h1>
+            <button
+              onClick={() => triggerRefresh()}
+              title="Refresh data now"
+              className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer"
+            >
+              <Activity className={`h-2.5 w-2.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : 'Live Data'}
+            </button>
+          </div>
           <p className="text-muted-foreground mt-1 text-base">Record, view, and manage all meter readings.</p>
         </div>
         <div className="flex gap-2 w-full md:w-auto flex-wrap justify-end">

@@ -18,6 +18,7 @@ import {
     LayoutDashboard,
     AlertTriangle
 } from 'lucide-react';
+import { isReaderStaff } from '@/lib/meter-reading-permissions';
 import {
     BarChart,
     XAxis,
@@ -185,7 +186,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             const bBulkMeters = activeBulkMeters.filter(bm => bm.branchId === branch.id);
             const totalInBranch = bBulkMeters.length;
 
-            const branchReaders = staff.filter(s => s.branchId === branch.id && s.role.toLowerCase() === 'reader').length;
+            const branchReaders = staff.filter(s => s.branchId === branch.id && isReaderStaff(s)).length;
             const branchRoutes = routes.filter(r => r.branchId === branch.id).length;
 
             const branchReadings = cycleReadings.filter(r => {

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { PERMISSIONS } from '@/lib/constants/auth';
+import { isReaderStaff } from '@/lib/meter-reading-permissions';
 
 export interface CurrentUser {
   id?: string;
@@ -45,14 +46,17 @@ export function useCurrentUser() {
    */
   const isManagement = permissions.has(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
+  const isReader = !isManagement && isReaderStaff(currentUser);
+
   return {
     currentUser,
     isStaff: !isManagement, // Basic distinction if requested, but routes drive access
-    isReader: permissions.has(PERMISSIONS.DATA_ENTRY_ACCESS) && !isManagement,
-    isStaffManagement: permissions.has(PERMISSIONS.STAFF_VIEW_ALL),
+    isReader,
+    isStaffManagement: permissions.has(PERMISSIONS.STAFF_VIEW_ALL) || roleLower.includes('management') || roleLower.includes('manager'),
     isManagement,
     isAdminAreaUser: isManagement,
     branchId: currentUser?.branchId,
     branchName: currentUser?.branchName,
   } as const;
 }
+

@@ -91,7 +91,7 @@ export default function StaffManagementDashboardPage() {
           const assignedPermissions = Array.isArray(parsedUser.permissions) ? parsedUser.permissions : [];
           const hasDashboardAccess = assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
 
-          if (roleLower === "staff management" || hasDashboardAccess) {
+          if ((roleLower && (roleLower.includes('management') || roleLower.includes('manager'))) || hasDashboardAccess) {
             const hasValidBranchName = parsedUser.branchName && parsedUser.branchName !== 'Unknown Branch';
             if (parsedUser.branchId && hasValidBranchName) {
               if (isMounted) {

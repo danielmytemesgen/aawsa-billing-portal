@@ -35,3 +35,21 @@ export function canCreateMeterReadingForType(
 
   return false;
 }
+
+export function isReaderStaff(user?: { role?: string; permissions?: string[] } | null): boolean {
+  if (!user) return false;
+  const roleLower = (user.role || '').toLowerCase().trim();
+  const perms = new Set(user.permissions || []);
+
+  // Recognized as reader if role name contains 'reader' (e.g., 'Reader', 'Meter Reader', 'Field Reader')
+  // OR if user holds reader permissions
+  return (
+    roleLower.includes('reader') ||
+    perms.has(PERMISSIONS.ROUTES_VIEW_ASSIGNED) ||
+    perms.has(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+    perms.has(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+    perms.has(PERMISSIONS.METER_READINGS_CREATE) ||
+    perms.has(PERMISSIONS.DATA_ENTRY_ACCESS)
+  );
+}
+

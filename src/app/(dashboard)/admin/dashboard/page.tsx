@@ -74,6 +74,7 @@ import { checkActualConnectivity } from "@/lib/offline-db";
 import { format } from 'date-fns';
 import { usePermissions } from "@/hooks/use-permissions";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { useDataRefresh } from "@/lib/data-refresh-context";
 
 const chartConfig = {
   Paid: { label: "Paid", color: "hsl(var(--chart-1))" },
@@ -255,6 +256,8 @@ export default function AdminDashboardPage() {
   const { hasPermission } = usePermissions();
   const { currentUser } = useCurrentUser();
   const router = useRouter();
+  const { lastRefreshed, isRefreshing, refresh: triggerRefresh } = useDataRefresh();
+  const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
 
   // Live clock state
   const [liveTime, setLiveTime] = React.useState<string>('');
@@ -448,8 +451,6 @@ export default function AdminDashboardPage() {
       }
     }
 
-
-
     // Client-side initialization fallback
     if (!metrics) {
       const currentBranches = getBranches();
@@ -494,8 +495,17 @@ export default function AdminDashboardPage() {
         setDynamicWaterUsageTrendData(trendData);
       }
     }
-
   }, [selectedMonth]);
+
+  // ── Listen for background refresh events from DataRefreshProvider ──────────
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      processDashboardData();
+      setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [processDashboardData]);
 
 
   React.useEffect(() => {
@@ -585,7 +595,7 @@ export default function AdminDashboardPage() {
       {/* ── Header: Greeting + Live Clock ── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-2xl md:text-3xl font-bold">Admin Dashboard</h1>
             {/* ── Connection Status Pill ── */}
             {isOnline ? (
@@ -603,6 +613,15 @@ export default function AdminDashboardPage() {
                 <WifiOff className="h-2.5 w-2.5" /> Offline
               </span>
             )}
+            {/* ── Live Data Badge ── */}
+            <button
+              onClick={() => triggerRefresh()}
+              title="Refresh data now"
+              className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`h-2.5 w-2.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : 'Live Data'}
+            </button>
           </div>
           <p className="text-base md:text-lg text-muted-foreground">
             {getGreetingEmoji()} {getGreeting()},{" "}

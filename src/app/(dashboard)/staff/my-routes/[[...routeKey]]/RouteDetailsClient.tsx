@@ -17,14 +17,20 @@ import {
     getIndividualCustomerReadings,
     initializeBulkMeterReadings,
     initializeIndividualCustomerReadings,
-    fetchRoutes as dbFetchRoutes
+    fetchRoutes as dbFetchRoutes,
+    subscribeToIndividualCustomerReadings,
+    subscribeToBulkMeterReadings,
+    subscribeToCustomers,
+    subscribeToBulkMeters,
 } from "@/lib/data-store";
+import { useDataRefresh } from "@/lib/data-refresh-context";
+import { useNetworkQuality } from "@/lib/network-quality";
 import { getReadingPeriodStatusAction, getReadingPeriodDetailsAction } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List, Clock, Filter, AlertCircle, Download, HardDrive, Lock } from "lucide-react";
+import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List, Clock, Filter, AlertCircle, Download, HardDrive, Lock, WifiOff, Wifi, Signal } from "lucide-react";
 import Link from "next/link";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle as UIDialogTitle } from "@/components/ui/dialog";
@@ -61,7 +67,13 @@ export default function RouteDetailsClient() {
     const [faultCodesForForm, setFaultCodesForForm] = React.useState<FaultCodeRow[]>([]);
     const [bulkReadings, setBulkReadings] = React.useState<any[]>([]);
     const [individualReadings, setIndividualReadings] = React.useState<any[]>([]);
-
+    const { isRefreshing, refresh: triggerRefresh, networkQuality, isOnline } = useDataRefresh();
+    const { quality: liveQuality } = useNetworkQuality();
+    // Use the most pessimistic quality between the context and live hook
+    const effectiveQuality = (!isOnline || liveQuality === 'offline' || networkQuality === 'offline')
+        ? 'offline'
+        : (liveQuality === 'weak' || networkQuality === 'weak') ? 'weak' : 'strong';
+    const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
     const [isLoading, setIsLoading] = React.useState(true);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [searchTerm, setSearchTerm] = React.useState("");
@@ -361,6 +373,41 @@ export default function RouteDetailsClient() {
         }
     };
     initializeData();
+
+    // ── Listen for data refresh events from DataRefreshProvider ─────────────
+    // On weak/offline networks, skip the full HTTP re-fetch and only pull from
+    // the in-memory store so we don't hammer a slow radio link.
+    const handleDataRefreshed = () => {
+      const currentOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      const conn = typeof navigator !== 'undefined' ? (navigator as any).connection : null;
+      const effType = conn?.effectiveType ?? 'unknown';
+      const isWeak = !currentOnline || effType === '2g' || effType === 'slow-2g' || (conn?.downlink != null && conn.downlink < 1);
+
+      if (isWeak || !currentOnline) {
+        // Lightweight update from in-memory store only
+        setAllCustomers(getCustomers());
+        setBulkReadings(getBulkMeterReadings());
+        setIndividualReadings(getIndividualCustomerReadings());
+      } else {
+        initializeData();
+      }
+      setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+
+    // ── Subscriptions for real-time local updates ────────────────────────────
+    const unsubInd = subscribeToIndividualCustomerReadings(() => setIndividualReadings(getIndividualCustomerReadings()));
+    const unsubBulk = subscribeToBulkMeterReadings(() => setBulkReadings(getBulkMeterReadings()));
+    const unsubCust = subscribeToCustomers((updated) => setAllCustomers(updated));
+    const unsubBM = subscribeToBulkMeters(() => initializeData());
+
+    return () => {
+      window.removeEventListener('data-refreshed', handleDataRefreshed);
+      unsubInd();
+      unsubBulk();
+      unsubCust();
+      unsubBM();
+    };
     }, [routeKey]);
 
     const route = React.useMemo(() =>
@@ -692,11 +739,39 @@ export default function RouteDetailsClient() {
     };
 
     if (isLoading && !route) {
+        // Skeleton card loader — gives structure even on slow connections
         return (
-            <div className="flex flex-col items-center justify-center h-screen space-y-4">
-                <Loader2 className="h-12 w-12 animate-spin text-primary" />
-                <div className="text-lg font-medium text-muted-foreground">{syncProgress || "Loading..."}</div>
-                <p className="text-sm text-muted-foreground animate-pulse">Optimizing your offline experience</p>
+            <div className="p-6 space-y-5">
+                {/* Network quality hint while loading */}
+                {effectiveQuality !== 'strong' && (
+                    <div className={`flex items-center gap-2 text-sm font-medium rounded-lg px-4 py-2.5 border ${
+                        effectiveQuality === 'offline'
+                            ? 'bg-red-50 border-red-200 text-red-700'
+                            : 'bg-amber-50 border-amber-200 text-amber-700'
+                    }`}>
+                        <WifiOff className="h-4 w-4 flex-shrink-0" />
+                        <span>{effectiveQuality === 'offline'
+                            ? 'No connection — loading from cached data…'
+                            : 'Slow connection detected — loading cached data…'}
+                        </span>
+                    </div>
+                )}
+                <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 bg-slate-200 animate-pulse rounded-full" />
+                    <div className="h-7 w-48 bg-slate-200 animate-pulse rounded-lg" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {[1,2,3].map(i => (
+                        <div key={i} className="h-24 bg-slate-100 animate-pulse rounded-xl border border-slate-200" />
+                    ))}
+                </div>
+                <div className="h-12 bg-slate-100 animate-pulse rounded-xl border border-slate-200" />
+                <div className="space-y-3">
+                    {[1,2,3,4].map(i => (
+                        <div key={i} className="h-20 bg-slate-100 animate-pulse rounded-xl border border-slate-200" />
+                    ))}
+                </div>
+                <p className="text-center text-xs text-slate-400">{syncProgress || 'Loading route data…'}</p>
             </div>
         );
     }
@@ -723,7 +798,30 @@ export default function RouteDetailsClient() {
                             </Link>
                         </Button>
                         <div>
-                            <h1 className="text-2xl font-bold">Route: {route.routeKey}</h1>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h1 className="text-2xl font-bold">Route: {route.routeKey}</h1>
+                                {/* Network quality badge */}
+                                {effectiveQuality === 'offline' && (
+                                    <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold">
+                                        <WifiOff className="h-2.5 w-2.5" /> Offline
+                                    </span>
+                                )}
+                                {effectiveQuality === 'weak' && (
+                                    <span className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                        Weak Signal
+                                    </span>
+                                )}
+                                <button
+                                    onClick={() => triggerRefresh()}
+                                    title="Refresh data now"
+                                    disabled={effectiveQuality === 'offline'}
+                                    className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <Clock className={`h-2.5 w-2.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                                    {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : (effectiveQuality === 'offline' ? 'Cached' : 'Live Data')}
+                                </button>
+                            </div>
                             <p className="text-xs text-muted-foreground">{route.description || "Reading assignment"}</p>
                         </div>
                     </div>
@@ -733,13 +831,43 @@ export default function RouteDetailsClient() {
                         variant="outline"
                         size="sm"
                         onClick={handleDownloadOfflinePackage}
-                        disabled={isCachingOffline}
-                        className="bg-white text-blue-700 border-blue-200 hover:bg-blue-50 font-bold text-xs shadow-sm h-9 flex items-center gap-1.5"
+                        disabled={isCachingOffline || !isOnline}
+                        title={!isOnline ? 'Cannot cache while offline' : effectiveQuality === 'weak' ? 'Tap to save all route data for offline use — recommended on slow connections' : 'Pre-cache all route data for offline use'}
+                        className={`font-bold text-xs shadow-sm h-9 flex items-center gap-1.5 transition-all ${
+                            effectiveQuality === 'weak' && isOnline
+                                ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600 ring-2 ring-amber-300 ring-offset-1 animate-pulse'
+                                : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50'
+                        }`}
                     >
-                        {isCachingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4 text-blue-600" />}
-                        {isCachingOffline ? "Caching..." : "Pre-cache Route for Offline"}
+                        {isCachingOffline ? <Loader2 className="h-4 w-4 animate-spin" /> : <HardDrive className="h-4 w-4" />}
+                        {isCachingOffline ? "Caching..." : effectiveQuality === 'weak' && isOnline ? "Save Offline Now!" : "Pre-cache for Offline"}
                     </Button>
                 </div>
+            {/* ─── Network Quality Banner ─────────────────────────────────── */}
+            {effectiveQuality === 'offline' && (
+                <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 text-sm">
+                    <WifiOff className="h-5 w-5 mt-0.5 flex-shrink-0 text-red-600" />
+                    <div>
+                        <p className="font-bold">No Connection — Offline Mode</p>
+                        <p className="text-xs mt-0.5 text-red-700">You are working from cached data. Readings are saved locally and will sync automatically when you reconnect.</p>
+                        {offlineQueueState.pending > 0 && (
+                            <p className="text-xs mt-1 font-semibold text-red-800">📤 {offlineQueueState.pending} reading{offlineQueueState.pending !== 1 ? 's' : ''} waiting to sync</p>
+                        )}
+                    </div>
+                </div>
+            )}
+            {effectiveQuality === 'weak' && (
+                <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm">
+                    <span className="mt-1.5 h-2 w-2 rounded-full bg-amber-500 flex-shrink-0 animate-pulse" />
+                    <div>
+                        <p className="font-bold">Slow Connection Detected</p>
+                        <p className="text-xs mt-0.5 text-amber-700">Readings are saved instantly on your device. Tap <strong>"Save Offline Now!"</strong> to download the full route package so you can read meters without any connection.</p>
+                        {offlineQueueState.pending > 0 && (
+                            <p className="text-xs mt-1 font-semibold text-amber-800">📤 {offlineQueueState.pending} reading{offlineQueueState.pending !== 1 ? 's' : ''} queued for sync</p>
+                        )}
+                    </div>
+                </div>
+            )}
             {/* ─── Route Reading Progress Summary Cards (Bulk Meters Only) ─── */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Card className="bg-white border-slate-200 shadow-sm">

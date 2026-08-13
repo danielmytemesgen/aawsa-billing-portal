@@ -70,7 +70,7 @@ export function PwaRegistry() {
         if (!resp.ok) throw new Error('no role');
         const data = await resp.json();
         const role = (data.role || '').toLowerCase();
-        if (role && role !== 'reader') {
+        if (role && !role.includes('reader') && !role.includes('field') && !role.includes('collector')) {
           // Admin / management users don't need offline SW
           console.info('PWA: non-reader role, skipping SW registration');
           window.dispatchEvent(new CustomEvent('service-worker-unavailable'));

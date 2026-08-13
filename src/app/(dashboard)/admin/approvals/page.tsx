@@ -98,7 +98,9 @@ export default function ApprovalsPage() {
 
   const pendingCustomers = React.useMemo(() => {
     const allPending = customers.filter(c => c.status === 'Pending Approval');
-    if (currentUser?.role.toLowerCase() === 'staff management' && currentUser.branchId) {
+    const roleLower = (currentUser?.role || '').toLowerCase();
+    const isBranchRestricted = (roleLower.includes('management') || roleLower.includes('manager')) && currentUser?.branchId;
+    if (isBranchRestricted) {
       return allPending.filter(c => c.branchId === currentUser.branchId);
     }
     return allPending;
@@ -106,7 +108,9 @@ export default function ApprovalsPage() {
 
   const pendingBulkMeters = React.useMemo(() => {
     const allPending = bulkMeters.filter(bm => bm.status === 'Pending Approval');
-    if (currentUser?.role.toLowerCase() === 'staff management' && currentUser.branchId) {
+    const roleLower = (currentUser?.role || '').toLowerCase();
+    const isBranchRestricted = (roleLower.includes('management') || roleLower.includes('manager')) && currentUser?.branchId;
+    if (isBranchRestricted) {
       return allPending.filter(bm => bm.branchId === currentUser.branchId);
     }
     return allPending;

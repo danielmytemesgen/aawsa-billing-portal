@@ -5,6 +5,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import { isReaderStaff } from "@/lib/meter-reading-permissions";
 import {
     Dialog,
     DialogContent,
@@ -104,7 +105,7 @@ export function RouteFormDialog({
     }, [defaultValues, form, open]);
 
     const filteredReaders = staffMembers.filter((staff: any) => {
-        const isReader = staff.role?.toLowerCase() === 'reader';
+        const isReader = isReaderStaff(staff);
         const isSameBranch = branchIdWatcher ? staff.branchId === branchIdWatcher : true;
         return isReader && isSameBranch;
     });

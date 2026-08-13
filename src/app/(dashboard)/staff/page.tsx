@@ -19,7 +19,7 @@ export default function StaffRedirectPage() {
         const assignedPermissions = Array.isArray(user.permissions) ? user.permissions : [];
         const hasDashboardAccess = assignedPermissions.includes('dashboard_view_all') || assignedPermissions.includes('dashboard_view_branch');
 
-        if (role === 'staff management') {
+        if (role.includes('management') || role.includes('manager')) {
           router.replace('/staff/staff-management-dashboard');
           return;
         }

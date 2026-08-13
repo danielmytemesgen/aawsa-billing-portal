@@ -31,8 +31,8 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     let dashboardHref = "/admin/dashboard"; // Default
     if (hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) && !hasPermission(PERMISSIONS.STAFF_VIEW)) dashboardHref = '/admin/head-office-dashboard';
     if (hasPermission(PERMISSIONS.STAFF_VIEW) && !hasPermission(PERMISSIONS.BILL_VIEW_ALL)) dashboardHref = '/admin/staff-management-dashboard';
-    if (userRoleLower === 'head office management') dashboardHref = '/admin/head-office-dashboard';
-    if (userRoleLower === 'staff management') dashboardHref = '/admin/staff-management-dashboard';
+    if (userRoleLower.includes('head office')) dashboardHref = '/admin/head-office-dashboard';
+    if ((userRoleLower.includes('management') || userRoleLower.includes('manager')) && !userRoleLower.includes('head office')) dashboardHref = '/admin/staff-management-dashboard';
 
     if (hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) || hasPermission(PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
         navItems.push({

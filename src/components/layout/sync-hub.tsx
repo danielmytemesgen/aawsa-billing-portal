@@ -525,6 +525,16 @@ export function SyncHub() {
     window.addEventListener('online', handleBrowserOnline);
     window.addEventListener('offline-queue-updated', checkPending);
 
+    // Sync when user returns to the tab (catches offline→online transitions that
+    // happen while the tab was backgrounded and missed the 'online' event).
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && !syncInProgress.current) {
+        checkPending();
+        runSync();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     const handleSWMessage = (event: MessageEvent) => {
       if (event.data?.type === 'BACKGROUND_SYNC_TRIGGER') {
         runSync();
@@ -649,6 +659,7 @@ export function SyncHub() {
       window.removeEventListener('online', handleBrowserOnline);
       window.removeEventListener('offline-queue-updated', checkPending);
       window.removeEventListener('offline-queue-updated', handleQueueUpdated);
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       }

@@ -25,6 +25,8 @@ import {
 import { motion } from "framer-motion";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import { getBranchesLookupAction, getReadingPeriodStatusAction, getReadingPeriodDetailsAction, getDashboardMetricsAction, type ReadingPeriodDetails } from "@/lib/actions";
+import { useDataRefresh } from "@/lib/data-refresh-context";
+import { isReaderStaff } from "@/lib/meter-reading-permissions";
 import {
   initializeBranches,
   initializeBulkMeters,
@@ -84,6 +86,8 @@ export default function StaffDashboardPage() {
   const [staffBranchName, setStaffBranchName] = React.useState<string | null>(null);
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
+  const { isRefreshing, refresh: triggerRefresh } = useDataRefresh();
+  const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
 
   const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
   const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
@@ -421,6 +425,23 @@ export default function StaffDashboardPage() {
     initializeData();
   }, [authStatus]);
 
+  // ── Listen for background refresh events from DataRefreshProvider ──────────
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      if (authStatus === 'authorized') {
+        fetchDashboardMetrics();
+        // Update local stores from refreshed data-store
+        setAllBulkMeters(getBulkMeters());
+        setAllCustomers(getCustomers());
+        setAllIndividualReadings(getIndividualCustomerReadings());
+        setAllBulkReadings(getBulkMeterReadings());
+        setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      }
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [authStatus]);
+
   const currentMonthYear = format(new Date(), 'yyyy-MM');
 
   // Derived state with useMemo
@@ -519,16 +540,17 @@ export default function StaffDashboardPage() {
   }, [authStatus, staffBranchId, allBulkMeters, allCustomers, allBranches, dashboardMetrics]);
 
 
-  const currentUserRole = React.useMemo(() => {
+  const isReaderUser = React.useMemo(() => {
     const userString = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
     if (userString) {
       try {
-        return JSON.parse(userString).role?.toLowerCase();
+        const u = JSON.parse(userString);
+        return isReaderStaff(u);
       } catch (e) {
-        return null;
+        return false;
       }
     }
-    return null;
+    return false;
   }, []);
 
   const currentUserId = React.useMemo(() => {
@@ -544,13 +566,13 @@ export default function StaffDashboardPage() {
   }, []);
 
   const myRouteKeys = React.useMemo(() => {
-    if (!currentUserId || currentUserRole !== 'reader') return new Set<string>();
+    if (!currentUserId || !isReaderUser) return new Set<string>();
     const myRoutes = allRoutes.filter(r => r.readerId?.toLowerCase() === currentUserId);
     return new Set(myRoutes.map(r => r.routeKey));
-  }, [allRoutes, currentUserId, currentUserRole]);
+  }, [allRoutes, currentUserId, isReaderUser]);
 
   const readerAnomalies = React.useMemo(() => {
-    if (currentUserRole !== 'reader' || myRouteKeys.size === 0) return [];
+    if (!isReaderUser || myRouteKeys.size === 0) return [];
     
     const anomalies: AnomalyRecord[] = [];
     
@@ -609,7 +631,7 @@ export default function StaffDashboardPage() {
     }
 
     return anomalies.sort((a, b) => (a.severity === 'high' ? -1 : 1)).slice(0, 5);
-  }, [allBulkMeters, allCustomers, myRouteKeys, currentUserRole]);
+  }, [allBulkMeters, allCustomers, myRouteKeys, isReaderUser]);
 
   if (isLoading || authStatus === 'loading') {
     return <div className="p-4 text-center">Loading dashboard data...</div>;
@@ -666,10 +688,14 @@ export default function StaffDashboardPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" className="shadow-sm bg-white hover:bg-gray-50" onClick={initializeData}>
-              <RotateCcw className="h-4 w-4 mr-2 text-blue-500" />
-              Refresh Data
-            </Button>
+            <button
+              onClick={() => triggerRefresh()}
+              title="Refresh data now"
+              className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-3 py-1.5 text-xs font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer"
+            >
+              <RotateCcw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : 'Live Data'}
+            </button>
           </div>
         </div>
 

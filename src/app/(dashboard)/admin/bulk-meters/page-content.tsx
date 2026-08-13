@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash } from "lucide-react";
+import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash, Download, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,8 @@ import { BatchInvoiceDialog } from "./batch-invoice-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { BulkMeterMap } from "@/components/maps/BulkMeterMap";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { bulkMeterStatuses, type BulkMeterStatus } from "./bulk-meter-types";
 
 import {
   getBulkMeters,
@@ -55,11 +57,19 @@ export default function BulkMetersPage() {
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [selectedMeters, setSelectedMeters] = React.useState<Set<string>>(new Set());
   const [isBatchInvoiceDialogOpen, setIsBatchInvoiceDialogOpen] = React.useState(false);
+  const [statusFilter, setStatusFilter] = React.useState<BulkMeterStatus | 'All'>('All');
+  const [isExporting, setIsExporting] = React.useState(false);
 
 
-  const fetchData = React.useCallback(async (p: number, rpp: number, search: string) => {
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {
     setIsLoading(true);
-    const { bulkMeters: paginatedBMs, totalCount: count, error } = await fetchBulkMetersPaginated(rpp, p * rpp, search);
+    const { bulkMeters: paginatedBMs, totalCount: count, error } = await fetchBulkMetersPaginated(
+      rpp,
+      p * rpp,
+      search,
+      undefined, // branchId — handled server-side per user
+      status && status !== 'All' ? status : undefined,
+    );
     if (!error) {
       setBulkMeters(paginatedBMs);
       setTotalCount(count);
@@ -84,8 +94,8 @@ export default function BulkMetersPage() {
   }, [searchTerm]);
 
   React.useEffect(() => {
-    fetchData(page, rowsPerPage, debouncedSearch);
-  }, [page, rowsPerPage, debouncedSearch, fetchData]);
+    fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+  }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -206,6 +216,64 @@ export default function BulkMetersPage() {
     return bulkMeters; // Branch filtering handled server side in getAllBulkMetersAction
   }, [bulkMeters]);
 
+  const handleExport = async (format: 'csv' | 'xlsx') => {
+    setIsExporting(true);
+    toast({ title: "Preparing Export", description: "Fetching all matching records..." });
+    try {
+      // Fetch all (up to 10000) with current filters
+      const { bulkMeters: allBMs } = await fetchBulkMetersPaginated(
+        10000, 0, debouncedSearch, undefined,
+        statusFilter !== 'All' ? statusFilter : undefined,
+      );
+
+      if (!allBMs || allBMs.length === 0) {
+        toast({ title: "No Data", description: "No bulk meters match the current filters.", variant: "destructive" });
+        return;
+      }
+
+      const rows = allBMs.map(m => ({
+        'Account Name': m.name || '',
+        'Customer Key': m.customerKeyNumber || '',
+        'Meter Number': m.meterNumber || '',
+        'INST KEY': m.instKey || '',
+        'Contract': m.contractNumber || '',
+        'Status': m.status || '',
+        'Branch': branches.find(b => b.id === m.branchId)?.name || m.branchId || '',
+        'Route Key': m.routeKey || '',
+        'Current Reading': m.currentReading ?? '',
+        'Previous Reading': m.previousReading ?? '',
+        'Outstanding Bill': m.outStandingbill ?? '',
+        'Woreda': m.woreda || '',
+        'Location': m.location || '',
+      }));
+
+      if (format === 'csv') {
+        const headers = Object.keys(rows[0]).join(',');
+        const lines = rows.map(r => Object.values(r).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        const csvContent = [headers, ...lines].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `bulk_meters_${statusFilter}_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click(); URL.revokeObjectURL(url);
+      } else {
+        // XLSX — dynamic import to avoid bundle size
+        const XLSX = await import('xlsx');
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Bulk Meters');
+        XLSX.writeFile(wb, `bulk_meters_${statusFilter}_${new Date().toISOString().slice(0,10)}.xlsx`);
+      }
+
+      toast({ title: "Export Complete", description: `${allBMs.length} records exported to ${format.toUpperCase()}.` });
+    } catch (err) {
+      console.error('Export error:', err);
+      toast({ title: "Export Failed", description: "Could not generate file.", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-8 pb-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -296,16 +364,83 @@ export default function BulkMetersPage() {
         </Card>
       </div>
 
-      <div className="mt-6 flex flex-col md:flex-row items-center gap-4">
-        <div className="relative flex-grow w-full">
-          <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
-          <Input
-            type="search"
-            placeholder="Search by name, meter #, contract, or branch..."
-            className="pl-12 h-14 w-full shadow-sm border-slate-200 focus-visible:ring-primary/20 text-lg font-medium placeholder:text-slate-400 rounded-xl"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      {/* ─── Search + Status Filter + Export ─── */}
+      <div className="mt-6 flex flex-col gap-3">
+        {/* Search bar */}
+        <div className="flex flex-col md:flex-row items-center gap-3">
+          <div className="relative flex-grow w-full">
+            <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+            <Input
+              type="search"
+              placeholder="Search by name, meter #, contract, or branch..."
+              className="pl-12 h-14 w-full shadow-sm border-slate-200 focus-visible:ring-primary/20 text-lg font-medium placeholder:text-slate-400 rounded-xl"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          {/* Export button */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                className="h-14 px-5 flex-shrink-0 gap-2 border-slate-200 shadow-sm rounded-xl text-base font-medium hover:bg-slate-50"
+                disabled={isExporting}
+              >
+                <Download className="h-5 w-5 text-slate-500" />
+                {isExporting ? 'Exporting...' : 'Export'}
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onClick={() => handleExport('csv')} className="gap-2 cursor-pointer">
+                <Download className="h-4 w-4" /> Export CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport('xlsx')} className="gap-2 cursor-pointer">
+                <Download className="h-4 w-4" /> Export Excel
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Status filter pills */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-500 mr-1">Filter:</span>
+          {(['All', ...bulkMeterStatuses] as const).map((status) => {
+            const active = statusFilter === status;
+            const colors: Record<string, string> = {
+              All: 'bg-slate-800 text-white border-slate-800',
+              Active: 'bg-emerald-500 text-white border-emerald-500',
+              Maintenance: 'bg-amber-500 text-white border-amber-500',
+              'Pending Approval': 'bg-blue-500 text-white border-blue-500',
+              Rejected: 'bg-red-500 text-white border-red-500',
+            };
+            const inactiveColors: Record<string, string> = {
+              All: 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
+              Active: 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400',
+              Maintenance: 'bg-white text-amber-600 border-amber-200 hover:border-amber-400',
+              'Pending Approval': 'bg-white text-blue-600 border-blue-200 hover:border-blue-400',
+              Rejected: 'bg-white text-red-600 border-red-200 hover:border-red-400',
+            };
+            return (
+              <button
+                key={status}
+                onClick={() => { setStatusFilter(status); setPage(0); }}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-all duration-150 shadow-sm ${
+                  active ? colors[status] : inactiveColors[status]
+                }`}
+              >
+                {status}
+                {active && status !== 'All' && (
+                  <X className="h-3 w-3 opacity-80" onClick={(e) => { e.stopPropagation(); setStatusFilter('All'); setPage(0); }} />
+                )}
+              </button>
+            );
+          })}
+          {statusFilter !== 'All' && (
+            <span className="ml-1 text-xs text-slate-400 italic">
+              Showing {totalCount} {statusFilter} meter{totalCount !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
       </div>
 
