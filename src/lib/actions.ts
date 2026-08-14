@@ -2870,11 +2870,20 @@ export async function createTariffAction(tariff: TariffInsert) {
     return result;
   });
 }
-export async function updateTariffAction(customerType: string, effectiveDate: string, tariff: TariffUpdate) {
+export async function updateTariffAction(customerType: string, effectiveDate: string, tariff: TariffUpdate, allowHistoricalEdit: boolean = false) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.TARIFFS_MANAGE);
 
-    // Check if the tariff is the latest version. Historical versions are read-only.
+    // Normalize the effectiveDate so comparisons match how dates are stored (YYYY-MM -> last day of month)
+    let lookupDate = effectiveDate;
+    if (effectiveDate && effectiveDate.length === 7 && effectiveDate.includes('-')) {
+      const [year, month] = effectiveDate.split('-').map(Number);
+      const lastDay = new Date(year, month, 0).getDate();
+      lookupDate = `${effectiveDate}-${lastDay}`;
+    }
+
+    // Check if the tariff is the latest version. Historical versions are read-only
+    // unless the caller explicitly requests a historical edit via `allowHistoricalEdit`.
     const allCustomerTariffs = await dbGetAllTariffs();
     const relevantTariffs = allCustomerTariffs
       .filter(t => t.customer_type === customerType && t.effective_date)
@@ -2886,14 +2895,29 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
       })
       .sort((a, b) => b.localeCompare(a)); // Descending order
 
-    if (relevantTariffs.length > 0 && effectiveDate < relevantTariffs[0]) {
+    if (relevantTariffs.length > 0 && lookupDate < relevantTariffs[0] && !allowHistoricalEdit) {
       throw new Error('Forbidden: Cannot modify a historical tariff version. Only the latest active tariff can be edited.');
     }
 
-    // Capture current tariff for audit comparison
-    const oldTariff = await dbGetTariffByTypeAndDate(customerType, effectiveDate);
+    // Capture current tariff for audit comparison. Try both the exact incoming date
+    // and a month-end canonicalized variant so we reliably locate the DB row.
+    const oldTariffInitial = await dbGetTariffByTypeAndDate(customerType, effectiveDate);
+    let oldTariff = oldTariffInitial;
+    if (!oldTariff) {
+      // compute month-end alternative and try again
+      if (effectiveDate && effectiveDate.includes('-')) {
+        const [y, m] = effectiveDate.split('-').map(Number);
+        const lastDay = new Date(y, m || 1, 0).getDate();
+        const alt = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        oldTariff = await dbGetTariffByTypeAndDate(customerType, alt);
+      }
+    }
 
-    const result = await dbUpdateTariff(customerType, effectiveDate, tariff);
+    const result = await dbUpdateTariff(customerType, lookupDate, tariff);
+
+    if (!result) {
+      throw new Error('Update failed: tariff row not found for provided effective date.');
+    }
 
     await logSecurityEventAction({
       event: 'Update Tariff',

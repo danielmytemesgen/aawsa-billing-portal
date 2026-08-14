@@ -2046,11 +2046,20 @@ export const getTariff = (customerType: CustomerType, effectiveDate: string): Ta
     console.warn("DataStore: getTariff called but tariffs array is empty. This indicates tariffs haven't been initialized yet.");
     return undefined;
   }
+  const formatDt = (d: any) => {
+    if (!d) return '';
+    if (d instanceof Date) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (typeof d === 'string' && d.includes('T')) return d.split('T')[0];
+    return String(d);
+  };
+  const targetDateFormatted = formatDt(effectiveDate);
+  const exactTariff = tariffs.find(t => t.customer_type === customerType && (t.effective_date === effectiveDate || formatDt(t.effective_date) === targetDateFormatted));
+
   const sortedTariffs = tariffs
-    .filter(t => t.customer_type === customerType && t.effective_date <= effectiveDate)
+    .filter(t => t.customer_type === customerType && formatDt(t.effective_date) <= targetDateFormatted)
     .sort((a, b) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime());
     
-  const tariff = sortedTariffs[0];
+  const tariff = exactTariff || sortedTariffs[0];
   if (!tariff) {
     console.warn(`DataStore: No active tariff found for customer type "${customerType}" on or before effective date "${effectiveDate}" in the local store.`);
     return undefined;
@@ -3076,7 +3085,7 @@ export const updateRolePermissions = async (roleId: number, permissionIds: numbe
 };
 
 
-export const updateTariff = async (customerType: CustomerType, effectiveDate: string, tariff: Partial<TariffInfo>): Promise<StoreOperationResult<void>> => {
+export const updateTariff = async (customerType: CustomerType, effectiveDate: string, tariff: Partial<TariffInfo>, allowHistoricalEdit: boolean = false): Promise<StoreOperationResult<void>> => {
   const updatePayload: TariffUpdate = {};
   if (tariff.tiers) updatePayload.tiers = tariff.tiers as any;
   if ((tariff as any).sewerage_tiers) updatePayload.sewerage_tiers = (tariff as any).sewerage_tiers as any;
@@ -3114,16 +3123,38 @@ export const updateTariff = async (customerType: CustomerType, effectiveDate: st
   if (Object.keys(updatePayload).length === 0) {
     return { success: true };
   }
+  // Normalize effectiveDate for lookup so client-side cache updates match server storage
+  let lookupDate = effectiveDate;
+  if (effectiveDate && effectiveDate.length === 7 && effectiveDate.includes('-')) {
+    const [year, month] = effectiveDate.split('-').map(Number);
+    const lastDay = new Date(year, month, 0).getDate();
+    lookupDate = `${effectiveDate}-${lastDay}`;
+  }
 
-  const { data: updatedDbTariff, error } = await updateTariffAction(customerType, effectiveDate, updatePayload);
+  const { data: updatedDbTariff, error } = await updateTariffAction(customerType, lookupDate, updatePayload, allowHistoricalEdit);
   if (updatedDbTariff && !error) {
+    const formatDt = (d: any) => {
+      if (!d) return '';
+      if (d instanceof Date) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (typeof d === 'string' && d.includes('T')) return d.split('T')[0];
+      return String(d);
+    };
     const mappedTariff = {
       ...updatedDbTariff,
-      effective_date: updatedDbTariff.effective_date instanceof Date
-        ? `${updatedDbTariff.effective_date.getFullYear()}-${String(updatedDbTariff.effective_date.getMonth() + 1).padStart(2, '0')}-${String(updatedDbTariff.effective_date.getDate()).padStart(2, '0')}`
-        : updatedDbTariff.effective_date
+      effective_date: formatDt(updatedDbTariff.effective_date) || lookupDate
     };
-    tariffs = tariffs.map(t => (t.customer_type === customerType && t.effective_date === effectiveDate) ? mappedTariff : t);
+    const targetLookupFormatted = formatDt(lookupDate);
+    const targetEffectiveFormatted = formatDt(effectiveDate);
+    tariffs = tariffs.map(t => {
+      const tFormatted = formatDt(t.effective_date);
+      const isMatch = t.customer_type === customerType && (
+        t.effective_date === lookupDate ||
+        t.effective_date === effectiveDate ||
+        tFormatted === targetLookupFormatted ||
+        tFormatted === targetEffectiveFormatted
+      );
+      return isMatch ? mappedTariff : t;
+    });
     notifyTariffListeners();
     return { success: true };
   }

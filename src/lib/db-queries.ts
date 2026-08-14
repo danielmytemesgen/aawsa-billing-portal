@@ -1714,8 +1714,37 @@ export const dbCreateTariff = async (tariff: any) => {
 export const dbUpdateTariff = async (customerType: string, effectiveDate: string, tariff: any) => {
     const keys = Object.keys(tariff);
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE tariffs SET ${setClause} WHERE customer_type = $${keys.length + 1} AND effective_date = $${keys.length + 2} RETURNING *`, [...keys.map(k => tariff[k]), customerType, effectiveDate]);
-    return rows[0] ?? null;
+
+    // Try updating with the exact provided date first
+    let rows = await query(
+        `UPDATE tariffs SET ${setClause} WHERE customer_type = $${keys.length + 1} AND effective_date = $${keys.length + 2} RETURNING *`,
+        [...keys.map(k => tariff[k]), customerType, effectiveDate]
+    );
+
+    if (rows[0]) return rows[0];
+
+    // If no row was updated, try an alternate lookup: if the provided date is YYYY-MM-DD,
+    // also try the last-day-of-month variant for that same month (some rows are stored
+    // using month-end canonicalization). If the provided date is YYYY-MM, normalize
+    // it to month-end and try that as well.
+    let altDate = effectiveDate;
+    if (effectiveDate && effectiveDate.length >= 7 && effectiveDate.includes('-')) {
+        const parts = effectiveDate.split('-').map(Number);
+        const year = parts[0];
+        const month = parts[1] || 1;
+        const lastDay = new Date(year, month, 0).getDate();
+        altDate = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    }
+
+    if (altDate !== effectiveDate) {
+        rows = await query(
+            `UPDATE tariffs SET ${setClause} WHERE customer_type = $${keys.length + 1} AND effective_date = $${keys.length + 2} RETURNING *`,
+            [...keys.map(k => tariff[k]), customerType, altDate]
+        );
+        if (rows[0]) return rows[0];
+    }
+
+    return null;
 };
 
 

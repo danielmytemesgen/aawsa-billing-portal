@@ -30,7 +30,7 @@ import { AdditionalFee } from "@/lib/billing-calculations";
 import { PenaltyDialog } from "./penalty-dialog";
 import { NewVersionDialog, type NewVersionFormValues } from "./new-version-dialog";
 
-const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, prevTier?: TariffTier | SewerageTier): DisplayTariffRate => {
+const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, prevTier?: TariffTier | SewerageTier, tierType: 'water' | 'sewerage' = 'water'): DisplayTariffRate => {
   // Coerce tier.limit to a numeric value or numeric Infinity for display logic.
   const limitValue: number | typeof Infinity = (tier.limit === 'Infinity' || tier.limit === Infinity) ? Infinity : Number(tier.limit);
 
@@ -54,7 +54,7 @@ const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, 
     : `Tier ${index + 1}: ${minConsumptionDisplay} - ${maxConsumptionDisplay} m³`;
 
   return {
-    id: `tier-${index}-${tier.rate}-${String(tier.limit)}-${typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`,
+    id: `tier-${tierType}-${index}-${tier.rate}-${String(tier.limit)}`,
     description,
     minConsumption: minConsumptionDisplay,
     maxConsumption: maxConsumptionDisplay,
@@ -144,7 +144,7 @@ const getDisplayTiersFromData = (tariffInfo: TariffInfo | null | undefined, tier
 
   let previousTier: TariffTier | SewerageTier | undefined;
   return tiersToMap.map((tier, index) => {
-    const displayTier = mapTariffTierToDisplay(tier, index, previousTier);
+    const displayTier = mapTariffTierToDisplay(tier, index, previousTier, tierType);
     previousTier = tier as any;
     return displayTier;
   });
@@ -170,6 +170,7 @@ export default function TariffManagementPage() {
 
   const [editingTierType, setEditingTierType] = React.useState<'water' | 'sewerage' | null>(null);
   const [editingRate, setEditingRate] = React.useState<DisplayTariffRate | null>(null);
+  const [editingTierIndex, setEditingTierIndex] = React.useState<number | null>(null);
 
   const [rateToDelete, setRateToDelete] = React.useState<{ tier: DisplayTariffRate, type: 'water' | 'sewerage' } | null>(null);
 
@@ -242,7 +243,7 @@ export default function TariffManagementPage() {
       ? { tiers: newTiers as TariffTier[] }
       : { sewerage_tiers: newTiers as SewerageTier[] };
 
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, newTariffInfo as any);
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, newTariffInfo as any, allowHistoricalEdit);
     if (result.success) {
       toast({ title: "Tariff Updated", description: `${currentTariffType} ${type} tariff rates effective ${currentEffectiveDate} have been saved.` });
     } else {
@@ -253,10 +254,14 @@ export default function TariffManagementPage() {
 
   const handleAddTier = (type: 'water' | 'sewerage') => {
     setEditingRate(null);
+    setEditingTierIndex(null);
     setEditingTierType(type);
   };
 
   const handleEditTier = (rate: DisplayTariffRate, type: 'water' | 'sewerage') => {
+    const tiers = type === 'water' ? activeWaterTiers : activeSewerageTiers;
+    const idx = tiers.findIndex(r => r.id === rate.id || (r.originalRate === rate.originalRate && r.originalLimit === rate.originalLimit));
+    setEditingTierIndex(idx >= 0 ? idx : null);
     setEditingRate(rate);
     setEditingTierType(type);
   };
@@ -269,9 +274,8 @@ export default function TariffManagementPage() {
     if (rateToDelete && activeTariffInfo) {
       const tiersToUpdate = rateToDelete.type === 'water' ? activeWaterTiers : activeSewerageTiers;
       const newRatesList = tiersToUpdate
-        .filter(r => r.id !== rateToDelete.tier.id)
-        .map(dt => ({ rate: dt.originalRate, limit: dt.originalLimit }))
-        .sort((a, b) => (a.limit as number) - (b.limit as number));
+        .filter(r => r.id !== rateToDelete.tier.id && !(r.originalRate === rateToDelete.tier.originalRate && r.originalLimit === rateToDelete.tier.originalLimit))
+        .map(dt => ({ rate: dt.originalRate, limit: dt.originalLimit }));
 
       handleTierUpdate(newRatesList, rateToDelete.type);
       toast({ title: `Tariff Tier Deleted`, description: `Tier "${rateToDelete.tier.description}" has been removed.` });
@@ -303,24 +307,34 @@ export default function TariffManagementPage() {
     let updatedTiers: (TariffTier | SewerageTier)[];
     const tiersToUpdate = editingTierType === 'water' ? activeWaterTiers : activeSewerageTiers;
 
-    if (editingRate) {
+    if (editingTierIndex !== null && editingTierIndex >= 0 && editingTierIndex < tiersToUpdate.length) {
+      // In-place update preserving exact tier position and tier number
+      updatedTiers = tiersToUpdate.map((r, idx) =>
+        idx === editingTierIndex
+          ? { rate: newRateValue, limit: newMaxConsumptionValue }
+          : { rate: r.originalRate, limit: r.originalLimit }
+      );
+    } else if (editingRate) {
+      // In-place update preserving exact tier position and tier number
       updatedTiers = tiersToUpdate.map(r =>
-        r.id === editingRate.id
+        (r.id === editingRate.id || (r.originalRate === editingRate.originalRate && r.originalLimit === editingRate.originalLimit))
           ? { rate: newRateValue, limit: newMaxConsumptionValue }
           : { rate: r.originalRate, limit: r.originalLimit }
       );
     } else {
+      // Adding a new tier: append to end without disturbing existing tier order
       updatedTiers = [
         ...tiersToUpdate.map(r => ({ rate: r.originalRate, limit: r.originalLimit })),
         { rate: newRateValue, limit: newMaxConsumptionValue }
       ];
     }
 
-    updatedTiers.sort((a, b) => (a.limit as number) - (b.limit as number));
+    // Keep existing tier numbers intact - do not swap tier positions
     handleTierUpdate(updatedTiers, editingTierType);
 
     setEditingTierType(null);
     setEditingRate(null);
+    setEditingTierIndex(null);
   };
 
   const handleUpdateMeterRent = async (newPrices: { [key: string]: number }) => {
@@ -340,7 +354,7 @@ export default function TariffManagementPage() {
       meter_rent_prices: normalizedPrices,
     };
 
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any);
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any, allowHistoricalEdit);
 
     if (result.success) {
       toast({ title: "Meter Rent Prices Updated", description: `New prices for ${currentEffectiveDate} have been saved.` });
@@ -367,7 +381,7 @@ export default function TariffManagementPage() {
 
     const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
       additional_fees: updatedFees
-    } as any);
+    } as any, allowHistoricalEdit);
 
     if (result.success) {
       toast({
@@ -389,7 +403,7 @@ export default function TariffManagementPage() {
 
     const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
       additional_fees: updatedFees
-    } as any);
+    } as any, allowHistoricalEdit);
 
     if (result.success) {
       toast({ title: "Fee Deleted", description: `Successfully removed the additional fee "${feeToDelete?.name ?? 'Unknown'}".` });
@@ -429,7 +443,7 @@ export default function TariffManagementPage() {
       [fieldName]: finalValue,
     };
 
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any);
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any, allowHistoricalEdit);
 
     if (result.success) {
       toast({ title: "Fee Updated", description: `${feeDialogConfig?.title} has been updated.` });
@@ -459,7 +473,7 @@ export default function TariffManagementPage() {
     const { fieldName, feeName, resetValue } = pendingReset;
 
     const updatePayload: Partial<TariffInfo> = { [fieldName]: resetValue };
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any);
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, updatePayload as any, allowHistoricalEdit);
 
     if (result.success) {
       const displayValue = resetValue < 1 && resetValue > 0 ? `${(resetValue * 100).toFixed(0)}%` : String(resetValue);
@@ -477,7 +491,7 @@ export default function TariffManagementPage() {
   }) => {
     if (!activeTariffInfo) return;
 
-    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, values as any);
+    const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, values as any, allowHistoricalEdit);
 
     if (result.success) {
       toast({ title: "Penalty Configuration Updated", description: "The new penalty rates have been saved successfully." });
@@ -494,7 +508,7 @@ export default function TariffManagementPage() {
     try {
       const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
         fixed_tier_index: newIndex
-      } as any);
+      } as any, allowHistoricalEdit);
       if (result.success) {
         if (newIndex !== null) {
           toast({ title: "Tier Selection Updated", description: `Billing for ${currentTariffType} will now use Tier ${newIndex + 1} (${activeWaterTiers[newIndex]?.description || ''}).` });
@@ -515,7 +529,7 @@ export default function TariffManagementPage() {
     try {
       const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, {
         use_rule_of_three: enabled
-      } as any);
+      } as any, allowHistoricalEdit);
       if (result.success) {
         toast({ title: "3m³ Rule Updated", description: `Minimum 3m³ adjustment is now ${enabled ? 'ENABLED' : 'DISABLED'} for ${currentTariffType}.` });
       } else {
@@ -582,7 +596,7 @@ export default function TariffManagementPage() {
               </Button>
             )}
             {hasPermission(PERMISSIONS.TARIFFS_MANAGE) && (
-              <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo || !isLatestTariff} className="h-11 bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100 font-bold px-6">
+              <Button onClick={() => setIsMeterRentDialogOpen(true)} variant="default" disabled={!activeTariffInfo || (!isLatestTariff && !allowHistoricalEdit)} className="h-11 bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-100 font-bold px-6">
                 <DollarSign className="mr-2 h-4 w-4" /> Manage Meter Rent
               </Button>
             )}
