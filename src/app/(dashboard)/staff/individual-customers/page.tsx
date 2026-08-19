@@ -3,13 +3,13 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText } from "lucide-react";
+import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
+import { individualCustomerStatuses, type IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { IndividualCustomerTable } from "@/app/(dashboard)/admin/individual-customers/individual-customer-table";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -46,6 +46,7 @@ export default function StaffIndividualCustomersPage() {
   const [isLoading, setIsLoading] = React.useState(true);
 
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<string>('All');
   const [isFormOpen, setIsFormOpen] = React.useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [selectedCustomer, setSelectedCustomer] = React.useState<IndividualCustomer | null>(null);
@@ -126,18 +127,25 @@ export default function StaffIndividualCustomersPage() {
     return { customers: [], bulkMeters: [] };
   }, [isStaffManagement, branchId, hasPermission, allCustomers, allBulkMeters]);
 
+  const filteredCustomers = React.useMemo(() => {
+    return branchFilteredData.customers.filter(customer => {
+      const matchesStatus = statusFilter === 'All' || customer.status === statusFilter;
+      return matchesStatus;
+    });
+  }, [branchFilteredData.customers, statusFilter]);
+
   const searchedCustomers = React.useMemo(() => {
     if (!searchTerm) {
-      return branchFilteredData.customers;
+      return filteredCustomers;
     }
-    return branchFilteredData.customers.filter(customer =>
+    return filteredCustomers.filter(customer =>
       customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.subCity.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.woreda.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (customer.assignedBulkMeterId && allBulkMeters.find(bm => bm.customerKeyNumber === customer.assignedBulkMeterId)?.name.toLowerCase().includes(searchTerm.toLowerCase()))
     );
-  }, [searchTerm, branchFilteredData.customers, allBulkMeters]);
+  }, [searchTerm, filteredCustomers, allBulkMeters]);
 
   const summary = React.useMemo(() => {
     const total = branchFilteredData.customers.length;
@@ -332,26 +340,71 @@ export default function StaffIndividualCustomersPage() {
       </div>
 
       <Card className="shadow-md border-slate-200/60 overflow-hidden">
-        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-              <UserCog className="h-4 w-4" />
+        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col gap-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                <UserCog className="h-4 w-4" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Customer Database</CardTitle>
+                <CardDescription>Manage individual consumer registry for {branchName || "your area"}.</CardDescription>
+              </div>
             </div>
-            <div>
-              <CardTitle className="text-lg">Customer Database</CardTitle>
-              <CardDescription>Manage individual consumer registry for {branchName || "your area"}.</CardDescription>
+            <div className="relative w-full md:w-72">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <Input
+                type="search"
+                placeholder="Search by key, name..."
+                className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                disabled={!branchId}
+              />
             </div>
           </div>
-          <div className="relative w-full md:w-72">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <Input
-              type="search"
-              placeholder="Search by key, name..."
-              className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              disabled={!branchId}
-            />
+
+          {/* Status filter pills & active tags */}
+          <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-100">
+            <span className="text-xs font-semibold text-slate-500 mr-1">Filter:</span>
+            {(['All', ...individualCustomerStatuses] as const).map((status) => {
+              const active = statusFilter === status;
+              const colors: Record<string, string> = {
+                All: 'bg-slate-800 text-white border-slate-800',
+                Active: 'bg-emerald-500 text-white border-emerald-500',
+                Inactive: 'bg-slate-400 text-white border-slate-400',
+                Suspended: 'bg-orange-500 text-white border-orange-500',
+                'Pending Approval': 'bg-blue-500 text-white border-blue-500',
+                Rejected: 'bg-red-500 text-white border-red-500',
+              };
+              const inactiveColors: Record<string, string> = {
+                All: 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
+                Active: 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400',
+                Inactive: 'bg-white text-slate-500 border-slate-200 hover:border-slate-400',
+                Suspended: 'bg-white text-orange-600 border-orange-200 hover:border-orange-400',
+                'Pending Approval': 'bg-white text-blue-600 border-blue-200 hover:border-blue-400',
+                Rejected: 'bg-white text-red-600 border-red-200 hover:border-red-400',
+              };
+              return (
+                <button
+                  key={status}
+                  onClick={() => { setStatusFilter(status); setPage(0); }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all duration-150 shadow-sm ${
+                    active ? colors[status] : inactiveColors[status]
+                  }`}
+                >
+                  {status}
+                  {active && status !== 'All' && (
+                    <X className="h-3 w-3 opacity-80" onClick={(e) => { e.stopPropagation(); setStatusFilter('All'); setPage(0); }} />
+                  )}
+                </button>
+              );
+            })}
+            {statusFilter !== 'All' && (
+              <span className="ml-1 text-xs text-slate-400 italic">
+                Showing {searchedCustomers.length} {statusFilter} customer{searchedCustomers.length !== 1 ? 's' : ''}
+              </span>
+            )}
           </div>
         </CardHeader>
         <CardContent className="p-0">

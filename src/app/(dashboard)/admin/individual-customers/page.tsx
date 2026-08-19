@@ -470,11 +470,15 @@ export default function IndividualCustomersPage() {
               </Badge>
             )}
 
-            {(statusFilter !== 'All' || branchFilter !== 'All') && (
+            {statusFilter !== 'All' ? (
+              <span className="ml-1 text-xs text-slate-400 italic">
+                Showing {totalCount} {statusFilter} customer{totalCount !== 1 ? 's' : ''}
+              </span>
+            ) : branchFilter !== 'All' ? (
               <span className="ml-1 text-xs text-slate-400 italic">
                 Showing {totalCount} result{totalCount !== 1 ? 's' : ''}
               </span>
-            )}
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">

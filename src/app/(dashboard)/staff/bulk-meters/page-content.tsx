@@ -1,14 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Gauge, Search, RefreshCcw, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter } from "lucide-react";
+import { PlusCircle, Gauge, Search, RefreshCcw, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
+import { bulkMeterStatuses, type BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
 import { BulkMeterTable } from "./bulk-meter-table";
 import { BatchInvoiceDialog } from "@/app/(dashboard)/admin/bulk-meters/batch-invoice-dialog";
@@ -49,6 +49,7 @@ export default function StaffBulkMetersPage() {
   const [isLoading, setIsLoading] = React.useState(true);
 
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<string>('All');
   const [isFormOpen, setIsFormOpen] = React.useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [selectedBulkMeter, setSelectedBulkMeter] = React.useState<BulkMeter | null>(null);
@@ -125,17 +126,24 @@ export default function StaffBulkMetersPage() {
   }, [authStatus, isStaffManagement, branchId, hasPermission, allBulkMeters]);
 
 
+  const filteredBulkMeters = React.useMemo(() => {
+    return branchFilteredBulkMeters.filter(bm => {
+      const matchesStatus = statusFilter === 'All' || bm.status === statusFilter;
+      return matchesStatus;
+    });
+  }, [branchFilteredBulkMeters, statusFilter]);
+
   const searchedBulkMeters = React.useMemo(() => {
     if (!searchTerm) {
-      return branchFilteredBulkMeters;
+      return filteredBulkMeters;
     }
-    return branchFilteredBulkMeters.filter(bm =>
+    return filteredBulkMeters.filter(bm =>
       bm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bm.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (bm.subCity && bm.subCity.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (bm.woreda && bm.woreda.toLowerCase().includes(searchTerm.toLowerCase()))
     );
-  }, [searchTerm, branchFilteredBulkMeters]);
+  }, [searchTerm, filteredBulkMeters]);
 
   const paginatedBulkMeters = searchedBulkMeters.slice(
     page * rowsPerPage,
@@ -199,22 +207,33 @@ export default function StaffBulkMetersPage() {
         </div>
       );
     }
-    if (authStatus === 'unauthorized') {
+    if (authStatus !== 'authorized') {
       return (
         <div className="mt-4 p-4 border rounded-md bg-destructive/10 text-center text-destructive">
-          Your user profile is not configured for a staff role or branch.
+          You are not authorized to view bulk meters.
         </div>
       );
     }
-    if (branchFilteredBulkMeters.length === 0 && !searchTerm) {
+
+    if (branchFilteredBulkMeters.length === 0) {
       return (
-        <div className="p-8 border-2 border-dashed rounded-lg bg-muted/50 text-center">
-          <Gauge className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-          <h3 className="text-lg font-semibold">No Bulk Meters Found</h3>
-          <p className="text-muted-foreground mt-1">No bulk meters assigned to: {branchName}. Click &quot;Add New&quot; to get started.</p>
+        <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg mt-4">
+          <Gauge className="mx-auto h-12 w-12 text-muted-foreground/50 mb-2" />
+          <p className="font-semibold text-lg">No Bulk Meters Found</p>
+          <p className="text-sm">There are no bulk meters registered for your branch.</p>
         </div>
       );
     }
+
+    if (searchedBulkMeters.length === 0) {
+      return (
+        <div className="text-center py-8 text-muted-foreground border rounded-lg mt-4">
+          <Search className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />
+          <p className="font-medium">No results match your search.</p>
+        </div>
+      );
+    }
+
     return (
       <BulkMeterTable
         data={paginatedBulkMeters}
@@ -232,31 +251,45 @@ export default function StaffBulkMetersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Bulk Meters {branchName ? `(${branchName})` : ''}</h1>
-          <p className="text-muted-foreground mt-1 text-base">Monitor and organize high-volume water consumption points for your branch.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800">Bulk Meter Management</h1>
+          <p className="text-slate-500 text-sm mt-1">Monitor, assign readings, and maintain commercial water connections.</p>
         </div>
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+        <div className="flex items-center gap-2">
           {hasPermission('bulk_meters_create') && (
-            <Button onClick={handleAddBulkMeter} disabled={authStatus !== 'authorized'} className="flex-shrink-0 shadow-sm order-1 md:order-2">
-              <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
+            <Button
+              onClick={handleAddBulkMeter}
+              className="bg-primary hover:bg-primary/90 text-white shadow-sm transition-all duration-200"
+            >
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Add Bulk Meter
             </Button>
           )}
-          <Button
-            variant="outline"
-            onClick={() => setViewMode(viewMode === 'table' ? 'map' : 'table')}
-            disabled={authStatus !== 'authorized'}
-            className="flex-shrink-0 shadow-sm border-slate-200 order-2 md:order-1"
-          >
-            <MapIcon className="mr-2 h-4 w-4" />
-            {viewMode === 'table' ? 'View on Map' : 'Back to Table'}
-          </Button>
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <Button
+              variant={viewMode === 'table' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('table')}
+              className={viewMode === 'table' ? 'bg-white text-slate-800 shadow-sm font-semibold' : 'text-slate-600'}
+            >
+              Table View
+            </Button>
+            <Button
+              variant={viewMode === 'map' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('map')}
+              className={viewMode === 'map' ? 'bg-white text-slate-800 shadow-sm font-semibold' : 'text-slate-600'}
+            >
+              <MapIcon className="mr-1.5 h-3.5 w-3.5" />
+              Map View
+            </Button>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fcfaff' }}>
           <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
             <Gauge className="h-48 w-48 text-purple-900" />
           </div>
@@ -321,7 +354,7 @@ export default function StaffBulkMetersPage() {
         </Card>
       </div>
 
-      <div className="mt-6 flex flex-col md:flex-row items-center gap-4">
+      <div className="mt-6 flex flex-col gap-4">
         <div className="relative flex-grow w-full">
           <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
           <Input
@@ -332,6 +365,47 @@ export default function StaffBulkMetersPage() {
             onChange={(e) => setSearchTerm(e.target.value)}
             disabled={authStatus !== 'authorized'}
           />
+        </div>
+
+        {/* Status filter pills & active tags */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-500 mr-1">Filter:</span>
+          {(['All', ...bulkMeterStatuses] as const).map((status) => {
+            const active = statusFilter === status;
+            const colors: Record<string, string> = {
+              All: 'bg-slate-800 text-white border-slate-800',
+              Active: 'bg-emerald-500 text-white border-emerald-500',
+              Maintenance: 'bg-amber-500 text-white border-amber-500',
+              'Pending Approval': 'bg-blue-500 text-white border-blue-500',
+              Rejected: 'bg-red-500 text-white border-red-500',
+            };
+            const inactiveColors: Record<string, string> = {
+              All: 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
+              Active: 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400',
+              Maintenance: 'bg-white text-amber-600 border-amber-200 hover:border-amber-400',
+              'Pending Approval': 'bg-white text-blue-600 border-blue-200 hover:border-blue-400',
+              Rejected: 'bg-white text-red-600 border-red-200 hover:border-red-400',
+            };
+            return (
+              <button
+                key={status}
+                onClick={() => { setStatusFilter(status); setPage(0); }}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-all duration-150 shadow-sm ${
+                  active ? colors[status] : inactiveColors[status]
+                }`}
+              >
+                {status}
+                {active && status !== 'All' && (
+                  <X className="h-3 w-3 opacity-80" onClick={(e) => { e.stopPropagation(); setStatusFilter('All'); setPage(0); }} />
+                )}
+              </button>
+            );
+          })}
+          {statusFilter !== 'All' && (
+            <span className="ml-1 text-xs text-slate-400 italic">
+              Showing {searchedBulkMeters.length} {statusFilter} meter{searchedBulkMeters.length !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
       </div>
 
