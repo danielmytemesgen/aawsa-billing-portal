@@ -162,7 +162,9 @@ export default function AdminDataEntryPage() {
     setTemplateDialogOpen(false);
   };
 
-  if (!hasPermission('data_entry_access')) {
+  const canAccessDataEntry = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('bulk_meters_create');
+
+  if (!canAccessDataEntry) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl md:text-3xl font-bold">Customer Data Entry</h1>

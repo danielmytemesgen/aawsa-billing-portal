@@ -88,7 +88,7 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/data-entry') || currentPath.startsWith('/staff/data-entry'),
-      requiredPermissions: [PERMISSIONS.DATA_ENTRY_ACCESS],
+      anyOf: [PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.BULK_METERS_CREATE],
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/notifications') || currentPath.startsWith('/staff/notifications'),

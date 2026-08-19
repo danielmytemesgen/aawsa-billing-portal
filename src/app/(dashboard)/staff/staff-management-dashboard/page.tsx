@@ -12,7 +12,19 @@ import {
   FileText,
   TrendingUp,
   AlertCircle,
-  Table as TableIcon
+  Table as TableIcon,
+  UserCheck,
+  Clock,
+  Bell,
+  DatabaseZap,
+  UserPlus,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  Target,
+  CheckCircle2,
+  XCircle,
+  Activity
 } from 'lucide-react';
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -40,7 +52,13 @@ import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-cust
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import { PERMISSIONS } from "@/lib/constants/auth";
+import { usePermissions } from "@/hooks/use-permissions";
+import { useCurrentUser } from "@/hooks/use-current-user";
+import { useDataRefresh } from "@/lib/data-refresh-context";
+import { getGreeting, getGreetingEmoji, getEthiopianDateString } from "@/lib/date-clock-utils";
+import { checkActualConnectivity } from "@/lib/offline-db";
 
 interface User {
   email: string;
@@ -58,10 +76,22 @@ const chartConfig = {
 
 export default function StaffManagementDashboardPage() {
   const router = useRouter();
+  const { hasPermission } = usePermissions();
+  const { currentUser } = useCurrentUser();
+  const { isRefreshing, refresh: triggerRefresh } = useDataRefresh();
+
   const [authStatus, setAuthStatus] = React.useState<'loading' | 'unauthorized' | 'authorized'>('loading');
   const [staffBranchName, setStaffBranchName] = React.useState<string | null>(null);
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
+
+  const [liveTime, setLiveTime] = React.useState<string>('');
+  const [liveDate, setLiveDate] = React.useState<string>('');
+  const [liveEthiopianDate, setLiveEthiopianDate] = React.useState<string>('');
+  const [isOnline, setIsOnline] = React.useState<boolean>(true);
+  const [isSyncing, setIsSyncing] = React.useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = React.useState<string>('');
+  const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
 
   const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
   const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
@@ -75,6 +105,32 @@ export default function StaffManagementDashboardPage() {
 
   React.useEffect(() => {
     setIsClient(true);
+
+    const updateClock = () => {
+      const now = new Date();
+      setLiveTime(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setLiveDate(now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+      setLiveEthiopianDate(getEthiopianDateString(now));
+    };
+    updateClock();
+    const clockInterval = setInterval(updateClock, 1000);
+
+    setIsOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const pingInterval = setInterval(() => {
+      checkActualConnectivity().then(online => setIsOnline(online));
+    }, 15000);
+
+    return () => {
+      clearInterval(clockInterval);
+      clearInterval(pingInterval);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   // Auth check
@@ -314,8 +370,24 @@ export default function StaffManagementDashboardPage() {
 
   // Derived state with useMemo
   const processedStats = React.useMemo(() => {
+    const defaultMonth = format(new Date(), 'yyyy-MM');
     if (authStatus !== 'authorized' || !staffBranchId) {
-      return { totalBulkMeters: 0, totalCustomers: 0, totalBills: 0, paidBills: 0, unpaidBills: 0, billsData: [], branchPerformanceData: [], waterUsageTrendData: [], paidPercentage: "0%", currentMonthYear: format(new Date(), 'yyyy-MM') };
+      return { 
+        totalBulkMeters: 0, 
+        totalCustomers: 0, 
+        totalBills: 0, 
+        paidBills: 0, 
+        unpaidBills: 0, 
+        billsData: [], 
+        revenueEfficiency: { billed: 0, collected: 0, efficiency: 0 },
+        readingProgress: { total: 0, read: 0, percentage: 0 },
+        todayActivity: { bills: 0, readings: 0, customers: 0 },
+        topDelinquentAccounts: [],
+        branchPerformanceData: [], 
+        waterUsageTrendData: [], 
+        paidPercentage: "0%", 
+        currentMonthYear: defaultMonth 
+      };
     }
 
     const currentMonthYear = dashboardMetrics?.latestMonth || format(new Date(), 'yyyy-MM');
@@ -405,6 +477,30 @@ export default function StaffManagementDashboardPage() {
       .sort((a, b) => new Date(a.month + '-01').getTime() - new Date(b.month + '-01').getTime());
     const waterUsageTrendData = serverUsageTrend ?? localUsageTrend;
 
+    const revenueEfficiency = {
+      billed: Number(metrics?.revenue?.totalBilled || 0),
+      collected: Number(metrics?.revenue?.totalCollected || 0),
+      efficiency: Number(metrics?.revenue?.efficiency || 0),
+    };
+
+    const readingProgress = {
+      total: Number(metrics?.readings?.totalCustomers || (branchBMs.length + branchCustomers.length)),
+      read: Number(metrics?.readings?.completedReadings || 0),
+      percentage: Number(metrics?.readings?.progress || 0),
+    };
+
+    const todayActivity = {
+      bills: Number(metrics?.todayActivity?.bills || 0),
+      readings: Number(metrics?.todayActivity?.readings || 0),
+      customers: Number(metrics?.todayActivity?.customers || 0),
+    };
+
+    const topDelinquentAccounts = metrics?.delinquent?.combined?.map((bill: any) => ({
+      name: bill.name || 'Unknown Account',
+      balance: Number(bill.outstanding || 0),
+      type: bill.type || 'Bulk'
+    })) ?? [];
+
     return {
       totalBulkMeters: branchBMs.length,
       totalCustomers: branchCustomers.length,
@@ -412,6 +508,10 @@ export default function StaffManagementDashboardPage() {
       paidBills: paidCount,
       unpaidBills: unpaidCount,
       billsData,
+      revenueEfficiency,
+      readingProgress,
+      todayActivity,
+      topDelinquentAccounts,
       branchPerformanceData,
       waterUsageTrendData,
       paidPercentage,
@@ -441,8 +541,108 @@ export default function StaffManagementDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl md:text-3xl font-bold">Staff Management Dashboard - {staffBranchName}</h1>
+      {/* ── Header: Greeting + Live Clock ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-2xl md:text-3xl font-bold">Staff Management Dashboard</h1>
+            {staffBranchName && (
+              <Badge variant="secondary" className="bg-blue-600 text-white font-bold px-2.5 py-0.5 border-none shadow-sm text-xs">
+                {staffBranchName} Branch
+              </Badge>
+            )}
+            {/* ── Connection Status Pill ── */}
+            {isOnline ? (
+              <span className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {isSyncing ? (
+                  <><RefreshCw className="h-2.5 w-2.5 animate-spin" /> Syncing…</>
+                ) : (
+                  <><Wifi className="h-2.5 w-2.5" /> Online{lastSyncTime ? ` · ${lastSyncTime}` : ''}</>
+                )}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                <WifiOff className="h-2.5 w-2.5" /> Offline
+              </span>
+            )}
+            {/* ── Live Data Badge ── */}
+            <button
+              onClick={() => triggerRefresh()}
+              title="Refresh data now"
+              className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-sm hover:bg-blue-100 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`h-2.5 w-2.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing…' : localLastUpdated ? `Updated ${localLastUpdated}` : 'Live Data'}
+            </button>
+          </div>
+          <p className="text-base md:text-lg text-muted-foreground">
+            {getGreetingEmoji()} {getGreeting()},{" "}
+            <span className="font-semibold text-foreground">
+              {currentUser?.name ? currentUser.name.split(" ")[0] : "Manager"}
+            </span>{" "}
+            👋
+          </p>
+        </div>
+        {/* Live Clock */}
+        <div className="flex flex-col items-start sm:items-end gap-0.5 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 shadow-sm min-w-[200px]">
+          <div className="flex items-center gap-2 text-slate-800">
+            <Clock className="h-4 w-4 text-blue-500" />
+            <span className="text-xl font-black tracking-tight tabular-nums">
+              {liveTime || '--:--:--'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 font-medium">{liveDate || '...'}</p>
+          {liveEthiopianDate && (
+            <span className="text-[11px] font-bold text-blue-600/90 mt-0.5 select-none">
+              {liveEthiopianDate}
+            </span>
+          )}
+        </div>
+      </div>
 
+      {/* ── Quick Actions Bar ── */}
+      <div className="flex flex-wrap gap-2.5">
+        {[
+          { label: 'Staff Management', icon: Users, href: '/staff/staff-management', color: 'bg-rose-500 hover:bg-rose-600', perm: hasPermission('staff_view_branch') || hasPermission('staff_view_all') || hasPermission('staff_view') },
+          { label: 'Data Entry', icon: DatabaseZap, href: '/staff/data-entry', color: 'bg-blue-500 hover:bg-blue-600', perm: hasPermission('customers_create') || hasPermission('bulk_meters_create') },
+          { label: 'Bill Management', icon: FileText, href: '/staff/bill-management', color: 'bg-violet-500 hover:bg-violet-600', perm: hasPermission('bill_view_branch') || hasPermission('bill_view_all') || hasPermission('billing_view') },
+          { label: 'Reports', icon: BarChartIcon, href: '/staff/reports', color: 'bg-emerald-500 hover:bg-emerald-600', perm: hasPermission('reports_view_branch') || hasPermission('reports_view_all') },
+          { label: 'Meter Readings', icon: Gauge, href: '/staff/meter-readings', color: 'bg-amber-500 hover:bg-amber-600', perm: hasPermission('meter_readings_view_branch') || hasPermission('meter_readings_view_all') || hasPermission('meter_readings_create') },
+        ].filter(item => item.perm).map(({ label, icon: Icon, href, color }) => (
+          <Link key={label} href={href} passHref>
+            <Button
+              size="sm"
+              className={`${color} text-white font-semibold rounded-full px-4 py-2 h-auto shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 flex items-center gap-1.5`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </Button>
+          </Link>
+        ))}
+      </div>
+
+      {/* ── Today's Activity Summary ── */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Bills Today", value: processedStats.todayActivity.bills, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
+          { label: "Readings Today", value: processedStats.todayActivity.readings, icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+          { label: "Customers Added", value: processedStats.todayActivity.customers, icon: UserPlus, color: 'text-violet-600', bg: 'bg-violet-50', border: 'border-violet-100' },
+        ].map(({ label, value, icon: Icon, color, bg, border }) => (
+          <div key={label} className={`flex items-center gap-3 ${bg} border ${border} rounded-2xl px-4 py-3 shadow-sm`}>
+            <div className={`h-8 w-8 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-sm`}>
+              <Icon className={`h-4 w-4 ${color}`} />
+            </div>
+            <div>
+              <p className={`text-xl font-black ${color}`}>{value}</p>
+              <p className="text-[11px] text-slate-500 font-semibold leading-tight">{label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Top 3-Column KPI Grid ── */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {/* Bills Status Card */}
         <Card className="group shadow-sm hover:shadow-xl border border-blue-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f4f7ff' }}>
@@ -450,7 +650,7 @@ export default function StaffManagementDashboardPage() {
             <FileText className="h-48 w-48 text-blue-900" />
           </div>
           <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
-            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bills (Current Cycle)</CardTitle>
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bills ({processedStats.currentMonthYear})</CardTitle>
             <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
               <FileText className="h-4 w-4" />
             </div>
@@ -482,71 +682,210 @@ export default function StaffManagementDashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Customers Card */}
-        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
-          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
-            <Users className="h-64 w-64 text-emerald-900" />
+        {/* Revenue Collection Efficiency */}
+        <Card className="group shadow-sm hover:shadow-xl border border-amber-100/60 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fffbf0' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <BarChartIcon className="h-48 w-48 text-amber-900" />
           </div>
-          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
-            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider max-w-[80%] leading-tight">Customers in <br/>{staffBranchName}</CardTitle>
-            <div className="h-10 w-10 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
-              <Users className="h-5 w-5" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Revenue Collection</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+              <BarChartIcon className="h-4 w-4" />
             </div>
           </CardHeader>
-          <CardContent className="px-6 pb-12 flex flex-col justify-between h-48 relative z-10">
-            <div>
-              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 mt-4 group-hover:text-emerald-900 transition-colors">{processedStats.totalCustomers.toLocaleString()}</div>
-              <p className="text-base text-slate-600 font-semibold">Total active accounts</p>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="flex items-start justify-between mt-2 mb-1">
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">
+                {processedStats.revenueEfficiency.efficiency.toFixed(1)}<span className="text-3xl text-amber-500/50">%</span>
+              </div>
+              {/* KPI Target Badge */}
+              {processedStats.revenueEfficiency.billed > 0 && (
+                <div className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
+                  processedStats.revenueEfficiency.efficiency >= 80
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : processedStats.revenueEfficiency.efficiency >= 50
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  <Target className="h-3 w-3" />
+                  {processedStats.revenueEfficiency.efficiency >= 80 ? '✅ On Target'
+                    : processedStats.revenueEfficiency.efficiency >= 50 ? '⚠️ Below Target'
+                    : '🚨 Critical'}
+                </div>
+              )}
             </div>
+            <p className="text-sm text-slate-600 font-semibold mb-4">Collection Efficiency <span className="text-xs text-slate-400 font-normal">(target: 80%)</span></p>
+
+            <div className="flex justify-between items-center mb-4 pt-1">
+              <div>
+                <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Total Billed</p>
+                <p className="text-base font-black text-slate-800"><span className="text-xs text-slate-400 mr-1">ETB</span>{processedStats.revenueEfficiency.billed.toLocaleString()}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Collected</p>
+                <p className="text-base font-black text-emerald-700"><span className="text-xs text-slate-400 mr-1">ETB</span>{processedStats.revenueEfficiency.collected.toLocaleString()}</p>
+              </div>
+            </div>
+
+            {/* Sparkline progress bar */}
+            {isClient && processedStats.revenueEfficiency.billed > 0 ? (
+              <div className="space-y-1.5">
+                <div className="w-full bg-amber-900/5 rounded-full h-2.5 overflow-hidden flex shadow-inner">
+                  <div className="bg-gradient-to-r from-amber-300 to-amber-500 h-full transition-all duration-1000 ease-out rounded-full" style={{ width: `${processedStats.revenueEfficiency.efficiency}%` }} />
+                </div>
+                <div className="flex justify-between text-[10px] text-slate-400 font-semibold">
+                  <span>0%</span>
+                  <span className="text-amber-600 font-bold">{processedStats.revenueEfficiency.efficiency.toFixed(1)}% collected</span>
+                  <span>100%</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm font-semibold text-amber-600/60 italic w-full text-center mt-2">No revenue data.</div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Bulk Meters Card */}
-        <Card className="group shadow-sm hover:shadow-xl border border-purple-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
-          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
-            <Gauge className="h-64 w-64 text-purple-900" />
+        {/* Meter Reading Progress */}
+        <Card className="group shadow-sm hover:shadow-xl border border-cyan-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
+            <Gauge className="h-48 w-48 text-cyan-900" />
           </div>
-          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
-            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider max-w-[80%] leading-tight">Bulk Meters in <br/>{staffBranchName}</CardTitle>
-            <div className="h-10 w-10 shrink-0 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
-              <Gauge className="h-5 w-5" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Reading Progress</CardTitle>
+            <div className="h-8 w-8 rounded-full bg-cyan-100 flex items-center justify-center text-cyan-600">
+              <Gauge className="h-4 w-4" />
             </div>
           </CardHeader>
-          <CardContent className="px-6 pb-12 flex flex-col justify-between h-48 relative z-10">
-            <div>
-              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 mt-4 group-hover:text-purple-900 transition-colors">{processedStats.totalBulkMeters.toLocaleString()}</div>
-              <p className="text-base text-slate-600 font-semibold">Total registered bulk meters</p>
+          <CardContent className="px-6 pb-6 relative z-10">
+            <div className="mt-2 text-4xl lg:text-5xl font-black tracking-tight text-slate-800 mb-1 group-hover:text-cyan-900 transition-colors">
+              {processedStats.readingProgress.percentage.toFixed(1)}<span className="text-3xl text-cyan-500/50">%</span>
+            </div>
+            <p className="text-sm text-slate-600 font-semibold mb-8">
+              <span className="text-cyan-600 font-bold">{processedStats.readingProgress.read}</span> of <span className="text-slate-500">{processedStats.readingProgress.total}</span> meters read
+            </p>
+            
+            <div className="mt-4 pt-2">
+              <div className="w-full bg-cyan-900/5 rounded-full h-3 overflow-hidden shadow-inner relative mb-3">
+                <div
+                  className="bg-cyan-500 h-full relative overflow-hidden transition-all duration-1000 ease-out"
+                  style={{ width: `${processedStats.readingProgress.percentage}%` }}
+                >
+                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.2)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.2)_50%,rgba(255,255,255,0.2)_75%,transparent_75%,transparent)] bg-[length:1rem_1rem] animate-[shimmer_1s_linear_infinite]" />
+                </div>
+              </div>
+              <div className="text-[10px] text-cyan-700 font-bold uppercase tracking-widest italic flex items-center justify-center gap-2">
+                {processedStats.readingProgress.percentage === 100 ? (
+                  <><div className="h-2 w-2 rounded-full bg-emerald-500" /> Sync Complete</>
+                ) : (
+                  <><div className="h-2 w-2 rounded-full bg-cyan-500 animate-pulse" /> Syncing in Progress...</>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      <Card className="shadow-lg">
+      {/* ── Middle 2-Column Grid ── */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Total Customers */}
+        <Card className="group shadow-sm hover:shadow-xl border border-emerald-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#f0fbf4' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
+            <Users className="h-64 w-64 text-emerald-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Customers in {staffBranchName}</CardTitle>
+            <div className="h-10 w-10 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+              <Users className="h-5 w-5" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-12 flex flex-col justify-between relative z-10">
+            <div>
+              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 group-hover:text-emerald-900 transition-colors">{processedStats.totalCustomers.toLocaleString()}</div>
+              <p className="text-base text-slate-600 font-semibold">Total active accounts in branch</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Total Bulk Meters */}
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100/80 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
+          <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.08] transition-all duration-700 pointer-events-none -mb-8 -mr-8 group-hover:scale-110">
+            <Gauge className="h-64 w-64 text-purple-900" />
+          </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 pt-6 px-6 relative z-10">
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Bulk Meters in {staffBranchName}</CardTitle>
+            <div className="h-10 w-10 shrink-0 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+              <Gauge className="h-5 w-5" />
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-12 flex flex-col justify-between relative z-10">
+            <div>
+              <div className="text-5xl lg:text-7xl font-black text-slate-800 tracking-tight mb-2 group-hover:text-purple-900 transition-colors">{processedStats.totalBulkMeters.toLocaleString()}</div>
+              <p className="text-base text-slate-600 font-semibold">Total registered bulk meters in branch</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Overdue Bills Alert Card ── */}
+      {processedStats.topDelinquentAccounts.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl px-5 py-4 shadow-sm">
+            <div className="h-12 w-12 rounded-2xl bg-red-100 flex items-center justify-center flex-shrink-0">
+              <XCircle className="h-6 w-6 text-red-600" />
+            </div>
+            <div className="flex-1">
+              <p className="text-xs uppercase font-bold text-red-400 tracking-wider">Overdue Accounts</p>
+              <p className="text-3xl font-black text-red-700">{processedStats.topDelinquentAccounts.length}</p>
+              <p className="text-xs text-red-500 font-semibold">With outstanding balances</p>
+            </div>
+            <Link href="/staff/bill-management" passHref>
+              <Button size="sm" variant="outline" className="border-red-300 text-red-600 hover:bg-red-100 rounded-xl font-bold">
+                View <ArrowRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+            </Link>
+          </div>
+          <div className="flex items-center gap-4 bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 shadow-sm">
+            <div className="h-12 w-12 rounded-2xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+            </div>
+            <div className="flex-1">
+              <p className="text-xs uppercase font-bold text-emerald-400 tracking-wider">Highest Outstanding</p>
+              <p className="text-xl font-black text-emerald-800">
+                ETB {processedStats.topDelinquentAccounts[0]?.balance.toLocaleString()}
+              </p>
+              <p className="text-xs text-emerald-600 font-semibold truncate max-w-[160px]">{processedStats.topDelinquentAccounts[0]?.name}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick Access ── */}
+      <Card className="bg-slate-50 border-slate-100 shadow-sm rounded-3xl">
         <CardHeader>
-          <CardTitle>Quick Access</CardTitle>
-          <CardDescription>Navigate quickly to key management areas for your branch.</CardDescription>
+          <CardTitle className="text-slate-900 font-bold">Quick Access</CardTitle>
+          <CardDescription className="text-slate-600/70">Navigate quickly to key management areas for your branch.</CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Button asChild variant="outline" className="w-full justify-start p-4 h-auto quick-access-btn">
-            <Link href="/staff/bulk-meters">
-              <Gauge className="mr-3 h-6 w-6" />
+          <Link href="/staff/bulk-meters" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group rounded-2xl">
+              <Gauge className="mr-4 h-8 w-8 text-blue-500 group-hover:scale-110 transition-transform" />
               <div>
-                <p className="font-semibold text-base">View Bulk Meters</p>
-                <p className="text-xs text-muted-foreground">Manage bulk water meters in your branch.</p>
+                <p className="font-bold text-slate-900 text-lg">View Bulk Meters</p>
+                <p className="text-sm text-slate-500">Manage bulk water meters in your branch.</p>
               </div>
-              <ArrowRight className="ml-auto h-5 w-5" />
-            </Link>
-          </Button>
-          <Button asChild variant="outline" className="w-full justify-start p-4 h-auto quick-access-btn">
-            <Link href="/staff/individual-customers">
-              <Users className="mr-3 h-6 w-6" />
+              <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
+            </Button>
+          </Link>
+          <Link href="/staff/individual-customers" passHref>
+            <Button variant="outline" className="w-full justify-start p-6 h-auto quick-access-btn bg-white hover:bg-slate-100 border-slate-200 transition-all duration-300 hover:shadow-md group rounded-2xl">
+              <Users className="mr-4 h-8 w-8 text-emerald-500 group-hover:scale-110 transition-transform" />
               <div>
-                <p className="font-semibold text-base">View Individual Customers</p>
-                <p className="text-xs text-muted-foreground">Manage individual customer accounts in your branch.</p>
+                <p className="font-bold text-slate-900 text-lg">View Individual Customers</p>
+                <p className="text-sm text-slate-500">Manage individual customer accounts in your branch.</p>
               </div>
-              <ArrowRight className="ml-auto h-5 w-5" />
-            </Link>
-          </Button>
+              <ArrowRight className="ml-auto h-6 w-6 text-slate-300 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all" />
+            </Button>
+          </Link>
         </CardContent>
       </Card>
 

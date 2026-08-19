@@ -262,7 +262,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if ((path.startsWith('/admin/data-entry') || path.startsWith('/staff/data-entry')) &&
-    !permissions.includes(PERMISSIONS.DATA_ENTRY_ACCESS)) {
+    !hasAny(permissions, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.BULK_METERS_CREATE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }

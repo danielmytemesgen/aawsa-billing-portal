@@ -32,11 +32,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 const parsedUser: UserProfile = JSON.parse(storedUser);
                 const userPermissions = parsedUser.permissions || [];
 
-                // Allow access if user has the high-level dashboard permission
-                if (userPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+                // Allow access if user is logged in with valid session / permissions
+                if (userPermissions.length > 0 || parsedUser.role) {
                     setUser(parsedUser);
                 } else {
-                    router.replace("/"); // Not authorized for this layout
+                    router.replace("/"); // Not authorized
                 }
             } catch (e) {
                 console.error("Failed to parse user from localStorage", e);

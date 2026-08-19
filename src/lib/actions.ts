@@ -648,7 +648,7 @@ export async function getCustomersSummaryAction() {
 
 export async function createCustomerAction(customer: IndividualCustomerInsert) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
+    const session = await checkPermissionAny(PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
     // All data entry creations default to Pending Approval
     customer.status = customer.status || 'Pending Approval';
     if (session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED)) {
@@ -804,7 +804,7 @@ export async function getBulkMeterByIdAction(customerKeyNumber: string) {
 }
 export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
+    const session = await checkPermissionAny(PERMISSIONS.BULK_METERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
     // All data entry creations default to Pending Approval
     bulkMeter.status = bulkMeter.status || 'Pending Approval';
     if (session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED)) {
@@ -4874,7 +4874,7 @@ const generateRandomDigits = (length: number): string => {
 export async function batchImportBulkMetersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
+    const session = await checkPermissionAny(PERMISSIONS.BULK_METERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
     const branches = await dbGetAllBranches();
     const branchMap = new Map<string, string>();
     branches.forEach((b: any) => {
@@ -5066,7 +5066,7 @@ export async function batchImportBulkMetersAction(rows: any[]) {
 export async function batchImportIndividualCustomersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
+    const session = await checkPermissionAny(PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
     const branches = await dbGetAllBranches();
     const branchMap = new Map<string, string>();
     branches.forEach((b: any) => {

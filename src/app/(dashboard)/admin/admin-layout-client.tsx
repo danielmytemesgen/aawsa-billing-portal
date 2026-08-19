@@ -77,7 +77,15 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     }
 
     const dataReportsItems: NavItem[] = [];
-    if (hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS)) dataReportsItems.push({ title: "Data Entry", href: "/admin/data-entry", iconName: "FileText" });
+    const canAccessDataEntry = hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) || hasPermission(PERMISSIONS.CUSTOMERS_CREATE) || hasPermission(PERMISSIONS.BULK_METERS_CREATE);
+    if (canAccessDataEntry) {
+        const isStaffUser = userRoleLower.includes('staff') && !userRoleLower.includes('head office') && !userRoleLower.includes('admin');
+        dataReportsItems.push({ 
+            title: "Data Entry", 
+            href: isStaffUser ? "/staff/data-entry" : "/admin/data-entry", 
+            iconName: "FileText" 
+        });
+    }
     if (hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) || hasPermission(PERMISSIONS.METER_READINGS_VIEW_BRANCH)) dataReportsItems.push({ title: "Meter Readings", href: "/admin/meter-readings", iconName: "ClipboardList" });
     if (hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
         dataReportsItems.push({ title: "Reports", href: "/admin/reports", iconName: "BarChart2" });

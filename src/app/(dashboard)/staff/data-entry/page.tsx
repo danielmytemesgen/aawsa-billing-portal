@@ -1,16 +1,21 @@
 "use client";
 
 import * as React from "react";
+import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, UploadCloud, Building, FileSpreadsheet, Lock } from "lucide-react";
+import { FileText, UploadCloud, Building, FileSpreadsheet, AlertCircle, ChevronDown, Lock } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { StaffBulkMeterEntryForm } from "./staff-bulk-meter-entry-form";
 import { StaffIndividualCustomerEntryForm } from "./individual-customer-data-entry-form";
 import { CsvUploadSection } from "@/app/(dashboard)/admin/data-entry/csv-upload-section";
 import {
   bulkMeterDataEntrySchema,
+  baseBulkMeterDataSchema,
   individualCustomerDataEntrySchema,
+  baseIndividualCustomerDataSchema,
   type BulkMeterDataEntryFormValues,
   type IndividualCustomerDataEntryFormValues
 } from "@/app/(dashboard)/admin/data-entry/customer-data-entry-types";
@@ -21,31 +26,59 @@ import {
   initializeCustomers,
   initializeBranches,
   getBranches,
-  getCustomers
+  getBulkMeters,
+  getCustomers,
+  subscribeToBranches
 } from "@/lib/data-store";
-import { generateCustomerKeys } from "@/lib/utils";
+import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
+import { generateBulkMeterKeys, generateCustomerKeys } from "@/lib/utils";
 import { batchImportBulkMetersAction, batchImportIndividualCustomersAction } from "@/lib/actions";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
-const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "routeKey", "branchId"];
-const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId"];
 
+const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "zCoordinate", "routeKey", "ordinal", "branchId"];
+const individualCustomerCsvHeaders = ["name", "customerKeyNumber", "instKey", "contractNumber", "customerType", "bookNumber", "ordinal", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "sewerageConnection", "assignedBulkMeterId", "branchId", "xCoordinate", "yCoordinate", "zCoordinate"];
 
+// Schema for CSV upload that allows auto-generated fields to be optional
+const bulkMeterCsvSchema = baseBulkMeterDataSchema.extend({
+  customerKeyNumber: z.string().optional(),
+  instKey: z.string().optional(),
+}).refine((data: any) => {
+  if (data.currentReading !== undefined && data.previousReading !== undefined) {
+    return data.currentReading >= data.previousReading;
+  }
+  return true;
+}, {
+  message: "Current Reading must be greater than or equal to Previous Reading.",
+  path: ["currentReading"],
+});
 
-interface User {
-  email: string;
-  role: "admin" | "staff" | "reader" | "Admin" | "Staff" | "Reader" | "Staff Management" | "staff management";
-  branchName?: string;
-  branchId?: string;
-}
+const individualCustomerCsvSchema = baseIndividualCustomerDataSchema.extend({
+  customerKeyNumber: z.string().optional(),
+  instKey: z.string().optional(),
+}).refine((data: any) => {
+  if (data.currentReading !== undefined && data.previousReading !== undefined) {
+    return data.currentReading >= data.previousReading;
+  }
+  return true;
+}, {
+  message: "Current Reading must be greater than or equal to Previous Reading.",
+  path: ["currentReading"],
+});
 
 export default function StaffDataEntryPage() {
   const { hasPermission } = usePermissions();
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
+  const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
   const [staffBranchName, setStaffBranchName] = React.useState<string>("Your Branch");
   const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
   const [isBranchDetermined, setIsBranchDetermined] = React.useState(false);
+
+  // Dialog state for template download
+  const [templateDialogOpen, setTemplateDialogOpen] = React.useState(false);
+  const [pendingTemplate, setPendingTemplate] = React.useState<{ headers: string[]; fileName: string } | null>(null);
+  const [selectedBranchId, setSelectedBranchId] = React.useState<string>("");
 
   React.useEffect(() => {
     initializeBulkMeters();
@@ -65,14 +98,15 @@ export default function StaffDataEntryPage() {
         }
         if (bId) {
           setStaffBranchId(bId);
+          setSelectedBranchId(bId);
         }
 
-        // Initialize admin branches to resolve branchId and exact branchName if needed
         initializeBranches().then(() => {
-          const allBranches = getBranches();
+          const branches = getBranches();
+          setAllBranches(branches);
           const targetName = bName || staffBranchName;
           if (targetName && targetName !== "Your Branch") {
-            const found = allBranches.find(b => {
+            const found = branches.find(b => {
               const bLower = b.name.trim().toLowerCase();
               const tLower = targetName.trim().toLowerCase();
               return bLower === tLower || bLower.includes(tLower) || tLower.includes(bLower);
@@ -80,6 +114,7 @@ export default function StaffDataEntryPage() {
             if (found) {
               setStaffBranchName(found.name);
               setStaffBranchId(found.id);
+              setSelectedBranchId(found.id);
             }
           }
         });
@@ -91,33 +126,73 @@ export default function StaffDataEntryPage() {
       setStaffBranchName("Error: Not Logged In");
     }
     setIsBranchDetermined(true);
+
+    const unsubBranches = subscribeToBranches((updated) => setAllBranches(updated));
+    return () => { unsubBranches(); };
   }, []);
 
-
-
-
   const handleBulkMeterCsvUpload = async (data: BulkMeterDataEntryFormValues) => {
-    // Auto‑generate keys if CSV omitted them
-    if (!data.customerKeyNumber || !data.instKey) {
-      const existing = getCustomers();
-      const { customerKey, instKey } = generateCustomerKeys(existing);
-      if (!data.customerKeyNumber) data.customerKeyNumber = customerKey;
-      if (!data.instKey) data.instKey = instKey;
+    if (!currentUser) return { success: false, message: "User not authenticated" };
+    
+    // Auto-generate keys if CSV omitted them
+    const finalData = { ...data };
+    if (!finalData.customerKeyNumber || !finalData.instKey) {
+      const existingMeters = getBulkMeters();
+      const generated = generateBulkMeterKeys(existingMeters);
+      finalData.customerKeyNumber = finalData.customerKeyNumber || generated.customerKey;
+      finalData.instKey = finalData.instKey || generated.instKey;
     }
-    return await addBulkMeter(data);
+    if (!finalData.branchId && staffBranchId) {
+      finalData.branchId = staffBranchId;
+    }
+    return await addBulkMeter(finalData);
   };
 
   const handleIndividualCustomerCsvUpload = async (data: IndividualCustomerDataEntryFormValues) => {
-    return await addCustomer(data);
+    if (!currentUser) return { success: false, message: "User not authenticated" };
+    
+    const finalData = { ...data };
+    if (!finalData.customerKeyNumber || !finalData.instKey) {
+      const existingCustomers = getCustomers();
+      const generated = generateCustomerKeys(existingCustomers);
+      finalData.customerKeyNumber = finalData.customerKeyNumber || generated.customerKey;
+      finalData.instKey = finalData.instKey || generated.instKey;
+    }
+    if (!finalData.branchId && staffBranchId) {
+      finalData.branchId = staffBranchId;
+    }
+    return await addCustomer(finalData);
   };
 
-  const downloadCsvTemplate = (headers: string[], fileName: string) => {
-    // Build a sample data row with branchId pre-filled for this staff member
+  const openTemplateDialog = (headers: string[], fileName: string) => {
+    setPendingTemplate({ headers, fileName });
+    if (!selectedBranchId && staffBranchId) {
+      setSelectedBranchId(staffBranchId);
+    }
+    setTemplateDialogOpen(true);
+  };
+
+  const downloadCsvTemplate = () => {
+    if (!pendingTemplate) return;
+    const { headers, fileName } = pendingTemplate;
+
     const sampleRow = headers.map(h => {
-      if (h.toLowerCase() === 'branchid') return staffBranchId ?? '';
+      if (h.toLowerCase() === 'branchid') return selectedBranchId || staffBranchId || '';
       return '';
     });
-    const csvString = headers.join(',') + '\n' + sampleRow.join(',') + '\n';
+
+    const branchRefComments = allBranches.length > 0
+      ? allBranches.map(b => `# Branch: "${b.name}" -> ID: ${b.id}`).join('\n') + '\n'
+      : '';
+
+    const csvString =
+      '# CSV DATA ENTRY TEMPLATE\n' +
+      '# Fill in row data below the header. The branchId column has been pre-filled with your selected branch.\n' +
+      '# Branch Reference List:\n' +
+      branchRefComments +
+      headers.join(',') + '\n' +
+      sampleRow.join(',') + '\n';
+
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     if (link.download !== undefined) {
@@ -130,16 +205,22 @@ export default function StaffDataEntryPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     }
+    setTemplateDialogOpen(false);
   };
 
-  if (!hasPermission('data_entry_access')) {
+  const canAccessDataEntry = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('bulk_meters_create');
+
+  if (!canAccessDataEntry) {
     return (
-      <Alert variant="destructive">
-        <Lock className="h-4 w-4" />
-        <AlertTitle>Access Denied</AlertTitle>
-        <CardDescription>You do not have permission to perform data entry.</CardDescription>
-      </Alert>
-    )
+      <div className="space-y-6">
+        <h1 className="text-2xl md:text-3xl font-bold">Customer Data Entry</h1>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Access Denied</AlertTitle>
+          <CardDescription>You do not have permission to access the data entry page.</CardDescription>
+        </Alert>
+      </div>
+    );
   }
 
   if (!isBranchDetermined) {
@@ -160,135 +241,208 @@ export default function StaffDataEntryPage() {
     );
   }
 
-  const canProceedWithDataEntry = staffBranchName !== "Error: Not Logged In" && staffBranchName !== "Error: Branch Undefined" && staffBranchName !== "Unassigned Branch";
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl md:text-3xl font-bold">Customer Data Entry ({staffBranchName})</h1>
+    <div className="space-y-6 relative min-h-[calc(100vh-100px)]">
+      {/* Background Decorative Elements */}
+      <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-primary/5 rounded-full blur-[100px] pointer-events-none z-0" />
+      <div className="absolute bottom-[0%] left-[-5%] w-[300px] h-[300px] bg-primary/10 rounded-full blur-[80px] pointer-events-none z-0" />
+
+      <div className="flex items-center justify-between relative z-10">
+        <div>
+          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900 dark:from-white dark:via-slate-400 dark:to-white bg-clip-text text-transparent">
+            Customer Data Entry {staffBranchName && staffBranchName !== "Your Branch" ? `(${staffBranchName})` : ''}
+          </h1>
+          <p className="text-muted-foreground mt-1 font-medium">Manage and record system data with precision.</p>
+        </div>
       </div>
 
-      {!canProceedWithDataEntry && (
-        <Card className="shadow-md border-destructive/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-destructive">
-              <Building className="h-5 w-5" /> Branch Information Issue
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">
-              {staffBranchName === "Unassigned Branch"
-                ? "You are not assigned to a specific branch. Please contact an administrator."
-                : "Could not determine your branch. Please ensure you are logged in correctly or contact an administrator."
-              }
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      <Tabs defaultValue="manual-individual" className="w-full relative z-10">
+        <TabsList className="flex items-center p-1 bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-md border rounded-2xl h-auto w-fit">
+          <TabsTrigger 
+            value="manual-individual" 
+            className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
+          >
+            <FileText className="mr-2 h-4 w-4 text-primary" /> 
+            <span className="font-semibold">Individual (Manual)</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="manual-bulk" 
+            className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
+          >
+            <FileText className="mr-2 h-4 w-4 text-primary" /> 
+            <span className="font-semibold">Bulk Meter (Manual)</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="csv-upload" 
+            className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
+          >
+            <UploadCloud className="mr-2 h-4 w-4 text-primary" /> 
+            <span className="font-semibold">CSV Upload</span>
+          </TabsTrigger>
+        </TabsList>
 
-      {canProceedWithDataEntry && (
-        <Tabs defaultValue="manual-individual" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 md:w-auto md:inline-flex">
-            <TabsTrigger value="manual-individual">
-              <FileText className="mr-2 h-4 w-4" /> Individual (Manual)
-            </TabsTrigger>
-            <TabsTrigger value="manual-bulk">
-              <FileText className="mr-2 h-4 w-4" /> Bulk Meter (Manual)
-            </TabsTrigger>
-            <TabsTrigger value="csv-upload">
-              <UploadCloud className="mr-2 h-4 w-4" /> CSV Upload
-            </TabsTrigger>
-          </TabsList>
+        <TabsContent value="manual-individual" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
+          <Card className="form-card-premium rounded-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-xl">
+                  <FileText className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl font-bold">Individual Customer Data Entry</CardTitle>
+                  <CardDescription className="text-sm font-medium">
+                    Manually enter data for a single individual customer. Designed for quick, one-off entries.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <StaffIndividualCustomerEntryForm branchName={staffBranchName} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          <TabsContent value="manual-individual">
-            <Card className="shadow-lg mt-4">
+        <TabsContent value="manual-bulk" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
+          <Card className="form-card-premium rounded-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-xl">
+                  <FileText className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl font-bold">Bulk Meter Data Entry</CardTitle>
+                  <CardDescription className="text-sm font-medium">
+                    Manually enter data for a single bulk meter.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <StaffBulkMeterEntryForm branchName={staffBranchName} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="csv-upload" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <Card className="form-card-premium rounded-3xl">
               <CardHeader>
-                <CardTitle>Individual Customer Data Entry</CardTitle>
-                <CardDescription>
-                  Manually enter data for a single individual customer.
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-xl">
+                      <UploadCloud className="h-6 w-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-xl">Bulk Meter CSV Upload</CardTitle>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
+                    onClick={() => openTemplateDialog(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
+                  >
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Template
+                  </Button>
+                </div>
+                <CardDescription className="pt-4 font-medium leading-relaxed">
+                  Upload multiple bulk meters at once. Ensure the CSV file structure, headers, and column order match the template exactly.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <StaffIndividualCustomerEntryForm branchName={staffBranchName} />
+                <CsvUploadSection 
+                  entryType="bulk"
+                  schema={bulkMeterCsvSchema}
+                  addRecordFunction={handleBulkMeterCsvUpload}
+                  expectedHeaders={bulkMeterCsvHeaders}
+                  batchUploadFunction={batchImportBulkMetersAction}
+                />
               </CardContent>
             </Card>
-          </TabsContent>
 
-          <TabsContent value="manual-bulk">
-            <Card className="shadow-lg mt-4">
+            <Card className="form-card-premium rounded-3xl">
               <CardHeader>
-                <CardTitle>Bulk Meter Data Entry</CardTitle>
-                <CardDescription>
-                  Manually enter data for a single bulk meter.
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-xl">
+                      <UploadCloud className="h-6 w-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-xl">Individual Customer CSV Upload</CardTitle>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
+                    onClick={() => openTemplateDialog(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
+                  >
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Template
+                  </Button>
+                </div>
+                <CardDescription className="pt-4 font-medium leading-relaxed">
+                  Upload multiple individual customers. Ensure the <code className="bg-primary/5 px-1 rounded text-primary text-xs">customerKeyNumber</code> is unique and <code className="bg-primary/5 px-1 rounded text-primary text-xs">assignedBulkMeterId</code> exists.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <StaffBulkMeterEntryForm branchName={staffBranchName} />
+                <CsvUploadSection
+                  entryType="individual"
+                  schema={individualCustomerCsvSchema}
+                  addRecordFunction={handleIndividualCustomerCsvUpload}
+                  expectedHeaders={individualCustomerCsvHeaders}
+                  batchUploadFunction={batchImportIndividualCustomersAction}
+                />
               </CardContent>
             </Card>
-          </TabsContent>
+          </div>
+        </TabsContent>
+      </Tabs>
 
-          <TabsContent value="csv-upload">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-              <Card className="shadow-lg">
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <CardTitle>Bulk Meter CSV Upload</CardTitle>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => downloadCsvTemplate(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
-                    >
-                      <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      Download Template
-                    </Button>
-                  </div>
-                  <CardDescription className="mt-2">
-                    Upload a CSV file to add multiple bulk meters.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <CsvUploadSection
-                    entryType="bulk"
-                    schema={bulkMeterDataEntrySchema}
-                    addRecordFunction={handleBulkMeterCsvUpload}
-                    expectedHeaders={bulkMeterCsvHeaders}
-                    batchUploadFunction={batchImportBulkMetersAction}
-                  />
-                </CardContent>
-              </Card>
+      {/* Branch Picker Dialog for CSV Template Download */}
+      <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">Select Branch for Template</DialogTitle>
+            <DialogDescription>
+              Choose a branch to pre-fill the <code className="bg-primary/10 px-1 rounded text-primary text-xs">branchId</code> column.
+              The template will also include all branch IDs as reference comments.
+            </DialogDescription>
+          </DialogHeader>
 
-              <Card className="shadow-lg">
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <CardTitle>Individual Customer CSV Upload</CardTitle>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => downloadCsvTemplate(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
-                    >
-                      <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      Download Template
-                    </Button>
-                  </div>
-                  <CardDescription className="mt-2">
-                    Upload a CSV file to add multiple individual customers.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <CsvUploadSection
-                    entryType="individual"
-                    schema={individualCustomerDataEntrySchema}
-                    addRecordFunction={handleIndividualCustomerCsvUpload}
-                    expectedHeaders={individualCustomerCsvHeaders}
-                    batchUploadFunction={batchImportIndividualCustomersAction}
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-        </Tabs>
-      )}
+          <div className="py-2">
+            <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
+              <SelectTrigger className="w-full rounded-xl">
+                <SelectValue placeholder="Select a branch..." />
+              </SelectTrigger>
+              <SelectContent>
+                {allBranches.map(branch => (
+                  <SelectItem key={branch.id} value={branch.id}>
+                    <span className="font-medium">{branch.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground font-mono">{branch.id.slice(0, 8)}…</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedBranchId && (
+              <p className="mt-2 text-xs text-muted-foreground font-mono break-all">
+                Full ID: {selectedBranchId}
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="rounded-xl" onClick={() => setTemplateDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="rounded-xl"
+              onClick={downloadCsvTemplate}
+              disabled={!selectedBranchId}
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Download Template
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
