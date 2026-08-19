@@ -79,10 +79,9 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     const dataReportsItems: NavItem[] = [];
     const canAccessDataEntry = hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) || hasPermission(PERMISSIONS.CUSTOMERS_CREATE) || hasPermission(PERMISSIONS.BULK_METERS_CREATE);
     if (canAccessDataEntry) {
-        const isStaffUser = userRoleLower.includes('staff') && !userRoleLower.includes('head office') && !userRoleLower.includes('admin');
         dataReportsItems.push({ 
             title: "Data Entry", 
-            href: isStaffUser ? "/staff/data-entry" : "/admin/data-entry", 
+            href: "/admin/data-entry", 
             iconName: "FileText" 
         });
     }

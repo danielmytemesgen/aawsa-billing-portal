@@ -89,6 +89,26 @@ function setSecurityHeaders(res: NextResponse) {
   return res;
 }
 
+function getRoleDashboardFallback(permissions: string[], role: string, request: NextRequest): URL {
+  const roleLower = role?.toLowerCase() || '';
+  if (permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+    return new URL(roleLower.includes('head office') ? '/admin/head-office-dashboard' : '/admin/dashboard', request.url);
+  }
+  if (permissions.includes(PERMISSIONS.STAFF_VIEW) && !permissions.includes(PERMISSIONS.BILL_VIEW_ALL)) {
+    return new URL('/admin/staff-management-dashboard', request.url);
+  }
+  if (permissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
+    return new URL('/admin/dashboard', request.url);
+  }
+  if (permissions.includes(PERMISSIONS.DATA_ENTRY_ACCESS) || permissions.includes(PERMISSIONS.CUSTOMERS_CREATE) || permissions.includes(PERMISSIONS.BULK_METERS_CREATE)) {
+    return new URL('/admin/data-entry', request.url);
+  }
+  if (permissions.includes(PERMISSIONS.METER_READINGS_CREATE) || permissions.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)) {
+    return new URL('/staff/my-routes', request.url);
+  }
+  return new URL('/admin/dashboard', request.url);
+}
+
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   // Short-circuit static assets and service worker to avoid running full middleware
@@ -126,8 +146,6 @@ export async function middleware(request: NextRequest) {
   // Kick-out enforcement: a staff session whose row was revoked gets logged
   // out immediately (clear the cookie so the JWT dies in this browser too) and
   // lands on the login page with ?kicked=1 so the user sees an explanation.
-  // The short-lived kicked_notice cookie is a second, reload-proof channel: the
-  // login page shows the banner if EITHER the query flag or the cookie is set.
   if (session.sessionId && await isSessionRevoked(session, request)) {
     const redirect = NextResponse.redirect(new URL('/?kicked=1', request.url));
     redirect.cookies.delete('session');
@@ -143,69 +161,63 @@ export async function middleware(request: NextRequest) {
   const role = session.role?.toLowerCase()?.trim();
   const permissions: string[] = session.permissions || [];
 
-  const isAdminRoute = adminRoutes.some(route => path.startsWith(route));
-  const isStaffRoute = staffRoutes.some(route => path.startsWith(route));
-  const hasAdminAccess = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
-
-  if (isAdminRoute && !hasAdminAccess) {
+  if (!role && permissions.length === 0) {
     console.warn('middleware: permission denied', {
       path,
-      reason: 'Admin route access without dashboard view permission',
-      permissions,
+      reason: 'Protected route access without role or permissions assignment',
       email: session?.email || 'Anonymous',
-      branch: session?.branchName || session?.branch || 'N/A',
-    });
-    const redirect = NextResponse.redirect(new URL('/staff/dashboard', request.url));
-    return setSecurityHeaders(redirect);
-  }
-
-  if (isStaffRoute && !role) {
-    console.warn('middleware: permission denied', {
-      path,
-      reason: 'Staff route access without role assignment',
-      permissions,
-      email: session?.email || 'Anonymous',
-      branch: session?.branchName || session?.branch || 'N/A',
     });
     const redirect = NextResponse.redirect(new URL('/', request.url));
     return setSecurityHeaders(redirect);
   }
 
-  const dashboardFallback = isAdminRoute
-    ? new URL('/admin/dashboard', request.url)
-    : new URL('/staff/dashboard', request.url);
+  const dashboardFallback = getRoleDashboardFallback(permissions, role || '', request);
 
-  if (path.startsWith('/admin/roles-and-permissions') && !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
+  // Granular, role-agnostic permission gates for all dashboard & system modules:
+
+  if ((path.startsWith('/admin/roles-and-permissions') || path.startsWith('/staff/roles-and-permissions')) &&
+    !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/security-logs') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
+  if (path.startsWith('/admin/security-logs') &&
+    !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/recycle-bin') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
+  if (path.startsWith('/admin/recycle-bin') &&
+    !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/maintenance') && !permissions.includes(PERMISSIONS.SETTINGS_MANAGE)) {
+  if (path.startsWith('/admin/maintenance') &&
+    !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/settings') && !permissions.includes(PERMISSIONS.SETTINGS_VIEW)) {
+  if ((path.startsWith('/admin/settings') || path.startsWith('/staff/settings')) &&
+    !hasAny(permissions, PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.SETTINGS_MANAGE, 'promotions_manage')) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/tariffs') && !permissions.includes(PERMISSIONS.TARIFFS_VIEW)) {
+  if ((path.startsWith('/admin/tariffs') || path.startsWith('/staff/tariffs')) &&
+    !permissions.includes(PERMISSIONS.TARIFFS_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/reports') && !hasAny(permissions, PERMISSIONS.REPORTS_GENERATE_ALL, PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
+  if ((path.startsWith('/admin/reports') || path.startsWith('/staff/reports')) &&
+    !hasAny(permissions,
+      PERMISSIONS.REPORTS_GENERATE_ALL,
+      PERMISSIONS.REPORTS_GENERATE_BRANCH,
+      PERMISSIONS.ROUTES_VIEW_ASSIGNED,
+      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -223,19 +235,19 @@ export async function middleware(request: NextRequest) {
   }
 
   if ((path.startsWith('/admin/individual-customers') || path.startsWith('/staff/individual-customers')) &&
-    !hasAny(permissions, PERMISSIONS.CUSTOMERS_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
+    !hasAny(permissions, PERMISSIONS.CUSTOMERS_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_BRANCH, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/bulk-meters') || path.startsWith('/staff/bulk-meters')) &&
-    !hasAny(permissions, PERMISSIONS.BULK_METERS_VIEW_ALL, PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
+    !hasAny(permissions, PERMISSIONS.BULK_METERS_VIEW_ALL, PERMISSIONS.BULK_METERS_VIEW_BRANCH, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.BULK_METERS_CREATE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/approvals') || path.startsWith('/staff/approvals')) &&
-    !permissions.includes(PERMISSIONS.CUSTOMERS_APPROVE)) {
+    !hasAny(permissions, PERMISSIONS.CUSTOMERS_APPROVE, PERMISSIONS.BULK_METERS_APPROVE, PERMISSIONS.BILL_APPROVE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -250,13 +262,19 @@ export async function middleware(request: NextRequest) {
       PERMISSIONS.BILL_APPROVE,
       PERMISSIONS.BILL_VIEW_PAID,
       PERMISSIONS.BILL_VIEW_UNPAID,
+      PERMISSIONS.BILL_CLOSE_CYCLE
     )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/meter-readings') || path.startsWith('/staff/meter-readings')) &&
-    !hasAny(permissions, PERMISSIONS.METER_READINGS_VIEW_ALL, PERMISSIONS.METER_READINGS_VIEW_BRANCH, PERMISSIONS.METER_READINGS_CREATE)) {
+    !hasAny(permissions,
+      PERMISSIONS.METER_READINGS_VIEW_ALL,
+      PERMISSIONS.METER_READINGS_VIEW_BRANCH,
+      PERMISSIONS.METER_READINGS_CREATE,
+      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -279,39 +297,14 @@ export async function middleware(request: NextRequest) {
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/staff/roles-and-permissions') && !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
-    const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect);
-  }
-
-  if (path.startsWith('/staff/tariffs') && !permissions.includes(PERMISSIONS.TARIFFS_VIEW)) {
-    const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect);
-  }
-
-  if (path.startsWith('/staff/settings') && !permissions.includes(PERMISSIONS.SETTINGS_VIEW)) {
-    const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect);
-  }
-
   if ((path.startsWith('/admin/routes') || path.startsWith('/staff/my-routes')) &&
     !hasAny(permissions, PERMISSIONS.ROUTES_VIEW_ALL, PERMISSIONS.ROUTES_VIEW_ASSIGNED, PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/fault-codes') && !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
-    const redirect = NextResponse.redirect(dashboardFallback);
-    return setSecurityHeaders(redirect);
-  }
-
-  if (path.startsWith('/staff/reports') &&
-    !hasAny(permissions,
-      PERMISSIONS.REPORTS_GENERATE_ALL,
-      PERMISSIONS.REPORTS_GENERATE_BRANCH,
-      PERMISSIONS.ROUTES_VIEW_ASSIGNED,
-      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
-    )) {
+  if (path.startsWith('/admin/fault-codes') &&
+    !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
