@@ -44,9 +44,15 @@ function ChangeMapView({ center }: { center: [number, number] }) {
 }
 
 /** Custom Leaflet divIcons for Green (Read), Amber (Unread), and Selected status */
+const iconCache = new Map<string, L.DivIcon>();
+
 const createCustomMarkerIcon = (status: 'read' | 'unread' | 'active') => {
+  if (typeof window === 'undefined') return undefined as any;
+  if (iconCache.has(status)) return iconCache.get(status)!;
+
+  let icon: L.DivIcon;
   if (status === 'read') {
-    return L.divIcon({
+    icon = L.divIcon({
       className: 'custom-meter-marker',
       html: `
         <div style="
@@ -67,10 +73,8 @@ const createCustomMarkerIcon = (status: 'read' | 'unread' | 'active') => {
       iconSize: [28, 28],
       iconAnchor: [14, 14]
     });
-  }
-
-  if (status === 'active') {
-    return L.divIcon({
+  } else if (status === 'active') {
+    icon = L.divIcon({
       className: 'custom-meter-marker-active',
       html: `
         <div style="
@@ -92,30 +96,33 @@ const createCustomMarkerIcon = (status: 'read' | 'unread' | 'active') => {
       iconSize: [34, 34],
       iconAnchor: [17, 17]
     });
+  } else {
+    // Unread / Pending status (Amber with pulse ring)
+    icon = L.divIcon({
+      className: 'custom-meter-marker-unread',
+      html: `
+        <div style="
+          background-color: #f59e0b;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          border: 3px solid white;
+          box-shadow: 0 4px 12px rgba(245,158,11,0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-weight: bold;
+          font-size: 14px;
+        ">⚡</div>
+      `,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
   }
 
-  // Unread / Pending status (Amber with pulse ring)
-  return L.divIcon({
-    className: 'custom-meter-marker-unread',
-    html: `
-      <div style="
-        background-color: #f59e0b;
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        border: 3px solid white;
-        box-shadow: 0 4px 12px rgba(245,158,11,0.6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-        font-size: 14px;
-      ">⚡</div>
-    `,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
-  });
+  iconCache.set(status, icon);
+  return icon;
 };
 
 export default function RouteMapInner({ 

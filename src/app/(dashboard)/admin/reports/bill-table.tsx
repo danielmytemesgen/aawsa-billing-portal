@@ -12,7 +12,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
 import type { Branch } from "../branches/branch-types";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
-import { getBillKey } from "@/lib/export-utils";
+import { getBillKey, getCustomerPhone } from "@/lib/export-utils";
 
 interface BillTableProps {
   bills: DomainBill[];
@@ -82,11 +82,12 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
   return (
     <div className="rounded-3xl border border-slate-200/60 shadow-md bg-white overflow-hidden mt-6">
       <Table>
-        <TableHeader className="bg-slate-50/50 border-b">
+        <TableHeader className="bg-slate-100/90 border-b">
           <TableRow className="hover:bg-transparent">
             <TableHead className="font-bold text-slate-700 py-5 pl-6">Customer/Meter Name</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Bill Key</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Customer Key</TableHead>
+            <TableHead className="font-bold text-slate-700 py-5">Phone</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Branch</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Month</TableHead>
             <TableHead className="text-right font-bold text-slate-700 py-5">Prev Reading</TableHead>
@@ -111,7 +112,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
         <TableBody>
           {bills.length > 0 ? (
             bills.map((bill) => (
-              <TableRow key={bill.id} className="hover:bg-slate-50/80 transition-colors group">
+              <TableRow key={bill.id} className="odd:bg-white even:bg-slate-50/60 hover:bg-blue-50/40 transition-colors group">
                 <TableCell className="font-bold text-slate-900 py-4 pl-6">{getIdentifier(bill)}</TableCell>
                 <TableCell className="py-4 whitespace-nowrap">
                   <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
@@ -119,6 +120,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
                   </span>
                 </TableCell>
                 <TableCell className="text-slate-600 py-4">{getCustomerKey(bill)}</TableCell>
+                <TableCell className="text-slate-600 py-4 whitespace-nowrap">{getCustomerPhone(bill, customers, bulkMeters)}</TableCell>
                 <TableCell className="text-slate-600 py-4">
                   <div className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-xs font-bold w-fit border border-blue-100">
                     {getBranchName(bill)}
@@ -174,7 +176,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
                 })()}</TableCell>
                 <TableCell className="text-right text-slate-600 py-4">{formatNumber(getMonthlyBillAmt(bill))}</TableCell>
                 <TableCell className="text-right text-red-500 font-bold py-4">{formatNumber(normalizeNumber(bill.PENALTYAMT))}</TableCell>
-                <TableCell className="text-right font-black font-mono text-indigo-700 bg-indigo-50/30 py-4 pr-6">{(() => {
+                <TableCell className="text-right font-black font-mono text-indigo-700 bg-indigo-50/40 py-4 pr-6">{(() => {
                   const outstanding = normalizeNumber(bill.OUTSTANDINGAMT) ?? (
                     (normalizeNumber((bill as any).debit_30 ?? bill.debit30) ?? 0) + 
                     (normalizeNumber((bill as any).debit_30_60 ?? bill.debit30_60) ?? 0) + 

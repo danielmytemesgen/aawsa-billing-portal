@@ -47,8 +47,12 @@ if (Test-Path (Join-Path $repoRoot "public")) {
 if (Test-Path (Join-Path $repoRoot ".next\static")) {
     Copy-Item -Path (Join-Path $repoRoot ".next\static\*") -Destination $standaloneStatic -Recurse -Force
 }
+if (Test-Path (Join-Path $repoRoot "server-https.js")) {
+    Copy-Item -Path (Join-Path $repoRoot "server-https.js") -Destination (Join-Path $standaloneDir "server-https.js") -Force
+}
 
 Write-Host "Starting PM2 process '$ProcessName'..."
+
 pm2 start ecosystem.config.js
 pm2 save
 

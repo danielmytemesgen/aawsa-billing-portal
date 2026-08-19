@@ -240,26 +240,59 @@ self.addEventListener('sync', (event) => {
               const body = await resp.json();
               const results = body.results || [];
 
-              // #region agent log
-              fetch('http://127.0.0.1:7788/ingest/11f0b13b-2903-4f1e-876b-3b02fed3705a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b1771'},body:JSON.stringify({sessionId:'7b1771',runId:'pre-fix',hypothesisId:'A',location:'sw.js:sync-results',message:'SW offline-sync response fields',data:{resultCount:results.length,sample:results.slice(0,3).map(r=>({success:r.success,id:r.id,localId:r.localId,serverId:r.serverId}))},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
-
               // Apply results: delete successes, mark failures
-              const tx = db.transaction('readings', 'readwrite');
-              const store = tx.objectStore('readings');
+
+              const tx = db.transaction(['readings', 'uploads'], 'readwrite');
+              const readingStore = tx.objectStore('readings');
+              const uploadStore = tx.objectStore('uploads');
+              
               for (const res of results) {
-                if (res.success && (res.id !== undefined && res.id !== null)) {
-                  // Remove by local id if present, otherwise try by id field
-                  try { store.delete(res.id); } catch (e) { /* ignore */ }
-                } else if (res.id) {
+                const targetLocalId = res.localId;
+                const targetId = res.id;
+                const serverId = res.serverId;
+
+                if (res.success) {
+                  // Delete reading by numeric ID if available
+                  if (typeof targetId === 'number') {
+                    try { readingStore.delete(targetId); } catch (e) {}
+                  }
+                  
+                  // Also search and delete by localId index
+                  if (targetLocalId) {
+                    try {
+                      const localIdx = readingStore.index('localId');
+                      const getReq = localIdx.getKey(targetLocalId);
+                      getReq.onsuccess = () => {
+                        if (getReq.result) {
+                          readingStore.delete(getReq.result);
+                        }
+                      };
+                    } catch (e) {}
+
+                    // Link serverId to pending photo uploads if matched
+                    if (serverId) {
+                      try {
+                        const upIdx = uploadStore.index('readingLocalId');
+                        const upReq = upIdx.get(targetLocalId);
+                        upReq.onsuccess = () => {
+                          const upRec = upReq.result;
+                          if (upRec) {
+                            upRec.readingId = serverId;
+                            uploadStore.put(upRec);
+                          }
+                        };
+                      } catch (e) {}
+                    }
+                  }
+                } else if (targetId) {
                   // Mark failed
-                  const getReq = store.get(res.id);
+                  const getReq = readingStore.get(targetId);
                   getReq.onsuccess = () => {
                     const rec = getReq.result;
                     if (rec) {
                       rec.status = 'failed';
                       rec.errorMessage = res.message || 'Server error';
-                      store.put(rec);
+                      readingStore.put(rec);
                     }
                   };
                 }
@@ -305,13 +338,10 @@ self.addEventListener('sync', (event) => {
                   const all = entries || [];
                   if (!all.length) return null;
 
-                  // Choose latest by timestamp
                   all.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
                   const entry = all[0];
 
-                  // If plaintext token stored for tests
                   if (entry.token) {
-                    // Exchange raw token for access token
                     const r = await fetch('/api/device/refresh', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
@@ -321,30 +351,9 @@ self.addEventListener('sync', (event) => {
                       const jb = await r.json();
                       return jb.accessToken || null;
                     }
-                    return null;
-                  }
-
-                  // Otherwise decrypt stored AES-GCM encrypted token
-                  const rawKey = Uint8Array.from(atob(entry.exportedKeyBase64), c => c.charCodeAt(0));
-                  const key = await crypto.subtle.importKey('raw', rawKey.buffer, 'AES-GCM', true, ['decrypt']);
-                  const iv = Uint8Array.from(atob(entry.ivBase64), c => c.charCodeAt(0));
-                  const cipher = Uint8Array.from(atob(entry.encryptedTokenBase64), c => c.charCodeAt(0));
-                  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher.buffer);
-                  const rawToken = new TextDecoder().decode(plain);
-
-                  // Exchange raw token for access token
-                  const refreshResp = await fetch('/api/device/refresh', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: rawToken })
-                  });
-                  if (refreshResp && refreshResp.ok) {
-                    const jb = await refreshResp.json();
-                    return jb.accessToken || null;
                   }
                   return null;
                 } catch (e) {
-                  console.warn('SW: failed to read/refresh device token', e);
                   return null;
                 }
               };
@@ -353,8 +362,25 @@ self.addEventListener('sync', (event) => {
 
               for (const up of pendingUploads) {
                 try {
-                  const blob = up.blob;
-                  const filename = up.filename || 'upload.jpg';
+                  let blob = up.blob;
+                  // If blob missing but photoData base64 exists, decode to Blob
+                  if (!blob && up.photoData) {
+                    try {
+                      const base64Str = up.photoData.includes(',') ? up.photoData.split(',')[1] : up.photoData;
+                      const byteCharacters = atob(base64Str);
+                      const byteNumbers = new Uint8Array(byteCharacters.length);
+                      for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                      }
+                      blob = new Blob([byteNumbers], { type: 'image/webp' });
+                    } catch (e) {
+                      console.warn('SW: base64 to Blob decode error', e);
+                    }
+                  }
+
+                  if (!blob) continue;
+
+                  const filename = up.filename || 'upload.webp';
                   const CHUNK_SIZE = 1024 * 1024; // 1 MB
 
                   // If large blob, perform chunked upload with retries
@@ -423,6 +449,9 @@ self.addEventListener('sync', (event) => {
                       try {
                         const form = new FormData();
                         form.append('file', blob, filename);
+                        if (up.readingId) {
+                          form.append('readingId', String(up.readingId));
+                        }
                         const headers = {};
                         if (accessToken) headers['Authorization'] = 'Bearer ' + accessToken;
                         const resp = await fetch('/api/upload', {
@@ -450,15 +479,14 @@ self.addEventListener('sync', (event) => {
                         await new Promise(res => setTimeout(res, backoff));
                       }
                     }
-                    if (!success) console.warn('SW: upload failed after retries');
                   }
-                } catch (e) {
-                  console.warn('SW: upload attempt failed', e);
+                } catch (err) {
+                  console.warn('SW: single upload failed', up.id, err);
                 }
               }
             }
-          } catch (uploadErr) {
-            console.error('SW: processing uploads failed', uploadErr);
+          } catch (e) {
+            console.warn('SW: failed to process uploads', e);
           }
 
         // Regardless, trigger clients to run their sync logic too (keeps UI consistent)

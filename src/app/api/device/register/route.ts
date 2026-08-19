@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { getSession } from '@/lib/auth';
 import { query } from '@/lib/db';
+import { env } from '@/lib/env';
 
 export async function POST(request: Request) {
   try {
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     // Generate raw token and store hash
     const rawToken = crypto.randomBytes(48).toString('hex');
     const tokenSalt = crypto.randomBytes(16).toString('hex');
-    const hmac = crypto.createHmac('sha256', process.env.SESSION_SECRET || 'fallback-secret');
+    const hmac = crypto.createHmac('sha256', env.SESSION_SECRET);
     hmac.update(rawToken + tokenSalt);
     const tokenHash = hmac.digest('hex');
 
@@ -38,3 +38,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, message: err?.message || String(err) }, { status: 500 });
   }
 }
+

@@ -449,6 +449,13 @@ export default function AdminDashboardPage() {
       if (metrics.usageTrend) {
         setDynamicWaterUsageTrendData(metrics.usageTrend);
       }
+
+      // 8. Today's Activity (from server — accurate, no client-store dependency)
+      if (metrics.todayActivity) {
+        setTodayBills(metrics.todayActivity.bills ?? 0);
+        setTodayReadings(metrics.todayActivity.readings ?? 0);
+        setTodayCustomers(metrics.todayActivity.customers ?? 0);
+      }
     }
 
     // Client-side initialization fallback

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
-import { dbGetAllSecurityLogs } from '@/lib/db-queries';
+import { dbGetAllSecurityLogs, dbGetUserSessions, dbGetSessionSummary } from '@/lib/db-queries';
 import { getSession } from '@/lib/auth';
 import { PERMISSIONS } from '@/lib/constants/auth';
 
@@ -22,11 +22,49 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const page = parseInt(searchParams.get('page') || '1', 10);
         const pageSize = parseInt(searchParams.get('pageSize') || '10', 10);
+        const view = searchParams.get('view') || 'logs';
+
+        // Branch isolation: If not management, filter by branch_name.
+        const filterBranchName = isManagement ? undefined : session.branchName;
+
+        // Session monitoring views require the manage permission (the page and
+        // sidebar already gate on SETTINGS_MANAGE — keep the API consistent).
+        if (view === 'sessions' || view === 'summary') {
+            if (!perms.includes(PERMISSIONS.SETTINGS_MANAGE)) {
+                return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
+            }
+
+            if (view === 'summary') {
+                const summary = await dbGetSessionSummary(filterBranchName);
+                return NextResponse.json({ summary });
+            }
+
+            const type = (searchParams.get('type') || undefined) as 'staff' | 'customer' | undefined;
+            const status = searchParams.get('status') || undefined;
+            const branch = searchParams.get('branch') || undefined;
+            const search = searchParams.get('search') || undefined;
+
+            const { sessions, total, lastPage } = await dbGetUserSessions({
+                page,
+                pageSize,
+                type,
+                status,
+                branchName: filterBranchName,
+                branch,
+                search,
+            });
+
+            return NextResponse.json({
+                sessions,
+                total,
+                page,
+                pageSize,
+                lastPage,
+            });
+        }
+
         const sortBy = searchParams.get('sortBy') || 'created_at';
         const sortOrder = (searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc';
-
-        // Branch isolation: If not management, filter by branch_name
-        const filterBranchName = isManagement ? undefined : session.branchName;
 
         const { logs, total, lastPage } = await dbGetAllSecurityLogs(page, pageSize, sortBy, sortOrder, filterBranchName);
 

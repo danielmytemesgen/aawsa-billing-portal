@@ -27,10 +27,11 @@ import { useDataRefresh } from "@/lib/data-refresh-context";
 import { useNetworkQuality } from "@/lib/network-quality";
 import { getReadingPeriodStatusAction, getReadingPeriodDetailsAction } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List, Clock, Filter, AlertCircle, Download, HardDrive, Lock, WifiOff, Wifi, Signal } from "lucide-react";
+import { Search, ArrowLeft, Gauge, ClipboardList, Loader2, User, ChevronRight, ChevronDown, CheckCircle2, Map as MapIcon, List, Clock, Filter, AlertCircle, Download, HardDrive, Lock, WifiOff, Wifi, Signal, Sun } from "lucide-react";
 import Link from "next/link";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle as UIDialogTitle } from "@/components/ui/dialog";
@@ -41,7 +42,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { FaultCodeRow } from "@/lib/action-types";
-import { type Coordinates, calculateDistance } from "@/lib/geo-utils";
+import { type Coordinates, calculateDistance, triggerReadingSavedHaptic } from "@/lib/geo-utils";
 import { MapPin } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
 import { canCreateMeterReadingForType } from "@/lib/meter-reading-permissions";
@@ -109,6 +110,21 @@ export default function RouteDetailsClient() {
         return true;
     });
     const PROXIMITY_THRESHOLD = 50; // 50 meters as requested
+
+    const [sunlightMode, setSunlightMode] = React.useState<boolean>(() => {
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('reader_sunlight_mode') === 'true';
+        }
+        return false;
+    });
+
+    const toggleSunlightMode = React.useCallback(() => {
+        setSunlightMode(prev => {
+            const next = !prev;
+            if (typeof window !== 'undefined') localStorage.setItem('reader_sunlight_mode', String(next));
+            return next;
+        });
+    }, []);
 
     // Persist nearby preference
     React.useEffect(() => {
@@ -241,12 +257,32 @@ export default function RouteDetailsClient() {
             setSyncProgress("Loading meters...");
             
             // Period status and dates caching logic
+            // Fix 6: Skip HTTP call if cached status is less than 30 minutes old.
+            const PERIOD_STATUS_TTL_MS = 30 * 60 * 1000;
             const fetchPeriodStatus = async () => {
                 const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
+                // Check TTL cache before making an HTTP call
+                if (!isOffline) {
+                    const ts = parseInt(localStorage.getItem('cached_period_status_ts') || '0', 10);
+                    if (ts > 0 && Date.now() - ts < PERIOD_STATUS_TTL_MS) {
+                        const cached = localStorage.getItem('cached_period_status');
+                        const cachedStart = localStorage.getItem('cached_period_start_date') || '';
+                        const cachedEnd = localStorage.getItem('cached_period_end_date') || '';
+                        if (cached) {
+                            setPeriodStatus(cached as any);
+                            if (cachedStart) setPeriodStartDate(cachedStart);
+                            if (cachedEnd) setPeriodEndDate(cachedEnd);
+                            return cached;
+                        }
+                    }
+                }
                 if (isOffline) {
                     const cached = localStorage.getItem('cached_period_status');
                     const cachedStartDay = localStorage.getItem('cached_period_start_day');
                     const cachedEndDay = localStorage.getItem('cached_period_end_day');
+
+                    let activeStart = '';
+                    let activeEnd = '';
 
                     // Recalculate dates from cached day numbers each time (handles month roll-over offline)
                     if (cachedStartDay && cachedEndDay) {
@@ -256,35 +292,45 @@ export default function RouteDetailsClient() {
                         const lastDay = new Date(yr, mo + 1, 0).getDate();
                         const sDay = Math.min(parseInt(cachedStartDay), lastDay);
                         const eDay = parseInt(cachedEndDay);
-                        const startStr = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(sDay).padStart(2, '0')}`;
-                        let endStr: string;
+                        activeStart = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(sDay).padStart(2, '0')}`;
                         if (eDay >= sDay) {
                             const eDayEffective = Math.min(eDay, lastDay);
-                            endStr = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(eDayEffective).padStart(2, '0')}`;
+                            activeEnd = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(eDayEffective).padStart(2, '0')}`;
                         } else {
                             const nextMo = mo + 1;
                             const nextYr = nextMo > 11 ? yr + 1 : yr;
                             const nextMoIdx = nextMo > 11 ? 0 : nextMo;
                             const lastDayNext = new Date(nextYr, nextMoIdx + 1, 0).getDate();
                             const eDayEffective = Math.min(eDay, lastDayNext);
-                            endStr = `${nextYr}-${String(nextMoIdx + 1).padStart(2, '0')}-${String(eDayEffective).padStart(2, '0')}`;
+                            activeEnd = `${nextYr}-${String(nextMoIdx + 1).padStart(2, '0')}-${String(eDayEffective).padStart(2, '0')}`;
                         }
-                        setPeriodStartDate(startStr);
-                        setPeriodEndDate(endStr);
-                        localStorage.setItem('cached_period_start_date', startStr);
-                        localStorage.setItem('cached_period_end_date', endStr);
+                        setPeriodStartDate(activeStart);
+                        setPeriodEndDate(activeEnd);
+                        localStorage.setItem('cached_period_start_date', activeStart);
+                        localStorage.setItem('cached_period_end_date', activeEnd);
                     } else {
-                        const cachedStart = localStorage.getItem('cached_period_start_date');
-                        const cachedEnd = localStorage.getItem('cached_period_end_date');
-                        if (cachedStart) setPeriodStartDate(cachedStart);
-                        if (cachedEnd) setPeriodEndDate(cachedEnd);
+                        activeStart = localStorage.getItem('cached_period_start_date') || '';
+                        activeEnd = localStorage.getItem('cached_period_end_date') || '';
+                        if (activeStart) setPeriodStartDate(activeStart);
+                        if (activeEnd) setPeriodEndDate(activeEnd);
                     }
 
-                    if (cached) {
-                        setPeriodStatus(cached as any);
-                        return cached;
+                    const now = new Date();
+                    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                    let computedOfflineStatus: 'Open' | 'Closed' | 'Ready for New Reading' = 'Closed';
+                    if (activeStart && activeEnd) {
+                        if (todayStr >= activeStart && todayStr <= activeEnd) {
+                            computedOfflineStatus = 'Open';
+                        } else if (todayStr < activeStart) {
+                            computedOfflineStatus = 'Ready for New Reading';
+                        } else {
+                            computedOfflineStatus = 'Closed';
+                        }
+                    } else if (cached) {
+                        computedOfflineStatus = cached as any;
                     }
-                    return 'Closed';
+                    setPeriodStatus(computedOfflineStatus);
+                    return computedOfflineStatus;
                 }
                 try {
                     const details = await getReadingPeriodDetailsAction();
@@ -293,6 +339,7 @@ export default function RouteDetailsClient() {
                         setPeriodStartDate(details.startDate || '');
                         setPeriodEndDate(details.endDate || '');
                         localStorage.setItem('cached_period_status', details.status);
+                        localStorage.setItem('cached_period_status_ts', String(Date.now())); // TTL timestamp
                         // Cache day numbers for offline monthly recalculation
                         localStorage.setItem('cached_period_start_day', String(details.startDay || 1));
                         localStorage.setItem('cached_period_end_day', String(details.endDay || 20));
@@ -311,27 +358,16 @@ export default function RouteDetailsClient() {
                 return 'Closed'; // Default fallback
             };
 
+            setSyncProgress("Loading route & meter data...");
             await Promise.all([
                 fetchPeriodStatus(),
                 fetchRoutes(),
                 initializeBulkMeters(true, { routeKey }),
-                initializeFaultCodes()
+                initializeFaultCodes(),
+                initializeCustomers(true, { routeKey }),
+                initializeBulkMeterReadings(true, { routeKey }).catch(e => console.warn('Bulk readings fetch warning:', e)),
+                initializeIndividualCustomerReadings(true, { routeKey }).catch(e => console.warn('Individual readings fetch warning:', e))
             ]);
-
-            // Then fetch customers (Targeted)
-            setSyncProgress("Loading customers...");
-            await initializeCustomers(true, { routeKey });
-
-            // Finally fetch latest readings (Targeted)
-            setSyncProgress("Syncing readings...");
-            try {
-                await Promise.all([
-                    initializeBulkMeterReadings(true, { routeKey }),
-                    initializeIndividualCustomerReadings(true, { routeKey })
-                ]);
-            } catch (e) {
-                console.warn("Failed to sync latest readings, some data might be stale:", e);
-            }
 
             setAllCustomers(getCustomers());
             setFaultCodesForForm(getFaultCodes());
@@ -375,8 +411,8 @@ export default function RouteDetailsClient() {
     initializeData();
 
     // ── Listen for data refresh events from DataRefreshProvider ─────────────
-    // On weak/offline networks, skip the full HTTP re-fetch and only pull from
-    // the in-memory store so we don't hammer a slow radio link.
+    // On any network quality: only refresh readings (lightweight) — skip re-fetching
+    // routes/meters/fault-codes which rarely change in-session.
     const handleDataRefreshed = () => {
       const currentOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
       const conn = typeof navigator !== 'undefined' ? (navigator as any).connection : null;
@@ -384,12 +420,19 @@ export default function RouteDetailsClient() {
       const isWeak = !currentOnline || effType === '2g' || effType === 'slow-2g' || (conn?.downlink != null && conn.downlink < 1);
 
       if (isWeak || !currentOnline) {
-        // Lightweight update from in-memory store only
+        // Lightweight update from in-memory store only — no HTTP
         setAllCustomers(getCustomers());
         setBulkReadings(getBulkMeterReadings());
         setIndividualReadings(getIndividualCustomerReadings());
       } else {
-        initializeData();
+        // Online: refresh only readings (the costly part), not the full route/meter data
+        Promise.all([
+          initializeBulkMeterReadings(true, { routeKey }),
+          initializeIndividualCustomerReadings(true, { routeKey }),
+        ]).then(() => {
+          setBulkReadings(getBulkMeterReadings());
+          setIndividualReadings(getIndividualCustomerReadings());
+        }).catch(e => console.warn('Readings refresh failed:', e));
       }
       setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     };
@@ -399,7 +442,11 @@ export default function RouteDetailsClient() {
     const unsubInd = subscribeToIndividualCustomerReadings(() => setIndividualReadings(getIndividualCustomerReadings()));
     const unsubBulk = subscribeToBulkMeterReadings(() => setBulkReadings(getBulkMeterReadings()));
     const unsubCust = subscribeToCustomers((updated) => setAllCustomers(updated));
-    const unsubBM = subscribeToBulkMeters(() => initializeData());
+    // Fix: unsubBM was calling full initializeData() on every in-memory bulk meter update.
+    // Now it only syncs the local state from the store — no HTTP calls.
+    const unsubBM = subscribeToBulkMeters(() => {
+      setBulkReadings(getBulkMeterReadings());
+    });
 
     return () => {
       window.removeEventListener('data-refreshed', handleDataRefreshed);
@@ -410,9 +457,71 @@ export default function RouteDetailsClient() {
     };
     }, [routeKey]);
 
-    const route = React.useMemo(() =>
-        routes.find(r => r.routeKey === routeKey),
-        [routes, routeKey]);
+    const route = React.useMemo(() => {
+        const found = routes.find(r => r.routeKey === routeKey);
+        if (found) return found;
+        // Fallback: check if bulk meters or customers have this routeKey
+        const bm = allBulkMeters.find(b => b.routeKey === routeKey || (b as any).route_key === routeKey);
+        if (bm) {
+            return {
+                routeKey,
+                branchId: bm.branchId || (bm as any).branch_id,
+                readerId: bm.readerStaffId || (bm as any).assignedReaderId,
+                description: `Route ${routeKey}`
+            };
+        }
+        const cust = allCustomers.find(c => c.routeKey === routeKey || (c as any).route_key === routeKey);
+        if (cust) {
+            return {
+                routeKey,
+                branchId: cust.branchId || (cust as any).branch_id,
+                readerId: cust.readerStaffId || (cust as any).assignedReaderId,
+                description: `Route ${routeKey}`
+            };
+        }
+        return undefined;
+    }, [routes, allBulkMeters, allCustomers, routeKey]);
+
+    const canViewAllRoutes = 
+        hasPermission('routes_view_all') || 
+        hasPermission('*') || 
+        hasPermission('all');
+
+    const canViewBranchRoutes =
+        hasPermission('routes_view_branch') ||
+        hasPermission('routes_manage');
+
+    const hasRouteAccess = React.useMemo(() => {
+        if (!route) return false;
+        if (canViewAllRoutes) return true;
+        if (canViewBranchRoutes) {
+            return !currentUser?.branchId || !route.branchId || route.branchId === currentUser.branchId;
+        }
+        // Reader access check: must be assigned to the route OR have assigned meters on this route OR belong to same branch
+        if (!currentUser?.id) return false;
+        const userIdRaw = currentUser.id.toLowerCase();
+        const userBranchId = currentUser.branchId;
+        const isRouteAssigned = route.readerId?.toLowerCase() === userIdRaw;
+        const hasAssignedBulk = allBulkMeters.some(bm => (bm.routeKey === routeKey || (bm as any).route_key === routeKey) && (
+            bm.readerStaffId?.toLowerCase() === userIdRaw || 
+            (bm as any).assignedReaderId?.toLowerCase() === userIdRaw ||
+            (bm as any).reader_staff_id?.toLowerCase() === userIdRaw ||
+            (bm as any).assigned_reader_id?.toLowerCase() === userIdRaw
+        ));
+        const hasAssignedCustomer = allCustomers.some(c => (c.routeKey === routeKey || (c as any).route_key === routeKey) && (
+            c.readerStaffId?.toLowerCase() === userIdRaw ||
+            (c as any).assignedReaderId?.toLowerCase() === userIdRaw ||
+            (c as any).reader_staff_id?.toLowerCase() === userIdRaw ||
+            (c as any).assigned_reader_id?.toLowerCase() === userIdRaw
+        ));
+        const isBranchMatch = Boolean(userBranchId && route.branchId && (
+            route.branchId === userBranchId || 
+            route.branchId.toLowerCase() === userBranchId.toLowerCase()
+        ));
+        const isAssigned = isRouteAssigned || hasAssignedBulk || hasAssignedCustomer || isBranchMatch;
+        const matchesBranch = !userBranchId || !route.branchId || route.branchId === userBranchId || route.branchId.toLowerCase() === userBranchId.toLowerCase();
+        return isAssigned && matchesBranch;
+    }, [route, currentUser, canViewAllRoutes, canViewBranchRoutes, allBulkMeters, allCustomers, routeKey]);
 
     const bulkMeters = React.useMemo(() => {
         return allBulkMeters.filter(bm => bm.routeKey === routeKey);
@@ -420,45 +529,72 @@ export default function RouteDetailsClient() {
 
     const currentMonth = React.useMemo(() => format(new Date(), 'yyyy-MM'), []);
 
-    const isMeterRead = React.useCallback((meterId: string, type: 'bulk' | 'individual') => {
-        // 1. If the meter has a pending offline reading queued in IndexedDB, count it as Read
-        //    so the badge and button flip immediately even without server confirmation.
-        if (pendingOfflineMeterKeys.has(meterId)) return true;
-
-        const list = type === 'bulk' ? bulkReadings : individualReadings;
-        const matchIdKey = type === 'bulk' ? 'CUSTOMERKEY' : 'individualCustomerId';
-
-        if (periodStartDate) {
-            return list.some(r => {
-                const id = r[matchIdKey] || r.customerKeyNumber || r.CUST_KEY;
-                if (id !== meterId) return false;
-
-                const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
+    const readBulkMeterKeys = React.useMemo(() => {
+        const readKeys = new Set<string>();
+        for (const r of bulkReadings) {
+            const id = r.CUSTOMERKEY || r.customerKeyNumber || r.CUST_KEY;
+            if (!id) continue;
+            const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
+            if (periodStartDate) {
                 if (!rDateStr) {
-                    // No date: fall back to month-year check against current cycle month
-                    const cycleMonth = periodStartDate.slice(0, 7);
-                    return r.monthYear === cycleMonth;
+                    if (r.monthYear === periodStartDate.slice(0, 7)) readKeys.add(id);
+                } else {
+                    const formatted = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
+                    if (periodEndDate ? (formatted >= periodStartDate && formatted <= periodEndDate) : formatted >= periodStartDate) {
+                        readKeys.add(id);
+                    }
                 }
+            } else if (r.monthYear === currentMonth) {
+                readKeys.add(id);
+            }
+        }
+        return readKeys;
+    }, [bulkReadings, currentMonth, periodStartDate, periodEndDate]);
 
-                const formattedRDate = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
-                if (periodEndDate) {
-                    return formattedRDate >= periodStartDate && formattedRDate <= periodEndDate;
+    const readIndividualMeterKeys = React.useMemo(() => {
+        const readKeys = new Set<string>();
+        for (const r of individualReadings) {
+            const id = r.individualCustomerId || r.customerKeyNumber || r.CUST_KEY;
+            if (!id) continue;
+            const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
+            if (periodStartDate) {
+                if (!rDateStr) {
+                    if (r.monthYear === periodStartDate.slice(0, 7)) readKeys.add(id);
+                } else {
+                    const formatted = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
+                    if (periodEndDate ? (formatted >= periodStartDate && formatted <= periodEndDate) : formatted >= periodStartDate) {
+                        readKeys.add(id);
+                    }
                 }
-                return formattedRDate >= periodStartDate;
-            });
+            } else if (r.monthYear === currentMonth) {
+                readKeys.add(id);
+            }
         }
+        return readKeys;
+    }, [individualReadings, currentMonth, periodStartDate, periodEndDate]);
 
-        if (type === 'bulk') {
-            return bulkReadings.some(r => (r.CUSTOMERKEY === meterId || r.customerKeyNumber === meterId) && r.monthYear === currentMonth);
-        } else {
-            return individualReadings.some(r => (r.individualCustomerId === meterId || r.customerKeyNumber === meterId) && r.monthYear === currentMonth);
-        }
-    }, [bulkReadings, individualReadings, currentMonth, periodStartDate, periodEndDate, pendingOfflineMeterKeys]);
+    const isMeterRead = React.useCallback((meterId: string, type: 'bulk' | 'individual') => {
+        if (pendingOfflineMeterKeys.has(meterId)) return true;
+        return type === 'bulk' ? readBulkMeterKeys.has(meterId) : readIndividualMeterKeys.has(meterId);
+    }, [pendingOfflineMeterKeys, readBulkMeterKeys, readIndividualMeterKeys]);
 
     const routeCustomers = React.useMemo(() => {
         const bulkIds = new Set(bulkMeters.map(bm => bm.customerKeyNumber));
         return allCustomers.filter(c => c.routeKey === routeKey || (c.assignedBulkMeterId && bulkIds.has(c.assignedBulkMeterId)));
     }, [allCustomers, routeKey, bulkMeters]);
+
+    // Fix 5: Pre-compute distances for all bulk meters once per userLocation change.
+    // Avoids calling calculateDistance twice per pair inside the sort comparator.
+    const meterDistanceMap = React.useMemo(() => {
+        const map = new Map<string, number>();
+        if (!userLocation) return map;
+        for (const bm of bulkMeters) {
+            if (bm.xCoordinate && bm.yCoordinate) {
+                map.set(bm.customerKeyNumber, calculateDistance(userLocation, { latitude: bm.yCoordinate, longitude: bm.xCoordinate }));
+            }
+        }
+        return map;
+    }, [bulkMeters, userLocation]);
 
     // Route-wide Bulk Meter count metrics (Read vs Unread)
     const routeStats = React.useMemo(() => {
@@ -512,23 +648,19 @@ export default function RouteDetailsClient() {
             });
         }
         
-        // 4. Sort by: Unread first, then Distance (if location available), then Read
+        // 4. Sort by: Unread first, then Distance (pre-computed, O(1) lookup), then Read
         return [...result].sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'bulk') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'bulk') ? 1 : 0;
             
             if (aRead !== bRead) return aRead - bRead;
 
-            // If both are same read status, sort by distance if location is available
-            if (userLocation && a.xCoordinate && a.yCoordinate && b.xCoordinate && b.yCoordinate) {
-                const distA = calculateDistance(userLocation, { latitude: a.yCoordinate, longitude: a.xCoordinate });
-                const distB = calculateDistance(userLocation, { latitude: b.yCoordinate, longitude: b.xCoordinate });
-                return distA - distB;
-            }
-
-            return 0;
+            // Use pre-computed distance map — avoids calling calculateDistance twice per pair
+            const distA = meterDistanceMap.get(a.customerKeyNumber) ?? Infinity;
+            const distB = meterDistanceMap.get(b.customerKeyNumber) ?? Infinity;
+            return distA - distB;
         });
-    }, [bulkMeters, meterStatusFilter, searchTerm, isMeterRead, nearbyOnly, userLocation, allCustomers]);
+    }, [bulkMeters, meterStatusFilter, searchTerm, isMeterRead, nearbyOnly, userLocation, meterDistanceMap]);
 
     const toggleExpand = (meterId: string) => {
         const newExpanded = new Set(expandedMeters);
@@ -615,6 +747,7 @@ export default function RouteDetailsClient() {
             }
 
             if (result.success) {
+                triggerReadingSavedHaptic();
                 toast({ title: "Success", description: result.message || "Meter reading updated successfully." });
                 setIsReadingModalOpen(false);
                 setSelectedMeter(null);
@@ -652,29 +785,11 @@ export default function RouteDetailsClient() {
                     setPendingOfflineMeterKeys(prev => new Set([...prev, values.entityId]));
                 }
 
-                // Also refresh from the in-memory store (covers online case)
-                setAllCustomers(getCustomers());
-                setBulkReadings(prev => {
-                    const fromStore = getBulkMeterReadings();
-                    // Merge: keep optimistic entries that aren't in the store yet
-                    const merged = [...fromStore];
-                    prev.forEach(p => {
-                        if (!merged.some(s => s.CUSTOMERKEY === p.CUSTOMERKEY && s.monthYear === p.monthYear)) {
-                            merged.push(p);
-                        }
-                    });
-                    return merged;
-                });
-                setIndividualReadings(prev => {
-                    const fromStore = getIndividualCustomerReadings();
-                    const merged = [...fromStore];
-                    prev.forEach(p => {
-                        if (!merged.some(s => s.individualCustomerId === p.individual_customer_id && s.monthYear === p.monthYear)) {
-                            merged.push(p);
-                        }
-                    });
-                    return merged;
-                });
+                // Fix 7: Removed redundant double state-sync merge.
+                // The optimistic update above already flipped the badge immediately.
+                // For online submissions the store will be updated by the subscription
+                // (notifyBulkMeterReadingListeners / notifyIndividualCustomerReadingListeners)
+                // triggered inside addBulkMeterReading / addIndividualCustomerReading.
             } else {
                 toast({ variant: "destructive", title: "Error", description: result.message });
             }
@@ -685,23 +800,38 @@ export default function RouteDetailsClient() {
         }
     };
 
-    const getCustomersForBulkMeter = (bulkMeterId: string) => {
-        const customers = allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bulkMeterId);
+    // Precompute bulk meter -> individual customers lookup map for instant O(1) rendering performance
+    const customersByBulkMeterMap = React.useMemo(() => {
+        const map = new Map<string, IndividualCustomer[]>();
+        for (const c of allCustomers) {
+            if (!c.assignedBulkMeterId) continue;
+            const existing = map.get(c.assignedBulkMeterId);
+            if (existing) {
+                existing.push(c);
+            } else {
+                map.set(c.assignedBulkMeterId, [c]);
+            }
+        }
+        return map;
+    }, [allCustomers]);
+
+    const getCustomersForBulkMeter = React.useCallback((bulkMeterId: string) => {
+        const list = customersByBulkMeterMap.get(bulkMeterId) || [];
         
         // Filter by meterStatusFilter if active
-        let filtered = customers;
+        let filtered = list;
         if (meterStatusFilter === 'unread') {
-            filtered = customers.filter(c => !isMeterRead(c.customerKeyNumber, 'individual'));
+            filtered = list.filter(c => !isMeterRead(c.customerKeyNumber, 'individual'));
         } else if (meterStatusFilter === 'read') {
-            filtered = customers.filter(c => isMeterRead(c.customerKeyNumber, 'individual'));
+            filtered = list.filter(c => isMeterRead(c.customerKeyNumber, 'individual'));
         }
 
-        return filtered.sort((a, b) => {
+        return [...filtered].sort((a, b) => {
             const aRead = isMeterRead(a.customerKeyNumber, 'individual') ? 1 : 0;
             const bRead = isMeterRead(b.customerKeyNumber, 'individual') ? 1 : 0;
             return aRead - bRead;
         });
-    };
+    }, [customersByBulkMeterMap, meterStatusFilter, isMeterRead]);
 
     const [isCachingOffline, setIsCachingOffline] = React.useState(false);
 
@@ -776,11 +906,22 @@ export default function RouteDetailsClient() {
         );
     }
 
-    if (!route) {
+    if (!route || !hasRouteAccess) {
         return (
-            <div className="p-12 text-center">
-                <p className="text-xl font-semibold">Route not found.</p>
-                <Button asChild variant="link" className="mt-4">
+            <div className="p-12 text-center max-w-md mx-auto space-y-4">
+                <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto border border-red-200">
+                    <Lock className="h-6 w-6" />
+                </div>
+                <div>
+                    <p className="text-xl font-bold text-slate-900">Access Restricted</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        {!route 
+                            ? "Route not found in the system." 
+                            : "You only have permission to access routes assigned to you within your branch."
+                        }
+                    </p>
+                </div>
+                <Button asChild variant="outline" className="border-slate-300">
                     <Link href="/staff/my-routes">Back to My Routes</Link>
                 </Button>
             </div>
@@ -788,7 +929,7 @@ export default function RouteDetailsClient() {
     }
 
     return (
-        <div className="p-6 space-y-6">
+        <div className={cn("p-6 space-y-6", sunlightMode && "bg-white text-black [&_*]:!border-black/20")}>
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-2">
@@ -825,6 +966,24 @@ export default function RouteDetailsClient() {
                             <p className="text-xs text-muted-foreground">{route.description || "Reading assignment"}</p>
                         </div>
                     </div>
+
+                    {/* Sunlight Mode toggle */}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={toggleSunlightMode}
+                        title={sunlightMode ? 'Disable sunlight mode' : 'Enable high-contrast sunlight mode for field reading'}
+                        className={cn(
+                            "font-bold text-xs shadow-sm h-9 flex items-center gap-1.5 transition-all",
+                            sunlightMode
+                                ? "bg-yellow-400 text-black border-yellow-500 hover:bg-yellow-500"
+                                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                        )}
+                    >
+                        <Sun className="h-3.5 w-3.5" />
+                        {sunlightMode ? 'Sunlight ON' : '☀️'}
+                    </Button>
 
                     <Button
                         type="button"
@@ -1106,11 +1265,11 @@ export default function RouteDetailsClient() {
                                                     </Badge>
                                                 )}
 
-                                                {/* Sub-customer read/unread count badge */}
+                                                {/* Fix 4: Sub-customer badge uses O(1) Map lookup instead of O(N) allCustomers.filter() */}
                                                 {(() => {
-                                                    const rawSubs = allCustomers.filter((c: IndividualCustomer) => c.assignedBulkMeterId === bm.customerKeyNumber);
+                                                    const rawSubs = customersByBulkMeterMap.get(bm.customerKeyNumber) || [];
                                                     if (rawSubs.length === 0) return null;
-                                                    const subReadCount = rawSubs.filter(c => isMeterRead(c.customerKeyNumber, 'individual')).length;
+                                                    const subReadCount = rawSubs.filter((c: IndividualCustomer) => isMeterRead(c.customerKeyNumber, 'individual')).length;
                                                     return (
                                                         <Badge variant="outline" className="text-[10px] font-bold bg-white text-slate-700 border-slate-300">
                                                             {subReadCount}/{rawSubs.length} Ind. Read
@@ -1248,6 +1407,7 @@ export default function RouteDetailsClient() {
                                 faultCodes={faultCodesForForm}
                                 isLoading={isSubmitting}
                                 initialLocation={userLocation}
+                                sunlightMode={sunlightMode}
                                 defaultValues={{
                                     meterType: selectedMeter.type === 'bulk' ? 'bulk_meter' : 'individual_customer_meter',
                                     entityId: selectedMeter.id,

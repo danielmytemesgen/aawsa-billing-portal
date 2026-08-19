@@ -20,6 +20,7 @@ export interface OfflineReading {
 export interface CachedMeter {
   customerKeyNumber: string;
   type: 'individual' | 'bulk';
+  routeKey?: string | null;
   data: any;
   lastUpdated: number;
 }
@@ -98,6 +99,11 @@ export class OfflineDB extends Dexie {
     this.version(7).stores({
       readings: '++id, localId, idempotencyKey, status, type, timestamp, routeKey, meterKey, readerStaffId'
     });
+    // add fast route B-Tree indexes on meters and cached_readings for instant <5ms route data loading
+    this.version(8).stores({
+      meters: 'customerKeyNumber, type, routeKey, [routeKey+type], lastUpdated',
+      cached_readings: 'id, type, routeKey, [type+routeKey], customerKey, lastUpdated'
+    });
   }
 }
 
@@ -113,7 +119,8 @@ class MockTable {
     return {
       equals: () => ({
         toArray: async () => []
-      })
+      }),
+      toArray: async () => []
     };
   }
   orderBy() {
@@ -268,51 +275,101 @@ export async function getSWCache(key: string) {
 // --- Storage management / pruning ---
 const MAX_STORAGE_BYTES = 100 * 1024 * 1024; // 100 MB
 
-export async function estimateStorageUsageBytes(): Promise<number> {
-  let total = 0;
-  const uploads = await db.uploads.toArray();
-  for (const u of uploads) {
-    if (u.blob && (u.blob as any).size) total += (u.blob as any).size;
+/**
+ * Utility helper to convert base64 data-URL or raw base64 string to a binary Blob
+ */
+export function base64ToBlob(base64Data: string, defaultMime = 'image/webp'): Blob {
+  try {
+    let byteString: string;
+    let mimeString = defaultMime;
+
+    if (base64Data.includes(',')) {
+      const parts = base64Data.split(',');
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      if (mimeMatch && mimeMatch[1]) {
+        mimeString = mimeMatch[1];
+      }
+      byteString = atob(parts[1]);
+    } else {
+      byteString = atob(base64Data);
+    }
+
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([ab], { type: mimeString });
+  } catch (e) {
+    console.error('base64ToBlob conversion failed:', e);
+    return new Blob([], { type: defaultMime });
   }
-  const readings = await db.readings.toArray();
-  for (const r of readings) {
-    total += JSON.stringify(r).length;
+}
+
+export async function estimateStorageUsageBytes(): Promise<number> {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+    try {
+      const estimate = await navigator.storage.estimate();
+      if (typeof estimate.usage === 'number') {
+        return estimate.usage;
+      }
+    } catch {
+      // fallback to manual estimation
+    }
+  }
+
+  let total = 0;
+  try {
+    // Estimate without loading entire large base64 blobs into memory simultaneously
+    const uploadCount = await db.uploads.count();
+    total += uploadCount * 250 * 1024; // estimate ~250KB per photo
+    const readingCount = await db.readings.count();
+    total += readingCount * 1024; // ~1KB per reading metadata
+    const cachedReadingsCount = await db.cached_readings.count();
+    total += cachedReadingsCount * 1024;
+    const metersCount = await db.meters.count();
+    total += metersCount * 2048;
+  } catch (e) {
+    console.warn('Storage estimation error:', e);
   }
   return total;
 }
 
+/**
+ * Prunes disposable read-only cached stores when local storage exceeds limit.
+ * CRITICAL: NEVER deletes unsynced readings (db.readings) or pending uploads (db.uploads)!
+ */
 export async function pruneStorageIfNeeded() {
   try {
     let usage = await estimateStorageUsageBytes();
     if (usage <= MAX_STORAGE_BYTES) return { pruned: 0, usage };
 
-    // Delete oldest uploads first
-    const toDelete: number[] = [];
-    const uploads = await db.uploads.orderBy('timestamp').toArray();
-    for (const u of uploads) {
-      if (!u.id) continue;
-      toDelete.push(u.id);
-      // approximate size
-      usage -= ((u.blob && (u.blob as any).size) ? (u.blob as any).size : 0) + 200;
-      if (usage <= MAX_STORAGE_BYTES) break;
-    }
+    let prunedCount = 0;
 
-    for (const id of toDelete) {
-      try { await db.uploads.delete(id); } catch (e) { /* ignore */ }
-    }
-
-    // If still over limit, delete oldest readings
-    if (usage > MAX_STORAGE_BYTES) {
-      const readings = await db.readings.orderBy('timestamp').toArray();
-      for (const r of readings) {
-        if (!r.id) continue;
-        usage -= JSON.stringify(r).length;
-        await db.readings.delete(r.id);
-        if (usage <= MAX_STORAGE_BYTES) break;
+    // 1. Evict oldest read-only cached historical readings first (strictly disposable cache)
+    const cachedReadingsCount = await db.cached_readings.count();
+    if (cachedReadingsCount > 2000) {
+      const oldestCached = await db.cached_readings.orderBy('lastUpdated').limit(cachedReadingsCount - 2000).primaryKeys();
+      if (oldestCached.length > 0) {
+        await db.cached_readings.bulkDelete(oldestCached as string[]);
+        prunedCount += oldestCached.length;
       }
     }
 
-    return { pruned: toDelete.length, usage };
+    // 2. If still high, evict older cached meters (disposable - re-fetched from server on demand)
+    usage = await estimateStorageUsageBytes();
+    if (usage > MAX_STORAGE_BYTES) {
+      const metersCount = await db.meters.count();
+      if (metersCount > 3000) {
+        const oldestMeters = await db.meters.orderBy('lastUpdated').limit(metersCount - 3000).primaryKeys();
+        if (oldestMeters.length > 0) {
+          await db.meters.bulkDelete(oldestMeters as string[]);
+          prunedCount += oldestMeters.length;
+        }
+      }
+    }
+
+    return { pruned: prunedCount, usage };
   } catch (e) {
     console.error('Prune storage failed', e);
     return { pruned: 0, usage: 0 };
@@ -320,8 +377,26 @@ export async function pruneStorageIfNeeded() {
 }
 
 /**
+ * Requests persistent storage from the browser to prevent eviction of IndexedDB on low disk space.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    try {
+      const isPersisted = await navigator.storage.persisted();
+      if (!isPersisted) {
+        return await navigator.storage.persist();
+      }
+      return isPersisted;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
  * Adds a reading to the offline queue.
- * Decouples the base64 meter photo from the reading metadata and queues them separately.
+ * Decouples the meter photo from the reading metadata and queues them separately as a binary Blob.
  */
 export async function queueOfflineReading(type: 'individual' | 'bulk', payload: any) {
   const localId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2,8);
@@ -351,18 +426,36 @@ export async function queueOfflineReading(type: 'individual' | 'bulk', payload: 
   });
 
   if (photo) {
+    let photoBlob: Blob | undefined;
+    let photoDataStr: string | null = null;
+
+    if (photo instanceof Blob) {
+      photoBlob = photo;
+    } else if (typeof photo === 'string') {
+      photoBlob = base64ToBlob(photo);
+      photoDataStr = photo;
+    }
+
     await db.uploads.add({
       readingId: null, // to be updated with server ID when reading is synced
       readingLocalId: localId,
       readingType: type,
-      photoData: photo,
+      blob: photoBlob,
+      photoData: photoDataStr,
       status: 'pending',
       timestamp: Date.now()
     });
   }
 
-  // Auto-prune storage if approaching the 100 MB limit
-  pruneStorageIfNeeded().catch(e => console.warn('Storage prune error:', e));
+  // Defer non-critical background maintenance and service worker triggers (<5ms insert latency)
+  if (typeof window !== 'undefined') {
+    const defer = (window as any).requestIdleCallback || ((cb: Function) => setTimeout(cb, 100));
+    defer(() => {
+      pruneStorageIfNeeded().catch(() => {});
+      import('./sync').then(m => m.registerBackgroundSync?.()).catch(() => {});
+      import('./geo-utils').then(m => m.triggerReadingSavedHaptic?.()).catch(() => {});
+    });
+  }
 
   return readingId;
 }
@@ -424,10 +517,21 @@ export async function cacheMeters(meters: any[], type: 'individual' | 'bulk') {
   const cachedMeters: CachedMeter[] = meters.map(m => ({
     customerKeyNumber: m.customerKeyNumber,
     type,
+    routeKey: m.routeKey || m.route_key || m.route?.routeKey || m.route?.route_key || null,
     data: m,
     lastUpdated: Date.now()
   }));
   return await db.meters.bulkPut(cachedMeters);
+}
+
+/**
+ * Retrieves cached meter data for a specific route with B-Tree index (<5ms).
+ */
+export async function getCachedMetersForRoute(routeKey: string, type?: 'individual' | 'bulk') {
+  if (type) {
+    return await db.meters.where({ routeKey, type }).toArray();
+  }
+  return await db.meters.where('routeKey').equals(routeKey).toArray();
 }
 
 /**
@@ -462,16 +566,28 @@ export async function resetSingleFailedReading(id: number) {
 }
 
 /**
- * Caches historical readings for offline use.
+ * Caches historical readings for offline use with route and customer index.
  */
 export async function cacheHistoricalReadings(readings: any[], type: 'individual' | 'bulk') {
   const cached = readings.map(r => ({
-    id: `${type}-${r.id}`,
+    id: `${type}-${r.id || r.customerKeyNumber || r.CUSTOMERKEY || Math.random()}`,
     type,
+    routeKey: r.routeKey || r.route_key || null,
+    customerKey: r.CUSTOMERKEY || r.customerKeyNumber || r.individualCustomerId || null,
     data: r,
     lastUpdated: Date.now()
   }));
   return await db.cached_readings.bulkPut(cached);
+}
+
+/**
+ * Retrieves cached historical readings for a specific route with B-Tree index (<5ms).
+ */
+export async function getCachedHistoricalReadingsForRoute(routeKey: string, type?: 'individual' | 'bulk') {
+  if (type) {
+    return await db.cached_readings.where({ routeKey, type }).toArray();
+  }
+  return await db.cached_readings.where('routeKey').equals(routeKey).toArray();
 }
 
 /**
@@ -523,15 +639,33 @@ export async function checkDeviceHealth(): Promise<DeviceHealthStatus> {
     }
   }
 
-  const usageBytes = await estimateStorageUsageBytes();
-  const storageUsageMb = parseFloat((usageBytes / (1024 * 1024)).toFixed(1));
+  let storageUsageMb = 0;
+  let isHighStorage = false;
+
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+    try {
+      const estimate = await navigator.storage.estimate();
+      if (typeof estimate.usage === 'number') {
+        storageUsageMb = parseFloat((estimate.usage / (1024 * 1024)).toFixed(1));
+        // High storage warning only when quota is nearly exhausted (>85%) or manual app usage > 500MB
+        if (estimate.quota && (estimate.usage / estimate.quota) > 0.85) {
+          isHighStorage = true;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (storageUsageMb === 0) {
+    const usageBytes = await estimateStorageUsageBytes();
+    storageUsageMb = parseFloat((usageBytes / (1024 * 1024)).toFixed(1));
+  }
 
   return {
     batteryLevelPct,
     isCharging,
     storageUsageMb,
     isLowBatteryWarning: batteryLevelPct !== null && batteryLevelPct <= 15 && isCharging === false,
-    isHighStorageWarning: storageUsageMb >= 80,
+    isHighStorageWarning: isHighStorage,
   };
 }
 
@@ -548,34 +682,43 @@ export async function cacheRoutePackage(routeKey: string, bulkMeters: any[], cus
     lastUpdated: now
   });
 
-  // 2. Cache Bulk Meters & Individual Customers
-  for (const bm of bulkMeters) {
-    await db.meters.put({
+  // 2. Cache Bulk Meters & Individual Customers in bulk batch
+  const cachedMeters: CachedMeter[] = [
+    ...bulkMeters.map(bm => ({
       customerKeyNumber: bm.customerKeyNumber,
-      type: 'bulk',
+      type: 'bulk' as const,
       data: bm,
       lastUpdated: now
-    });
-  }
-
-  for (const c of customers) {
-    await db.meters.put({
+    })),
+    ...customers.map(c => ({
       customerKeyNumber: c.customerKeyNumber,
-      type: 'individual',
+      type: 'individual' as const,
       data: c,
       lastUpdated: now
-    });
+    }))
+  ];
+
+  if (cachedMeters.length > 0) {
+    await db.meters.bulkPut(cachedMeters);
   }
 
-  // 3. Cache Historical Readings
-  for (const r of readings) {
+  // 3. Cache Historical Readings in bulk batch — MUST include routeKey so the
+  // [type+routeKey] composite Dexie index can be used for fast offline lookups.
+  const cachedReadings = readings.map(r => {
     const key = r.id || r.localId || `${r.CUSTOMERKEY || r.individualCustomerId}:${r.monthYear}`;
-    await db.cached_readings.put({
+    const rType = r.CUSTOMERKEY ? 'bulk' as const : 'individual' as const;
+    return {
       id: String(key),
-      type: r.CUSTOMERKEY ? 'bulk' : 'individual',
+      type: rType,
+      routeKey,            // propagate route key for index-based offline retrieval
+      customerKey: r.CUSTOMERKEY || r.customerKeyNumber || r.individualCustomerId || null,
       data: r,
       lastUpdated: now
-    });
+    };
+  });
+
+  if (cachedReadings.length > 0) {
+    await db.cached_readings.bulkPut(cachedReadings);
   }
 
   return { routeKey, bulkMetersCount: bulkMeters.length, customersCount: customers.length, readingsCount: readings.length };

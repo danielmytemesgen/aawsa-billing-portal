@@ -283,7 +283,23 @@ export default function StaffDashboardPage() {
         const isOfflineStatus = typeof window !== 'undefined' && !window.navigator.onLine;
         if (isOfflineStatus) {
           const cached = localStorage.getItem('cached_period_status');
-          setReadingPeriodStatus((cached as any) || 'Open');
+          const cachedStart = localStorage.getItem('cached_period_start_date');
+          const cachedEnd = localStorage.getItem('cached_period_end_date');
+          const now = new Date();
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          let offlineStatus: any = 'Closed';
+          if (cachedStart && cachedEnd) {
+            if (todayStr >= cachedStart && todayStr <= cachedEnd) {
+              offlineStatus = 'Open';
+            } else if (todayStr < cachedStart) {
+              offlineStatus = 'Ready for New Reading';
+            } else {
+              offlineStatus = 'Closed';
+            }
+          } else if (cached) {
+            offlineStatus = cached as any;
+          }
+          setReadingPeriodStatus(offlineStatus);
         } else {
           try {
             const details = await getReadingPeriodDetailsAction();
@@ -291,11 +307,13 @@ export default function StaffDashboardPage() {
               setPeriodDetails(details);
               setReadingPeriodStatus(details.status);
               localStorage.setItem('cached_period_status', details.status);
+              if (details.startDate) localStorage.setItem('cached_period_start_date', details.startDate);
+              if (details.endDate) localStorage.setItem('cached_period_end_date', details.endDate);
             }
           } catch (err) {
-            console.warn("Offline: failed to fetch reading period details, assuming Open", err);
+            console.warn("Offline: failed to fetch reading period details, calculating from cache", err);
             const cached = localStorage.getItem('cached_period_status');
-            setReadingPeriodStatus((cached as any) || 'Open');
+            setReadingPeriodStatus((cached as any) || 'Closed');
           }
         }
       };

@@ -1,9 +1,49 @@
-export const compressImage = (
+export const compressImageToBlob = async (
   file: File,
-  maxWidth: number = 1024,
-  maxHeight: number = 1024,
-  quality: number = 0.7
-): Promise<string> => {
+  maxWidth: number = 1280,
+  maxHeight: number = 1280,
+  quality: number = 0.75
+): Promise<{ blob: Blob; dataUrl: string }> => {
+  // Fast path: use modern createImageBitmap if supported for non-blocking bitmap decoding
+  if (typeof window !== 'undefined' && 'createImageBitmap' in window) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      let width = bitmap.width;
+      let height = bitmap.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        if ('close' in bitmap && typeof (bitmap as any).close === 'function') {
+          (bitmap as any).close();
+        }
+        const dataUrl = canvas.toDataURL("image/webp", quality);
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), "image/webp", quality);
+        });
+        return { blob, dataUrl };
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  // Fallback path
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -14,7 +54,6 @@ export const compressImage = (
         let width = img.width;
         let height = img.height;
 
-        // Calculate the new dimensions while keeping the aspect ratio
         if (width > height) {
           if (width > maxWidth) {
             height = Math.round((height * maxWidth) / width);
@@ -38,15 +77,29 @@ export const compressImage = (
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-
-        // Export as WebP for best compression, fallback to JPEG if unsupported (though modern browsers support WebP)
-        const compressedDataUrl = canvas.toDataURL("image/webp", quality);
-        resolve(compressedDataUrl);
+        const dataUrl = canvas.toDataURL("image/webp", quality);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve({ blob, dataUrl });
+          } else {
+            reject(new Error("Canvas toBlob failed"));
+          }
+        }, "image/webp", quality);
       };
       img.onerror = (error) => reject(error);
     };
     reader.onerror = (error) => reject(error);
   });
+};
+
+export const compressImage = async (
+  file: File,
+  maxWidth: number = 1280,
+  maxHeight: number = 1280,
+  quality: number = 0.75
+): Promise<string> => {
+  const result = await compressImageToBlob(file, maxWidth, maxHeight, quality);
+  return result.dataUrl;
 };
 
 export interface ImageExifMetadata {

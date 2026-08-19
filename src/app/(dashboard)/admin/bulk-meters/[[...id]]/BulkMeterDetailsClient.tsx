@@ -27,16 +27,18 @@ import type { IndividualCustomer, IndividualCustomerStatus } from "../../individ
 import type { Branch } from "../../branches/branch-types";
 import type { DomainBulkMeterReading, DomainBill } from "@/lib/data-store";
 import { type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult, calculateBillFromTariff } from "@/lib/billing-calculations";
-import { calculateBillAction, closeBillingCycleAction } from "@/lib/actions";
+import { calculateBillAction, closeBillingCycleAction, getMeterCreditAction } from "@/lib/actions";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "../bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "../../individual-customers/individual-customer-form-dialog";
 import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
 import { ManageAssignedCustomersDialog } from "@/components/billing/ManageAssignedCustomersDialog";
 import { EditReadingsRecalculateSection } from "@/components/billing/EditReadingsRecalculateSection";
+import { BulkMeterCreditCard, type BulkMeterCreditData } from "@/components/billing/BulkMeterCreditCard";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
 import { calculateDebtAging, getMonthlyBillAmt } from "@/lib/billing-utils";
+import { computeCreditForBill } from "@/lib/credit-utils";
 import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 
 // Safely format a date value that may be a string (ISO), a Date object, a timestamp, or null/undefined.
@@ -92,6 +94,11 @@ export default function BulkMeterDetailsPage() {
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
   const canManageCustomers = hasPermission(PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS);
+  const canViewCredit =
+    hasPermission(PERMISSIONS.CREDIT_VIEW_ALL) ||
+    hasPermission(PERMISSIONS.CREDIT_VIEW_BRANCH);
+  const canAddCredit = hasPermission(PERMISSIONS.CREDIT_CREATE);
+  const canVoidCredit = hasPermission(PERMISSIONS.CREDIT_VOID);
   const canEditReadings =
     hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
     hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
@@ -142,6 +149,21 @@ export default function BulkMeterDetailsPage() {
 
   // Tariff version counter — increments when tariffs change so memoized details re-calculate
   const [tariffVersion, setTariffVersion] = React.useState(0);
+
+  // Credit / deposit state (balance + ledger) for the credit card and payslip lines
+  const [creditData, setCreditData] = React.useState<BulkMeterCreditData | null>(null);
+  const refreshCreditData = React.useCallback(async () => {
+    if (!bulkMeterKey) return;
+    try {
+      const res = await getMeterCreditAction(bulkMeterKey);
+      if (res.data) setCreditData(res.data);
+    } catch (e) {
+      console.error("Failed to load credit data:", e);
+    }
+  }, [bulkMeterKey]);
+  React.useEffect(() => {
+    refreshCreditData();
+  }, [refreshCreditData]);
 
   const paginatedReadingHistory = meterReadingHistory.slice(
     readingHistoryPage * readingHistoryRowsPerPage,
@@ -510,9 +532,30 @@ export default function BulkMeterDetailsPage() {
     let d60_bucket = 0;
     let billIndexCounter = 0;
 
+    // Credit-note replay state — mirrors the server engine (dbSyncAgingForCustomer in
+    // src/lib/db-queries.ts): overpayments become a deposit that discounts future bills.
+    // The meter's stored creditBalance + its ledger rows make the replay idempotent, so
+    // this client-side copy agrees with what the DB wrote.
+    const creditEnabled = true; // bulk-meter details page; bulk meters have credit support
+    const creditLedger = creditData?.ledger ?? [];
+    const voidedCreditIds = new Set(
+      creditLedger.filter((e) => e.event_type === 'voided' && e.voided_ledger_id).map((e) => e.voided_ledger_id as string)
+    );
+    const createdByBill = new Map<string, { id: string; amount: number }>();
+    const appliedByBill = new Map<string, { id: string; amount: number }>();
+    for (const e of creditLedger) {
+      if (e.event_type === 'created' && e.source_bill_id && !voidedCreditIds.has(e.id)) {
+        createdByBill.set(String(e.source_bill_id), { id: e.id, amount: e.amount });
+      }
+      if (e.event_type === 'applied' && e.source_bill_id && !voidedCreditIds.has(e.id)) {
+        appliedByBill.set(String(e.source_bill_id), { id: e.id, amount: e.amount });
+      }
+    }
+    let creditBalance = creditData?.creditBalance ?? Number(bulkMeter?.creditBalance ?? 0);
+
     for (const bill of historyOldestFirst) {
-      // SKIP or VOID records that are marked as Deleted or Void
-      const isVoided = bill.status === 'Deleted' || bill.status === 'Void';
+      // SKIP or VOID records that are marked as Deleted or Void (matches the server, which also treats Reversed as voided)
+      const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed';
 
       const threshold = activeTariff.penalty_month_threshold ?? 3;
       const bankRate = Number(activeTariff.bank_lending_rate ?? 0.15);
@@ -555,17 +598,6 @@ export default function BulkMeterDetailsPage() {
       const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
       const totalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
 
-      // Save results
-      results.set(bill.id, {
-        d30: d30_bucket,
-        d30_60: d30_60_bucket,
-        d60: totalD60AndLegacy,
-        penalty,
-        outstanding: derivedOutstanding,
-        currentMonthly: currentMonthlyCharge,
-        totalPayable
-      });
-
       // 5. Update Carried Forward for nextrow
       // If voided, we assume no payment was possible/recorded against THIS specific record
       const amtPaid = isVoided ? 0 : Number(bill.amountPaid || 0);
@@ -573,10 +605,45 @@ export default function BulkMeterDetailsPage() {
       // The business rule: previous Penalty must be carried forward and included in the arrears,
       // which will naturally cascade down into Debit_60 as legacy debt since it doesn't fit the newer buckets.
       const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
-      carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
 
-      // 6. Update Aging Buckets for next cycle
-      let remainingPayment = amtPaid;
+      // Credit-aware carry-forward — identical math to the server's dbSyncAgingForCustomer:
+      // the deposit (created rows) covers unpaid debt (applied rows) before any balance carries.
+      let creditApplied = 0;
+      if (creditEnabled) {
+        const existingCreated = createdByBill.get(String(bill.id)) ?? null;
+        const existingApplied = appliedByBill.get(String(bill.id)) ?? null;
+        const creditResult = computeCreditForBill({
+          debtForNextMonth,
+          amtPaid,
+          creditBalance,
+          existingCreated,
+          existingApplied,
+        });
+        creditBalance = creditResult.newCreditBalance;
+        creditApplied = creditResult.creditApplied;
+        carriedForwardUnpaid = creditResult.carriedForwardUnpaid;
+      } else {
+        // Legacy clamp (non-bulk customers — no credit support yet)
+        carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
+      }
+
+      // Save results (paymentStatus mirrors the engine's per-bill write-back)
+      const billUnpaid = Math.max(0, totalPayable - amtPaid - creditApplied);
+      results.set(bill.id, {
+        d30: d30_bucket,
+        d30_60: d30_60_bucket,
+        d60: totalD60AndLegacy,
+        penalty,
+        outstanding: derivedOutstanding,
+        currentMonthly: currentMonthlyCharge,
+        totalPayable,
+        creditApplied,
+        paymentStatus: billUnpaid <= 0.01 ? 'Paid' : 'Unpaid',
+      });
+
+      // 6. Update Aging Buckets for next cycle (credit counts as a payment source,
+      //     so a credit-paid bill never carries phantom debt into the next cycle)
+      let remainingPayment = amtPaid + creditApplied;
 
       const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
       const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
@@ -610,7 +677,7 @@ export default function BulkMeterDetailsPage() {
     }
 
     return results;
-  }, [billingHistory, activeTariff]);
+  }, [billingHistory, activeTariff, creditData, bulkMeter]);
 
   const {
     bmPreviousReading,
@@ -850,6 +917,18 @@ export default function BulkMeterDetailsPage() {
     }
   };
 
+  // Source Bill click in the Credit / Deposit ledger → open that bill's payslip directly.
+  const handleOpenBillFromLedger = (billId: string) => {
+    const bill = billingHistory.find((b) => b.id === billId);
+    if (!bill) {
+      toast({ variant: "destructive", title: "Bill Not Found", description: "This bill may have been deleted or is no longer in the current history." });
+      return;
+    }
+    if (prepareSlipData(bill)) {
+      setShowSlip(true);
+    }
+  };
+
   const handlePrintSlip = (bill?: DomainBill | null) => {
     if (prepareSlipData(bill)) {
       setShowSlip(true);
@@ -916,6 +995,19 @@ export default function BulkMeterDetailsPage() {
   if (!bulkMeter && !isLoading) return <div className="p-4 text-center">Bulk meter not found or an error occurred.</div>;
   // Narrow bulkMeter for JSX usage
   const currentBulkMeter = bulkMeter!;
+
+  // Credit values used by the payslip: how much of THIS bill was paid by deposit,
+  // and the deposit remaining after it (from the ledger's balance_after).
+  const creditLedgerRows = creditData?.ledger ?? [];
+  const voidedCreditIds = new Set(
+    creditLedgerRows.filter((e) => e.event_type === 'voided' && e.voided_ledger_id).map((e) => e.voided_ledger_id as string)
+  );
+  const appliedCreditEntry = creditLedgerRows.find(
+    (e) => e.event_type === 'applied' && e.source_bill_id === billForPrintView?.id && !voidedCreditIds.has(e.id)
+  );
+  const creditAppliedForBill = appliedCreditEntry ? appliedCreditEntry.amount : 0;
+  const remainingDepositAfterBill = appliedCreditEntry ? appliedCreditEntry.balance_after : (creditData?.creditBalance ?? 0);
+  const meterCreditBalance = creditData?.creditBalance ?? Number(currentBulkMeter.creditBalance ?? 0);
 
   return (
     <div className={cn("space-y-6", showSlip ? "p-0 bg-slate-100/30 flex flex-col items-start" : "p-4")}>
@@ -1015,9 +1107,21 @@ export default function BulkMeterDetailsPage() {
                       <tr className="print-table-total"><td>Current Bill (ETB)</td><td>ETB {(billForPrintView ? Number(billForPrintView.THISMONTHBILLAMT ?? billForPrintView.TOTALBILLAMOUNT ?? 0) : billCardDetails.totalDifferenceBill).toFixed(2)}</td></tr>
                       <tr><td>Penalty (ETB):</td><td>ETB {(billForPrintView ? Number(billForPrintView.PENALTYAMT || 0) : billCardDetails.penaltyAmt).toFixed(2)}</td></tr>
                       <tr><td>Outstanding (ETB):</td><td>ETB {(billForPrintView ? Number(billForPrintView.OUTSTANDINGAMT || 0) : billCardDetails.outstandingBill).toFixed(2)}</td></tr>
+                      {creditAppliedForBill > 0.005 && (
+                        <tr>
+                          <td>Credit Applied (Deposit):</td>
+                          <td>−ETB {creditAppliedForBill.toFixed(2)}</td>
+                        </tr>
+                      )}
+                      {creditAppliedForBill > 0.005 && remainingDepositAfterBill > 0.005 && (
+                        <tr>
+                          <td>Remaining Deposit:</td>
+                          <td>ETB {remainingDepositAfterBill.toFixed(2)}</td>
+                        </tr>
+                      )}
                       <tr className="print-table-total" style={{ fontSize: '10pt' }}>
                         <td>Total Amount Payable:</td>
-                        <td>ETB {(billForPrintView ? Number(billForPrintView.TOTALBILLAMOUNT || 0) : billCardDetails.totalPayable).toFixed(2)}</td>
+                        <td>ETB {Math.max(0, (billForPrintView ? Number(billForPrintView.TOTALBILLAMOUNT || 0) : billCardDetails.totalPayable) - creditAppliedForBill).toFixed(2)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -1267,6 +1371,37 @@ export default function BulkMeterDetailsPage() {
               </CardContent>
             </Card>
           </div>
+
+          {canViewCredit && (
+              <BulkMeterCreditCard
+                bulkMeterKey={currentBulkMeter.customerKeyNumber}
+                initialBalance={meterCreditBalance}
+                canManage={canManageCustomers}
+                canAdd={canAddCredit}
+                canVoid={canVoidCredit}
+                bills={billingHistory.map((b) => ({
+                  id: b.id,
+                  billKey: b.BILLKEY || "",
+                  monthYear: b.monthYear,
+                  total: Number(b.TOTALBILLAMOUNT || 0),
+                }))}
+                overpaidBills={billingHistory
+                  .filter((b) => {
+                    const paid = Number(b.amountPaid ?? 0);
+                    const total = Number(b.TOTALBILLAMOUNT || 0);
+                    return paid > total;
+                  })
+                  .sort((a, b) => (a.monthYear < b.monthYear ? 1 : a.monthYear > b.monthYear ? -1 : 0))
+                  .map((b) => ({
+                    id: b.id,
+                    billKey: b.BILLKEY || "",
+                    monthYear: b.monthYear,
+                    total: Number(b.TOTALBILLAMOUNT || 0),
+                    amountPaid: Number(b.amountPaid ?? 0),
+                  }))}
+                onViewBill={handleOpenBillFromLedger}
+              />
+            )}
 
           <Card className="shadow-lg non-printable">
             <CardHeader>

@@ -101,7 +101,19 @@ export default function ReaderSupervisorMonitoringPage() {
 
       // ── Real-time updates & listener ───────────────────────────────────────
       const handleDataRefreshed = () => {
-        loadData();
+        const currentOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+        if (currentOnline) {
+          Promise.all([
+            initializeBulkMeterReadings(true),
+            initializeIndividualCustomerReadings(true)
+          ]).then(() => {
+            setBulkReadings(getBulkMeterReadings());
+            setIndReadings(getIndividualCustomerReadings());
+          }).catch(() => {});
+        } else {
+          setBulkReadings(getBulkMeterReadings());
+          setIndReadings(getIndividualCustomerReadings());
+        }
         setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       };
       window.addEventListener('data-refreshed', handleDataRefreshed);

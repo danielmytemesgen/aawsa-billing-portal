@@ -10,6 +10,47 @@ const staffRoutes = ['/staff'];
 const hasAny = (permissions: string[], ...perms: string[]) =>
   perms.some(p => permissions.includes(p));
 
+// Kicked-out staff sessions: the Edge runtime can't import pg, so we ask the
+// internal /api/session/revocation-status endpoint (which short-circuits in
+// middleware and runs on Node). Results are cached 60s to avoid a fetch per
+// request; revoked sessions are never cached so the next request logs them out.
+const REVOKE_CACHE_TTL_MS = 60_000;
+const revocationCache = new Map<string, number>();
+
+async function isSessionRevoked(session: any, request: NextRequest): Promise<boolean> {
+  const sessionId = session?.sessionId;
+  if (!sessionId) return false;
+  const now = Date.now();
+  const lastChecked = revocationCache.get(sessionId);
+  if (lastChecked !== undefined && now - lastChecked < REVOKE_CACHE_TTL_MS) {
+    return false;
+  }
+  try {
+    const res = await fetch(
+      `${request.nextUrl.origin}/api/session/revocation-status?sessionId=${encodeURIComponent(sessionId)}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          // Shared secret: the status endpoint rejects requests without it.
+          // Mirrors env.ts's dev default so dev and prod stay consistent.
+          'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
+        },
+      }
+    );
+    if (!res.ok) return false; // fail-open
+    const data = await res.json();
+    if (data.revoked) {
+      revocationCache.delete(sessionId);
+      return true;
+    }
+    revocationCache.set(sessionId, now);
+    return false;
+  } catch (e) {
+    console.warn('Revocation check failed (fail-open):', e);
+    return false;
+  }
+}
+
 function setSecurityHeaders(res: NextResponse) {
   const isDev = process.env.NODE_ENV !== 'production';
   const csp = [
@@ -79,6 +120,23 @@ export async function middleware(request: NextRequest) {
   // Protected route: require valid session
   if (!session) {
     const redirect = NextResponse.redirect(new URL('/', request.url));
+    return setSecurityHeaders(redirect);
+  }
+
+  // Kick-out enforcement: a staff session whose row was revoked gets logged
+  // out immediately (clear the cookie so the JWT dies in this browser too) and
+  // lands on the login page with ?kicked=1 so the user sees an explanation.
+  // The short-lived kicked_notice cookie is a second, reload-proof channel: the
+  // login page shows the banner if EITHER the query flag or the cookie is set.
+  if (session.sessionId && await isSessionRevoked(session, request)) {
+    const redirect = NextResponse.redirect(new URL('/?kicked=1', request.url));
+    redirect.cookies.delete('session');
+    redirect.cookies.set('kicked_notice', '1', {
+      path: '/',
+      maxAge: 300, // 5 min — long enough to survive the redirect + any reload
+      httpOnly: false, // the login page reads it to show the notice
+      sameSite: 'lax',
+    });
     return setSecurityHeaders(redirect);
   }
 

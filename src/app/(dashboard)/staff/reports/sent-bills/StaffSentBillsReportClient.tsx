@@ -218,9 +218,9 @@ export default function StaffSentBillsReportClient() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 rounded-3xl bg-gradient-to-b from-slate-100/70 via-slate-50/40 to-white">
       <Card className="shadow-lg">
-        <CardHeader>
+        <CardHeader className="bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-slate-50/40">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <Send className="h-8 w-8 text-primary" />

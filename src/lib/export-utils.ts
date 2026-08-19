@@ -56,6 +56,24 @@ export const getCustomerKeyDisplay = (bill: any): string => {
   return bill.individualCustomerId || bill.individual_customer_id || bill.CUSTOMERKEY || bill.customerKey || "N/A";
 };
 
+export const getCustomerPhone = (
+  bill: any,
+  customers: IndividualCustomer[] = [],
+  bulkMeters: BulkMeter[] = []
+): string => {
+  const custId = bill.individualCustomerId || bill.individual_customer_id;
+  if (custId) {
+    const customer = customers.find(c => c.customerKeyNumber === custId);
+    return customer?.phoneNumber || (bill as any).PHONE || (bill as any).phone || "-";
+  }
+  const meterKey = bill.CUSTOMERKEY || bill.customerKey;
+  if (meterKey) {
+    const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === meterKey);
+    return bulkMeter?.phoneNumber || (bill as any).PHONE || (bill as any).phone || "-";
+  }
+  return "-";
+};
+
 export const getBranchNameDisplay = (
   bill: any,
   customers: IndividualCustomer[] = [],
@@ -102,6 +120,7 @@ export const exportSentBillsToCsv = (
     "Bill Key",
     "Customer/Meter Name",
     "Customer Key",
+    "Phone",
     "Branch",
     "Month",
     "Prev Reading",
@@ -123,6 +142,7 @@ export const exportSentBillsToCsv = (
     const billKey = getBillKey(bill);
     const custName = getCustomerIdentifier(bill, customers, bulkMeters);
     const custKey = getCustomerKeyDisplay(bill);
+    const phone = getCustomerPhone(bill, customers, bulkMeters);
     const branchName = getBranchNameDisplay(bill, customers, bulkMeters, branches);
     const monthValue = bill.monthYear || (bill as any).month_year || '-';
 
@@ -147,6 +167,7 @@ export const exportSentBillsToCsv = (
       "Bill Key": billKey,
       "Customer/Meter Name": custName,
       "Customer Key": custKey,
+      "Phone": phone,
       "Branch": branchName,
       "Month": monthValue,
       "Prev Reading": prevRead !== undefined ? prevRead : '',
@@ -181,6 +202,7 @@ export const exportSentBillsToXlsx = (
     "Bill Key",
     "Customer/Meter Name",
     "Customer Key",
+    "Phone",
     "Branch",
     "Month",
     "Prev Reading",
@@ -202,6 +224,7 @@ export const exportSentBillsToXlsx = (
     const billKey = getBillKey(bill);
     const custName = getCustomerIdentifier(bill, customers, bulkMeters);
     const custKey = getCustomerKeyDisplay(bill);
+    const phone = getCustomerPhone(bill, customers, bulkMeters);
     const branchName = getBranchNameDisplay(bill, customers, bulkMeters, branches);
     const monthValue = bill.monthYear || (bill as any).month_year || '-';
 
@@ -226,6 +249,7 @@ export const exportSentBillsToXlsx = (
       "Bill Key": billKey,
       "Customer/Meter Name": custName,
       "Customer Key": custKey,
+      "Phone": phone,
       "Branch": branchName,
       "Month": monthValue,
       "Prev Reading": prevRead !== undefined ? prevRead : '',

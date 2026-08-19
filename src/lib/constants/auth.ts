@@ -154,6 +154,12 @@ export const PERMISSIONS = {
     PAYMENTS_VIEW: 'payments_view',
     PAYMENTS_CREATE: 'payments_create',
     PAYMENTS_DELETE: 'payments_delete',
+
+    // Credit & Deposit
+    CREDIT_VIEW_ALL: 'credit_view_all',
+    CREDIT_VIEW_BRANCH: 'credit_view_branch',
+    CREDIT_CREATE: 'credit_create',
+    CREDIT_VOID: 'credit_void',
 } as const;
 
 export const BRANCHES = {

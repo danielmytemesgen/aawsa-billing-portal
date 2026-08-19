@@ -15,6 +15,7 @@ export type BulkMeter = z.infer<typeof baseBulkMeterDataSchema> & {
   paymentStatus: PaymentStatus;
   instKey?: string | null;
   outStandingbill: number;
+  creditBalance?: number; // Overpayment deposit (credit note) in ETB — see docs/CREDIT_NOTE_PLAN.md
   branchId?: string; // New field for branch association
   bulkUsage?: number;
   totalBulkBill?: number;
@@ -28,9 +29,11 @@ export type BulkMeter = z.infer<typeof baseBulkMeterDataSchema> & {
   approved_by?: string | null;
   approved_at?: string | null;
   woreda: string;
-  location: string;
+  location?: string;
   routeKey?: string | null;
   ordinal?: number | null;
+  assignedReaderId?: string | null;
+  readerStaffId?: string | null;
 };
 
 export interface Route {

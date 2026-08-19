@@ -36,10 +36,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { getCurrentPosition, checkProximity, getGpsSignalInfo, triggerProximityHaptic, sortMetersByDistance, type Coordinates } from "@/lib/geo-utils";
+import { getCurrentPosition, checkProximity, getGpsSignalInfo, isGpsAccuracyAcceptable, triggerProximityHaptic, sortMetersByDistance, type Coordinates } from "@/lib/geo-utils";
 import { checkDeviceHealth, type DeviceHealthStatus } from "@/lib/offline-db";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload, AlertCircle, Search, Compass, BatteryCharging, HardDrive } from "lucide-react";
+import { MapPin, Info, CheckCircle2, XCircle, Lock, Unlock, Loader2, Camera, Upload, AlertCircle, Search, Compass, BatteryCharging, HardDrive, Sun, TriangleAlert } from "lucide-react";
 import type { FaultCodeRow } from "@/lib/action-types";
 import { Badge } from "@/components/ui/badge";
 import { upsertSpatialRecord } from "@/lib/data-store";
@@ -77,9 +77,10 @@ interface AddMeterReadingFormProps {
   isLoading?: boolean;
   defaultValues?: Partial<AddMeterReadingFormValues>;
   initialLocation?: Coordinates | null;
+  sunlightMode?: boolean;
 }
 
-function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
+function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation, sunlightMode }: AddMeterReadingFormProps) {
   const [userLocation, setUserLocation] = React.useState<Coordinates | null>(initialLocation || null);
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
@@ -92,6 +93,32 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const [photoExif, setPhotoExif] = React.useState<ImageExifMetadata | null>(null);
   const [sortByNearest, setSortByNearest] = React.useState(true);
   const [deviceHealth, setDeviceHealth] = React.useState<DeviceHealthStatus | null>(null);
+
+  // Fix 8: Stable location — only triggers meter list re-sort when the device moves
+  // more than 5m or accuracy improves by more than 10m. Prevents the full distance
+  // sort from running on every GPS tick (which fires every 1-3 seconds).
+  const [stableLocation, setStableLocation] = React.useState<Coordinates | null>(initialLocation || null);
+  const stableLocationRef = React.useRef<Coordinates | null>(initialLocation || null);
+
+  const updateStableLocation = React.useCallback((newCoords: Coordinates | null) => {
+    if (!newCoords) return;
+    const prev = stableLocationRef.current;
+    if (!prev) {
+      stableLocationRef.current = newCoords;
+      setStableLocation(newCoords);
+      return;
+    }
+    // Only update if device moved >5m or accuracy improved >10m
+    const dist = Math.sqrt(
+      Math.pow((newCoords.latitude - prev.latitude) * 111000, 2) +
+      Math.pow((newCoords.longitude - prev.longitude) * 111000, 2)
+    );
+    const accImproved = (prev.accuracy ?? Infinity) - (newCoords.accuracy ?? Infinity) > 10;
+    if (dist > 5 || accImproved) {
+      stableLocationRef.current = newCoords;
+      setStableLocation(newCoords);
+    }
+  }, []);
   const [isBypassed, setIsBypassed] = React.useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('meter_reading_location_bypassed') === 'true';
@@ -122,43 +149,54 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       });
       setUserLocation(pos);
       setLiveAccuracy(pos.accuracy ?? null);
+      updateStableLocation(pos);
     } catch (err: any) {
       setLocationError(err.message || "Could not acquire location.");
     } finally {
       setIsAcquiringLocation(false);
     }
-  }, []);
+  }, [updateStableLocation]);
 
   // Check device health (battery & storage usage) on mount
   React.useEffect(() => {
     checkDeviceHealth().then(status => setDeviceHealth(status)).catch(() => {});
   }, []);
 
-  // Auto-refresh GPS every 60 seconds while the form is mounted to keep location fresh
-  React.useEffect(() => {
-    const intervalId = setInterval(() => {
-      if (!isAcquiringLocation) acquireLocation();
-    }, 60_000);
-    return () => clearInterval(intervalId);
-  }, [acquireLocation, isAcquiringLocation]);
-
+  // Initial location setup with instant cached-location seed
   React.useEffect(() => {
     if (initialLocation) {
       setUserLocation(initialLocation);
+      updateStableLocation(initialLocation);
     } else {
+      // Instant cache seed (<1ms) so proximity check is calculated immediately
+      try {
+        const raw = localStorage.getItem('last_user_location');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.coords && (Date.now() - (parsed.t || 0)) < 24 * 60 * 60 * 1000) {
+            setUserLocation(parsed.coords);
+            updateStableLocation(parsed.coords);
+          }
+        }
+      } catch { /* ignore */ }
+
       acquireLocation();
     }
-  }, [acquireLocation, initialLocation]);
+  }, [acquireLocation, initialLocation, updateStableLocation]);
+
+  // O(1) lookup maps for instant validation and data display
+  const customersMap = React.useMemo(() => new Map(customers.map(c => [c.customerKeyNumber, c])), [customers]);
+  const bulkMetersMap = React.useMemo(() => new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm])), [bulkMeters]);
 
   const formSchema = React.useMemo(() => {
     return formSchemaBase.refine(
       (data) => {
         let lastReading = -1;
         if (data.meterType === 'individual_customer_meter') {
-          const customer = customers.find(c => c.customerKeyNumber === data.entityId);
+          const customer = customersMap.get(data.entityId);
           if (customer) lastReading = customer.currentReading;
         } else if (data.meterType === 'bulk_meter') {
-          const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === data.entityId);
+          const bulkMeter = bulkMetersMap.get(data.entityId);
           if (bulkMeter) lastReading = bulkMeter.currentReading;
         }
         if (lastReading === -1) return true;
@@ -167,9 +205,9 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       (data) => {
         let lastReading = 0;
         if (data.meterType === 'individual_customer_meter') {
-          lastReading = customers.find(c => c.customerKeyNumber === data.entityId)?.currentReading ?? 0;
+          lastReading = customersMap.get(data.entityId)?.currentReading ?? 0;
         } else {
-          lastReading = bulkMeters.find(bm => bm.customerKeyNumber === data.entityId)?.currentReading ?? 0;
+          lastReading = bulkMetersMap.get(data.entityId)?.currentReading ?? 0;
         }
         return {
           message: `Reading cannot be lower than the last reading (${lastReading.toFixed(2)}).`,
@@ -177,7 +215,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
         };
       }
     );
-  }, [customers, bulkMeters]);
+  }, [customersMap, bulkMetersMap]);
 
   const { hasPermission } = usePermissions();
 
@@ -214,7 +252,8 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const selectedEntityId = form.watch("entityId");
   const selectedFaultCode = form.watch("faultCode");
   const currentReadingValue = form.watch("reading");
-  const [anomalyWarning, setAnomalyWarning] = React.useState<string | null>(null);
+  const [anomalyWarning, setAnomalyWarning] = React.useState<{ type: 'zero' | 'surge'; message: string } | null>(null);
+  const [anomalyConfirmed, setAnomalyConfirmed] = React.useState(false);
 
   const hasCurrentTypePermission = selectedMeterType === 'bulk_meter' ? canCreateBulk : canCreateIndividual;
 
@@ -232,29 +271,49 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   const previousReading = React.useMemo(() => {
     if (!selectedEntityId) return null;
     if (selectedMeterType === 'individual_customer_meter') {
-      return customers.find(c => c.customerKeyNumber === selectedEntityId)?.currentReading ?? null;
+      return customersMap.get(selectedEntityId)?.currentReading ?? null;
     }
-    return bulkMeters.find(bm => bm.customerKeyNumber === selectedEntityId)?.currentReading ?? null;
-  }, [selectedEntityId, selectedMeterType, customers, bulkMeters]);
+    return bulkMetersMap.get(selectedEntityId)?.currentReading ?? null;
+  }, [selectedEntityId, selectedMeterType, customersMap, bulkMetersMap]);
 
   const consumption = React.useMemo(() => {
     if (previousReading === null || currentReadingValue === undefined || currentReadingValue === null) return null;
     return currentReadingValue - previousReading;
   }, [currentReadingValue, previousReading]);
 
-  // Adaptive anomaly threshold: bulk meters get a higher threshold
+  // Adaptive anomaly threshold: bulk meters get a higher threshold (500 m³), individual = 100 m³ or 3× previous
   const anomalyThreshold = selectedMeterType === 'bulk_meter' ? 500 : 100;
 
   React.useEffect(() => {
     if (!selectedEntityId || currentReadingValue === undefined || currentReadingValue === null) {
       setAnomalyWarning(null);
+      setAnomalyConfirmed(false);
       return;
     }
+    const noFault = !selectedFaultCode || selectedFaultCode === 'none';
     const usage = (currentReadingValue ?? 0) - (previousReading ?? 0);
-    if (usage > anomalyThreshold && (!selectedFaultCode || selectedFaultCode === 'none')) {
-      setAnomalyWarning(`Exceptionally high usage (${usage.toFixed(1)} m³). Please double-check the meter dial.`);
+    const prevVal = previousReading ?? 0;
+    // Surge: consumption > threshold OR > 3× previous (whichever is smaller concern threshold)
+    const isSurge = usage > anomalyThreshold || (prevVal > 0 && usage > prevVal * 3);
+    // Zero: consumption exactly 0 and no fault code (possible skipped/stopped meter)
+    const isZero = usage === 0 && noFault && prevVal > 0;
+
+    if (isSurge && noFault) {
+      const pct = prevVal > 0 ? `+${Math.round((usage / prevVal) * 100)}%` : '';
+      setAnomalyWarning({
+        type: 'surge',
+        message: `High Consumption Detected: ${usage.toFixed(1)} m³ ${pct ? `(${pct} surge)` : ''}. Please re-verify the physical meter dials before saving.`
+      });
+      setAnomalyConfirmed(false);
+    } else if (isZero) {
+      setAnomalyWarning({
+        type: 'zero',
+        message: `Zero Consumption recorded. Is this meter stopped, bypassed, or should a fault code be applied?`
+      });
+      setAnomalyConfirmed(false);
     } else {
       setAnomalyWarning(null);
+      setAnomalyConfirmed(false);
     }
   }, [currentReadingValue, selectedEntityId, previousReading, selectedFaultCode, anomalyThreshold]);
 
@@ -392,11 +451,13 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       }));
     }
 
-    if (sortByNearest && userLocation) {
-      return sortMetersByDistance(list, userLocation);
+    // Fix 8: Use stableLocation (debounced GPS) instead of live userLocation to
+    // avoid re-sorting the full meter list on every GPS tick.
+    if (sortByNearest && stableLocation) {
+      return sortMetersByDistance(list, stableLocation);
     }
     return list;
-  }, [selectedMeterType, customers, bulkMeters, sortByNearest, userLocation]);
+  }, [selectedMeterType, customers, bulkMeters, sortByNearest, stableLocation]);
 
   const filteredMeters = React.useMemo(() => {
     const q = meterSearch.trim().toLowerCase();
@@ -411,6 +472,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
 
   function handleSubmit(values: AddMeterReadingFormValues) {
     if (!proximityStatus?.isWithinRange) return;
+    if (anomalyWarning && !anomalyConfirmed) return;
     const finalValues = {
       ...values,
       capturedCoordinates: userLocation ? {
@@ -449,9 +511,15 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     photoMissing ||
     !hasCurrentTypePermission;
 
+  // GPS drift warning: show when GPS accuracy is poor (>30m)
+  const gpsDriftWarning = liveAccuracy !== null && !isGpsAccuracyAcceptable(liveAccuracy);
+
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5">
+      <form onSubmit={form.handleSubmit(handleSubmit)} className={cn(
+        "space-y-5",
+        sunlightMode && "sunlight-mode"
+      )}>
 
         {/* ── Meter Type Tabs ── */}
         <Tabs
@@ -693,39 +761,38 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
               </Button>
             </div>
           ) : isAcquiringLocation ? (
-            <div className="bg-slate-50 border rounded-xl p-4 space-y-3">
+            <div className="bg-slate-50 border rounded-xl p-3.5 space-y-2.5">
               <div className="flex items-center gap-3">
                 <Loader2 className="h-5 w-5 animate-spin text-blue-500 shrink-0" />
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-slate-700">
-                    {liveAccuracy !== null ? 'Improving GPS accuracy…' : 'Acquiring GPS signal…'}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-slate-800">
+                    {liveAccuracy !== null ? 'Locking in GPS accuracy…' : 'Acquiring GPS signal…'}
                   </p>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-slate-500 truncate">
                     {liveAccuracy !== null
-                      ? `Current accuracy: ±${Math.round(liveAccuracy)} m — ${getGpsSignalInfo(liveAccuracy).label}`
-                      : 'Waiting for satellite lock…'}
+                      ? `Accuracy: ±${Math.round(liveAccuracy)}m — ${getGpsSignalInfo(liveAccuracy).label}`
+                      : 'Connecting to satellites (<3s)…'}
                   </p>
                 </div>
-                {liveAccuracy !== null && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    getGpsSignalInfo(liveAccuracy).color
-                  } border border-current bg-white`}>
-                    {getGpsSignalInfo(liveAccuracy).label}
-                  </span>
-                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBypassLocation}
+                  className="h-7 px-2.5 text-[10px] font-bold bg-white text-amber-700 border-amber-300 hover:bg-amber-50 shadow-sm shrink-0"
+                >
+                  <Unlock className="h-3 w-3 mr-1" /> Fast Bypass
+                </Button>
               </div>
               {/* Live GPS signal strength bar */}
-              <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    liveAccuracy !== null ? getGpsSignalInfo(liveAccuracy).bgColor : 'bg-blue-300 animate-pulse'
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    liveAccuracy !== null ? getGpsSignalInfo(liveAccuracy).bgColor : 'bg-blue-400 animate-pulse'
                   }`}
-                  style={{ width: liveAccuracy !== null ? `${getGpsSignalInfo(liveAccuracy).progress}%` : '30%' }}
+                  style={{ width: liveAccuracy !== null ? `${getGpsSignalInfo(liveAccuracy).progress}%` : '50%' }}
                 />
               </div>
-              <p className="text-[10px] text-slate-400 text-center">
-                Step outdoors or near a window for the best signal.
-              </p>
             </div>
           ) : proximityStatus ? (
             <div className="space-y-2">
@@ -883,12 +950,58 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
                     Auto-set to previous reading due to fault code.
                   </p>
                 )}
+                {/* ── GPS Drift Warning ── */}
+                {gpsDriftWarning && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+                    <TriangleAlert className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-xs font-bold text-red-800">Weak GPS Signal — Location Drift Detected</p>
+                      <p className="text-[11px] text-red-700 mt-0.5">Accuracy: ±{Math.round(liveAccuracy!)}m. Step into an open area for a reliable GPS lock before recording the coordinates.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Anomaly Warning with required confirmation ── */}
                 {anomalyWarning && (
-                  <Alert className="mt-2 bg-amber-50 text-amber-900 border-amber-200 py-2">
-                    <AlertCircle className="h-4 w-4 text-amber-600" />
-                    <AlertTitle className="text-amber-800 text-xs font-bold">Anomaly Detected</AlertTitle>
-                    <AlertDescription className="text-amber-700 text-xs">{anomalyWarning}</AlertDescription>
-                  </Alert>
+                  <div className={cn(
+                    "mt-2 rounded-lg border px-3 py-2.5",
+                    anomalyWarning.type === 'surge'
+                      ? "bg-amber-50 border-amber-300"
+                      : "bg-blue-50 border-blue-300"
+                  )}>
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className={cn(
+                        "h-4 w-4 mt-0.5 shrink-0",
+                        anomalyWarning.type === 'surge' ? "text-amber-600" : "text-blue-500"
+                      )} />
+                      <div className="flex-1">
+                        <p className={cn(
+                          "text-xs font-bold",
+                          anomalyWarning.type === 'surge' ? "text-amber-900" : "text-blue-800"
+                        )}>
+                          {anomalyWarning.type === 'surge' ? '⚠️ High Consumption Warning' : 'ℹ️ Zero Consumption Notice'}
+                        </p>
+                        <p className={cn(
+                          "text-[11px] mt-0.5",
+                          anomalyWarning.type === 'surge' ? "text-amber-800" : "text-blue-700"
+                        )}>
+                          {anomalyWarning.message}
+                        </p>
+                        <label className="flex items-center gap-2 mt-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={anomalyConfirmed}
+                            onChange={e => setAnomalyConfirmed(e.target.checked)}
+                            className="h-4 w-4 rounded border-slate-300"
+                            id="anomaly-confirm"
+                          />
+                          <span className="text-xs font-semibold text-slate-700">
+                            I have double-checked the meter dial and confirm this reading is correct
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
                 )}
                 <FormMessage />
               </FormItem>
@@ -1028,7 +1141,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
         {/* ── Submit ── */}
         <Button
           type="submit"
-          disabled={isSubmitDisabled}
+          disabled={isSubmitDisabled || (!!anomalyWarning && !anomalyConfirmed)}
           className="w-full h-12 font-bold text-base text-white shadow-md transition-all bg-emerald-600 hover:bg-emerald-700"
         >
           {isLoading ? (

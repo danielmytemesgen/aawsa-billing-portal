@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
 import { sanitizeHtml } from '@/lib/security';
+import { getSession } from '@/lib/auth';
 
 // Module-scoped debug info (PoC only)
 let lastUploadInfo: any = null;
 
 export async function POST(request: Request) {
   try {
+    const session = await getSession(request);
+    if (!session || !session.id) {
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
     // Accept multipart/form-data with a `file` field
     const form = await request.formData();
     const file = form.get('file') as Blob | null;
@@ -26,7 +32,8 @@ export async function POST(request: Request) {
       timestamp: Date.now(),
       filename,
       size,
-      readingId
+      readingId,
+      userId: session.id,
     };
 
     return NextResponse.json({ success: true, filename, size, readingId });
@@ -35,7 +42,12 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const session = await getSession(request);
+  if (!session || !session.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   // Return last upload info for debugging/tests
   return NextResponse.json({ lastUploadInfo });
 }
+

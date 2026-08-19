@@ -25,7 +25,8 @@
     "prepare": "node scripts/tools/husky-skip.js",
     "test:e2e": "playwright test",
     "test": "vitest",
-    "partition-listener": "npx tsc src/scripts/partition-listener.ts --outDir dist --ignoreConfig && node dist/src/scripts/partition-listener.js"
+    "partition-listener": "npx tsc src/scripts/partition-listener.ts --outDir dist --ignoreConfig && node dist/src/scripts/partition-listener.js",
+    "session-sweep": "npx tsc src/scripts/session-sweep.ts --outDir dist --ignoreConfig && node dist/src/scripts/session-sweep.js"
   },
   "dependencies": {
     "@genkit-ai/googleai": "^1.6.2",

@@ -86,7 +86,11 @@ const PERMISSIONS = [
     { name: 'tariffs_view', category: 'Settings' },
     { name: 'tariffs_manage', category: 'Settings' },
     { name: 'meter_readings_edit_recalculate_view', category: 'Meter Readings' },
-    { name: 'meter_readings_edit_recalculate', category: 'Meter Readings' }
+    { name: 'meter_readings_edit_recalculate', category: 'Meter Readings' },
+    { name: 'credit_view_all', category: 'Credit & Deposit' },
+    { name: 'credit_view_branch', category: 'Credit & Deposit' },
+    { name: 'credit_create', category: 'Credit & Deposit' },
+    { name: 'credit_void', category: 'Credit & Deposit' }
 ];
 
 async function sync() {

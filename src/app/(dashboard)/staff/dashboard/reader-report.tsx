@@ -80,10 +80,11 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
         const gpsEncoded = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate).length;
 
         // Collected vs Pending (Current Month - supporting raw & mapped reading shapes)
+        const activeBulkMeterKeys = new Set(activeBulkMeters.map(bm => bm.customerKeyNumber));
         const cycleReadings = allReadings.filter(r => r.monthYear === recentCycleMonth);
         const cycleBulkReadings = cycleReadings.filter(r => {
             const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId;
-            return activeBulkMeters.some(bm => bm.customerKeyNumber === meterId);
+            return meterId ? activeBulkMeterKeys.has(meterId) : false;
         });
         const uniqueMetersRead = new Set(cycleBulkReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId));
         
@@ -147,27 +148,30 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
         // Sort by count descending
         faultCodeBreakdown.sort((a, b) => b.count - a.count);
 
-        // Consumption Trend Calculation (Always last 6 months for trend context)
+        // Consumption Trend Calculation (Single-pass aggregation over allReadings)
         const last6Months = Array.from({ length: 6 }, (_, i) => {
             const date = subMonths(new Date(), i);
             return format(date, 'yyyy-MM');
         }).reverse();
+        const last6MonthsSet = new Set(last6Months);
 
-        const trendData = last6Months.map(month => {
-            let usage = 0;
-            allReadings.forEach((r: any) => {
-                const dateStr = r.readingDate || r.createdAt;
-                if (!dateStr) return;
-                const rMonth = typeof dateStr === 'string' ? dateStr.substring(0, 7) : format(new Date(dateStr), 'yyyy-MM');
-                if (rMonth === month) {
-                    usage += (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
+        const monthlyUsageMap = new Map<string, number>();
+        for (const r of allReadings) {
+            const dateStr = r.readingDate || r.createdAt;
+            if (!dateStr) continue;
+            const rMonth = typeof dateStr === 'string' ? dateStr.substring(0, 7) : format(new Date(dateStr), 'yyyy-MM');
+            if (last6MonthsSet.has(rMonth)) {
+                const diff = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
+                if (diff > 0) {
+                    monthlyUsageMap.set(rMonth, (monthlyUsageMap.get(rMonth) || 0) + diff);
                 }
-            });
-            return {
-                month: format(new Date(month + "-01"), 'MMM'),
-                consumption: usage > 0 ? usage : 0
-            };
-        });
+            }
+        }
+
+        const trendData = last6Months.map(month => ({
+            month: format(new Date(month + "-01"), 'MMM'),
+            consumption: monthlyUsageMap.get(month) || 0
+        }));
 
         const currentMonthUsage = trendData[trendData.length - 1].consumption;
         const previousMonthUsage = trendData[trendData.length - 2]?.consumption || 0;

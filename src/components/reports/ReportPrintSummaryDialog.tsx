@@ -16,7 +16,7 @@ import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
-import { getBillKey, getCustomerIdentifier, getCustomerKeyDisplay, getBranchNameDisplay } from "@/lib/export-utils";
+import { getBillKey, getCustomerIdentifier, getCustomerKeyDisplay, getCustomerPhone, getBranchNameDisplay } from "@/lib/export-utils";
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
 import { formatNumber } from "@/lib/format";
 import { formatDate } from "@/lib/utils";
@@ -291,6 +291,7 @@ export function ReportPrintSummaryDialog({
                   <th className="py-3 px-3">Bill Key</th>
                   <th className="py-3 px-3">Customer / Meter</th>
                   <th className="py-3 px-3">Customer Key</th>
+                  <th className="py-3 px-3">Phone</th>
                   <th className="py-3 px-3">Branch</th>
                   <th className="py-3 px-3 text-right">Diff. Usage (m³)</th>
                   {type === 'sent' ? (
@@ -317,6 +318,7 @@ export function ReportPrintSummaryDialog({
                     const billKey = getBillKey(bill);
                     const custName = getCustomerIdentifier(bill, customers, bulkMeters);
                     const custKey = getCustomerKeyDisplay(bill);
+                    const phone = getCustomerPhone(bill, customers, bulkMeters);
                     const branchName = getBranchNameDisplay(bill, customers, bulkMeters, branches);
 
                     // Use difference_usage (Diff. Usage) as the primary per-row consumption metric
@@ -346,6 +348,7 @@ export function ReportPrintSummaryDialog({
                         <td className="py-2.5 px-3 font-mono font-bold text-indigo-700">{billKey}</td>
                         <td className="py-2.5 px-3 font-medium text-slate-900">{custName}</td>
                         <td className="py-2.5 px-3 font-mono text-slate-600">{custKey}</td>
+                        <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{phone}</td>
                         <td className="py-2.5 px-3 text-slate-600">{branchName}</td>
                         <td className="py-2.5 px-3 text-right font-medium">{formatNumber(usage)}</td>
                         {type === 'sent' ? (

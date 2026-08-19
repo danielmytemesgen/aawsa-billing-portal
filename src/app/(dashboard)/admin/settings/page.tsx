@@ -170,6 +170,13 @@ export default function AdminSettingsPage() {
       });
     }
 
+    const freshPeriod = await getReadingPeriodDetailsAction();
+    if (freshPeriod) {
+      setReadingPeriodStatus(freshPeriod.status);
+      setReadingStartDate(freshPeriod.startDate || '');
+      setReadingEndDate(freshPeriod.endDate || '');
+    }
+
     localStorage.setItem(NOTIFY_NEW_BILL_KEY, String(notifyOnNewBill));
     localStorage.setItem(NOTIFY_OVERDUE_KEY, String(notifyOnOverdue));
     localStorage.setItem(EXPORT_FORMAT_KEY, exportFormat);

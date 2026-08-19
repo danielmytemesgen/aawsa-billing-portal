@@ -90,7 +90,9 @@ import {
   dbGetBulkMeterReadingsByMeter,
   dbCreateCustomerSession,
   dbRevokeCustomerSession,
-  dbGetActiveCustomerSessions,
+  dbRevokeStaffSession,
+  dbReactivateCustomerSession,
+  dbReactivateStaffSession,
   dbIsCustomerSessionValid,
   dbGetCustomerSession,
   dbLogCustomerPageView,
@@ -117,6 +119,8 @@ import {
   dbPermanentlyDeleteFromRecycleBin,
   dbGetUnsettledBillsPaginated,
   dbGetBillsByCustomerKey,
+  dbGetBillsPaginated,
+  dbGetBillsStatusCounts,
   dbGetUnsettledBillsCount,
   dbGetPaidBillsPaginated,
   dbGetPaidBillsCount,
@@ -133,7 +137,13 @@ import {
   dbCreateMeterReadingPhoto,
   dbGetPhotosByReadingId,
   dbSyncAgingForCustomer,
+  dbGetMeterCreditBalance,
+  dbGetMeterCredit,
+  dbCreateCredit,
+  dbVoidCredit,
+  type CreditLedgerEntry,
 } from './db-queries';
+import { roundMoney, MONEY_EPSILON } from './credit-utils';
 import { withTransaction, query } from './db';
 
 import { calculateBill, calculateBillFromTariff, type CustomerType, type SewerageConnection } from './billing';
@@ -172,7 +182,7 @@ export interface ReadingPeriodDetails {
 }
 
 export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDetails> {
-  const status = (await dbGetSystemSetting('reading_period_status')) as ReadingPeriodStatus || 'Open';
+  const rawStatus = (await dbGetSystemSetting('reading_period_status')) as ReadingPeriodStatus || null;
   const rawStart = (await dbGetSystemSetting('reading_period_start_date')) || '';
   const rawEnd = (await dbGetSystemSetting('reading_period_end_date')) || '';
   const rawStartDay = await dbGetSystemSetting('reading_period_start_day');
@@ -181,6 +191,7 @@ export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDeta
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
+  const todayStr = format(now, 'yyyy-MM-dd');
 
   let startDay = 1;
   if (rawStartDay && !isNaN(parseInt(rawStartDay))) {
@@ -202,24 +213,58 @@ export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDeta
   endDay = Math.max(1, Math.min(31, endDay));
 
   const lastDayOfCurrentMonth = new Date(year, month + 1, 0).getDate();
-  const effectiveStartDayNum = Math.min(startDay, lastDayOfCurrentMonth);
-  const effectiveStartDateObj = new Date(year, month, effectiveStartDayNum);
-  const startDateStr = format(effectiveStartDateObj, 'yyyy-MM-dd');
 
+  let effectiveStartDateObj: Date;
   let effectiveEndDateObj: Date;
+
   if (endDay >= startDay) {
+    // Standard same-month cycle (e.g. Day 1 to Day 14)
+    const effectiveStartDayNum = Math.min(startDay, lastDayOfCurrentMonth);
     const effectiveEndDayNum = Math.min(endDay, lastDayOfCurrentMonth);
+    effectiveStartDateObj = new Date(year, month, effectiveStartDayNum);
     effectiveEndDateObj = new Date(year, month, effectiveEndDayNum);
   } else {
-    const nextMonthObj = new Date(year, month + 1, 1);
-    const lastDayOfNextMonth = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth() + 1, 0).getDate();
-    const effectiveEndDayNum = Math.min(endDay, lastDayOfNextMonth);
-    effectiveEndDateObj = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth(), effectiveEndDayNum);
+    // Cross-month cycle (e.g. Day 25 of month M to Day 5 of month M+1)
+    const currentDay = now.getDate();
+    if (currentDay <= endDay) {
+      // Currently in the tail of the cycle (started in previous month, ending this month)
+      const prevMonthObj = new Date(year, month - 1, 1);
+      const lastDayOfPrevMonth = new Date(prevMonthObj.getFullYear(), prevMonthObj.getMonth() + 1, 0).getDate();
+      const effectiveStartDayNum = Math.min(startDay, lastDayOfPrevMonth);
+      const effectiveEndDayNum = Math.min(endDay, lastDayOfCurrentMonth);
+
+      effectiveStartDateObj = new Date(prevMonthObj.getFullYear(), prevMonthObj.getMonth(), effectiveStartDayNum);
+      effectiveEndDateObj = new Date(year, month, effectiveEndDayNum);
+    } else {
+      // Currently before or in the head of the cycle (starts this month, ending next month)
+      const nextMonthObj = new Date(year, month + 1, 1);
+      const lastDayOfNextMonth = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth() + 1, 0).getDate();
+      const effectiveStartDayNum = Math.min(startDay, lastDayOfCurrentMonth);
+      const effectiveEndDayNum = Math.min(endDay, lastDayOfNextMonth);
+
+      effectiveStartDateObj = new Date(year, month, effectiveStartDayNum);
+      effectiveEndDateObj = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth(), effectiveEndDayNum);
+    }
   }
+
+  const startDateStr = format(effectiveStartDateObj, 'yyyy-MM-dd');
   const endDateStr = format(effectiveEndDateObj, 'yyyy-MM-dd');
 
+  // Dynamically compute reading period status from auto-recurring schedule dates:
+  // - Open: Today is between startDate and endDate (inclusive)
+  // - Ready for New Reading: Today is before startDate
+  // - Closed: Today is after endDate
+  let computedStatus: ReadingPeriodStatus;
+  if (todayStr >= startDateStr && todayStr <= endDateStr) {
+    computedStatus = 'Open';
+  } else if (todayStr < startDateStr) {
+    computedStatus = 'Ready for New Reading';
+  } else {
+    computedStatus = 'Closed';
+  }
+
   return {
-    status,
+    status: computedStatus,
     startDate: startDateStr,
     endDate: endDateStr,
     startDay,
@@ -229,8 +274,8 @@ export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDeta
 }
 
 export async function getReadingPeriodStatusAction(): Promise<ReadingPeriodStatus> {
-  const status = await dbGetSystemSetting('reading_period_status');
-  return (status as ReadingPeriodStatus) ?? 'Open';
+  const details = await getReadingPeriodDetailsAction();
+  return details.status;
 }
 
 export async function updateReadingPeriodStatusAction(
@@ -927,6 +972,57 @@ export async function deleteStaffMemberAction(email: string) {
 }
 export async function getStaffMemberForAuthAction(email: string, password?: string) { return await wrap(() => dbGetStaffMemberForAuth(email, password)); }
 
+export async function getBillsPaginatedAction(options: {
+  limit: number;
+  offset: number;
+  searchTerm?: string;
+  branchId?: string;
+  month?: string;
+  status?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = await dbGetStaffPermissions(session.id);
+    const hasBillPerm = perms.includes(PERMISSIONS.BILL_VIEW_ALL) || 
+                       perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) || 
+                       perms.some((p: string) => p.startsWith('bill:'));
+    if (!hasBillPerm) throw new Error('Forbidden: Missing billing permissions');
+
+    const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BILL_VIEW_ALL);
+    const readerId = !perms.includes(PERMISSIONS.BILL_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetBillsPaginated({ ...options, branchId, readerId });
+  });
+}
+
+export async function getBillsStatusCountsAction(options?: {
+  branchId?: string;
+  month?: string;
+  searchTerm?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = await dbGetStaffPermissions(session.id);
+    const hasBillPerm = perms.includes(PERMISSIONS.BILL_VIEW_ALL) || 
+                       perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) || 
+                       perms.some((p: string) => p.startsWith('bill:'));
+    if (!hasBillPerm) throw new Error('Forbidden: Missing billing permissions');
+
+    const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BILL_VIEW_ALL);
+    const readerId = !perms.includes(PERMISSIONS.BILL_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetBillsStatusCounts({ ...options, branchId, readerId });
+  });
+}
+
 export async function getAllBillsAction(options?: { branchId?: string; excludeUnfinalized?: boolean }) {
   return await wrap(async () => {
     const session = await getSession();
@@ -1098,6 +1194,26 @@ export async function closeBillingCycleAction(payload: {
       }
       billToInsert.TOTALBILLAMOUNT = (billToInsert.THISMONTHBILLAMT || 0) + (billToInsert.OUTSTANDINGAMT || 0) + (billToInsert.PENALTYAMT || 0);
 
+      // Credit-note wiring: a bulk meter with a deposit is billed for the net amount.
+      // The deposit is consumed by the credit-aware aging engine (dbSyncAgingForCustomer
+      // below), which records the credit_ledger 'applied' row and decrements the balance
+      // in this same transaction. Here we only make the bill row reflect what is actually
+      // owed: when the operator marks the bill as paid, the deposit covers the first part
+      // of the total, so the cash portion (dueAfterCredit) is what goes into amount_paid.
+      let creditAppliedThisCycle = 0;
+      const billPaymentStatus = (billToInsert.payment_status || (billToInsert as any).paymentStatus || '').toString().toLowerCase();
+      if (billToInsert.CUSTOMERKEY) {
+        const creditBalance = await dbGetMeterCreditBalance(billToInsert.CUSTOMERKEY);
+        if (creditBalance > MONEY_EPSILON) {
+          const totalPayableForCycle = Number(billToInsert.TOTALBILLAMOUNT || 0);
+          const dueAfterCredit = Math.max(0, roundMoney(totalPayableForCycle - creditBalance));
+          creditAppliedThisCycle = roundMoney(totalPayableForCycle - dueAfterCredit);
+          if (billPaymentStatus === 'paid') {
+            billToInsert.amount_paid = dueAfterCredit;
+          }
+        }
+      }
+
       // Status Check: Ensure account is Active before billing
       if (billToInsert.CUSTOMERKEY) {
         const bm = await dbGetBulkMeterById(billToInsert.CUSTOMERKEY);
@@ -1158,7 +1274,7 @@ export async function closeBillingCycleAction(payload: {
         }
       });
 
-      return { bill: billResult, meter: meterResult };
+      return { bill: billResult, meter: meterResult, creditApplied: creditAppliedThisCycle };
     });
   });
 }
@@ -1287,6 +1403,14 @@ export async function runBillingCycleAction(payload: {
     // Total Payable = Penalty + Outstanding + Current Bill
     const totalPayableForCycle = Number((penaltyAmt + outstandingAmt + billingResult.totalBill).toFixed(2));
 
+    // Credit-note wiring: a deposit is applied to this cycle's bill first, so the
+    // meter is billed for the net amount. The engine (dbSyncAgingForCustomer below)
+    // records the credit_ledger 'applied' row and decrements the balance; here we set
+    // the bill's amount_paid/payment_status so a fully-covered bill reads as Paid.
+    const creditBalanceAtCycle = await dbGetMeterCreditBalance(payload.bulkMeterId);
+    const dueAfterCredit = Math.max(0, roundMoney(totalPayableForCycle - creditBalanceAtCycle));
+    const creditAppliedThisCycle = roundMoney(totalPayableForCycle - dueAfterCredit);
+
     // Get branch name for bill
     let branchName: string | undefined = undefined;
     if (bulkMeter.branch_id) {
@@ -1321,10 +1445,13 @@ export async function runBillingCycleAction(payload: {
       debit_30_60: debit30_60,
       debit_60: debit60,
       due_date: dueDate.toISOString(),
-      payment_status: payload.carryBalance ? 'Unpaid' : 'Paid',
-      // When marking as Paid, record the full amount as paid so dbSyncAgingForCustomer
-      // recalculates consistently and never reverts payment_status back to 'Unpaid'.
-      amount_paid: payload.carryBalance ? 0 : totalPayableForCycle,
+      // When carryBalance is false the bill is settled now: the deposit covers the
+      // first part (dueAfterCredit is the net cash owed), so a fully-covered bill is
+      // created 'Paid' with amount_paid 0 and the engine records the applied credit.
+      payment_status: payload.carryBalance ? (dueAfterCredit > MONEY_EPSILON ? 'Unpaid' : 'Paid') : 'Paid',
+      // Record the net cash portion as paid so dbSyncAgingForCustomer recalculates
+      // consistently and never reverts payment_status back to 'Unpaid'.
+      amount_paid: payload.carryBalance ? 0 : dueAfterCredit,
       status: 'Draft', // New cycles start as drafts
       bill_number: `BILL-${Date.now()}`,
       snapshot_data: {
@@ -1349,13 +1476,13 @@ export async function runBillingCycleAction(payload: {
       });
     }
 
-    // 6. Update Bulk Meter — carry forward the new total payable as the outstanding balance
-    const newOutstandingBalance = payload.carryBalance ? totalPayableForCycle : 0;
+    // 6. Update Bulk Meter — carry forward the net (post-credit) amount as the outstanding balance
+    const newOutstandingBalance = payload.carryBalance ? dueAfterCredit : 0;
     const newPreviousReading = bulkMeter.currentReading ?? bulkMeter.previousReading ?? 0;
     const meterUpdate: BulkMeterUpdate = {
       previousReading: newPreviousReading,
       outStandingbill: newOutstandingBalance as any,
-      paymentStatus: payload.carryBalance ? 'Unpaid' as any : 'Paid' as any,
+      paymentStatus: payload.carryBalance ? (dueAfterCredit > MONEY_EPSILON ? 'Unpaid' as any : 'Paid' as any) : 'Paid' as any,
     };
 
     await dbUpdateBulkMeter(payload.bulkMeterId, meterUpdate);
@@ -1377,9 +1504,83 @@ export async function runBillingCycleAction(payload: {
       warningMsg = `Negative difference usage (${rawDifferenceUsage} m³) detected for bulk meter ${payload.bulkMeterId}. Billed at 3 m³ (Rule of 3 active), but readings need attention.`;
     }
 
-    return { billId: billResult.id, success: true, warning: warningMsg };
+    return { billId: billResult.id, success: true, warning: warningMsg, creditApplied: creditAppliedThisCycle, dueAfterCredit };
   });
 }
+
+/**
+ * Current credit (deposit) balance + ledger for a bulk meter (newest first).
+ * Used by the Bulk Meter Details credit card.
+ */
+export async function getMeterCreditAction(bulkMeterId: string) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.CREDIT_VIEW_ALL,
+      PERMISSIONS.CREDIT_VIEW_BRANCH
+    );
+    const perms = session.permissions || [];
+    if (!perms.includes(PERMISSIONS.CREDIT_VIEW_ALL)) {
+      const meter = await dbGetBulkMeterById(bulkMeterId);
+      if (!meter || meter.branch_id !== session.branchId) {
+        throw new Error('Forbidden: This meter does not belong to your branch');
+      }
+    }
+    const data = await dbGetMeterCredit(bulkMeterId);
+    return data;
+  });
+}
+
+/** Ensure the session may edit this meter (branch isolation unless global). */
+async function assertMeterWriteAccess(customerKey: string, session: any) {
+  const perms = session.permissions || [];
+  if (!perms.includes(PERMISSIONS.CREDIT_VIEW_ALL) && !perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL)) {
+    const meter = await dbGetBulkMeterById(customerKey);
+    if (!meter || meter.branch_id !== session.branchId) {
+      throw new Error('Forbidden: This meter does not belong to your branch');
+    }
+  }
+}
+
+/**
+ * Manual credit add (operator): the deposit balance is bumped and an auditable
+ * 'created' row lands in credit_ledger. The aging engine treats it as available
+ * credit on the next sync. `sourceBillId` optionally links the deposit to the
+ * bill it came from (e.g. a duplicate payment against a specific bill).
+ */
+export async function addMeterCreditAction(bulkMeterId: string, amount: number, reason: string, notes?: string, sourceBillId?: string) {
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.CREDIT_CREATE);
+    await assertMeterWriteAccess(bulkMeterId, session);
+    const row = await dbCreateCredit(bulkMeterId, amount, reason || 'manual', notes || null, session.id, sourceBillId || null);
+    await logSecurityEventAction({
+      event: 'Bulk Meter Credit Created',
+      customerKeyNumber: bulkMeterId,
+      severity: 'info',
+      details: { amount: row.amount, reason: row.reason, ledgerId: row.id, sourceBillId: row.source_bill_id } as any
+    });
+    return { creditBalance: row.balance_after };
+  });
+}
+
+/**
+ * Manual credit void: reverses the unconsumed portion of a 'created' ledger row.
+ * Fully-consumed credits are blocked server-side.
+ */
+export async function voidMeterCreditAction(bulkMeterId: string, ledgerId: string) {
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.CREDIT_VOID);
+    await assertMeterWriteAccess(bulkMeterId, session);
+    const result = await dbVoidCredit(bulkMeterId, ledgerId, session.id);
+    await logSecurityEventAction({
+      event: 'Bulk Meter Credit Voided',
+      customerKeyNumber: bulkMeterId,
+      severity: 'warning',
+      details: { voidedAmount: result.voidedAmount, remainingBalance: result.remainingBalance, ledgerId } as any
+    });
+    return result;
+  });
+}
+
 export async function updateBillAction(id: string, bill: BillUpdate) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BILL_UPDATE);
@@ -1822,19 +2023,18 @@ export async function getLatestReadingsByRouteAction(routeKey: string) {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
 
-    // Fetch meters for the route
-    const { data: meters } = await getAllBulkMetersAction({ routeKey });
-    if (!meters || meters.length === 0) return { bulk: [], individual: [] };
+    // Fetch meters and customers for the route in parallel
+    const [{ data: meters }, { data: customers }] = await Promise.all([
+      getAllBulkMetersAction({ routeKey }),
+      getAllCustomersAction({ routeKey })
+    ]);
 
-    const meterKeys = meters.map((m: any) => m.customerKeyNumber);
-    
-    // Fetch customers for these meters
-    const { data: customers } = await getAllCustomersAction({ routeKey });
+    const meterKeys = meters?.map((m: any) => m.customerKeyNumber) || [];
     const customerKeys = customers?.map((c: any) => c.customerKeyNumber) || [];
 
     const [bulkReadings, individualReadings] = await Promise.all([
-      dbGetLatestReadingsByMeters(meterKeys, 'bulk'),
-      dbGetLatestReadingsByMeters(customerKeys, 'individual')
+      meterKeys.length > 0 ? dbGetLatestReadingsByMeters(meterKeys, 'bulk') : Promise.resolve([]),
+      customerKeys.length > 0 ? dbGetLatestReadingsByMeters(customerKeys, 'individual') : Promise.resolve([])
     ]);
 
     return {
@@ -3208,43 +3408,31 @@ export async function getCustomerReadingsAction(
 
 // Route Server Actions
 export async function getAllRoutesAction(options?: { branchId?: string }) {
-  const session = await getSession();
-  
-  const perms = session?.permissions || [];
-  const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || (session?.role || '').toLowerCase() === 'admin';
-
-  // If user is field/meter reading staff (lacks admin view-all), enforce reading period status check
-  if (!isSuperAdmin && (
-    perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) || 
-    perms.includes(PERMISSIONS.METER_READINGS_CREATE) || 
-    perms.includes(PERMISSIONS.METER_READINGS_CREATE_BULK) || 
-    perms.includes(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
-    perms.includes('meter_readings_create_bulk') ||
-    perms.includes('meter_readings_create_individual')
-  )) {
-    const status = await getReadingPeriodStatusAction();
-    if (status === 'Closed') {
-      return []; // Return no routes if closed for field staff
-    }
-  }
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
+    const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || (session?.role || '').toLowerCase() === 'admin';
 
     if (!perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && 
         !perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) && 
+        !perms.includes(PERMISSIONS.ROUTES_VIEW_BRANCH) &&
+        !perms.includes('routes_manage') &&
+        !perms.includes('meter_readings_create_bulk') &&
+        !perms.includes('meter_readings_create_individual') &&
+        !perms.includes('meter_readings_create') &&
         !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
       throw new Error('Forbidden: Missing route view permissions');
     }
     
+    const canViewAll = perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) || isSuperAdmin;
+    const canViewBranch = perms.includes(PERMISSIONS.ROUTES_VIEW_BRANCH) || perms.includes('routes_manage');
+
     // Determine branch isolation:
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.ROUTES_VIEW_ALL);
     
-    // Reader isolation: If user only has assigned access, lock them to their own readerId
-    const readerId = !perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
-      ? session.id
-      : undefined;
+    // Reader isolation: If user is a field reader (lacks global/branch management), check by readerId
+    const readerId = (!canViewAll && !canViewBranch) ? session.id : undefined;
 
     return await dbGetAllRoutes(branchId, readerId);
   });
@@ -3394,7 +3582,7 @@ export async function createCustomerSessionAction(session: {
   });
 }
 
-export async function revokeCustomerSessionAction(sessionId: string) {
+export async function revokeCustomerSessionAction(sessionId: string, reason: 'revoked' | 'logout' = 'revoked') {
   return await wrap(async () => {
     // Either an admin/staff with settings perm, or the owning customer may revoke.
     const staffSession = await getSession();
@@ -3412,24 +3600,48 @@ export async function revokeCustomerSessionAction(sessionId: string) {
     }
     if (!authorized) throw new Error('Forbidden: Missing permission to revoke session');
 
-    const result = await dbRevokeCustomerSession(sessionId);
+    const result = await dbRevokeCustomerSession(sessionId, reason);
     await logSecurityEventAction({
-      event: 'Customer Session Revoked',
-      severity: 'warning',
+      event: reason === 'logout' ? 'Customer Logout' : 'Customer Session Revoked',
+      severity: reason === 'logout' ? 'info' : 'warning',
       details: { sessionId }
     });
     return result;
   });
 }
 
-export async function getActiveCustomerSessionsAction() {
+/**
+ * Admin kick-out for either a staff or a customer session, from the unified
+ * User Sessions tab. Gated on SETTINGS_MANAGE / DASHBOARD_VIEW_ALL.
+ */
+export async function revokeUserSessionAction(userType: 'staff' | 'customer', sessionId: string) {
   return await wrap(async () => {
-    const session = await checkPermission();
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
     if (!perms.includes(PERMISSIONS.SETTINGS_MANAGE) && !perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
-      throw new Error('Forbidden: Missing permission to view customer sessions');
+      throw new Error('Forbidden: Missing permission to revoke sessions');
     }
-    return await dbGetActiveCustomerSessions();
+
+    if (userType === 'staff') {
+      const result = await dbRevokeStaffSession(sessionId, 'revoked');
+      if (!result) throw new Error('Session is already ended — nothing to kick out.');
+      await logSecurityEventAction({
+        event: 'Staff Session Revoked',
+        severity: 'warning',
+        details: { sessionId, revoked_by: session.email },
+      });
+      return result;
+    }
+
+    const result = await dbRevokeCustomerSession(sessionId, 'revoked');
+    if (!result) throw new Error('Session not found — nothing to kick out.');
+    await logSecurityEventAction({
+      event: 'Customer Session Revoked',
+      severity: 'warning',
+      details: { sessionId, revoked_by: session.email },
+    });
+    return result;
   });
 }
 
@@ -3438,12 +3650,50 @@ export async function validateCustomerSessionAction(sessionId: string) {
   return await wrap(() => dbIsCustomerSessionValid(sessionId));
 }
 
-export async function logCustomerPageViewAction(sessionId: string, pageName: string) {
+/**
+ * Admin undo for an ended staff/customer session, from the unified User
+ * Sessions tab. Mirrors revokeUserSessionAction: same permission gate, and
+ * logs a security event. Gated on SETTINGS_MANAGE / DASHBOARD_VIEW_ALL.
+ */
+export async function reactivateUserSessionAction(userType: 'staff' | 'customer', sessionId: string) {
   return await wrap(async () => {
-    // The sessionId IS the credential here — verify it is valid before logging.
-    const valid = await dbIsCustomerSessionValid(sessionId);
-    if (!valid) throw new Error('Invalid or revoked customer session');
-    return await dbLogCustomerPageView(sessionId, pageName);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    if (!perms.includes(PERMISSIONS.SETTINGS_MANAGE) && !perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+      throw new Error('Forbidden: Missing permission to reactivate sessions');
+    }
+
+    if (userType === 'staff') {
+      const result = await dbReactivateStaffSession(sessionId);
+      if (!result) throw new Error('Session is already active or not found.');
+      await logSecurityEventAction({
+        event: 'Staff Session Reactivated',
+        severity: 'info',
+        details: { sessionId, reactivated_by: session.email },
+      });
+      return result;
+    }
+
+    const result = await dbReactivateCustomerSession(sessionId);
+    if (!result) throw new Error('Session is already active or not found.');
+    await logSecurityEventAction({
+      event: 'Customer Session Reactivated',
+      severity: 'info',
+      details: { sessionId, reactivated_by: session.email },
+    });
+    return result;
+  });
+}
+
+export async function logCustomerPageViewAction(sessionId: string, pageName: string, path?: string) {
+  return await wrap(async () => {
+    // The sessionId IS the credential here — the single UPDATE validates the
+    // session (is_revoked=false) while appending the timestamped page view and
+    // throttling the heartbeat, so we don't write twice per page view.
+    const logged = await dbLogCustomerPageView(sessionId, pageName, path);
+    if (!logged) throw new Error('Invalid or revoked customer session');
+    return { success: true };
   });
 }
 
@@ -4374,45 +4624,53 @@ export async function submitBillsBulkAction(ids: string[]) {
     await verifyBillsBranchAccessBulk(ids, session);
 
     return await withTransaction(async (client) => {
-      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-      const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
-      const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Draft']));
+      await client.query('SAVEPOINT sp_bulk_submit');
+      try {
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+        const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Draft']));
 
-      // Group IDs by month_year for partition pruning updates
-      const groups = new Map<string, string[]>();
-      for (const r of currentBills.rows) {
-        if (!groups.has(r.month_year)) groups.set(r.month_year, []);
-        groups.get(r.month_year)!.push(r.id);
-      }
+        // Group IDs by month_year for partition pruning updates
+        const groups = new Map<string, string[]>();
+        for (const r of currentBills.rows) {
+          if (!groups.has(r.month_year)) groups.set(r.month_year, []);
+          groups.get(r.month_year)!.push(r.id);
+        }
 
-      for (const [my, groupIds] of groups.entries()) {
-        const groupPlaceholders = groupIds.map((_, i) => `$${i + 1}`).join(', ');
+        for (const [my, groupIds] of groups.entries()) {
+          const groupPlaceholders = groupIds.map((_, i) => `$${i + 1}`).join(', ');
+          await client.query(
+            `UPDATE bills SET status = 'Pending' WHERE month_year = $${groupIds.length + 1} AND id IN (${groupPlaceholders})`,
+            [...groupIds, my]
+          );
+        }
+
+        const logValues: any[] = [];
+        const logPlaceholders: string[] = [];
+        let index = 1;
+        for (const id of ids) {
+          const fromStatus = statusMap.get(id) || 'Draft';
+          logValues.push(id, fromStatus, 'Pending', session.id);
+          logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
+          index += 4;
+        }
         await client.query(
-          `UPDATE bills SET status = 'Pending' WHERE month_year = $${groupIds.length + 1} AND id IN (${groupPlaceholders})`,
-          [...groupIds, my]
+          `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
+          logValues
         );
+
+        await client.query('RELEASE SAVEPOINT sp_bulk_submit');
+
+        await logSecurityEventAction({
+          event: 'Submit Bills Bulk',
+          details: { count: ids.length, ids }
+        });
+
+        return { success: true };
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT sp_bulk_submit');
+        throw err;
       }
-
-      const logValues: any[] = [];
-      const logPlaceholders: string[] = [];
-      let index = 1;
-      for (const id of ids) {
-        const fromStatus = statusMap.get(id) || 'Draft';
-        logValues.push(id, fromStatus, 'Pending', session.id);
-        logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
-        index += 4;
-      }
-      await client.query(
-        `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
-        logValues
-      );
-
-      await logSecurityEventAction({
-        event: 'Submit Bills Bulk',
-        details: { count: ids.length, ids }
-      });
-
-      return { success: true };
     });
   });
 }
@@ -4424,47 +4682,55 @@ export async function approveBillsBulkAction(ids: string[]) {
     await verifyBillsBranchAccessBulk(ids, session);
 
     return await withTransaction(async (client) => {
-      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-      const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
-      const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Pending']));
+      await client.query('SAVEPOINT sp_bulk_approve');
+      try {
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+        const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Pending']));
 
-      const approvalDate = new Date();
+        const approvalDate = new Date();
 
-      // Group IDs by month_year for partition pruning updates
-      const groups = new Map<string, string[]>();
-      for (const r of currentBills.rows) {
-        if (!groups.has(r.month_year)) groups.set(r.month_year, []);
-        groups.get(r.month_year)!.push(r.id);
-      }
+        // Group IDs by month_year for partition pruning updates
+        const groups = new Map<string, string[]>();
+        for (const r of currentBills.rows) {
+          if (!groups.has(r.month_year)) groups.set(r.month_year, []);
+          groups.get(r.month_year)!.push(r.id);
+        }
 
-      for (const [my, groupIds] of groups.entries()) {
-        const groupPlaceholders = groupIds.map((_, i) => `$${i + 3}`).join(', ');
+        for (const [my, groupIds] of groups.entries()) {
+          const groupPlaceholders = groupIds.map((_, i) => `$${i + 3}`).join(', ');
+          await client.query(
+            `UPDATE bills SET status = 'Approved', approval_date = $1, approved_by = $2 WHERE month_year = $${groupIds.length + 3} AND id IN (${groupPlaceholders})`,
+            [approvalDate, session.id, ...groupIds, my]
+          );
+        }
+
+        const logValues: any[] = [];
+        const logPlaceholders: string[] = [];
+        let index = 1;
+        for (const id of ids) {
+          const fromStatus = statusMap.get(id) || 'Pending';
+          logValues.push(id, fromStatus, 'Approved', session.id);
+          logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
+          index += 4;
+        }
         await client.query(
-          `UPDATE bills SET status = 'Approved', approval_date = $1, approved_by = $2 WHERE month_year = $${groupIds.length + 3} AND id IN (${groupPlaceholders})`,
-          [approvalDate, session.id, ...groupIds, my]
+          `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
+          logValues
         );
+
+        await client.query('RELEASE SAVEPOINT sp_bulk_approve');
+
+        await logSecurityEventAction({
+          event: 'Approve Bills Bulk',
+          details: { count: ids.length, ids }
+        });
+
+        return { success: true };
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT sp_bulk_approve');
+        throw err;
       }
-
-      const logValues: any[] = [];
-      const logPlaceholders: string[] = [];
-      let index = 1;
-      for (const id of ids) {
-        const fromStatus = statusMap.get(id) || 'Pending';
-        logValues.push(id, fromStatus, 'Approved', session.id);
-        logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
-        index += 4;
-      }
-      await client.query(
-        `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
-        logValues
-      );
-
-      await logSecurityEventAction({
-        event: 'Approve Bills Bulk',
-        details: { count: ids.length, ids }
-      });
-
-      return { success: true };
     });
   });
 }
@@ -4482,45 +4748,53 @@ export async function postBillsBulkAction(ids: string[]) {
     await verifyBillsBranchAccessBulk(ids, session);
 
     return await withTransaction(async (client) => {
-      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-      const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
-      const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Approved']));
+      await client.query('SAVEPOINT sp_bulk_post');
+      try {
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+        const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Approved']));
 
-      // Group IDs by month_year for partition pruning updates
-      const groups = new Map<string, string[]>();
-      for (const r of currentBills.rows) {
-        if (!groups.has(r.month_year)) groups.set(r.month_year, []);
-        groups.get(r.month_year)!.push(r.id);
-      }
+        // Group IDs by month_year for partition pruning updates
+        const groups = new Map<string, string[]>();
+        for (const r of currentBills.rows) {
+          if (!groups.has(r.month_year)) groups.set(r.month_year, []);
+          groups.get(r.month_year)!.push(r.id);
+        }
 
-      for (const [my, groupIds] of groups.entries()) {
-        const groupPlaceholders = groupIds.map((_, i) => `$${i + 1}`).join(', ');
+        for (const [my, groupIds] of groups.entries()) {
+          const groupPlaceholders = groupIds.map((_, i) => `$${i + 1}`).join(', ');
+          await client.query(
+            `UPDATE bills SET status = 'Posted' WHERE month_year = $${groupIds.length + 1} AND id IN (${groupPlaceholders})`,
+            [...groupIds, my]
+          );
+        }
+
+        const logValues: any[] = [];
+        const logPlaceholders: string[] = [];
+        let index = 1;
+        for (const id of ids) {
+          const fromStatus = statusMap.get(id) || 'Approved';
+          logValues.push(id, fromStatus, 'Posted', session.id);
+          logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
+          index += 4;
+        }
         await client.query(
-          `UPDATE bills SET status = 'Posted' WHERE month_year = $${groupIds.length + 1} AND id IN (${groupPlaceholders})`,
-          [...groupIds, my]
+          `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
+          logValues
         );
+
+        await client.query('RELEASE SAVEPOINT sp_bulk_post');
+
+        await logSecurityEventAction({
+          event: 'Post Bills Bulk',
+          details: { count: ids.length, ids }
+        });
+
+        return { success: true };
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT sp_bulk_post');
+        throw err;
       }
-
-      const logValues: any[] = [];
-      const logPlaceholders: string[] = [];
-      let index = 1;
-      for (const id of ids) {
-        const fromStatus = statusMap.get(id) || 'Approved';
-        logValues.push(id, fromStatus, 'Posted', session.id);
-        logPlaceholders.push(`($${index}, $${index+1}, $${index+2}, $${index+3})`);
-        index += 4;
-      }
-      await client.query(
-        `INSERT INTO bill_workflow_logs ("bill_id", "from_status", "to_status", "changed_by") VALUES ${logPlaceholders.join(', ')}`,
-        logValues
-      );
-
-      await logSecurityEventAction({
-        event: 'Post Bills Bulk',
-        details: { count: ids.length, ids }
-      });
-
-      return { success: true };
     });
   });
 }
@@ -4580,6 +4854,19 @@ async function savepointGuard(
   }
 }
 
+const normalizePhoneNumber = (raw?: any): string | null => {
+  if (!raw) return null;
+  const clean = String(raw).trim().replace(/[\s-]/g, '');
+  if (/^[79]\d{8}$/.test(clean)) return `0${clean}`;
+  return clean;
+};
+
+const generateRandomDigits = (length: number): string => {
+  const min = Math.pow(10, length - 1);
+  const max = Math.pow(10, length) - 1;
+  return String(Math.floor(min + Math.random() * (max - min + 1)));
+};
+
 /**
  * Batch-import bulk meters from a CSV upload.
  * Replaces N individual createBulkMeterAction calls with a single server roundtrip.
@@ -4588,39 +4875,64 @@ export async function batchImportBulkMetersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_CREATE);
+    const branches = await dbGetAllBranches();
+    const branchMap = new Map<string, string>();
+    branches.forEach((b: any) => {
+      if (b.id) branchMap.set(String(b.id).toLowerCase(), b.id);
+      if (b.name) branchMap.set(b.name.toLowerCase().trim(), b.id);
+    });
+
+    const ALLOWED_BULK_COLS = new Set([
+      "customerKeyNumber", "INST_KEY", "name", "contractNumber", "meterSize",
+      "METER_KEY", "previousReading", "currentReading", "month", "specificArea",
+      "subCity", "woreda", "branch_id", "NUMBER_OF_DIALS", "status",
+      "paymentStatus", "charge_group", "ROUTE_KEY", "sewerage_connection",
+      "ordinal", "phoneNumber", "roundKey"
+    ]);
 
     const preparedRows = rows.map((row: any) => {
       const r = { ...row };
-      r.branch_id = r.branch_id || r.branchId || session.branchId;
-      r.status = 'Pending Approval';
-      if (!r.customerKeyNumber) {
-        r.customerKeyNumber = `BM-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
-      }
-      if (!r.instKey) {
-        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
-      }
-      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
-      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
-      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
-      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
-      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
-      delete r.branchId;
+      const rawBranch = r.branch_id || r.branchId || session.branchId;
+      const resolvedBranchId = rawBranch ? (branchMap.get(String(rawBranch).toLowerCase().trim()) || session.branchId) : session.branchId;
 
-      const normalizedRow: Record<string, any> = {};
-      for (const k of Object.keys(r)) {
-        const v = r[k];
-        switch (k) {
-          case 'meterNumber': case 'meter_key': case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
-          case 'instKey': case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
-          case 'routeKey': case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
-          case 'branchId': case 'branch_id': normalizedRow['branch_id'] = v; break;
-          case 'chargeGroup': case 'charge_group': normalizedRow['charge_group'] = v; break;
-          case 'sewerageConnection': case 'sewerage_connection': normalizedRow['sewerage_connection'] = v; break;
-          case 'numberOfDials': case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-          default: normalizedRow[k] = v; break;
+      const customerKeyNumber = r.customerKeyNumber || `BM-${generateRandomDigits(8)}`;
+      const instKey = r.INST_KEY || r.instKey || `INST-${generateRandomDigits(6)}`;
+      const meterKey = r.METER_KEY || r.meterNumber || r.meter_key;
+      const routeKey = r.ROUTE_KEY || r.routeKey || r.route_key || null;
+      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+
+      const normalizedRow: Record<string, any> = {
+        customerKeyNumber,
+        INST_KEY: instKey,
+        name: r.name || 'Bulk Meter',
+        contractNumber: r.contractNumber || `CON-${generateRandomDigits(8)}`,
+        meterSize: r.meterSize !== undefined ? Number(r.meterSize) || 1 : 1,
+        METER_KEY: meterKey,
+        previousReading: r.previousReading !== undefined ? Number(r.previousReading) || 0 : 0,
+        currentReading: r.currentReading !== undefined ? Number(r.currentReading) || 0 : 0,
+        month: r.month || format(new Date(), 'yyyy-MM'),
+        specificArea: r.specificArea || null,
+        subCity: r.subCity || null,
+        woreda: r.woreda || null,
+        branch_id: resolvedBranchId,
+        NUMBER_OF_DIALS: r.NUMBER_OF_DIALS || r.numberOfDials ? Number(r.NUMBER_OF_DIALS || r.numberOfDials) : null,
+        status: 'Pending Approval',
+        paymentStatus: r.paymentStatus || 'Unpaid',
+        charge_group: r.charge_group || r.chargeGroup || null,
+        ROUTE_KEY: routeKey,
+        sewerage_connection: r.sewerage_connection || r.sewerageConnection || 'No',
+        ordinal: r.ordinal !== undefined ? Number(r.ordinal) || null : null,
+        phoneNumber: normalizePhoneNumber(r.phoneNumber),
+      };
+
+      // Strip keys not in the allowed database columns
+      for (const k of Object.keys(normalizedRow)) {
+        if (!ALLOWED_BULK_COLS.has(k) || normalizedRow[k] === undefined) {
+          delete normalizedRow[k];
         }
       }
-      return { row: normalizedRow, spatial, key: normalizedRow['customerKeyNumber'] };
+
+      return { row: normalizedRow, spatial, key: customerKeyNumber, routeKey };
     });
 
     const insertedKeys: string[] = [];
@@ -4629,9 +4941,30 @@ export async function batchImportBulkMetersAction(rows: any[]) {
     console.log(`[BatchImportBulkMeters] Processing batch of ${preparedRows.length} rows`);
 
     await withTransaction(async (client) => {
+      // 1. Auto-provision any missing routes using the exact resolved branch ID from the CSV
+      const routeBranchMap = new Map<string, string | null>();
+      for (const p of preparedRows) {
+        if (p.routeKey && !routeBranchMap.has(p.routeKey)) {
+          routeBranchMap.set(p.routeKey, p.row.branch_id || session.branchId || null);
+        }
+      }
+
+      for (const [rk, routeBranchId] of routeBranchMap.entries()) {
+        try {
+          await client.query(
+            `INSERT INTO routes (route_key, branch_id, description) VALUES ($1, $2, $3) 
+             ON CONFLICT (route_key) DO UPDATE SET branch_id = COALESCE(routes.branch_id, EXCLUDED.branch_id)`,
+            [rk, routeBranchId, `Route ${rk}`]
+          );
+        } catch (e) {
+          console.warn(`[BatchImportBulkMeters] Route provision warning for ${rk}:`, e);
+        }
+      }
+
       const MINI_BATCH = 50;
       for (let i = 0; i < preparedRows.length; i += MINI_BATCH) {
         const batch = preparedRows.slice(i, i + MINI_BATCH);
+        const batchSp = `sp_bm_batch_${i}`;
         
         // Collect all distinct column names in this mini-batch
         const colSet = new Set<string>();
@@ -4653,8 +4986,13 @@ export async function batchImportBulkMetersAction(rows: any[]) {
 
         const sql = `INSERT INTO bulk_meters (${colNamesStr}) VALUES ${valueTuples.join(', ')} ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`;
         
+        let batchOk = false;
         try {
+          await client.query(`SAVEPOINT ${batchSp}`);
           const res = await client.query(sql, values);
+          await client.query(`RELEASE SAVEPOINT ${batchSp}`);
+          batchOk = true;
+
           const insertedInThisBatch = new Set((res.rows || []).map((r: any) => r.customerKeyNumber));
           
           for (const item of batch) {
@@ -4664,13 +5002,21 @@ export async function batchImportBulkMetersAction(rows: any[]) {
                 await dbUpsertSpatialRecord(item.key, 'bulk_meter', item.spatial, client);
               }
             } else {
-              errors.push(`Meter ${item.key}: already exists`);
+              errors.push(`Meter ${item.key}: already exists or conflict`);
             }
           }
-        } catch (err: any) {
-          // Fallback to row-by-row on unexpected batch failure
-          for (const item of batch) {
+        } catch (batchErr: any) {
+          try { await client.query(`ROLLBACK TO SAVEPOINT ${batchSp}`); } catch {}
+          console.warn(`[BatchImportBulkMeters] Mini-batch ${i} failed, falling back to row-by-row:`, batchErr?.message);
+        }
+
+        // Fallback to row-by-row with individual savepoints if mini-batch failed
+        if (!batchOk) {
+          for (let rIdx = 0; rIdx < batch.length; rIdx++) {
+            const item = batch[rIdx];
+            const rowSp = `sp_bm_row_${i}_${rIdx}`;
             try {
+              await client.query(`SAVEPOINT ${rowSp}`);
               const itemCols = Object.keys(item.row).map(c => `"${c}"`).join(', ');
               const itemPlaceholders = Object.keys(item.row).map((_, idx) => `$${idx + 1}`).join(', ');
               const itemValues = Object.values(item.row);
@@ -4678,6 +5024,8 @@ export async function batchImportBulkMetersAction(rows: any[]) {
                 `INSERT INTO bulk_meters (${itemCols}) VALUES (${itemPlaceholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`,
                 itemValues
               );
+              await client.query(`RELEASE SAVEPOINT ${rowSp}`);
+
               if (singleRes.rows?.length > 0) {
                 insertedKeys.push(item.key);
                 if (item.spatial.xCoordinate != null || item.spatial.yCoordinate != null || item.spatial.zCoordinate != null) {
@@ -4687,6 +5035,7 @@ export async function batchImportBulkMetersAction(rows: any[]) {
                 errors.push(`Meter ${item.key}: already exists`);
               }
             } catch (singleErr: any) {
+              try { await client.query(`ROLLBACK TO SAVEPOINT ${rowSp}`); } catch {}
               errors.push(`Meter ${item.key}: ${singleErr?.message || 'Insert failed'}`);
             }
           }
@@ -4718,40 +5067,69 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_CREATE);
+    const branches = await dbGetAllBranches();
+    const branchMap = new Map<string, string>();
+    branches.forEach((b: any) => {
+      if (b.id) branchMap.set(String(b.id).toLowerCase(), b.id);
+      if (b.name) branchMap.set(b.name.toLowerCase().trim(), b.id);
+    });
+
+    const ALLOWED_IND_COLS = new Set([
+      "customerKeyNumber", "INST_KEY", "name", "contractNumber", "customerType",
+      "bookNumber", "ordinal", "meterSize", "METER_KEY", "previousReading",
+      "currentReading", "month", "assignedBulkMeterId", "branch_id",
+      "NUMBER_OF_DIALS", "status", "paymentStatus", "ROUTE_KEY", "roundKey",
+      "calculatedBill", "outStandingbill", "sewerageConnection", "specificArea",
+      "subCity", "woreda", "phoneNumber"
+    ]);
 
     const preparedRows = rows.map((row: any) => {
       const r = { ...row };
-      r.branch_id = r.branch_id || r.branchId || session.branchId;
-      r.status = 'Pending Approval';
-      if (!r.customerKeyNumber) {
-        r.customerKeyNumber = `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
-      }
-      if (!r.instKey) {
-        r.instKey = `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
-      }
-      if (r.meterNumber !== undefined) { r.METER_KEY = r.meterNumber; delete r.meterNumber; }
-      if (r.routeKey !== undefined) { r.ROUTE_KEY = r.routeKey; delete r.routeKey; }
-      if (r.instKey !== undefined) { r.INST_KEY = r.instKey; delete r.instKey; }
-      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
-      delete r.xCoordinate; delete r.yCoordinate; delete r.zCoordinate;
-      delete r.branchId;
+      const rawBranch = r.branch_id || r.branchId || session.branchId;
+      const resolvedBranchId = rawBranch ? (branchMap.get(String(rawBranch).toLowerCase().trim()) || session.branchId) : session.branchId;
 
-      const normalizedRow: Record<string, any> = {};
-      for (const k of Object.keys(r)) {
-        const v = r[k];
-        switch (k) {
-          case 'meterNumber': case 'meter_key': case 'METER_KEY': normalizedRow['METER_KEY'] = v; break;
-          case 'instKey': case 'INST_KEY': normalizedRow['INST_KEY'] = v; break;
-          case 'routeKey': case 'ROUTE_KEY': normalizedRow['ROUTE_KEY'] = v; break;
-          case 'assignedBulkMeterId': normalizedRow['assignedBulkMeterId'] = v; break;
-          case 'branchId': case 'branch_id': normalizedRow['branch_id'] = v; break;
-          case 'chargeGroup': case 'charge_group': normalizedRow['charge_group'] = v; break;
-          case 'sewerageConnection': case 'sewerage_connection': normalizedRow['sewerageConnection'] = v; break;
-          case 'numberOfDials': case 'NUMBER_OF_DIALS': normalizedRow['NUMBER_OF_DIALS'] = v; break;
-          default: normalizedRow[k] = v; break;
+      const customerKeyNumber = r.customerKeyNumber || `IND-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`;
+      const instKey = r.INST_KEY || r.instKey || `INST-${crypto.randomUUID().replace(/-/g, '').slice(0,6)}`;
+      const meterKey = r.METER_KEY || r.meterNumber || r.meter_key;
+      const routeKey = r.ROUTE_KEY || r.routeKey || r.route_key || null;
+      const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
+
+      const normalizedRow: Record<string, any> = {
+        customerKeyNumber,
+        INST_KEY: instKey,
+        name: r.name || 'Customer',
+        contractNumber: r.contractNumber || `CON-${crypto.randomUUID().replace(/-/g, '').slice(0,8)}`,
+        customerType: r.customerType || 'Domestic',
+        bookNumber: r.bookNumber || '1',
+        ordinal: r.ordinal !== undefined ? Number(r.ordinal) || 1 : 1,
+        meterSize: r.meterSize !== undefined ? Number(r.meterSize) || 0.5 : 0.5,
+        METER_KEY: meterKey,
+        previousReading: r.previousReading !== undefined ? Number(r.previousReading) || 0 : 0,
+        currentReading: r.currentReading !== undefined ? Number(r.currentReading) || 0 : 0,
+        month: r.month || format(new Date(), 'yyyy-MM'),
+        assignedBulkMeterId: r.assignedBulkMeterId || null,
+        branch_id: resolvedBranchId,
+        NUMBER_OF_DIALS: r.NUMBER_OF_DIALS || r.numberOfDials ? Number(r.NUMBER_OF_DIALS || r.numberOfDials) : null,
+        status: 'Pending Approval',
+        paymentStatus: r.paymentStatus || 'Unpaid',
+        ROUTE_KEY: routeKey,
+        roundKey: r.roundKey || null,
+        calculatedBill: r.calculatedBill !== undefined ? Number(r.calculatedBill) || 0 : 0,
+        outStandingbill: r.outStandingbill !== undefined ? Number(r.outStandingbill) || 0 : 0,
+        sewerageConnection: r.sewerageConnection || r.sewerage_connection || 'No',
+        specificArea: r.specificArea || null,
+        subCity: r.subCity || null,
+        woreda: r.woreda || null,
+        phoneNumber: normalizePhoneNumber(r.phoneNumber),
+      };
+
+      for (const k of Object.keys(normalizedRow)) {
+        if (!ALLOWED_IND_COLS.has(k) || normalizedRow[k] === undefined) {
+          delete normalizedRow[k];
         }
       }
-      return { row: normalizedRow, spatial, key: normalizedRow['customerKeyNumber'] };
+
+      return { row: normalizedRow, spatial, key: customerKeyNumber, routeKey };
     });
 
     const insertedKeys: string[] = [];
@@ -4760,9 +5138,30 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
     console.log(`[BatchImportIndividualCustomers] Processing batch of ${preparedRows.length} rows`);
 
     await withTransaction(async (client) => {
+      // 1. Auto-provision any missing routes using the exact resolved branch ID from the CSV
+      const routeBranchMap = new Map<string, string | null>();
+      for (const p of preparedRows) {
+        if (p.routeKey && !routeBranchMap.has(p.routeKey)) {
+          routeBranchMap.set(p.routeKey, p.row.branch_id || session.branchId || null);
+        }
+      }
+
+      for (const [rk, routeBranchId] of routeBranchMap.entries()) {
+        try {
+          await client.query(
+            `INSERT INTO routes (route_key, branch_id, description) VALUES ($1, $2, $3) 
+             ON CONFLICT (route_key) DO UPDATE SET branch_id = COALESCE(routes.branch_id, EXCLUDED.branch_id)`,
+            [rk, routeBranchId, `Route ${rk}`]
+          );
+        } catch (e) {
+          console.warn(`[BatchImportIndividualCustomers] Route provision warning for ${rk}:`, e);
+        }
+      }
+
       const MINI_BATCH = 50;
       for (let i = 0; i < preparedRows.length; i += MINI_BATCH) {
         const batch = preparedRows.slice(i, i + MINI_BATCH);
+        const batchSp = `sp_ind_batch_${i}`;
         
         // Collect all distinct column names in this mini-batch
         const colSet = new Set<string>();
@@ -4784,8 +5183,13 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
 
         const sql = `INSERT INTO individual_customers (${colNamesStr}) VALUES ${valueTuples.join(', ')} ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`;
         
+        let batchOk = false;
         try {
+          await client.query(`SAVEPOINT ${batchSp}`);
           const res = await client.query(sql, values);
+          await client.query(`RELEASE SAVEPOINT ${batchSp}`);
+          batchOk = true;
+
           const insertedInThisBatch = new Set((res.rows || []).map((r: any) => r.customerKeyNumber));
           
           for (const item of batch) {
@@ -4795,13 +5199,21 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
                 await dbUpsertSpatialRecord(item.key, 'individual_customer', item.spatial, client);
               }
             } else {
-              errors.push(`Customer ${item.key}: already exists`);
+              errors.push(`Customer ${item.key}: already exists or conflict`);
             }
           }
-        } catch (err: any) {
-          // Fallback to row-by-row on unexpected batch failure
-          for (const item of batch) {
+        } catch (batchErr: any) {
+          try { await client.query(`ROLLBACK TO SAVEPOINT ${batchSp}`); } catch {}
+          console.warn(`[BatchImportIndividualCustomers] Mini-batch ${i} failed, falling back to row-by-row:`, batchErr?.message);
+        }
+
+        // Fallback to row-by-row with individual savepoints
+        if (!batchOk) {
+          for (let rIdx = 0; rIdx < batch.length; rIdx++) {
+            const item = batch[rIdx];
+            const rowSp = `sp_ind_row_${i}_${rIdx}`;
             try {
+              await client.query(`SAVEPOINT ${rowSp}`);
               const itemCols = Object.keys(item.row).map(c => `"${c}"`).join(', ');
               const itemPlaceholders = Object.keys(item.row).map((_, idx) => `$${idx + 1}`).join(', ');
               const itemValues = Object.values(item.row);
@@ -4809,6 +5221,8 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
                 `INSERT INTO individual_customers (${itemCols}) VALUES (${itemPlaceholders}) ON CONFLICT ("customerKeyNumber") DO NOTHING RETURNING "customerKeyNumber"`,
                 itemValues
               );
+              await client.query(`RELEASE SAVEPOINT ${rowSp}`);
+
               if (singleRes.rows?.length > 0) {
                 insertedKeys.push(item.key);
                 if (item.spatial.xCoordinate != null || item.spatial.yCoordinate != null || item.spatial.zCoordinate != null) {
@@ -4818,6 +5232,7 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
                 errors.push(`Customer ${item.key}: already exists`);
               }
             } catch (singleErr: any) {
+              try { await client.query(`ROLLBACK TO SAVEPOINT ${rowSp}`); } catch {}
               errors.push(`Customer ${item.key}: ${singleErr?.message || 'Insert failed'}`);
             }
           }

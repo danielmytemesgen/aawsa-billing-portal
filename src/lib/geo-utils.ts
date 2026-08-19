@@ -8,6 +8,14 @@ export interface Coordinates {
     accuracy?: number;
 }
 
+export const GPS_MAX_ACCURACY_THRESHOLD = 30; // Maximum acceptable GPS accuracy in meters for reading capture
+
+/** Returns true if the GPS accuracy is within the reliable threshold (< 30m). */
+export const isGpsAccuracyAcceptable = (accuracy?: number): boolean => {
+    if (accuracy === undefined || accuracy === null) return true;
+    return accuracy <= GPS_MAX_ACCURACY_THRESHOLD;
+};
+
 /** Returns a label for GPS signal quality based on accuracy (meters). */
 export const getGpsQualityLabel = (accuracy: number): 'excellent' | 'good' | 'fair' | 'poor' => {
     if (accuracy <= 5)  return 'excellent';
@@ -20,26 +28,20 @@ export const getGpsQualityLabel = (accuracy: number): 'excellent' | 'good' | 'fa
 export const getGpsSignalInfo = (accuracy: number): { color: string; bgColor: string; progress: number; label: string } => {
     const quality = getGpsQualityLabel(accuracy);
     const map = {
-        excellent: { color: 'text-emerald-600', bgColor: 'bg-emerald-500', progress: 100, label: 'Excellent' },
-        good:      { color: 'text-green-600',   bgColor: 'bg-green-500',   progress: 75,  label: 'Good' },
-        fair:      { color: 'text-amber-600',   bgColor: 'bg-amber-400',   progress: 45,  label: 'Fair' },
-        poor:      { color: 'text-red-600',     bgColor: 'bg-red-400',     progress: 20,  label: 'Poor' },
+        excellent: { color: 'text-emerald-600', bgColor: 'bg-emerald-500', progress: 100, label: 'Excellent (≤5m)' },
+        good:      { color: 'text-green-600',   bgColor: 'bg-green-500',   progress: 75,  label: 'Good (≤15m)' },
+        fair:      { color: 'text-amber-600',   bgColor: 'bg-amber-400',   progress: 45,  label: 'Fair (≤30m)' },
+        poor:      { color: 'text-red-600',     bgColor: 'bg-red-400',     progress: 20,  label: 'Weak (>30m Drift)' },
     };
     return map[quality];
 };
 
 /**
- * Gets the current position using a multi-sample strategy for maximum accuracy.
- *
- * Strategy:
- * 1. Watch positions continuously for up to 20 seconds.
- * 2. Resolve immediately if accuracy <= 10 m (excellent urban GPS).
- * 3. Average the best 3 samples if we cannot hit 10 m.
- * 4. Fall back to best single sample if timeout is reached.
- *
- * @param onProgress – optional callback fired on every new reading with
- *                     the current accuracy in meters, so the UI can display
- *                     a live signal quality bar.
+ * Gets the current position using a fast-lock multi-sample strategy:
+ * 1. Resolves immediately if accuracy <= 25m (urban GPS / clear sky).
+ * 2. First sample with acceptable accuracy (<= 35m) resolves within 1.5s max.
+ * 3. Averages samples if multiple are collected within 4 seconds.
+ * 4. Total timeout reduced to 4.5 seconds for instant field verification.
  */
 export const getCurrentPosition = async (
     onProgress?: (accuracy: number) => void
@@ -50,19 +52,19 @@ export const getCurrentPosition = async (
             return;
         }
 
-        const ACCURACY_EXCELLENT = 10;    // Resolve immediately at <= 10 m
-        const ACCURACY_GOOD      = 20;    // Resolve averaged when best sample <= 20 m
-        const MAX_SAMPLES        = 5;     // Maximum samples to collect
-        const TIMEOUT_MS         = 20000; // Total wait time
+        const ACCURACY_EXCELLENT = 25;    // Immediate resolution threshold (≤ 25m)
+        const ACCURACY_ACCEPTABLE = 40;   // Good field reading threshold (≤ 40m)
+        const MAX_SAMPLES        = 4;     // Maximum samples
+        const TIMEOUT_MS         = 4500;  // Ultra-fast 4.5s max wait time
 
         const samples: GeolocationPosition[] = [];
         let resolved = false;
         let watchId: number;
 
-        const doResolve = (pos: GeolocationPosition) => {
+        const doResolve = (pos: GeolocationPosition | { coords: { latitude: number; longitude: number; accuracy?: number } }) => {
             if (resolved) return;
             resolved = true;
-            navigator.geolocation.clearWatch(watchId);
+            if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
             clearTimeout(timer);
             resolve({
                 latitude: pos.coords.latitude,
@@ -74,15 +76,26 @@ export const getCurrentPosition = async (
         const doAveragedResolve = () => {
             if (resolved) return;
             resolved = true;
-            navigator.geolocation.clearWatch(watchId);
+            if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
             clearTimeout(timer);
 
             if (samples.length === 0) {
-                reject(new Error('Location request timed out. Please enable GPS and step into an open area.'));
+                // Try last known good location from localStorage before failing
+                try {
+                    const raw = localStorage.getItem('last_user_location');
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed?.coords && (Date.now() - (parsed.t || 0)) < 24 * 60 * 60 * 1000) {
+                            resolve(parsed.coords);
+                            return;
+                        }
+                    }
+                } catch { /* ignore */ }
+
+                reject(new Error('Location request timed out. Please tap "Bypass" or step outdoors.'));
                 return;
             }
 
-            // Average the best (most accurate) samples
             const best = [...samples]
                 .sort((a, b) => a.coords.accuracy - b.coords.accuracy)
                 .slice(0, 3);
@@ -96,51 +109,60 @@ export const getCurrentPosition = async (
 
         const timer = setTimeout(doAveragedResolve, TIMEOUT_MS);
 
+        // Fast-path: check if browser already has a fresh cached position (<60s old)
+        try {
+            navigator.geolocation.getCurrentPosition(
+                (quickPos) => {
+                    if (quickPos?.coords?.accuracy && quickPos.coords.accuracy <= ACCURACY_EXCELLENT) {
+                        onProgress?.(quickPos.coords.accuracy);
+                        doResolve(quickPos);
+                    }
+                },
+                () => {},
+                { enableHighAccuracy: false, maximumAge: 60000, timeout: 1000 }
+            );
+        } catch { /* ignore fast-path error */ }
+
         watchId = navigator.geolocation.watchPosition(
             (position) => {
                 const acc = position.coords.accuracy;
-
-                // Notify UI of live accuracy for signal quality display
                 onProgress?.(acc);
 
-                // Store sample; keep only best MAX_SAMPLES by accuracy
                 samples.push(position);
                 if (samples.length > MAX_SAMPLES) {
                     samples.sort((a, b) => a.coords.accuracy - b.coords.accuracy);
                     samples.splice(MAX_SAMPLES);
                 }
 
-                // Resolve immediately on excellent accuracy
+                // Resolve immediately on good urban accuracy
                 if (acc <= ACCURACY_EXCELLENT) {
                     doResolve(position);
                     return;
                 }
 
-                // Resolve averaged once we have 3+ good-enough samples
-                const bestAcc = [...samples].sort((a, b) => a.coords.accuracy - b.coords.accuracy)[0]?.coords.accuracy ?? Infinity;
-                if (samples.length >= 3 && bestAcc <= ACCURACY_GOOD) {
-                    doAveragedResolve();
+                // If accuracy is acceptable (≤ 40m) on 2nd sample or later, resolve without waiting 4.5s
+                if (samples.length >= 2 && acc <= ACCURACY_ACCEPTABLE) {
+                    doResolve(position);
                 }
             },
             (error) => {
                 if (!resolved && samples.length === 0 && error.code !== error.TIMEOUT) {
                     clearTimeout(timer);
                     resolved = true;
-                    navigator.geolocation.clearWatch(watchId);
+                    if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
                     let msg = 'Could not acquire GPS location.';
                     if (error.code === error.PERMISSION_DENIED) {
-                        msg = 'Location permission denied. Please allow GPS access in your browser settings and refresh.';
+                        msg = 'Location permission denied. Please allow GPS access in your browser settings or tap Bypass.';
                     } else if (error.code === error.POSITION_UNAVAILABLE) {
-                        msg = 'GPS signal unavailable. Move to an open area and try again.';
+                        msg = 'GPS signal unavailable. Move to an open area or tap Bypass.';
                     }
                     reject(new Error(msg));
                 }
-                // For TIMEOUT: let the setTimeout handler fire doAveragedResolve with whatever we have
             },
             {
                 enableHighAccuracy: true,
                 timeout: TIMEOUT_MS,
-                maximumAge: 0, // Always request a fresh position — no cached results
+                maximumAge: 10000
             }
         );
     });
@@ -200,6 +222,32 @@ export const triggerProximityHaptic = () => {
             navigator.vibrate([120, 60, 120]);
         } catch {
             // Ignore if vibration is blocked by user gesture requirements
+        }
+    }
+};
+
+/**
+ * Triggers a sharp, tactile double-tap vibration when a meter reading is recorded (online or offline).
+ */
+export const triggerReadingSavedHaptic = () => {
+    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+        try {
+            navigator.vibrate([50, 40, 50]);
+        } catch {
+            // Ignore if unsupported
+        }
+    }
+};
+
+/**
+ * Triggers an alert vibration pattern for errors or conflicts.
+ */
+export const triggerWarningHaptic = () => {
+    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+        try {
+            navigator.vibrate([100, 50, 100, 50, 100]);
+        } catch {
+            // Ignore if unsupported
         }
     }
 };

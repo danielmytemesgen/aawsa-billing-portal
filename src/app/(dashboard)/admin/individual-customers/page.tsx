@@ -2,10 +2,12 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, Download, ChevronDown, X } from "lucide-react";
+import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, Download, ChevronDown, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { IndividualCustomer } from "./individual-customer-types";
@@ -55,6 +57,7 @@ export default function IndividualCustomersPage() {
   const [summary, setSummary] = React.useState({ total: 0, active: 0, inactive: 0 });
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<IndividualCustomerStatus | 'All'>('All');
+  const [branchFilter, setBranchFilter] = React.useState<string>('All');
   const [isExporting, setIsExporting] = React.useState(false);
 
   const fetchSummaryStats = React.useCallback(async () => {
@@ -62,13 +65,13 @@ export default function IndividualCustomersPage() {
     if (data) setSummary(data);
   }, []);
 
-  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string, branch?: string) => {
     setIsLoading(true);
     const { customers: paginatedCustomers, totalCount: count, error } = await fetchCustomersPaginated(
       rpp,
       p * rpp,
       search,
-      undefined, // branchId — handled server-side
+      branch && branch !== 'All' ? branch : undefined,
       status && status !== 'All' ? status : undefined,
     );
     if (!error) {
@@ -94,9 +97,9 @@ export default function IndividualCustomersPage() {
   }, [searchTerm]);
 
   React.useEffect(() => {
-    fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+    fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
     fetchSummaryStats();
-  }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData, fetchSummaryStats]);
+  }, [page, rowsPerPage, debouncedSearch, statusFilter, branchFilter, fetchData, fetchSummaryStats]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -208,7 +211,8 @@ export default function IndividualCustomersPage() {
     toast({ title: "Preparing Export", description: "Fetching all matching records..." });
     try {
       const { customers: allCustomers } = await fetchCustomersPaginated(
-        10000, 0, debouncedSearch, undefined,
+        10000, 0, debouncedSearch,
+        branchFilter !== 'All' ? branchFilter : undefined,
         statusFilter !== 'All' ? statusFilter : undefined,
       );
 
@@ -350,9 +354,9 @@ export default function IndividualCustomersPage() {
                 <CardDescription>Manage your individual consumer registry.</CardDescription>
               </div>
             </div>
-            {/* Search + Export row */}
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <div className="relative flex-grow md:w-72">
+            {/* Search + Branch Filter + Export row */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-grow md:w-64">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <Input
                   type="search"
@@ -362,6 +366,35 @@ export default function IndividualCustomersPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+
+              {/* Branch Selector */}
+              <div className="w-full sm:w-48 flex-shrink-0">
+                <Select
+                  value={branchFilter}
+                  onValueChange={(val) => {
+                    setBranchFilter(val);
+                    setPage(0);
+                  }}
+                >
+                  <SelectTrigger className="h-10 px-3 border-slate-200 shadow-sm rounded-xl font-medium bg-white hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center gap-1.5 truncate text-sm">
+                      <Building2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                      <SelectValue placeholder="All Branches" />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    <SelectItem value="All" className="font-semibold text-slate-800">
+                      🏢 All Branches
+                    </SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -386,7 +419,7 @@ export default function IndividualCustomersPage() {
             </div>
           </div>
 
-          {/* Status filter pills */}
+          {/* Status filter pills & active tags */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold text-slate-500 mr-1">Filter:</span>
             {(['All', ...individualCustomerStatuses] as const).map((status) => {
@@ -422,9 +455,24 @@ export default function IndividualCustomersPage() {
                 </button>
               );
             })}
-            {statusFilter !== 'All' && (
+
+            {/* Active Branch Chip */}
+            {branchFilter !== 'All' && (
+              <Badge
+                variant="secondary"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer shadow-sm"
+                onClick={() => { setBranchFilter('All'); setPage(0); }}
+                title="Click to clear branch filter"
+              >
+                <Building2 className="h-3 w-3 text-blue-600" />
+                Branch: {branches.find(b => b.id === branchFilter)?.name || branchFilter}
+                <X className="h-3 w-3 ml-0.5 opacity-70 hover:opacity-100" />
+              </Badge>
+            )}
+
+            {(statusFilter !== 'All' || branchFilter !== 'All') && (
               <span className="ml-1 text-xs text-slate-400 italic">
-                {totalCount} {statusFilter} customer{totalCount !== 1 ? 's' : ''}
+                Showing {totalCount} result{totalCount !== 1 ? 's' : ''}
               </span>
             )}
           </div>

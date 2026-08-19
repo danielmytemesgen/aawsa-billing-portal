@@ -57,6 +57,11 @@ export const baseIndividualCustomerDataSchema = z.object({
   woreda: z.string().min(1, { message: "Woreda is required." }),
   sewerageConnection: z.enum(sewerageConnections, { errorMap: () => ({ message: "Please select sewerage connection status." }) }),
   assignedBulkMeterId: z.string().optional().describe("The ID of the bulk meter this individual customer is assigned to."),
+  phoneNumber: z.string()
+    .regex(/^(?:\+251|251|0)?[79]\d{8}$/, { message: "Phone must be Ethiopian format: 9xxxxxxxx, 09xxxxxxxx, 07xxxxxxxx, or +251xxxxxxxxx" })
+    .optional()
+    .or(z.literal(''))
+    .optional(),
   branchId: z.string().optional().describe("The ID of the branch this customer belongs to."),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
   // Coordinates validated for Addis Ababa/Ethiopia region
@@ -99,9 +104,9 @@ export const baseBulkMeterDataSchema = z.object({
   specificArea: z.string().trim().min(2, { message: "Specific Area must be at least 2 characters." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
   woreda: z.string().min(1, { message: "Woreda is required." }),
-  // Ethiopian phone: 09xx, 07xx, +2519xx, +2517xx, or 2519xx/2517xx
+  // Ethiopian phone: 9xx, 09xx, 07xx, +2519xx, +2517xx, or 2519xx/2517xx
   phoneNumber: z.string()
-    .regex(/^(?:\+251|251|0)[79]\d{8}$/, { message: "Phone must be Ethiopian format: 09xxxxxxxx, 07xxxxxxxx, or +251xxxxxxxxx" })
+    .regex(/^(?:\+251|251|0)?[79]\d{8}$/, { message: "Phone must be Ethiopian format: 9xxxxxxxx, 09xxxxxxxx, 07xxxxxxxx, or +251xxxxxxxxx" })
     .optional()
     .or(z.literal(''))
     .optional(),

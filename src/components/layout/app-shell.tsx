@@ -56,6 +56,61 @@ interface UserProfile {
   name?: string;
 }
 
+// Human-readable labels for staff/admin routes, used by the page-view tracker.
+// Covers both the admin and staff sidebars — AppShell renders for both.
+const STAFF_PAGE_NAME_MAP: Record<string, string> = {
+  // Admin
+  '/admin/dashboard': 'Dashboard',
+  '/admin/head-office-dashboard': 'Head Office Dashboard',
+  '/admin/staff-management-dashboard': 'Staff Management Dashboard',
+  '/admin/branches': 'Branch Management',
+  '/admin/staff-management': 'Staff Management',
+  '/admin/approvals': 'Approvals',
+  '/admin/roles-and-permissions': 'Roles & Permissions',
+  '/admin/notifications': 'Notifications',
+  '/admin/tariffs': 'Tariff Management',
+  '/admin/routes': 'Route Management',
+  '/admin/knowledge-base': 'Knowledge Base',
+  '/admin/bill-management': 'Bill Management',
+  '/admin/fault-codes': 'Fault Codes',
+  '/admin/bulk-meters': 'Bulk Meters',
+  '/admin/individual-customers': 'Individual Customers',
+  '/admin/data-entry': 'Data Entry',
+  '/admin/meter-readings': 'Meter Readings',
+  '/admin/reports': 'Reports',
+  '/admin/reports/paid-bills': 'List Of Paid Bills',
+  '/admin/reports/sent-bills': 'List Of Sent Bills',
+  '/admin/reports/unsettled-bills': 'List of Unsettled Bills',
+  '/admin/settings': 'Settings',
+  '/admin/settings/promotions': 'Promotions',
+  '/admin/security-logs': 'Security Logs',
+  '/admin/recycle-bin': 'Recycle Bin',
+  '/admin/maintenance': 'System Maintenance',
+  // Staff
+  '/staff/dashboard': 'Dashboard',
+  '/staff/staff-management-dashboard': 'Staff Management Dashboard',
+  '/staff/my-routes': 'My Routes',
+  '/staff/reader-progress': 'Reader Monitoring',
+  '/staff/branches': 'Branch Management',
+  '/staff/staff-management': 'Staff Management',
+  '/staff/approvals': 'Approvals',
+  '/staff/roles-and-permissions': 'Roles & Permissions',
+  '/staff/notifications': 'Notifications',
+  '/staff/tariffs': 'Tariff Management',
+  '/staff/knowledge-base': 'Knowledge Base',
+  '/staff/bill-management': 'Bill Management',
+  '/staff/bulk-meters': 'Bulk Meters',
+  '/staff/individual-customers': 'Individual Customers',
+  '/staff/data-entry': 'Data Entry',
+  '/staff/meter-readings': 'Meter Readings',
+  '/staff/reports': 'Reports',
+  '/staff/reports/reading-classification': 'Reading Analytics',
+  '/staff/reports/paid-bills': 'List Of Paid Bills',
+  '/staff/reports/sent-bills': 'List Of Sent Bills',
+  '/staff/reports/unsettled-bills': 'List of Unsettled Bills',
+  '/staff/settings': 'Settings',
+};
+
 interface AppHeaderContentProps {
   user: UserProfile | null;
   appName?: string;
@@ -162,6 +217,7 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
 
 export function AppShell({ user, userRole, sidebar, children }: { user: UserProfile | null, userRole: 'admin' | 'staff', children: React.ReactNode, sidebar?: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [appName, setAppName] = React.useState("AAWSA Billing Portal");
   const currentYear = new Date().getFullYear();
   const { isOnline, wasOffline, pendingCount } = useNetworkStatus();
@@ -274,6 +330,29 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
       window.removeEventListener('sync-progress', handleSyncProgress);
     };
   }, []);
+
+  // Track page views for staff/admin sessions (fire-and-forget).
+  // The sessionId is read server-side from the httpOnly JWT cookie, so the
+  // client only sends the path + label. Consecutive-identical-path dedupe and
+  // heartbeat throttling happen server-side.
+  const lastLoggedPathRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!pathname || !user) return;
+    const label = STAFF_PAGE_NAME_MAP[pathname];
+    if (!label) return;
+    if (lastLoggedPathRef.current === pathname) return;
+    lastLoggedPathRef.current = pathname;
+
+    fetch('/api/staff/log-page-view', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: pathname, label }),
+    }).catch(() => {
+      // Fire-and-forget: allow a retry on the next navigation (keep the ref unset)
+      if (lastLoggedPathRef.current === pathname) lastLoggedPathRef.current = null;
+    });
+  }, [pathname, user]);
 
   return (
     <SidebarProvider defaultOpen={true}>

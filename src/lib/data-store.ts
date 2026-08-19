@@ -519,6 +519,7 @@ const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<Do
     customerKeyNumber: dbCustomer.customerKeyNumber,
     instKey: dbCustomer.INST_KEY,
     name: dbCustomer.name,
+    phoneNumber: (dbCustomer as any).phone_number || dbCustomer.phoneNumber || undefined,
     contractNumber: dbCustomer.contractNumber,
     customerType: dbCustomer.customerType,
     bookNumber: dbCustomer.bookNumber,
@@ -700,6 +701,7 @@ const mapDbBulkMeterToDomain = async (dbBulkMeter: BulkMeterRow): Promise<BulkMe
     differenceUsage: dbBulkMeter.difference_usage === null || dbBulkMeter.difference_usage === undefined ? undefined : Number(dbBulkMeter.difference_usage),
     differenceBill: dbBulkMeter.difference_bill === null || dbBulkMeter.difference_bill === undefined ? undefined : Number(dbBulkMeter.difference_bill),
     outStandingbill: dbBulkMeter.outStandingbill ? Number(dbBulkMeter.outStandingbill) : 0,
+    creditBalance: dbBulkMeter.creditBalance === null || dbBulkMeter.creditBalance === undefined ? undefined : Number(dbBulkMeter.creditBalance),
     xCoordinate: dbBulkMeter.x_coordinate ? Number(dbBulkMeter.x_coordinate) : undefined,
     yCoordinate: dbBulkMeter.y_coordinate ? Number(dbBulkMeter.y_coordinate) : undefined,
     zCoordinate: dbBulkMeter.z_coordinate ? Number(dbBulkMeter.z_coordinate) : undefined,
@@ -754,6 +756,7 @@ const mapDomainBulkMeterToInsert = async (bm: Partial<BulkMeter>): Promise<BulkM
     difference_usage: differenceUsage,
     difference_bill: differenceBill,
     outStandingbill: bm.outStandingbill ? Number(bm.outStandingbill) : 0,
+    creditBalance: bm.creditBalance === null || bm.creditBalance === undefined ? undefined : Number(bm.creditBalance),
     x_coordinate: bm.xCoordinate,
     y_coordinate: bm.yCoordinate,
     z_coordinate: bm.zCoordinate,
@@ -785,6 +788,7 @@ const mapDomainBulkMeterToUpdate = async (bulkMeterWithUpdates: BulkMeter): Prom
     charge_group: bulkMeterWithUpdates.chargeGroup as "Domestic" | "Non-domestic",
     sewerage_connection: bulkMeterWithUpdates.sewerageConnection,
     outStandingbill: Number(bulkMeterWithUpdates.outStandingbill),
+    creditBalance: bulkMeterWithUpdates.creditBalance === null || bulkMeterWithUpdates.creditBalance === undefined ? undefined : Number(bulkMeterWithUpdates.creditBalance),
     x_coordinate: bulkMeterWithUpdates.xCoordinate,
     y_coordinate: bulkMeterWithUpdates.yCoordinate,
     z_coordinate: bulkMeterWithUpdates.zCoordinate,
@@ -1410,78 +1414,89 @@ async function fetchAllBranches() {
   return branches;
 }
 
+// ── In-flight promise locks: prevent duplicate concurrent fetches ─────────────
+let customersInflight: Promise<any> | null = null;
+let bulkMetersInflight: Promise<any> | null = null;
+
 async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
-  try {  
-    if (!tariffsFetched) {
-      await initializeTariffs();
-    }
-    const { data, error } = await getAllCustomersAction(options);
-    if (data) {
-      const newCustomers = await Promise.all(data.map(mapDbCustomerToDomain));
-      
-      // Merge strategy: update existing or append new
-      const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
-      for (const nc of newCustomers) {
-        customerMap.set(nc.customerKeyNumber, nc);
+  // If no options (full fetch), deduplicate concurrent callers
+  if (!options && customersInflight) return customersInflight;
+  const run = async () => {
+    try {
+      // Fetch tariffs and customers in parallel — no more serial waterfall
+      const [{ data, error }] = await Promise.all([
+        getAllCustomersAction(options),
+        tariffsFetched ? Promise.resolve() : initializeTariffs(),
+      ]);
+      if (data) {
+        const newCustomers = await Promise.all(data.map(mapDbCustomerToDomain));
+        const customerMap = new Map(customers.map(c => [c.customerKeyNumber, c]));
+        for (const nc of newCustomers) customerMap.set(nc.customerKeyNumber, nc);
+        customers = Array.from(customerMap.values());
+        if (typeof window !== 'undefined') {
+          offlineDb.cacheMeters(newCustomers, 'individual').catch(err => console.error('DataStore: Failed to cache customers:', err));
+        }
+        notifyCustomerListeners();
+      } else {
+        console.error('DataStore: Failed to fetch customers. Database error:', JSON.stringify(error, null, 2));
       }
-      customers = Array.from(customerMap.values());
-      
-      // Cache for offline use
-      if (typeof window !== 'undefined') {
-        offlineDb.cacheMeters(newCustomers, 'individual').catch(err => console.error("DataStore: Failed to cache customers:", err));
-      }
-  
-      notifyCustomerListeners();
-    } else {
-      console.error("DataStore: Failed to fetch customers. Database error:", JSON.stringify(error, null, 2));
+      customersFetched = !options;
+    } catch (err) {
+      console.warn('DataStore: fetchAllCustomers failed (offline?)', err);
+    } finally {
+      customersInflight = null;
     }
-    customersFetched = !options; // Only mark as fully fetched if no filters/options applied
-  } catch (err) {
-    console.warn("DataStore: fetchAllCustomers failed (offline?)", err);
+    return customers;
+  };
+  if (!options) {
+    customersInflight = run();
+    return customersInflight;
   }
-  return customers;
+  return run();
 }
 
 async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
-  try {  
-    if (!tariffsFetched) {
-      await initializeTariffs();
-    }
-    const { data: rawBulkMeters, error: fetchError } = await getAllBulkMetersAction(options);
-  
-    if (fetchError) {
-      console.error("DataStore: Failed to fetch bulk meters. Database error:", JSON.stringify(fetchError, null, 2));
-      bulkMetersFetched = !options;
-      return [];
-    }
-  
-    if (!rawBulkMeters) {
-      bulkMeters = [];
+  // If no options (full fetch), deduplicate concurrent callers
+  if (!options && bulkMetersInflight) return bulkMetersInflight;
+  const run = async () => {
+    try {
+      // Fetch tariffs and bulk meters in parallel — no more serial waterfall
+      const [{ data: rawBulkMeters, error: fetchError }] = await Promise.all([
+        getAllBulkMetersAction(options),
+        tariffsFetched ? Promise.resolve() : initializeTariffs(),
+      ]);
+      if (fetchError) {
+        console.error('DataStore: Failed to fetch bulk meters. Database error:', JSON.stringify(fetchError, null, 2));
+        bulkMetersFetched = !options;
+        return [];
+      }
+      if (!rawBulkMeters) {
+        bulkMeters = [];
+        notifyBulkMeterListeners();
+        bulkMetersFetched = !options;
+        return [];
+      }
+      const newBulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
+      const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+      for (const nbm of newBulkMeters) meterMap.set(nbm.customerKeyNumber, nbm);
+      bulkMeters = Array.from(meterMap.values());
+      if (typeof window !== 'undefined') {
+        offlineDb.cacheMeters(newBulkMeters, 'bulk').catch(err => console.error('DataStore: Failed to cache bulk meters:', err));
+      }
       notifyBulkMeterListeners();
       bulkMetersFetched = !options;
-      return [];
+    } catch (err) {
+      console.warn('DataStore: fetchAllBulkMeters failed (offline?)', err);
+    } finally {
+      bulkMetersInflight = null;
     }
-  
-    const newBulkMeters = await Promise.all(rawBulkMeters.map(mapDbBulkMeterToDomain));
-    
-    // Merge strategy
-    const meterMap = new Map(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
-    for (const nbm of newBulkMeters) {
-      meterMap.set(nbm.customerKeyNumber, nbm);
-    }
-    bulkMeters = Array.from(meterMap.values());
-  
-    // Cache for offline use
-    if (typeof window !== 'undefined') {
-      offlineDb.cacheMeters(newBulkMeters, 'bulk').catch(err => console.error("DataStore: Failed to cache bulk meters:", err));
-    }
-  
-    notifyBulkMeterListeners();
-    bulkMetersFetched = !options;
-  } catch (err) {
-    console.warn("DataStore: fetchAllBulkMeters failed (offline?)", err);
+    return bulkMeters;
+  };
+  if (!options) {
+    bulkMetersInflight = run();
+    return bulkMetersInflight;
   }
-  return bulkMeters;
+  return run();
 }
 
 
@@ -1778,9 +1793,12 @@ export const initializeBranches = async (force: boolean = false) => {
 
 export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) => {
   if (force || !customersFetched || customers.length === 0 || options) {
-    // If offline, attempt to load from cache first
+    // If offline, attempt to load from cache first using fast B-Tree index if routeKey is specified
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
-      const cached = await offlineDb.getCachedMeters('individual');
+      const cached = options?.routeKey 
+        ? await offlineDb.getCachedMetersForRoute(options.routeKey, 'individual')
+        : await offlineDb.getCachedMeters('individual');
+
       if (cached && cached.length > 0) {
         const cachedCustomers = cached.map((c: any) => c.data);
 
@@ -1824,9 +1842,12 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
 
 export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) => {
   if (force || !bulkMetersFetched || bulkMeters.length === 0 || options) {
-    // If offline, attempt to load from cache first
+    // If offline, attempt to load from cache first using fast B-Tree index if routeKey is specified
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
-      const cached = await offlineDb.getCachedMeters('bulk');
+      const cached = options?.routeKey 
+        ? await offlineDb.getCachedMetersForRoute(options.routeKey, 'bulk')
+        : await offlineDb.getCachedMeters('bulk');
+
       if (cached && cached.length > 0) {
         const cachedMeters = cached.map((c: any) => c.data);
 
@@ -1913,9 +1934,9 @@ export const initializeBills = async (force: boolean = false) => {
 };
 export const initializeIndividualCustomerReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
   if (options?.routeKey) {
-    // If offline, attempt to load cached historical readings first
+    // If offline, attempt to load cached historical readings first using fast route index
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
-      const cached = await offlineDb.getCachedHistoricalReadings('individual');
+      const cached = await offlineDb.getCachedHistoricalReadingsForRoute(options.routeKey, 'individual');
       if (cached && cached.length > 0) {
         const cachedReadings = cached.map((c: any) => c.data);
         const readingMap = new Map(individualCustomerReadings.map(r => [r.id, r]));
@@ -1959,9 +1980,9 @@ export const initializeIndividualCustomerReadings = async (force: boolean = fals
 
 export const initializeBulkMeterReadings = async (force: boolean = false, options?: { routeKey?: string }) => {
   if (options?.routeKey) {
-    // If offline, attempt to load cached historical readings first
+    // If offline, attempt to load cached historical readings first using fast route index
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
-      const cached = await offlineDb.getCachedHistoricalReadings('bulk');
+      const cached = await offlineDb.getCachedHistoricalReadingsForRoute(options.routeKey, 'bulk');
       if (cached && cached.length > 0) {
         const cachedReadings = cached.map((c: any) => c.data);
         const readingMap = new Map(bulkMeterReadings.map(r => [r.id, r]));
@@ -2545,9 +2566,9 @@ export const addIndividualCustomerReading = async (
     return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${customer.currentReading}).` };
   }
 
-  const shouldQueueOffline = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
+  const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
 
-  if (shouldQueueOffline) {
+  if (isOffline && !options?.skipOfflineFallback) {
     const readingId = await offlineDb.queueOfflineReading('individual', readingData);
     
     // Optimistic update
@@ -2579,15 +2600,23 @@ export const addIndividualCustomerReading = async (
     yCoordinate: readingData.capturedCoordinates.latitude,
   } : undefined;
   
-  const { data: newDbReading, error: readingInsertError } = await createIndividualCustomerReadingAction(
-    payload,
-    spatialData,
-    readingData.meter_photo ?? undefined
-  );
+  let newDbReading: any = null;
+  let readingInsertError: any = null;
+
+  try {
+    const res = await createIndividualCustomerReadingAction(
+      payload,
+      spatialData,
+      readingData.meter_photo ?? undefined
+    );
+    newDbReading = res.data;
+    readingInsertError = res.error;
+  } catch (err: any) {
+    readingInsertError = err;
+  }
 
   if (readingInsertError || !newDbReading) {
-    const shouldQueueOfflineOnError = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
-    if (shouldQueueOfflineOnError) {
+    if (typeof window !== 'undefined' && !options?.skipOfflineFallback) {
       const readingId = await offlineDb.queueOfflineReading('individual', readingData);
       const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (customer.currentReading ?? 0);
       const newReading: DomainIndividualCustomerReading = {
@@ -2604,7 +2633,7 @@ export const addIndividualCustomerReading = async (
     }
 
     let userMessage = (readingInsertError as any)?.message || "Failed to add reading.";
-    if (readingInsertError && (readingInsertError as any).message.includes('violates row-level security policy')) {
+    if (readingInsertError && (readingInsertError as any).message && (readingInsertError as any).message.includes('violates row-level security policy')) {
       userMessage = "Permission denied to add readings. Please check Row Level Security policies in the database.";
     }
     console.error("DataStore: Failed to add individual reading. Database error:", JSON.stringify(readingInsertError, null, 2));
@@ -2650,9 +2679,9 @@ export const addBulkMeterReading = async (
     return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${bulkMeter.currentReading}).` };
   }
 
-  const shouldQueueOffline = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
+  const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
 
-  if (shouldQueueOffline) {
+  if (isOffline && !options?.skipOfflineFallback) {
     const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
     
     // Optimistic update
@@ -2684,15 +2713,23 @@ export const addBulkMeterReading = async (
     yCoordinate: readingData.capturedCoordinates.latitude,
   } : undefined;
 
-  const { data: newDbReading, error: readingInsertError } = await createBulkMeterReadingAction(
-    payload,
-    spatialData,
-    readingData.meter_photo ?? undefined
-  );
+  let newDbReading: any = null;
+  let readingInsertError: any = null;
+
+  try {
+    const res = await createBulkMeterReadingAction(
+      payload,
+      spatialData,
+      readingData.meter_photo ?? undefined
+    );
+    newDbReading = res.data;
+    readingInsertError = res.error;
+  } catch (err: any) {
+    readingInsertError = err;
+  }
 
   if (readingInsertError || !newDbReading) {
-    const shouldQueueOfflineOnError = typeof window !== 'undefined' && !options?.skipOfflineFallback && (!window.navigator.onLine || !(await offlineDb.checkActualConnectivity()));
-    if (shouldQueueOfflineOnError) {
+    if (typeof window !== 'undefined' && !options?.skipOfflineFallback) {
       const readingId = await offlineDb.queueOfflineReading('bulk', readingData);
       const prevReadingToUse = readingData.previousReading !== undefined ? readingData.previousReading : (bulkMeter.currentReading ?? 0);
       const newReading: DomainBulkMeterReading = {

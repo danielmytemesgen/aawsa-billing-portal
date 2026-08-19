@@ -212,7 +212,7 @@ export default function SentBillsReportPage() {
   }
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-6 pb-10 p-4 rounded-3xl bg-gradient-to-b from-slate-100/70 via-slate-50/40 to-white">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Sent Bills Report</h1>
@@ -221,7 +221,7 @@ export default function SentBillsReportPage() {
       </div>
 
       <Card className="shadow-md border-slate-200/60 overflow-hidden rounded-3xl">
-        <CardHeader className="bg-slate-50/50 border-b pb-6 pt-6 px-6">
+        <CardHeader className="bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-slate-50/40 border-b pb-6 pt-6 px-6">
           <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6">
             <div className="flex items-center gap-4">
               <div className="h-12 w-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">

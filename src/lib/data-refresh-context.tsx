@@ -17,15 +17,15 @@ import { useNetworkQuality, type NetworkQuality } from "@/lib/network-quality";
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────────────────────────────────────
-/** Polling intervals per network quality tier */
+/** Polling intervals per network quality tier (optimized to avoid mobile network churn) */
 const POLL_INTERVALS: Record<NetworkQuality, number> = {
-  strong: 30_000,       //  30 s — normal
-  weak:   3 * 60_000,   //   3 min — conserve bandwidth on 2G/3G
+  strong: 5 * 60_000,   //  5 min — gentle background check on strong connection
+  weak:   15 * 60_000,  //  15 min — conserve bandwidth and radio battery on 2G/3G
   offline: Infinity,    //  paused — no polling when offline
 };
 
 /** SSE reconnect: exponential backoff 10 s → 20 s → 40 s → 80 s, cap at 5 min */
-const SSE_BACKOFF_BASE_MS   = 10_000;
+const SSE_BACKOFF_BASE_MS   = 15_000;
 const SSE_BACKOFF_MAX_MS    = 5 * 60_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,21 +60,16 @@ export function useDataRefresh() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Core: refresh all critical entities from the server
+// Core: refresh critical entities from the server
 // Each initialize(force=true) re-fetches from the DB and calls notifyListeners()
 // so every subscribed component updates automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 async function refreshAllEntities(): Promise<void> {
   await Promise.allSettled([
     initializeBranches(true),
-    initializeCustomers(true),
-    initializeBulkMeters(true),
-    initializeBills(true),
-    initializeIndividualCustomerReadings(true),
-    initializeBulkMeterReadings(true),
-    initializeStaffMembers(true),
     initializeNotifications(true),
-    initializePayments(true),
+    initializeBills(true),
+    initializeStaffMembers(true),
   ]);
 }
 

@@ -13,6 +13,9 @@ const allowedDevOrigins = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: process.env.NEXT_BUILD_TARGET === 'export' ? 'export' : 'standalone',
+  compress: true,
+  poweredByHeader: false,
+  reactStrictMode: false,
   typescript: { ignoreBuildErrors: false },
   eslint: {
     ignoreDuringBuilds: true,

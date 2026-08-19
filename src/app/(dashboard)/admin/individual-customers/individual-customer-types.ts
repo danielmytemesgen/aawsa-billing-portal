@@ -8,9 +8,10 @@ export type IndividualCustomerStatus = (typeof individualCustomerStatuses)[numbe
 
 // This type represents the data structure for an individual customer entity.
 // It combines the fields from the data entry schema with operational/billing fields.
-// customerKeyNumber is now the primary identifier.
+//  customerKeyNumber is now the primary identifier.
 export type IndividualCustomer = z.infer<typeof baseIndividualCustomerDataSchema> & {
   // id: string; // Removed, customerKeyNumber is the PK
+  phoneNumber?: string; // Phone number (DB column: phone_number) - not part of the data-entry schema
   status: IndividualCustomerStatus;
   paymentStatus: PaymentStatus;
   calculatedBill: number;
@@ -23,4 +24,6 @@ export type IndividualCustomer = z.infer<typeof baseIndividualCustomerDataSchema
   isMinOfThreeApplied?: boolean;
   effectiveUsage?: number;
   rawUsage?: number;
+  assignedReaderId?: string | null;
+  readerStaffId?: string | null;
 };

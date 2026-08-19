@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -24,7 +24,6 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
     const pathname = usePathname();
     const [customerName, setCustomerName] = useState("");
     const [customerKey, setCustomerKey] = useState("");
-    const loggedPagesRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         // Check if customer is logged in
@@ -43,14 +42,13 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
         }
     }, [router]);
 
-    // Track page views on navigation
+    // Track page views on navigation. Every navigation is sent (repeat visits
+    // are kept); the server stores {path,label,viewed_at} and dedupes only
+    // consecutive identical paths, so no client-side tracking is needed.
     useEffect(() => {
         if (!pathname) return;
         const pageName = PAGE_NAME_MAP[pathname];
         if (!pageName) return;
-
-        // Avoid logging the same page multiple times in this client session
-        if (loggedPagesRef.current.has(pageName)) return;
 
         const customerData = localStorage.getItem("customer");
         if (!customerData) return;
@@ -60,16 +58,13 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
             const sessionId = customer.sessionId;
             if (!sessionId) return;
 
-            loggedPagesRef.current.add(pageName);
-
             // Fire-and-forget: log the page view
             fetch('/api/customer/log-page-view', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId, pageName }),
+                body: JSON.stringify({ sessionId, pageName, path: pathname, label: pageName }),
             }).catch(() => {
-                // Remove from tracked if logging failed so it can retry
-                loggedPagesRef.current.delete(pageName);
+                // ignore — fire-and-forget
             });
         } catch {
             // ignore parse errors
@@ -84,7 +79,7 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
                 const sessionId = customer.sessionId;
                 if (sessionId) {
                     const { revokeCustomerSessionAction } = await import("@/lib/actions");
-                    await revokeCustomerSessionAction(sessionId);
+                    await revokeCustomerSessionAction(sessionId, 'logout');
                 }
             }
         } catch (e) {

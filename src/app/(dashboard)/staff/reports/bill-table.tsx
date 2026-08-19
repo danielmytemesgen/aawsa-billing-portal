@@ -11,7 +11,7 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
 import { getMonthlyBillAmt } from "@/lib/billing-utils";
-import { getBillKey } from "@/lib/export-utils";
+import { getBillKey, getCustomerPhone } from "@/lib/export-utils";
 
 interface BillTableProps {
   bills: DomainBill[];
@@ -84,11 +84,12 @@ export function BillTable({ bills, customers, bulkMeters, branches = [], showDeb
   return (
     <div className="rounded-md border mt-4">
       <Table>
-        <TableHeader>
-          <TableRow>
+        <TableHeader className="bg-slate-100/90">
+          <TableRow className="hover:bg-transparent">
             <TableHead>Customer/Meter Name</TableHead>
             <TableHead>Bill Key</TableHead>
             <TableHead>Customer Key</TableHead>
+            <TableHead>Phone</TableHead>
             <TableHead>Branch</TableHead>
             <TableHead>Month</TableHead>
             <TableHead className="text-right">Prev Reading</TableHead>
@@ -113,7 +114,7 @@ export function BillTable({ bills, customers, bulkMeters, branches = [], showDeb
         <TableBody>
           {bills.length > 0 ? (
             bills.map((bill) => (
-              <TableRow key={bill.id}>
+              <TableRow key={bill.id} className="odd:bg-white even:bg-slate-50/60 hover:bg-blue-50/40 transition-colors">
                 <TableCell className="font-medium">{getIdentifier(bill)}</TableCell>
                 <TableCell className="py-3 whitespace-nowrap">
                   <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
@@ -121,6 +122,7 @@ export function BillTable({ bills, customers, bulkMeters, branches = [], showDeb
                   </span>
                 </TableCell>
                 <TableCell>{getCustomerKey(bill)}</TableCell>
+                <TableCell className="whitespace-nowrap">{getCustomerPhone(bill, customers, bulkMeters)}</TableCell>
                 <TableCell>{getBranchName(bill)}</TableCell>
                 {(() => {
                   const monthValue = getBillField<string>(bill, ['monthYear', 'month_year']);

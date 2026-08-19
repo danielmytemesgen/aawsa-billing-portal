@@ -1,5 +1,7 @@
 import { query, withTransaction } from './db';
 import { randomUUID } from 'crypto';
+import { buildUserSessionsFilters, USER_SESSION_STATUS_SQL } from './session-monitoring';
+import { computeCreditForBill, roundMoney, type ComputeCreditForBillOutput } from './credit-utils';
 
 // Postgres-backed implementations for common DB operations.
 // These functions keep `any` shapes to match the existing codebase.
@@ -907,6 +909,157 @@ export const dbGetAllBills = async (options?: { branchId?: string; readerId?: st
     return await query(sql, params);
 };
 
+export const dbGetBillsPaginated = async (options: {
+    limit: number;
+    offset: number;
+    searchTerm?: string;
+    branchId?: string;
+    month?: string;
+    status?: string;
+    readerId?: string;
+}) => {
+    let sql = `
+        SELECT b.*,
+               ic."customerType" as customer_type,
+               bm.charge_group as charge_group
+        FROM bills b
+        LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+        LEFT JOIN routes r ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = r.route_key
+    `;
+    const params: any[] = [];
+    let paramIndex = 1;
+    const whereClauses = ['b.deleted_at IS NULL'];
+
+    if (options.month && options.month !== 'all') {
+        whereClauses.push(`b.month_year = $${paramIndex}`);
+        params.push(options.month);
+        paramIndex++;
+    }
+
+    if (options.status && options.status !== 'all') {
+        whereClauses.push(`b.status = $${paramIndex}`);
+        params.push(options.status);
+        paramIndex++;
+    }
+
+    if (options.branchId && options.branchId !== 'all') {
+        whereClauses.push(`(b.branch_id = $${paramIndex} OR bm.branch_id = $${paramIndex} OR ic.branch_id = $${paramIndex})`);
+        params.push(options.branchId);
+        paramIndex++;
+    }
+
+    if (options.readerId) {
+        whereClauses.push(`r.reader_id = $${paramIndex}`);
+        params.push(options.readerId);
+        paramIndex++;
+    }
+
+    if (options.searchTerm && options.searchTerm.trim()) {
+        const searchPattern = `%${options.searchTerm.trim()}%`;
+        whereClauses.push(`(
+            b."CUSTOMERKEY" ILIKE $${paramIndex} OR
+            b.individual_customer_id ILIKE $${paramIndex} OR
+            b."CUSTOMERNAME" ILIKE $${paramIndex} OR
+            b.id::text ILIKE $${paramIndex} OR
+            b."BILLKEY" ILIKE $${paramIndex}
+        )`);
+        params.push(searchPattern);
+        paramIndex++;
+    }
+
+    if (whereClauses.length > 0) {
+        sql += ' WHERE ' + whereClauses.join(' AND ');
+    }
+
+    // Count total query
+    const countSql = `SELECT COUNT(*) as count FROM (` + sql + `) as count_query`;
+    const countRes: any = await query(countSql, params);
+    const totalCount = Number(countRes?.[0]?.count || 0);
+
+    // Data query with ordering and pagination
+    sql += ` ORDER BY b.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(options.limit, options.offset);
+
+    const rows: any = await query(sql, params);
+    return { data: rows || [], totalCount };
+};
+
+export const dbGetBillsStatusCounts = async (options: {
+    branchId?: string;
+    month?: string;
+    searchTerm?: string;
+    readerId?: string;
+}) => {
+    let sql = `
+        SELECT b.status, COUNT(*) as count
+        FROM bills b
+        LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+        LEFT JOIN routes r ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = r.route_key
+    `;
+    const params: any[] = [];
+    let paramIndex = 1;
+    const whereClauses = ['b.deleted_at IS NULL'];
+
+    if (options.month && options.month !== 'all') {
+        whereClauses.push(`b.month_year = $${paramIndex}`);
+        params.push(options.month);
+        paramIndex++;
+    }
+
+    if (options.branchId && options.branchId !== 'all') {
+        whereClauses.push(`(b.branch_id = $${paramIndex} OR bm.branch_id = $${paramIndex} OR ic.branch_id = $${paramIndex})`);
+        params.push(options.branchId);
+        paramIndex++;
+    }
+
+    if (options.readerId) {
+        whereClauses.push(`r.reader_id = $${paramIndex}`);
+        params.push(options.readerId);
+        paramIndex++;
+    }
+
+    if (options.searchTerm && options.searchTerm.trim()) {
+        const searchPattern = `%${options.searchTerm.trim()}%`;
+        whereClauses.push(`(
+            b."CUSTOMERKEY" ILIKE $${paramIndex} OR
+            b.individual_customer_id ILIKE $${paramIndex} OR
+            b."CUSTOMERNAME" ILIKE $${paramIndex} OR
+            b.id::text ILIKE $${paramIndex} OR
+            b."BILLKEY" ILIKE $${paramIndex}
+        )`);
+        params.push(searchPattern);
+        paramIndex++;
+    }
+
+    if (whereClauses.length > 0) {
+        sql += ' WHERE ' + whereClauses.join(' AND ');
+    }
+
+    sql += ` GROUP BY b.status`;
+    const rows: any = await query(sql, params);
+    
+    const counts: Record<string, number> = {
+        Draft: 0,
+        Pending: 0,
+        Approved: 0,
+        Posted: 0,
+        Rework: 0,
+        Total: 0
+    };
+
+    if (Array.isArray(rows)) {
+        for (const row of rows) {
+            const st = row.status || 'Draft';
+            const cnt = Number(row.count || 0);
+            counts[st] = (counts[st] || 0) + cnt;
+            counts.Total += cnt;
+        }
+    }
+    return counts;
+};
+
 export const dbGetBillsByCustomerKey = async (customerKey: string) => {
     return await query(
         `SELECT * FROM bills 
@@ -1051,6 +1204,13 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
         await client.query('UPDATE bills SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
             ['bill', id, bill.bill_number || `Bill ${id}`, deletedBy, JSON.stringify(bill)]);
+
+        // Re-run the aging replay so any credit created by this bill's overpayment
+        // is reversed (bill no longer exists) and balances stay consistent.
+        const customerKeyToSync = bill.CUSTOMERKEY || bill.individual_customer_id;
+        if (customerKeyToSync) {
+            await dbSyncAgingForCustomer(customerKeyToSync, client);
+        }
         return true;
     });
 };
@@ -1166,7 +1326,23 @@ export const dbGetBillWorkflowLogs = async (billId: string) => {
     return await query('SELECT * FROM bill_workflow_logs WHERE bill_id = $1 ORDER BY created_at DESC', [billId]);
 };
 
-export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string) => {
+async function ensureReadingPartitionExists(parentTable: string, monthYear?: string | null, executor?: any) {
+    if (!monthYear || !/^\d{4}-\d{2}$/.test(monthYear)) return;
+    try {
+        const partitionName = `${parentTable}_${monthYear.replace('-', '_')}`;
+        const checkSql = `SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = $1 AND n.nspname = 'public'`;
+        const checkRes = await executor.query(checkSql, [partitionName]);
+        const exists = checkRes.rows ? checkRes.rows.length > 0 : (Array.isArray(checkRes) && checkRes.length > 0);
+        if (!exists) {
+            const createSql = `CREATE TABLE IF NOT EXISTS public.${partitionName} PARTITION OF public.${parentTable} FOR VALUES IN ($1)`;
+            await executor.query(createSql, [monthYear]);
+        }
+    } catch (e) {
+        // Ignore if table is not partitioned or already created concurrently
+    }
+}
+
+export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string, limit: number = 3000) => {
     let sql = `
         SELECT r.*, 
         EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
@@ -1188,6 +1364,8 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
         sql += ` AND ro.reader_id = $${params.length}`;
     }
 
+    sql += ` ORDER BY r.created_at DESC LIMIT ${limit}`;
+
     return await query(sql, params);
 };
 
@@ -1199,6 +1377,9 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
         const monthYear = safeFields.month_year || safeFields.monthYear || (rDate ? String(rDate).slice(0, 7) : null);
 
         const executor = client || { query };
+
+        // Ensure partition exists for this month before insert
+        await ensureReadingPartitionExists('individual_customer_readings', monthYear, executor);
 
         // Check if a reading record already exists for this individual customer in the same billing month
         if (custKey && monthYear) {
@@ -1266,7 +1447,7 @@ export const dbGetIndividualCustomerReadingsByCustomer = async (customerKey: str
     );
 };
 
-export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string) => {
+export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string, limit: number = 3000) => {
     let sql = `
         SELECT r.*,
         EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
@@ -1287,6 +1468,8 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
         sql += ` AND ro.reader_id = $${params.length}`;
     }
 
+    sql += ` ORDER BY r.created_at DESC LIMIT ${limit}`;
+
     return await query(sql, params);
 };
 
@@ -1298,6 +1481,9 @@ export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
         const monthYear = safeFields.month_year || safeFields.monthYear || (rDate ? String(rDate).slice(0, 7) : null);
 
         const executor = client || { query };
+
+        // Ensure partition exists for this month before insert
+        await ensureReadingPartitionExists('bulk_meter_readings', monthYear, executor);
 
         // Check if a reading record already exists for this bulk meter in the same billing month
         if (custKey && monthYear) {
@@ -1899,10 +2085,39 @@ export const dbCreateCustomerSession = async (session: {
     return rows[0];
 };
 
-export const dbRevokeCustomerSession = async (sessionId: string) => {
-    const sql = 'UPDATE customer_sessions SET is_revoked = true WHERE id = $1 RETURNING *';
-    const rows: any = await query(sql, [sessionId]);
+export const dbRevokeCustomerSession = async (sessionId: string, reason: 'revoked' | 'logout' = 'revoked') => {
+    const sql = `
+        UPDATE customer_sessions
+        SET is_revoked = true,
+            logout_time = now(),
+            duration_seconds = EXTRACT(EPOCH FROM (now() - created_at))::int,
+            session_end_reason = $2
+        WHERE id = $1
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [sessionId, reason]);
     return rows[0];
+};
+
+/**
+ * Undo for an ended customer session: clears the end-of-session fields and
+ * the revoked flag so the row shows as active again. Only applies to ended
+ * sessions. Note the guard covers BOTH shapes: rows revoked before migration
+ * 017 (is_revoked=true with no logout_time) and rows ended afterwards
+ * (logout_time set) — otherwise old revoked rows could never be reactivated.
+ */
+export const dbReactivateCustomerSession = async (sessionId: string) => {
+    const sql = `
+        UPDATE customer_sessions
+        SET is_revoked = false,
+            logout_time = NULL,
+            duration_seconds = NULL,
+            session_end_reason = NULL
+        WHERE id = $1 AND (logout_time IS NOT NULL OR is_revoked = true)
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [sessionId]);
+    return rows[0] ?? null;
 };
 
 export const dbGetActiveCustomerSessions = async () => {
@@ -1935,16 +2150,346 @@ export const dbGetCustomerSession = async (sessionId: string) => {
     return rows && rows[0] ? rows[0] : null;
 };
 
-export const dbLogCustomerPageView = async (sessionId: string, pageName: string) => {
-    // Append page to pages_viewed array only if not already present
+/**
+ * Appends a timestamped page view {path,label,viewed_at} to a customer session.
+ * Repeat visits are kept; only consecutive identical paths are deduped. The
+ * last_active_at heartbeat is throttled to once per 60s.
+ * Returns true when the session existed and was not revoked.
+ */
+export const dbLogCustomerPageView = async (sessionId: string, pageName: string, path?: string) => {
+    const pagePath = path || pageName;
+    const entry = JSON.stringify({ path: pagePath, label: pageName, viewed_at: new Date().toISOString() });
     const sql = `
-        UPDATE customer_sessions 
-        SET pages_viewed = array_append(pages_viewed, $2), last_active_at = now()
-        WHERE id = $1 AND is_revoked = false AND NOT ($2 = ANY(COALESCE(pages_viewed, '{}')))
+        UPDATE customer_sessions
+        SET pages_viewed = CASE
+                WHEN jsonb_array_length(COALESCE(pages_viewed, '[]'::jsonb)) > 0
+                     AND pages_viewed -> (jsonb_array_length(COALESCE(pages_viewed, '[]'::jsonb)) - 1) ->> 'path' = $3
+                THEN pages_viewed
+                ELSE COALESCE(pages_viewed, '[]'::jsonb) || $2::jsonb
+            END,
+            last_active_at = CASE
+                WHEN last_active_at > now() - interval '60 seconds' THEN last_active_at
+                ELSE now()
+            END
+        WHERE id = $1 AND is_revoked = false
+        RETURNING id
+    `;
+    const rows: any = await query(sql, [sessionId, entry, pagePath]);
+    return rows.length > 0;
+};
+
+/**
+ * Appends a timestamped page view {path,label,viewed_at} to a staff session.
+ * Same semantics as dbLogCustomerPageView: consecutive-path dedupe + 60s
+ * heartbeat throttle. Returns true when the session is active.
+ */
+export const dbLogStaffPageView = async (sessionId: string, path: string, label: string) => {
+    const entry = JSON.stringify({ path, label, viewed_at: new Date().toISOString() });
+    const sql = `
+        UPDATE staff_sessions
+        SET pages_viewed = CASE
+                WHEN jsonb_array_length(COALESCE(pages_viewed, '[]'::jsonb)) > 0
+                     AND pages_viewed -> (jsonb_array_length(COALESCE(pages_viewed, '[]'::jsonb)) - 1) ->> 'path' = $3
+                THEN pages_viewed
+                ELSE COALESCE(pages_viewed, '[]'::jsonb) || $2::jsonb
+            END,
+            last_active_at = CASE
+                WHEN last_active_at > now() - interval '60 seconds' THEN last_active_at
+                ELSE now()
+            END
+        WHERE id = $1 AND logout_time IS NULL
+        RETURNING id
+    `;
+    const rows: any = await query(sql, [sessionId, entry, path]);
+    return rows.length > 0;
+};
+
+// =====================================================
+// Staff Session Management (login monitoring)
+// =====================================================
+
+/**
+ * Creates a staff_sessions row at login time. Resolves branch_name from the
+ * branches table when only branch_id is provided.
+ */
+export const dbCreateStaffSession = async (session: {
+    staff_id: string;
+    staff_email: string;
+    role_name?: string | null;
+    branch_id?: string | null;
+    branch_name?: string | null;
+    ip_address?: string | null;
+    user_agent?: string | null;
+    device_name?: string | null;
+    location?: string | null;
+}) => {
+    let branchName = session.branch_name ?? null;
+    if (!branchName && session.branch_id) {
+        try {
+            const branchRows: any = await query('SELECT name FROM branches WHERE id = $1', [session.branch_id]);
+            branchName = branchRows[0]?.name ?? null;
+        } catch (e) {
+            console.warn('Failed to resolve branch name for staff session:', e);
+        }
+    }
+
+    const sql = `
+        INSERT INTO staff_sessions
+            (staff_id, staff_email, role_name, branch_id, branch_name, ip_address, user_agent, device_name, location)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
     `;
-    const rows: any = await query(sql, [sessionId, pageName]);
+    const rows: any = await query(sql, [
+        session.staff_id,
+        session.staff_email,
+        session.role_name ?? null,
+        session.branch_id ?? null,
+        branchName,
+        session.ip_address ?? null,
+        session.user_agent ?? null,
+        session.device_name ?? null,
+        session.location ?? null,
+    ]);
     return rows[0] ?? null;
+};
+
+/**
+ * Closes an active staff session: sets logout_time, computed duration and the
+ * reason the session ended. No-op (returns null) if already closed.
+ */
+export const dbFinalizeStaffSession = async (sessionId: string, reason: 'logout' | 'idle_timeout' | 'expired' | 'revoked') => {
+    const sql = `
+        UPDATE staff_sessions
+        SET logout_time = now(),
+            duration_seconds = EXTRACT(EPOCH FROM (now() - login_time))::int,
+            session_end_reason = $2
+        WHERE id = $1 AND logout_time IS NULL
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [sessionId, reason]);
+    return rows[0] ?? null;
+};
+
+/**
+ * Heartbeat: bumps last_active_at for an active staff session.
+ * Callers are responsible for throttling.
+ */
+export const dbTouchStaffSession = async (sessionId: string) => {
+    const sql = 'UPDATE staff_sessions SET last_active_at = now() WHERE id = $1 AND logout_time IS NULL';
+    await query(sql, [sessionId]);
+    return true;
+};
+
+/**
+ * Closes an active staff session (admin kick-out). No-op if already closed.
+ */
+export const dbRevokeStaffSession = async (sessionId: string, reason: 'revoked' | 'idle_timeout' | 'expired' = 'revoked') => {
+    const sql = `
+        UPDATE staff_sessions
+        SET logout_time = now(),
+            duration_seconds = EXTRACT(EPOCH FROM (now() - login_time))::int,
+            session_end_reason = $2
+        WHERE id = $1 AND logout_time IS NULL
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [sessionId, reason]);
+    return rows[0] ?? null;
+};
+
+/**
+ * Undo for an ended staff session: clears the end-of-session fields and bumps
+ * last_active_at so the nightly sweep gives the reactivated session a fresh
+ * lease instead of immediately re-closing it. Only applies to ended sessions
+ * (logout_time IS NOT NULL). Note: it restores the DB row only — if the user's
+ * JWT cookie was already cleared by the kick-out redirect, they re-login.
+ */
+export const dbReactivateStaffSession = async (sessionId: string) => {
+    const sql = `
+        UPDATE staff_sessions
+        SET logout_time = NULL,
+            duration_seconds = NULL,
+            session_end_reason = NULL,
+            last_active_at = now()
+        WHERE id = $1 AND logout_time IS NOT NULL
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [sessionId]);
+    return rows[0] ?? null;
+};
+
+/**
+ * True while a staff session is still active (not finalized by logout,
+ * expiry or kick-out). Used by the middleware/getSession revocation checks.
+ */
+export const dbIsStaffSessionActive = async (sessionId: string) => {
+    const rows: any = await query(
+        'SELECT 1 FROM staff_sessions WHERE id = $1 AND logout_time IS NULL LIMIT 1',
+        [sessionId]
+    );
+    return rows.length > 0;
+};
+
+/**
+ * Nightly sweep: closes staff sessions that have been idle longer than the
+ * configured session duration (defaults to the 2h JWT ceiling). Customers are
+ * deliberately NOT swept — customer sessions have no expiry policy.
+ * Returns the number of sessions closed.
+ */
+export const dbSweepExpiredStaffSessions = async (durationSeconds: number = 7200) => {
+    const seconds = Math.max(60, Math.floor(Number(durationSeconds) || 7200));
+    const sql = `
+        UPDATE staff_sessions
+        SET logout_time = now(),
+            duration_seconds = EXTRACT(EPOCH FROM (now() - login_time))::int,
+            session_end_reason = 'expired'
+        WHERE logout_time IS NULL
+          AND last_active_at < now() - ($1::int * interval '1 second')
+        RETURNING id
+    `;
+    const rows: any = await query(sql, [seconds]);
+    return rows.length;
+};
+
+// =====================================================
+// Unified User Sessions (staff + customer UNION)
+// =====================================================
+
+// Shared CTE: one row per session with a user_type discriminator. Customer
+// branch is resolved best-effort via bulk_meters / individual_customers
+// (customer_sessions has no branch column of its own).
+const USER_SESSIONS_CTE = `
+    WITH sessions AS (
+        SELECT
+            'staff'::text AS user_type,
+            ss.id,
+            ss.staff_email AS user_identifier,
+            ss.role_name,
+            ss.branch_id,
+            ss.branch_name,
+            ss.ip_address,
+            ss.user_agent,
+            ss.device_name,
+            ss.location,
+            ss.login_time,
+            ss.logout_time,
+            ss.duration_seconds,
+            ss.session_end_reason,
+            ss.last_active_at,
+            ss.pages_viewed,
+            ss.created_at,
+            NULL::text AS customer_key_number,
+            NULL::text AS customer_type,
+            NULL::boolean AS is_revoked
+        FROM staff_sessions ss
+        UNION ALL
+        SELECT
+            'customer'::text AS user_type,
+            cs.id,
+            cs.customer_key_number AS user_identifier,
+            NULL::text AS role_name,
+            COALESCE(bm.branch_id, ic.branch_id) AS branch_id,
+            COALESCE(b.name, icb.name) AS branch_name,
+            cs.ip_address,
+            cs.user_agent,
+            cs.device_name,
+            cs.location,
+            cs.created_at AS login_time,
+            cs.logout_time,
+            cs.duration_seconds,
+            cs.session_end_reason,
+            cs.last_active_at,
+            cs.pages_viewed,
+            cs.created_at,
+            cs.customer_key_number,
+            cs.customer_type,
+            cs.is_revoked
+        FROM customer_sessions cs
+        LEFT JOIN bulk_meters bm ON cs.customer_key_number = bm."customerKeyNumber" AND cs.customer_type ILIKE 'bulk%'
+        LEFT JOIN individual_customers ic ON cs.customer_key_number = ic."customerKeyNumber" AND cs.customer_type ILIKE 'individual%'
+        LEFT JOIN branches b ON bm.branch_id = b.id
+        LEFT JOIN branches icb ON ic.branch_id = icb.id
+    )
+`;
+
+export interface UserSessionsOptions {
+    page?: number;
+    pageSize?: number;
+    type?: 'staff' | 'customer';
+    status?: string;
+    branchName?: string; // exact match — branch isolation for non-management staff
+    branch?: string;     // ILIKE — UI filter
+    search?: string;     // ILIKE on user identifier
+}
+
+/**
+ * Paginated, filterable UNION of staff + customer sessions, newest first.
+ * duration_seconds is live (now - login) for active sessions.
+ */
+export const dbGetUserSessions = async (options: UserSessionsOptions = {}) => {
+    const page = options.page ?? 1;
+    const pageSize = options.pageSize ?? 10;
+    const offset = (page - 1) * pageSize;
+
+    const { whereSql, params } = buildUserSessionsFilters(options);
+    const selectSql = `
+        ${USER_SESSIONS_CTE}
+        SELECT
+            s.*,
+            ${USER_SESSION_STATUS_SQL} AS status,
+            COALESCE(s.duration_seconds, EXTRACT(EPOCH FROM (now() - s.login_time))::int) AS duration_seconds
+        FROM sessions s
+        ${whereSql}
+    `;
+
+    const rows = await query(
+        `${selectSql} ORDER BY s.login_time DESC, s.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, pageSize, offset]
+    );
+    const totalResult: any = await query(
+        `${USER_SESSIONS_CTE} SELECT COUNT(*) AS total FROM sessions s ${whereSql}`,
+        params
+    );
+    const total = parseInt(totalResult[0]?.total || '0', 10);
+
+    return {
+        sessions: rows,
+        total,
+        page,
+        pageSize,
+        lastPage: Math.ceil(total / pageSize),
+    };
+};
+
+/**
+ * Summary counts across the unified session store: active now, logins today,
+ * average duration of finished sessions, and total sessions.
+ */
+export const dbGetSessionSummary = async (branchName?: string) => {
+    const params: any[] = [];
+    let whereSql = '';
+    if (branchName) {
+        whereSql = 'WHERE s.branch_name = $1';
+        params.push(branchName);
+    }
+
+    const sql = `
+        ${USER_SESSIONS_CTE}
+        SELECT
+            COUNT(*) FILTER (WHERE ${USER_SESSION_STATUS_SQL} = 'active') AS active_count,
+            COUNT(*) FILTER (WHERE s.login_time >= date_trunc('day', now())) AS today_count,
+            ROUND(AVG(s.duration_seconds) FILTER (WHERE s.duration_seconds IS NOT NULL AND s.duration_seconds > 0)) AS avg_duration_seconds,
+            COUNT(*) AS total_count
+        FROM sessions s
+        ${whereSql}
+    `;
+    const rows: any = await query(sql, params);
+    const row = rows[0] ?? {};
+    return {
+        active_count: parseInt(row.active_count || '0', 10),
+        today_count: parseInt(row.today_count || '0', 10),
+        avg_duration_seconds: row.avg_duration_seconds != null ? Number(row.avg_duration_seconds) : null,
+        total_count: parseInt(row.total_count || '0', 10),
+    };
 };
 
 // =====================================================
@@ -2004,7 +2549,18 @@ export const dbGetAllRoutes = async (branchId?: string, readerId?: string) => {
     
     if (readerId) {
         params.push(readerId);
-        sql += ` AND reader_id = $${params.length}`;
+        const idx = params.length;
+        sql += ` AND (
+            reader_id = $${idx}
+            OR route_key IN (
+                SELECT DISTINCT route_key FROM bulk_meters 
+                WHERE reader_staff_id = $${idx} OR assigned_reader_id = $${idx} OR "readerStaffId" = $${idx} OR "assignedReaderId" = $${idx}
+            )
+            OR route_key IN (
+                SELECT DISTINCT route_key FROM individual_customers 
+                WHERE reader_staff_id = $${idx} OR assigned_reader_id = $${idx} OR "readerStaffId" = $${idx} OR "assignedReaderId" = $${idx}
+            )
+        )`;
     }
 
     return await query(sql, params);
@@ -2045,30 +2601,19 @@ export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
 };
 
 export const dbGetDashboardMetrics = async (branchId?: string) => {
-    // Dynamically get the most recent month with bill information present in the database
+    // ── Step 1: Resolve latestMonth first (needed by most queries) ────────────
     let latestMonth = new Date().toISOString().substring(0, 7);
     try {
-        const latestMonthRes: any = await query(`
-            SELECT MAX(month_year) as latest_month 
-            FROM bills 
-            WHERE month_year IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL
-        `);
-        if (latestMonthRes && latestMonthRes[0]?.latest_month) {
-            latestMonth = latestMonthRes[0].latest_month;
-        } else {
-            const anyMonthRes: any = await query(`
-                SELECT MAX(month_year) as latest_month 
-                FROM bills 
-                WHERE month_year IS NOT NULL AND deleted_at IS NULL
-            `);
-            if (anyMonthRes && anyMonthRes[0]?.latest_month) {
-                latestMonth = anyMonthRes[0].latest_month;
-            }
-        }
+        const [postedRes, anyRes]: any[] = await Promise.all([
+            query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL`),
+            query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND deleted_at IS NULL`),
+        ]);
+        latestMonth = postedRes[0]?.latest_month || anyRes[0]?.latest_month || latestMonth;
     } catch (err) {
-        console.warn("Failed to fetch latest bill month_year, falling back to current calendar month:", err);
+        console.warn('Failed to fetch latest bill month_year, falling back to current calendar month:', err);
     }
 
+    // ── Step 2: Build shared filter fragments ─────────────────────────────────
     const params = [latestMonth];
     let branchFilter = '';
     if (branchId) {
@@ -2076,123 +2621,177 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         params.push(branchId);
     }
 
-    // 1. Get Bill Statuses Aggregation for the latest month (Only for POSTED bills)
-    const billStatusSql = `
-        SELECT payment_status as status, COUNT(*) as count 
-        FROM bills 
-        WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL ${branchFilter}
-        GROUP BY payment_status
-    `;
-    const billStatuses = await query(billStatusSql, params);
-
-    // 2. Get Revenue Aggregation for the latest month (Only for POSTED bills)
-    const revenueSql = `
-        SELECT 
-            SUM(COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))) as total_billed,
-            SUM(CASE WHEN payment_status = 'Paid' THEN COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) ELSE 0 END) as total_collected
-        FROM bills
-        WHERE status = 'Posted' AND month_year = $1 AND deleted_at IS NULL ${branchFilter}
-    `;
-    const revenueData: any = await query(revenueSql, params);
-    const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
-
-    // 3. Meter Reading Progress (Bulk Meters)
     let meterFilter = '';
-    if (branchId) {
-        meterFilter = ' WHERE branch_id = $1';
-    }
-    const totalCustomersSql = `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + ' AND status = \'Active\'' : ' WHERE status = \'Active\''}`;
-    const totalCustomersData: any = await query(totalCustomersSql, branchId ? [branchId] : []);
-    const totalCustomers = parseInt(totalCustomersData[0].count || 0);
+    if (branchId) meterFilter = ' WHERE branch_id = $1';
 
-    // Count bulk meter readings for the latest month
-    let currentReadingsSql = `
-        SELECT COUNT(DISTINCT bmr."CUST_KEY") as count 
-        FROM bulk_meter_readings bmr
-        JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber"
-        WHERE bmr."READING_DATE" >= CAST($1 || '-01' AS DATE) AND bmr."READING_DATE" < CAST($1 || '-01' AS DATE) + INTERVAL '1 month'
-    `;
-    if (branchId) {
-        currentReadingsSql += ' AND bm.branch_id = $2';
-    }
-    const currentReadingsData: any = await query(currentReadingsSql, params);
-    const currentReadings = parseInt(currentReadingsData[0].count || 0);
-
-    // 4. Counts
-    const bulkMeterCountData: any = await query(`SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + ' AND status != \'Pending Approval\'' : ' WHERE status != \'Pending Approval\''}`, branchId ? [branchId] : []);
-
-    // Only count active individual customers, exclude pending/inactive
-    let individualFilter = 'WHERE status != \'Pending Approval\'';
-    if (branchId) {
-        individualFilter += ' AND branch_id = $1';
-    }
-    const individualCustomerCountData: any = await query(`SELECT COUNT(*) as count FROM individual_customers ${individualFilter}`, branchId ? [branchId] : []);
-
-    const branchCountData: any = await query('SELECT COUNT(*) as count FROM branches');
-
-    // 5. Top Delinquent Accounts (Filtered by latest month as requested)
-    const delinquentSql = `
-        SELECT 
-            COALESCE("CUSTOMERKEY", individual_customer_id) as key, 
-            COALESCE(
-                (SELECT name FROM individual_customers WHERE "customerKeyNumber" = bills.individual_customer_id),
-                (SELECT name FROM bulk_meters WHERE "customerKeyNumber" = bills."CUSTOMERKEY"),
-                'Unknown'
-            ) as name,
-            COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) as outstanding,
-            CASE 
-                WHEN "CUSTOMERKEY" IS NOT NULL THEN 'Bulk' 
-                ELSE 'Individual' 
-            END as type
-        FROM bills
-        WHERE month_year = $1 AND payment_status = 'Unpaid' AND status = 'Posted' ${branchFilter}
-        ORDER BY COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) DESC
-        LIMIT 5
-    `;
-    const topDelinquent: any = await query(delinquentSql, params);
-
-    // 6. Branch Performance
     let perfBranchFilter = "WHERE b.name != 'Head Office'";
-    if (branchId) {
-        perfBranchFilter += " AND b.id = $2";
-    }
-    const branchPerformanceSql = `
-        SELECT 
-            b.name as branch_name,
-            COUNT(CASE WHEN bi.payment_status = 'Paid' THEN 1 END) as paid,
-            COUNT(CASE WHEN bi.payment_status = 'Unpaid' THEN 1 END) as unpaid
-        FROM branches b
-        LEFT JOIN (
-            SELECT 
-                COALESCE(
-                    branch_id,
-                    (SELECT branch_id FROM bulk_meters bm WHERE bm."customerKeyNumber" = bills."CUSTOMERKEY" LIMIT 1),
-                    (SELECT branch_id FROM individual_customers ic WHERE ic."customerKeyNumber" = bills.individual_customer_id LIMIT 1),
-                    (SELECT id FROM branches br WHERE TRIM(BOTH '\t' FROM TRIM(br.name)) = TRIM(BOTH '\t' FROM TRIM(bills."CUSTOMERBRANCH")) LIMIT 1)
-                ) as effective_branch_id,
-                payment_status
-            FROM bills
-            WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL
-        ) bi ON bi.effective_branch_id = b.id
-        ${perfBranchFilter}
-        GROUP BY b.name
-    `;
-    const branchPerformance: any = await query(branchPerformanceSql, params);
+    if (branchId) perfBranchFilter += ' AND b.id = $2';
 
-    // 7. Overall Water Usage Trend (Last 6 months from POSTED bills)
     const usageBranchFilter = branchId ? 'AND branch_id = $1' : '';
-    const usageTrendSql = `
-        SELECT 
-            "month_year" as month,
-            SUM("CONS") as usage
-        FROM bills
-        WHERE "CONS" IS NOT NULL AND status = 'Posted' ${usageBranchFilter}
-        GROUP BY month
-        ORDER BY month DESC
-        LIMIT 6
-    `;
-    const usageTrend: any = await query(usageTrendSql, branchId ? [branchId] : []);
 
+    let individualFilter = "WHERE status != 'Pending Approval'";
+    if (branchId) individualFilter += ' AND branch_id = $1';
+
+    const todayIso = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    let todayBillsFilter = branchId ? 'AND branch_id = $2' : '';
+    let todayReadingsBranchJoin = branchId
+        ? 'JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber" WHERE DATE(bmr."READING_DATE") = $1 AND bm.branch_id = $2'
+        : 'WHERE DATE(bmr."READING_DATE") = $1';
+    let todayIndReadingsBranchJoin = branchId
+        ? 'JOIN individual_customers ic ON imr.individual_customer_id = ic."customerKeyNumber" WHERE DATE(imr.created_at) = $1 AND ic.branch_id = $2'
+        : 'WHERE DATE(imr.created_at) = $1';
+    let todayCustFilter = branchId ? 'AND branch_id = $2' : '';
+
+    // ── Step 3: Run all independent queries in parallel ────────────────────────
+    const [
+        billStatuses,
+        revenueData,
+        totalCustomersData,
+        currentReadingsData,
+        bulkMeterCountData,
+        individualCustomerCountData,
+        branchCountData,
+        topDelinquent,
+        branchPerformance,
+        usageTrend,
+        todayBillsData,
+        todayBulkReadingsData,
+        todayIndReadingsData,
+        todayCustomersData,
+    ]: any[] = await Promise.all([
+        // 1. Bill statuses for latest month
+        query(
+            `SELECT payment_status as status, COUNT(*) as count
+             FROM bills
+             WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL ${branchFilter}
+             GROUP BY payment_status`,
+            params
+        ),
+
+        // 2. Revenue aggregation
+        query(
+            `SELECT
+                SUM(COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))) as total_billed,
+                SUM(CASE WHEN payment_status = 'Paid' THEN COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) ELSE 0 END) as total_collected
+             FROM bills
+             WHERE status = 'Posted' AND month_year = $1 AND deleted_at IS NULL ${branchFilter}`,
+            params
+        ),
+
+        // 3a. Total active bulk meters (for reading progress denominator)
+        query(
+            `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + " AND status = 'Active'" : "WHERE status = 'Active'"}`,
+            branchId ? [branchId] : []
+        ),
+
+        // 3b. Bulk meter readings completed for the latest month
+        query(
+            `SELECT COUNT(DISTINCT bmr."CUST_KEY") as count
+             FROM bulk_meter_readings bmr
+             JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber"
+             WHERE bmr."READING_DATE" >= CAST($1 || '-01' AS DATE)
+               AND bmr."READING_DATE" < CAST($1 || '-01' AS DATE) + INTERVAL '1 month'
+               ${branchId ? 'AND bm.branch_id = $2' : ''}`,
+            params
+        ),
+
+        // 4a. Total bulk meters count
+        query(
+            `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + " AND status != 'Pending Approval'" : "WHERE status != 'Pending Approval'"}`,
+            branchId ? [branchId] : []
+        ),
+
+        // 4b. Individual customers count
+        query(
+            `SELECT COUNT(*) as count FROM individual_customers ${individualFilter}`,
+            branchId ? [branchId] : []
+        ),
+
+        // 4c. Branch count
+        query('SELECT COUNT(*) as count FROM branches'),
+
+        // 5. Top delinquent accounts
+        query(
+            `SELECT
+                COALESCE("CUSTOMERKEY", individual_customer_id) as key,
+                COALESCE(
+                    (SELECT name FROM individual_customers WHERE "customerKeyNumber" = bills.individual_customer_id),
+                    (SELECT name FROM bulk_meters WHERE "customerKeyNumber" = bills."CUSTOMERKEY"),
+                    'Unknown'
+                ) as name,
+                COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) as outstanding,
+                CASE WHEN "CUSTOMERKEY" IS NOT NULL THEN 'Bulk' ELSE 'Individual' END as type
+             FROM bills
+             WHERE month_year = $1 AND payment_status = 'Unpaid' AND status = 'Posted' ${branchFilter}
+             ORDER BY COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) DESC
+             LIMIT 5`,
+            params
+        ),
+
+        // 6. Branch performance breakdown
+        query(
+            `SELECT
+                b.name as branch_name,
+                COUNT(CASE WHEN bi.payment_status = 'Paid' THEN 1 END) as paid,
+                COUNT(CASE WHEN bi.payment_status = 'Unpaid' THEN 1 END) as unpaid
+             FROM branches b
+             LEFT JOIN (
+                 SELECT
+                     COALESCE(
+                         branch_id,
+                         (SELECT branch_id FROM bulk_meters bm WHERE bm."customerKeyNumber" = bills."CUSTOMERKEY" LIMIT 1),
+                         (SELECT branch_id FROM individual_customers ic WHERE ic."customerKeyNumber" = bills.individual_customer_id LIMIT 1),
+                         (SELECT id FROM branches br WHERE TRIM(BOTH '\t' FROM TRIM(br.name)) = TRIM(BOTH '\t' FROM TRIM(bills."CUSTOMERBRANCH")) LIMIT 1)
+                     ) as effective_branch_id,
+                     payment_status
+                 FROM bills
+                 WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL
+             ) bi ON bi.effective_branch_id = b.id
+             ${perfBranchFilter}
+             GROUP BY b.name`,
+            params
+        ),
+
+        // 7. Water usage trend (last 6 months)
+        query(
+            `SELECT "month_year" as month, SUM("CONS") as usage
+             FROM bills
+             WHERE "CONS" IS NOT NULL AND status = 'Posted' ${usageBranchFilter}
+             GROUP BY month
+             ORDER BY month DESC
+             LIMIT 6`,
+            branchId ? [branchId] : []
+        ),
+
+        // 8a. Bills created today
+        query(
+            `SELECT COUNT(*) as count FROM bills WHERE DATE(created_at) = $1 AND deleted_at IS NULL ${todayBillsFilter}`,
+            branchId ? [todayIso, branchId] : [todayIso]
+        ).catch(() => [{ count: 0 }]),
+
+        // 8b. Bulk meter readings today
+        query(
+            `SELECT COUNT(*) as count FROM bulk_meter_readings bmr ${todayReadingsBranchJoin}`,
+            branchId ? [todayIso, branchId] : [todayIso]
+        ).catch(() => [{ count: 0 }]),
+
+        // 8c. Individual meter readings today
+        query(
+            `SELECT COUNT(*) as count FROM individual_meter_readings imr ${todayIndReadingsBranchJoin}`,
+            branchId ? [todayIso, branchId] : [todayIso]
+        ).catch(() => [{ count: 0 }]),
+
+        // 8d. New customers today
+        query(
+            `SELECT COUNT(*) as count FROM individual_customers WHERE DATE(created_at) = $1 AND deleted_at IS NULL ${todayCustFilter}`,
+            branchId ? [todayIso, branchId] : [todayIso]
+        ).catch(() => [{ count: 0 }]),
+    ]);
+
+    // ── Step 4: Assemble result ───────────────────────────────────────────────
+    const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
+    const totalCustomers = parseInt(totalCustomersData[0]?.count || 0);
+    const currentReadings = parseInt(currentReadingsData[0]?.count || 0);
 
     return {
         latestMonth,
@@ -2200,32 +2799,43 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         revenue: {
             totalBilled: Number(revenue.total_billed || 0),
             totalCollected: Number(revenue.total_collected || 0),
-            efficiency: (revenue.total_billed && Number(revenue.total_billed) > 0) ? (Number(revenue.total_collected || 0) / Number(revenue.total_billed)) * 100 : 0
+            efficiency: (revenue.total_billed && Number(revenue.total_billed) > 0)
+                ? (Number(revenue.total_collected || 0) / Number(revenue.total_billed)) * 100
+                : 0,
         },
         readings: {
             totalCustomers,
             completedReadings: currentReadings,
-            progress: totalCustomers > 0 ? (currentReadings / totalCustomers) * 100 : 0
+            progress: totalCustomers > 0 ? (currentReadings / totalCustomers) * 100 : 0,
         },
         counts: {
-            bulkMeters: parseInt(bulkMeterCountData[0].count || 0),
-            individualCustomers: parseInt(individualCustomerCountData[0].count || 0),
-            branches: parseInt(branchCountData[0].count || 0)
+            bulkMeters: parseInt(bulkMeterCountData[0]?.count || 0),
+            individualCustomers: parseInt(individualCustomerCountData[0]?.count || 0),
+            branches: parseInt(branchCountData[0]?.count || 0),
+        },
+        todayActivity: {
+            bills: parseInt(todayBillsData[0]?.count || 0),
+            readings: parseInt(todayBulkReadingsData[0]?.count || 0) + parseInt(todayIndReadingsData[0]?.count || 0),
+            customers: parseInt(todayCustomersData[0]?.count || 0),
         },
         delinquent: {
-            combined: topDelinquent
+            combined: topDelinquent,
         },
         branchPerformance: branchPerformance.map((bp: any) => ({
             branch: bp.branch_name,
             paid: parseInt(bp.paid || 0),
-            unpaid: parseInt(bp.unpaid || 0)
+            unpaid: parseInt(bp.unpaid || 0),
         })),
         usageTrend: usageTrend.reverse().map((ut: any) => ({
             month: ut.month,
-            usage: Number(ut.usage || 0)
-        }))
+            usage: Number(ut.usage || 0),
+        })),
     };
 };
+
+
+
+
 
 
 
@@ -2824,6 +3434,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     await dbEnsurePaymentColumnsExist();
     let updatedCount = 0;
     const errors: Array<{ row: number; error: string }> = [];
+    const affectedBulkKeys = new Set<string>();
 
     if (!records || records.length === 0) {
         return { success: true, updatedCount: 0, errors: [] };
@@ -3099,10 +3710,16 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             }
 
             // 4. Amount
+            // The CSV is the source of truth for payment reconciliation, so an amount
+            // LOWER than the bill total is treated as a mismatch (partial payments go
+            // through other channels). An amount HIGHER than the bill is an
+            // overpayment (duplicate transaction / bill corrected downward) — the
+            // credit-note engine turns the excess into a deposit on the meter, so it
+            // is allowed through and linked to this bill (source_bill_id).
             if (rec.amount !== undefined && rec.amount !== null && !isNaN(Number(rec.amount))) {
                 const csvAmount = Number(rec.amount);
                 const billAmount = Number(targetBill.TOTALBILLAMOUNT || 0);
-                if (billAmount > 0 && Math.abs(csvAmount - billAmount) > 0.05) {
+                if (billAmount > 0 && csvAmount < billAmount - 0.05) {
                     rowContradictions.push(`Amount (${csvAmount}) contradicts existing bill total amount (${billAmount})`);
                 }
             }
@@ -3280,6 +3897,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 console.warn(`[CSV] Row ${rowNum} ⚠️ individual_customer_id "${targetBill.individual_customer_id}" does not exist in individual_customers. Inserting payment with NULL individual_customer_id.`);
             }
             const bulkMeterId = targetBill.CUSTOMERKEY || null;
+            if (bulkMeterId) affectedBulkKeys.add(bulkMeterId);
 
             // Log payment into payments table
             try {
@@ -3340,7 +3958,119 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     }
 
     console.log(`[CSV] ✅ Batch complete: ${updatedCount} updated, ${errors.length} errors`);
+
+    // Credit-note wiring: an overpaid bulk-meter bill is a deposit. The engine's
+    // replay creates the credit (source_bill_id stamped from the matched bill);
+    // this links each new credit to the payment row that produced it so
+    // credit_ledger.source_payment_id is populated. Finally, a backfill pass
+    // links any duplicate-transaction / bill-correction credit that still has no
+    // source bill to the meter's most recent overpaid bill — a defensive
+    // invariant for credits recorded before the overpayment was recognised.
+    for (const key of affectedBulkKeys) {
+        try {
+            await dbSyncAgingForCustomer(key);
+        } catch (syncErr) {
+            console.error(`[CSV] Aging sync failed for bulk meter ${key}:`, syncErr);
+        }
+    }
+    try {
+        const linked = await dbLinkCreditSourcePayments();
+        if (linked > 0) console.log(`[CSV] ✅ Linked ${linked} credit(s) to their source payment`);
+    } catch (linkErr) {
+        console.error('[CSV] Credit source-payment linking failed:', linkErr);
+    }
+    if (affectedBulkKeys.size > 0) {
+        try {
+            const backfilled = await dbLinkCreditsToOverpaidBills([...affectedBulkKeys]);
+            if (backfilled > 0) console.log(`[CSV] ✅ Backfilled source bill on ${backfilled} credit(s)`);
+        } catch (backfillErr) {
+            console.error('[CSV] Credit source-bill backfill failed:', backfillErr);
+        }
+    }
+
     return { success: true, updatedCount, errors };
+};
+
+/**
+ * Link 'created' credit ledger rows to the payment that produced them.
+ * After a payment (e.g. CSV batch) the engine's aging sync creates a credit
+ * from the overpaid bill; this attaches the largest payment on that bill as
+ * source_payment_id, completing the audit trail. Safe to run repeatedly.
+ */
+export const dbLinkCreditSourcePayments = async (): Promise<number> => {
+    const rows = await query(
+        `UPDATE credit_ledger cl
+         SET source_payment_id = p.id
+         FROM (
+             SELECT DISTINCT ON (bill_id) bill_id, id
+             FROM payments
+             WHERE bill_id IN (
+                 SELECT source_bill_id FROM credit_ledger
+                 WHERE event_type = 'created' AND source_payment_id IS NULL AND source_bill_id IS NOT NULL
+             )
+             ORDER BY bill_id, amount_paid DESC, created_at DESC
+         ) p
+         WHERE cl.event_type = 'created'
+           AND cl.source_payment_id IS NULL
+           AND cl.source_bill_id = p.bill_id
+         RETURNING cl.id`
+    );
+    return Array.isArray(rows) ? rows.length : 0;
+};
+
+/**
+ * Backfill: give 'created' credits that lost their source bill a link to the
+ * meter's most recent overpaid bill (amount_paid > TOTALBILLAMOUNT). Runs after
+ * CSV payment batches so a duplicate-transaction credit recorded before the
+ * overpayment was recognised is tied to the bill the batch reveals.
+ *
+ * Normally this matches 0 rows — the aging engine stamps source_bill_id itself
+ * (dbSyncAgingForCustomer) — so this is a defensive invariant, not the primary
+ * path. It only links credits whose reason semantically implies a bill
+ * ('duplicate_transaction' / 'bill_correction'); manual standalone deposits
+ * (reason 'manual') are intentionally left alone, as are voided credits and
+ * bills that already carry a live credit. Idempotent.
+ */
+export const dbLinkCreditsToOverpaidBills = async (meterKeys: string[]): Promise<number> => {
+    if (!meterKeys || meterKeys.length === 0) return 0;
+    const keys = meterKeys.map((k) => String(k).trim().toLowerCase());
+    const rows = await query(
+        `UPDATE credit_ledger cl
+         SET source_bill_id = ob.bill_id
+         FROM (
+             SELECT DISTINCT ON (c.id) c.id AS ledger_id, b.id AS bill_id
+             FROM credit_ledger c
+             JOIN bulk_meters bm
+               ON LOWER(TRIM(bm."customerKeyNumber")) = LOWER(TRIM(c.bulk_meter_id)) AND bm.deleted_at IS NULL
+             JOIN bills b
+               ON LOWER(TRIM(b."CUSTOMERKEY")) = LOWER(TRIM(c.bulk_meter_id))
+              AND b.deleted_at IS NULL
+              AND COALESCE(b.amount_paid, 0) > COALESCE(b."TOTALBILLAMOUNT", 0)
+              AND NOT EXISTS (
+                  SELECT 1 FROM credit_ledger other
+                  WHERE other.source_bill_id = b.id
+                    AND other.event_type = 'created'
+                    AND other.id <> c.id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM credit_ledger v
+                        WHERE v.voided_ledger_id = other.id AND v.event_type = 'voided'
+                    )
+              )
+             WHERE c.event_type = 'created'
+               AND c.source_bill_id IS NULL
+               AND c.reason IN ('duplicate_transaction', 'bill_correction')
+               AND LOWER(TRIM(c.bulk_meter_id)) = ANY($1)
+               AND NOT EXISTS (
+                   SELECT 1 FROM credit_ledger v2
+                   WHERE v2.voided_ledger_id = c.id AND v2.event_type = 'voided'
+               )
+             ORDER BY c.id, b.month_year DESC, b.created_at DESC
+         ) ob
+         WHERE cl.id = ob.ledger_id
+         RETURNING cl.id`,
+        [keys]
+    );
+    return Array.isArray(rows) ? rows.length : 0;
 };
 
 
@@ -3783,8 +4513,62 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     );
     const bills = client ? billsRes.rows : billsRes;
 
+    // 2b. Credit-note state (bulk meters only — see docs/CREDIT_NOTE_PLAN.md).
+    //     Individual customers have no creditBalance column yet; they keep the
+    //     legacy clamp behaviour until the schema is extended.
+    let creditEnabled = isBulk;
+    let creditBalance = 0;
+    let createdByBill: Map<string, { id: string; amount: number }> = new Map();
+    let appliedByBill: Map<string, { id: string; amount: number }> = new Map();
+
+    if (creditEnabled) {
+        const balRes = await qFunc(
+            `SELECT "creditBalance" FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+            [customerKey]
+        );
+        const balRow = (client ? balRes.rows : balRes)[0];
+        creditBalance = Number(balRow?.creditBalance || 0);
+
+        const ledgerRes = await qFunc(
+            `SELECT id, event_type, amount, source_bill_id, voided_ledger_id
+             FROM credit_ledger
+             WHERE bulk_meter_id = $1
+             ORDER BY created_at ASC, id ASC`,
+            [customerKey]
+        );
+        const ledgerRows = client ? ledgerRes.rows : ledgerRes;
+
+        // A created/applied row is voided when a 'voided' row references it.
+        const voidedIds = new Set<string>();
+        for (const row of ledgerRows) {
+            if (row.event_type === 'voided' && row.voided_ledger_id) {
+                voidedIds.add(String(row.voided_ledger_id));
+            }
+        }
+        for (const row of ledgerRows) {
+            if (row.event_type === 'created' && row.source_bill_id && !voidedIds.has(row.id)) {
+                createdByBill.set(String(row.source_bill_id), { id: row.id, amount: Number(row.amount || 0) });
+            }
+            if (row.event_type === 'applied' && row.source_bill_id && !voidedIds.has(row.id)) {
+                appliedByBill.set(String(row.source_bill_id), { id: row.id, amount: Number(row.amount || 0) });
+            }
+        }
+    }
+
     if (bills.length === 0) {
         if (isBulk) {
+            // Void auto-created credits whose bill no longer exists; manual deposits survive.
+            if (creditEnabled) {
+                for (const [billId, created] of createdByBill) {
+                    creditBalance = Math.max(0, roundMoney(creditBalance - created.amount));
+                    await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'voided', created.amount, 'bill_removed', null, null, created.id, creditBalance, null);
+                    void billId;
+                }
+                await qFunc(
+                    `UPDATE bulk_meters SET "creditBalance" = $1 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2))`,
+                    [roundMoney(creditBalance), customerKey]
+                );
+            }
             await qFunc(
                 `UPDATE bulk_meters SET "outStandingbill" = 0, "paymentStatus" = 'Paid' WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
                 [customerKey]
@@ -3891,7 +4675,67 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         const currentMonthlyCharge_rounded = Number(currentMonthlyCharge.toFixed(2));
 
         const amtPaid = isVoided ? 0 : Number(bill.amount_paid || bill.amountPaid || bill.AMOUNTPAID || 0);
-        const billUnpaid = Math.max(0, derivedTotalPayable - amtPaid);
+
+        // Credit-aware carry-forward (bulk meters). Overpayments become a deposit
+        // (credit_ledger 'created') that discounts future bills until consumed.
+        const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
+        let creditApplied = 0;
+        let creditResult: ComputeCreditForBillOutput | null = null;
+
+        if (creditEnabled) {
+            const existingCreated = createdByBill.get(String(bill.id)) ?? null;
+            const existingApplied = appliedByBill.get(String(bill.id)) ?? null;
+
+            creditResult = computeCreditForBill({
+                debtForNextMonth,
+                amtPaid,
+                creditBalance,
+                existingCreated,
+                existingApplied,
+            });
+            creditBalance = creditResult.newCreditBalance;
+
+            // Persist credit events for this bill
+            if (creditResult.creditCreated > 0) {
+                const row = await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'created', creditResult.creditCreated, 'bill_correction', bill.id, null, null, creditBalance, null);
+                createdByBill.set(String(bill.id), { id: row.id, amount: creditResult.creditCreated });
+            } else if (creditResult.creditCreatedAdjustment !== 0 && existingCreated) {
+                const newAmount = roundMoney(existingCreated.amount + creditResult.creditCreatedAdjustment);
+                await qFunc(
+                    `UPDATE credit_ledger SET amount = $1, balance_after = $2 WHERE id = $3`,
+                    [newAmount, creditBalance, existingCreated.id]
+                );
+                createdByBill.set(String(bill.id), { id: existingCreated.id, amount: newAmount });
+            }
+
+            if (creditResult.creditVoided > 0 && existingCreated) {
+                await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'voided', creditResult.creditVoided, 'bill_correction', bill.id, null, existingCreated.id, creditBalance, null);
+                createdByBill.delete(String(bill.id));
+            }
+
+            if (creditResult.creditApplied > 0) {
+                if (existingApplied) {
+                    creditApplied = creditResult.creditApplied;
+                    if (creditResult.existingAppliedAdjusted !== undefined) {
+                        await qFunc(
+                            `UPDATE credit_ledger SET amount = $1, balance_after = $2 WHERE id = $3`,
+                            [creditResult.existingAppliedAdjusted, creditBalance, existingApplied.id]
+                        );
+                    }
+                } else {
+                    const row = await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'applied', creditResult.creditApplied, 'billing_cycle', bill.id, null, null, creditBalance, null);
+                    appliedByBill.set(String(bill.id), { id: row.id, amount: creditResult.creditApplied });
+                    creditApplied = creditResult.creditApplied;
+                }
+            }
+
+            carriedForwardUnpaid = creditResult.carriedForwardUnpaid;
+        } else {
+            // Legacy clamp for non-bulk customers (no credit support yet).
+            carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
+        }
+
+        const billUnpaid = Math.max(0, derivedTotalPayable - amtPaid - creditApplied);
         const billPaymentStatus = billUnpaid <= 0.01 ? 'Paid' : 'Unpaid';
 
         // Preserve any bills already manually marked as 'Paid'.
@@ -3923,10 +4767,9 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
             ]
         );
 
-        const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
-        carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
-
-        let remainingPayment = amtPaid;
+        // Credit acts as a payment source for the aging buckets (oldest debt first),
+        // so a credit-paid bill does not carry phantom debt into the next cycle.
+        let remainingPayment = roundMoney(amtPaid + creditApplied);
 
         const paidAgainstOldest = Math.min(remainingPayment, totalD60AndLegacy);
         const remaining_d60_plus_legacy = Math.max(0, totalD60AndLegacy - paidAgainstOldest);
@@ -3957,15 +4800,26 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         }
     }
 
+    // Void auto-created credits whose bill was deleted/removed since the last sync.
+    if (creditEnabled) {
+        const liveBillIds = new Set(bills.map((b: any) => String(b.id)));
+        for (const [billId, created] of createdByBill) {
+            if (!liveBillIds.has(billId)) {
+                creditBalance = Math.max(0, roundMoney(creditBalance - created.amount));
+                await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'voided', created.amount, 'bill_removed', null, null, created.id, creditBalance, null);
+            }
+        }
+    }
+
     const finalOutstandingBalance = Number(carriedForwardUnpaid.toFixed(2));
     const finalStatus = finalOutstandingBalance > 0.01 ? 'Unpaid' : 'Paid';
 
     if (isBulk) {
         await qFunc(
             `UPDATE bulk_meters 
-             SET "outStandingbill" = $1, "paymentStatus" = $2 
-             WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($3))`,
-            [finalOutstandingBalance, finalStatus, customerKey]
+             SET "creditBalance" = $1, "outStandingbill" = $2, "paymentStatus" = $3 
+             WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($4))`,
+            [roundMoney(creditBalance), finalOutstandingBalance, finalStatus, customerKey]
         );
     } else {
         await qFunc(
@@ -3975,4 +4829,255 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
             [finalOutstandingBalance, finalStatus, customerKey]
         );
     }
+};
+
+/**
+ * Insert a credit_ledger row through the same connection the engine is using
+ * (so it participates in any enclosing transaction). Returns the new row id.
+ */
+async function dbInsertCreditLedgerRow(
+    qFunc: (text: string, params?: any[]) => Promise<any>,
+    client: any,
+    bulkMeterId: string,
+    eventType: 'created' | 'applied' | 'voided',
+    amount: number,
+    reason: string,
+    sourceBillId: string | null,
+    sourcePaymentId: string | null,
+    voidedLedgerId: string | null,
+    balanceAfter: number,
+    createdBy: string | null,
+    notes?: string | null
+): Promise<{ id: string }> {
+    const res = await qFunc(
+        `INSERT INTO credit_ledger
+            (bulk_meter_id, event_type, amount, reason, source_bill_id, source_payment_id, voided_ledger_id, balance_after, created_by, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [bulkMeterId, eventType, roundMoney(amount), reason, sourceBillId, sourcePaymentId, voidedLedgerId, roundMoney(balanceAfter), createdBy, notes ?? null]
+    );
+    const rows = client ? res.rows : res;
+    return rows[0] as { id: string };
+}
+
+/** Current credit (deposit) balance for a bulk meter, in ETB. */
+export const dbGetMeterCreditBalance = async (customerKey: string): Promise<number> => {
+    const rows = await query(
+        `SELECT "creditBalance" FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+        [customerKey]
+    );
+    return Number(rows[0]?.creditBalance || 0);
+};
+
+/**
+ * Recompute a bulk meter's creditBalance from the credit_ledger trail
+ * (sum of non-voided created − non-voided applied) and persist it.
+ * Self-healing / test helper: keeps the stored balance in sync with the ledger.
+ */
+export const dbRebuildCreditBalance = async (customerKey: string): Promise<number> => {
+    const rows = await query(
+        `SELECT COALESCE(SUM(CASE WHEN e.event_type = 'created' THEN e.amount ELSE -e.amount END), 0) AS balance
+         FROM credit_ledger e
+         WHERE e.bulk_meter_id = $1
+           AND e.event_type IN ('created', 'applied')
+           AND NOT EXISTS (
+               SELECT 1 FROM credit_ledger v
+               WHERE v.voided_ledger_id = e.id AND v.event_type = 'voided'
+           )`,
+        [customerKey]
+    );
+    const balance = Number(rows[0]?.balance || 0);
+    await query(
+        `UPDATE bulk_meters SET "creditBalance" = $1 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2))`,
+        [roundMoney(balance), customerKey]
+    );
+    return roundMoney(balance);
+};
+
+/** A single credit_ledger row as exposed to the UI. */
+export interface CreditLedgerEntry {
+    id: string;
+    event_type: 'created' | 'applied' | 'voided';
+    amount: number;
+    reason: string | null;
+    source_bill_id: string | null;
+    source_bill_key: string | null;
+    source_payment_id: string | null;
+    voided_ledger_id: string | null;
+    balance_after: number;
+    created_by: string | null;
+    created_at: string | Date;
+    notes: string | null;
+}
+
+/**
+ * Current credit balance + full ledger for a bulk meter (newest first).
+ * Used by the Bulk Meter Details credit card.
+ */
+export const dbGetMeterCredit = async (customerKey: string): Promise<{ creditBalance: number; ledger: CreditLedgerEntry[] }> => {
+    const balance = await dbGetMeterCreditBalance(customerKey);
+    const rows = await query(
+        `SELECT l.id, l.event_type, l.amount, l.reason, l.source_bill_id, b."BILLKEY" AS source_bill_key,
+                l.source_payment_id, l.voided_ledger_id, l.balance_after, l.created_by, l.created_at, l.notes
+         FROM credit_ledger l
+         LEFT JOIN bills b ON b.id = l.source_bill_id
+         WHERE l.bulk_meter_id = $1
+         ORDER BY l.created_at DESC, l.id DESC`,
+        [customerKey]
+    );
+    return {
+        creditBalance: balance,
+        ledger: rows.map((r: any) => ({
+            id: String(r.id),
+            event_type: r.event_type,
+            amount: Number(r.amount || 0),
+            reason: r.reason,
+            source_bill_id: r.source_bill_id ? String(r.source_bill_id) : null,
+            source_bill_key: r.source_bill_key || null,
+            source_payment_id: r.source_payment_id ? String(r.source_payment_id) : null,
+            voided_ledger_id: r.voided_ledger_id ? String(r.voided_ledger_id) : null,
+            balance_after: Number(r.balance_after || 0),
+            created_by: r.created_by ? String(r.created_by) : null,
+            created_at: r.created_at,
+            notes: r.notes,
+        })),
+    };
+};
+
+/**
+ * Most recent overpaid bill for a bulk meter (amount_paid > bill total, bill not
+ * deleted, and no live 'created' credit already linked to it). Used to auto-link
+ * manual duplicate-transaction credits to the bill that actually overpaid.
+ */
+export const dbGetMostRecentOverpaidBill = async (
+    customerKey: string
+): Promise<{ id: string; billKey: string | null; monthYear: string; total: number; overpaidBy: number } | null> => {
+    const rows = await query(
+        `SELECT b.id, b."BILLKEY", b.month_year, b."TOTALBILLAMOUNT", b.amount_paid
+         FROM bills b
+         WHERE b."CUSTOMERKEY" = $1
+           AND b.deleted_at IS NULL
+           AND COALESCE(b.amount_paid, 0) > COALESCE(b."TOTALBILLAMOUNT", 0)
+           AND NOT EXISTS (
+               SELECT 1 FROM credit_ledger c
+               WHERE c.source_bill_id = b.id
+                 AND c.event_type = 'created'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM credit_ledger v
+                     WHERE v.voided_ledger_id = c.id AND v.event_type = 'voided'
+                 )
+           )
+         ORDER BY b.month_year DESC, b.created_at DESC
+         LIMIT 1`,
+        [customerKey]
+    );
+    const r = rows[0];
+    if (!r) return null;
+    return {
+        id: String(r.id),
+        billKey: r.BILLKEY || null,
+        monthYear: r.month_year,
+        total: Number(r.TOTALBILLAMOUNT || 0),
+        overpaidBy: roundMoney(Number(r.amount_paid || 0) - Number(r.TOTALBILLAMOUNT || 0)),
+    };
+};
+
+/**
+ * Manual credit add (operator action): inserts a 'created' ledger row and bumps
+ * the meter balance atomically. Returns the new ledger row.
+ * `sourceBillId` (optional) links the deposit to the bill it came from.
+ * When the reason is 'duplicate_transaction' and no bill was picked, the most
+ * recent overpaid bill is auto-linked server-side (idempotent: bills that
+ * already carry a live credit are skipped).
+ */
+export const dbCreateCredit = async (
+    customerKey: string,
+    amount: number,
+    reason: string,
+    notes: string | null,
+    createdBy: string | null,
+    sourceBillId?: string | null
+): Promise<CreditLedgerEntry> => {
+    const amt = roundMoney(Number(amount) || 0);
+    if (amt <= 0) throw new Error('Credit amount must be greater than zero.');
+    let linkedBillId = sourceBillId || null;
+    if (!linkedBillId && reason === 'duplicate_transaction') {
+        const overpaid = await dbGetMostRecentOverpaidBill(customerKey);
+        if (overpaid) linkedBillId = overpaid.id;
+    }
+    const rows = await query(
+        `WITH upd AS (
+            UPDATE bulk_meters
+            SET "creditBalance" = round((COALESCE("creditBalance", 0) + $2)::numeric, 2)
+            WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL
+            RETURNING "creditBalance"
+         )
+         INSERT INTO credit_ledger (bulk_meter_id, event_type, amount, reason, source_bill_id, balance_after, created_by, notes)
+         SELECT $1, 'created', $2, $3, $6, round((SELECT "creditBalance" FROM upd)::numeric, 2), $4, $5
+         RETURNING id, event_type, amount, reason, source_bill_id, balance_after, created_by, created_at, notes`,
+        [customerKey, amt, reason, createdBy ?? null, notes ?? null, linkedBillId]
+    );
+    if (!rows[0]) throw new Error('Bulk meter not found.');
+    return {
+        id: String(rows[0].id),
+        event_type: 'created',
+        amount: Number(rows[0].amount),
+        reason: rows[0].reason,
+        source_bill_id: rows[0].source_bill_id ? String(rows[0].source_bill_id) : null,
+        source_bill_key: null,
+        source_payment_id: null,
+        voided_ledger_id: null,
+        balance_after: Number(rows[0].balance_after),
+        created_by: rows[0].created_by ? String(rows[0].created_by) : null,
+        created_at: rows[0].created_at,
+        notes: rows[0].notes,
+    };
+};
+
+/**
+ * Manual credit void (operator action): reverses the *unconsumed* portion of a
+ * 'created' ledger row. Fully-consumed credits are blocked (the money is already
+ * sitting in applied bill payments). Returns the amount reversed + new balance.
+ */
+export const dbVoidCredit = async (
+    customerKey: string,
+    ledgerId: string,
+    createdBy: string | null
+): Promise<{ voidedAmount: number; remainingBalance: number }> => {
+    const targetRows = await query(
+        `SELECT id, amount FROM credit_ledger
+         WHERE id = $1 AND bulk_meter_id = $2 AND event_type = 'created'`,
+        [ledgerId, customerKey]
+    );
+    const target = targetRows[0];
+    if (!target) throw new Error('Credit not found or is not a created credit.');
+
+    const alreadyVoided = await query(
+        `SELECT 1 FROM credit_ledger WHERE voided_ledger_id = $1 AND event_type = 'voided' LIMIT 1`,
+        [ledgerId]
+    );
+    if (alreadyVoided[0]) throw new Error('This credit has already been voided.');
+
+    const balRows = await query(
+        `SELECT "creditBalance" FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+        [customerKey]
+    );
+    const currentBalance = roundMoney(Number(balRows[0]?.creditBalance || 0));
+
+    const voidedAmount = roundMoney(Math.min(Number(target.amount), currentBalance));
+    if (voidedAmount <= 0.005) {
+        throw new Error('This credit has been fully applied to bills and can no longer be voided.');
+    }
+    const newBalance = roundMoney(currentBalance - voidedAmount);
+
+    await query(
+        `INSERT INTO credit_ledger (bulk_meter_id, event_type, amount, reason, voided_ledger_id, balance_after, created_by, notes)
+         VALUES ($1, 'voided', $2, 'manual', $3, $4, $5, $6)`,
+        [customerKey, voidedAmount, ledgerId, newBalance, createdBy ?? null, 'Manual void of operator credit']
+    );
+    await query(
+        `UPDATE bulk_meters SET "creditBalance" = $1 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2))`,
+        [newBalance, customerKey]
+    );
+    return { voidedAmount, remainingBalance: newBalance };
 };

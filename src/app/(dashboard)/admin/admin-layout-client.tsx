@@ -6,7 +6,8 @@ import { SidebarNav, type NavItemGroup, type NavItem } from "@/components/layout
 import { AppShell } from "@/components/layout/app-shell";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { getLatestPermissionsAction } from "@/lib/actions";
-import { PERMISSIONS } from '@/lib/constants/auth';import { subscribePermissionsSync } from '@/lib/permissions-sync';
+import { PERMISSIONS } from '@/lib/constants/auth';
+import { subscribePermissionsSync } from '@/lib/permissions-sync';
 
 interface UserProfile {
     id: string;
@@ -157,14 +158,17 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
 
     const navItems = buildSidebarNavItems(user);
 
-    const permissionsValue: PermissionsContextType = React.useMemo(() => ({
-        permissions: new Set(user?.permissions || []),
-        hasPermission: (permission: string) => {
-            if (!user) return false;
-            return user.permissions?.includes(permission) || false;
-        },
-        refreshPermissions
-    }), [user, refreshPermissions]);
+    const permissionsValue: PermissionsContextType = React.useMemo(() => {
+        const permSet = new Set(user?.permissions || []);
+        return {
+            permissions: permSet,
+            hasPermission: (permission: string) => {
+                if (!user) return false;
+                return permSet.has(permission);
+            },
+            refreshPermissions
+        };
+    }, [user, refreshPermissions]);
 
     return (
         <PermissionsContext.Provider value={permissionsValue}>

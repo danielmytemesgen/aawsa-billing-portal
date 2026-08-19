@@ -144,8 +144,11 @@ export default function StaffMeterReadingsPage() {
       bulkReadingsRaw = bulkReadingsRaw.filter(r => r.monthYear === currentMonthYear);
     }
 
+    const customerMap = new Map<string, IndividualCustomer>(customers.map(c => [c.customerKeyNumber, c]));
+    const bulkMeterMap = new Map<string, BulkMeter>(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+
     const displayedIndividualReadings: DisplayReading[] = individualReadingsRaw.map(r => {
-      const customer = customers.find(c => c.customerKeyNumber === r.individualCustomerId);
+      const customer = r.individualCustomerId ? customerMap.get(r.individualCustomerId) : undefined;
       return {
         id: r.id,
         meterId: r.individualCustomerId,
@@ -161,7 +164,7 @@ export default function StaffMeterReadingsPage() {
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
     const displayedBulkReadings: DisplayReading[] = bulkReadingsRaw.map(r => {
-      const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === r.CUSTOMERKEY);
+      const bulkMeter = r.CUSTOMERKEY ? bulkMeterMap.get(r.CUSTOMERKEY) : undefined;
       return {
         id: r.id,
         meterId: r.CUSTOMERKEY,
@@ -175,8 +178,6 @@ export default function StaffMeterReadingsPage() {
         faultCode: r.faultCode
       };
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
-
-    // Readings are mapped to what the user's branch/role allows.
 
     setIndividualReadings(displayedIndividualReadings);
     setBulkReadings(displayedBulkReadings);

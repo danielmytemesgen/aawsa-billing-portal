@@ -55,10 +55,12 @@ export function getEffectiveBranchId(
     return undefined;
   }
 
-  // Restrict to the user's assigned branch (treat 'all' as unset for safety)
+  // Restrict to the user's assigned branch
   if (userBranchId && userBranchId !== 'all') {
     return userBranchId;
   }
 
-  return undefined;
+  // Branch-restricted user has no assigned branch -> return non-matching sentinel UUID to prevent leaking all branches
+  return '00000000-0000-0000-0000-000000000000';
 }
+

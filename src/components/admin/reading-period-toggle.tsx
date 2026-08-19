@@ -48,9 +48,15 @@ export function ReadingPeriodToggle() {
                 const { updateReadingPeriodStatusAction: dynamicAction } = await import('@/lib/actions');
                 await dynamicAction(status, startDate, endDate);
             }
+            const freshDetails = await getReadingPeriodDetailsAction();
+            if (freshDetails) {
+                setStatus(freshDetails.status);
+                setStartDate(freshDetails.startDate || '');
+                setEndDate(freshDetails.endDate || '');
+            }
             toast({
                 title: "Reading Period Updated",
-                description: `Status updated to "${status}". Start date: ${startDate || 'N/A'}, End date: ${endDate || 'N/A'}.`,
+                description: `Status is now "${freshDetails?.status || status}". Active cycle: ${freshDetails?.startDate || startDate} to ${freshDetails?.endDate || endDate}.`,
                 variant: "default"
             });
         } catch (error: any) {

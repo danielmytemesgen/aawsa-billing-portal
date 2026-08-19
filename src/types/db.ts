@@ -1042,3 +1042,39 @@ export type SecurityLog = {
   severity: "info" | "warning" | "critical";
   details: any | null;
 };
+
+/** One entry of a session's pages_viewed column: legacy name string or timestamped object. */
+export type PageViewEntry = string | { path?: string; label?: string; viewed_at?: string };
+
+export type UserSessionStatus = 'active' | 'logout' | 'idle_timeout' | 'expired' | 'revoked' | 'logged_out';
+
+/** Unified view of a staff or customer session (UNION of staff_sessions + customer_sessions). */
+export type UserSession = {
+  id: string;
+  user_type: 'staff' | 'customer';
+  user_identifier: string; // staff email or customer key number
+  role_name: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  device_name: string | null;
+  location: string | null;
+  login_time: string;
+  logout_time: string | null;
+  duration_seconds: number | null; // live (now - login) while active
+  session_end_reason: string | null;
+  status: UserSessionStatus;
+  last_active_at: string;
+  pages_viewed: PageViewEntry[];
+  created_at: string;
+  customer_key_number: string | null;
+  customer_type: string | null;
+};
+
+export type SessionSummary = {
+  active_count: number;
+  today_count: number;
+  avg_duration_seconds: number | null;
+  total_count: number;
+};

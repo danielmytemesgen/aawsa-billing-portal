@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash, Download, ChevronDown, X } from "lucide-react";
+import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash, Download, ChevronDown, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { BulkMeter } from "./bulk-meter-types";
@@ -58,16 +59,17 @@ export default function BulkMetersPage() {
   const [selectedMeters, setSelectedMeters] = React.useState<Set<string>>(new Set());
   const [isBatchInvoiceDialogOpen, setIsBatchInvoiceDialogOpen] = React.useState(false);
   const [statusFilter, setStatusFilter] = React.useState<BulkMeterStatus | 'All'>('All');
+  const [branchFilter, setBranchFilter] = React.useState<string>('All');
   const [isExporting, setIsExporting] = React.useState(false);
 
 
-  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string, branch?: string) => {
     setIsLoading(true);
     const { bulkMeters: paginatedBMs, totalCount: count, error } = await fetchBulkMetersPaginated(
       rpp,
       p * rpp,
       search,
-      undefined, // branchId — handled server-side per user
+      branch && branch !== 'All' ? branch : undefined,
       status && status !== 'All' ? status : undefined,
     );
     if (!error) {
@@ -94,8 +96,8 @@ export default function BulkMetersPage() {
   }, [searchTerm]);
 
   React.useEffect(() => {
-    fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
-  }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData]);
+    fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
+  }, [page, rowsPerPage, debouncedSearch, statusFilter, branchFilter, fetchData]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -222,7 +224,8 @@ export default function BulkMetersPage() {
     try {
       // Fetch all (up to 10000) with current filters
       const { bulkMeters: allBMs } = await fetchBulkMetersPaginated(
-        10000, 0, debouncedSearch, undefined,
+        10000, 0, debouncedSearch,
+        branchFilter !== 'All' ? branchFilter : undefined,
         statusFilter !== 'All' ? statusFilter : undefined,
       );
 
@@ -234,6 +237,7 @@ export default function BulkMetersPage() {
       const rows = allBMs.map(m => ({
         'Account Name': m.name || '',
         'Customer Key': m.customerKeyNumber || '',
+        'Phone Number': m.phoneNumber || '',
         'Meter Number': m.meterNumber || '',
         'INST KEY': m.instKey || '',
         'Contract': m.contractNumber || '',
@@ -364,10 +368,10 @@ export default function BulkMetersPage() {
         </Card>
       </div>
 
-      {/* ─── Search + Status Filter + Export ─── */}
+      {/* ─── Search + Branch Filter + Status Filter + Export ─── */}
       <div className="mt-6 flex flex-col gap-3">
-        {/* Search bar */}
-        <div className="flex flex-col md:flex-row items-center gap-3">
+        {/* Search bar + Branch Dropdown + Export */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
           <div className="relative flex-grow w-full">
             <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
             <Input
@@ -378,6 +382,35 @@ export default function BulkMetersPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+
+          {/* Branch Filter Dropdown */}
+          <div className="w-full md:w-64 flex-shrink-0">
+            <Select
+              value={branchFilter}
+              onValueChange={(val) => {
+                setBranchFilter(val);
+                setPage(0);
+              }}
+            >
+              <SelectTrigger className="h-14 px-4 border-slate-200 shadow-sm rounded-xl text-base font-medium bg-white hover:bg-slate-50 transition-colors">
+                <div className="flex items-center gap-2 truncate">
+                  <Building2 className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                  <SelectValue placeholder="All Branches" />
+                </div>
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value="All" className="font-semibold text-slate-800">
+                  🏢 All Branches
+                </SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Export button */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -402,7 +435,7 @@ export default function BulkMetersPage() {
           </DropdownMenu>
         </div>
 
-        {/* Status filter pills */}
+        {/* Status filter pills & active tags */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-500 mr-1">Filter:</span>
           {(['All', ...bulkMeterStatuses] as const).map((status) => {
@@ -436,9 +469,24 @@ export default function BulkMetersPage() {
               </button>
             );
           })}
-          {statusFilter !== 'All' && (
+
+          {/* Active Branch Filter Chip */}
+          {branchFilter !== 'All' && (
+            <Badge
+              variant="secondary"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer shadow-sm"
+              onClick={() => { setBranchFilter('All'); setPage(0); }}
+              title="Click to clear branch filter"
+            >
+              <Building2 className="h-3 w-3 text-blue-600" />
+              Branch: {branches.find(b => b.id === branchFilter)?.name || branchFilter}
+              <X className="h-3 w-3 ml-0.5 opacity-70 hover:opacity-100" />
+            </Badge>
+          )}
+
+          {(statusFilter !== 'All' || branchFilter !== 'All') && (
             <span className="ml-1 text-xs text-slate-400 italic">
-              Showing {totalCount} {statusFilter} meter{totalCount !== 1 ? 's' : ''}
+              Showing {totalCount} result{totalCount !== 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -499,7 +547,7 @@ export default function BulkMetersPage() {
             <div className="min-w-[1000px]">
               {isLoading ? (
                 <div className="p-4">
-                  <TableSkeleton columns={8} rows={10} />
+                  <TableSkeleton columns={10} rows={10} />
                 </div>
               ) : bulkMeters.length === 0 ? (
                 <EmptyState 

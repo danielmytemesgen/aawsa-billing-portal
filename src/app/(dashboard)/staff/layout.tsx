@@ -8,7 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PermissionsContext, type PermissionsContextType } from '@/hooks/use-permissions';
 import { useRouter } from 'next/navigation';
 import { getLatestPermissionsAction } from "@/lib/actions";
-import { PERMISSIONS } from '@/lib/constants/auth';import { subscribePermissionsSync } from '@/lib/permissions-sync';
+import { PERMISSIONS } from '@/lib/constants/auth';
+import { subscribePermissionsSync } from '@/lib/permissions-sync';
 
 interface UserProfile {
     id: string;
@@ -180,14 +181,17 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
 
     const navItems = buildStaffSidebarNavItems(user);
 
-    const permissionsValue: PermissionsContextType = React.useMemo(() => ({
-        permissions: new Set(user?.permissions || []),
-        hasPermission: (permission: string) => {
-            if (!user) return false;
-            return user.permissions?.includes(permission) || false;
-        },
-        refreshPermissions
-    }), [user, refreshPermissions]);
+    const permissionsValue: PermissionsContextType = React.useMemo(() => {
+        const permSet = new Set(user?.permissions || []);
+        return {
+            permissions: permSet,
+            hasPermission: (permission: string) => {
+                if (!user) return false;
+                return permSet.has(permission);
+            },
+            refreshPermissions
+        };
+    }, [user, refreshPermissions]);
 
     if (isLoading) {
         return (

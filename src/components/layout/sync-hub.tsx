@@ -14,6 +14,7 @@ import {
   checkDeviceHealth,
   resetFailedUploads,
   resetSingleFailedUpload,
+  requestPersistentStorage,
   UploadEntry
 } from '@/lib/offline-db';
 import { addIndividualCustomerReading, addBulkMeterReading } from '@/lib/data-store';
@@ -210,54 +211,59 @@ export function SyncHub() {
       });
     }
 
-    for (const reading of pending) {
-      if (!reading.id) continue;
+    // --- PHASE 1: Sync pending readings with controlled concurrency (chunks of 3) ---
+    const READING_CHUNK_SIZE = 3;
+    for (let i = 0; i < pending.length; i += READING_CHUNK_SIZE) {
+      const chunk = pending.slice(i, i + READING_CHUNK_SIZE);
+      await Promise.all(chunk.map(async (reading: any) => {
+        if (!reading.id) return;
 
-      // Skip conflicted items — require manual resolution
-      if (currentConflicts.has(reading.id)) {
-        await markAsFailed(reading.id, 'Duplicate reading conflict detected for the same meter and billing period. Please discard the incorrect entry.');
-        failed++;
-        continue;
-      }
-
-      await markAsSyncing(reading.id);
-
-      try {
-        let result;
-        if (reading.type === 'individual') {
-          result = await addIndividualCustomerReading(reading.payload, { skipOfflineFallback: true });
-        } else {
-          result = await addBulkMeterReading(reading.payload, { skipOfflineFallback: true });
+        // Skip conflicted items — require manual resolution
+        if (currentConflicts.has(reading.id)) {
+          await markAsFailed(reading.id, 'Duplicate reading conflict detected for the same meter and billing period. Please discard the incorrect entry.');
+          failed++;
+          return;
         }
 
-        if (result.success && result.data) {
-          const serverId = result.data.id;
-          if (reading.localId && serverId) {
-            // Find and link the decoupled photo upload entry
-            const uploadEntry = await db.uploads.where('readingLocalId').equals(reading.localId).first();
-            if (uploadEntry && uploadEntry.id) {
-              await db.uploads.update(uploadEntry.id, { readingId: serverId });
-            } else {
-              console.warn('SyncHub: no upload record found for readingLocalId', reading.localId, {
-                readingId: reading.id,
-                readingType: reading.type,
-              });
+        await markAsSyncing(reading.id);
+
+        try {
+          let result;
+          if (reading.type === 'individual') {
+            result = await addIndividualCustomerReading(reading.payload, { skipOfflineFallback: true });
+          } else {
+            result = await addBulkMeterReading(reading.payload, { skipOfflineFallback: true });
+          }
+
+          if (result.success && result.data) {
+            const serverId = result.data.id;
+            if (reading.localId && serverId) {
+              // Find and link the decoupled photo upload entry
+              const uploadEntry = await db.uploads.where('readingLocalId').equals(reading.localId).first();
+              if (uploadEntry && uploadEntry.id) {
+                await db.uploads.update(uploadEntry.id, { readingId: serverId });
+              } else {
+                console.warn('SyncHub: no upload record found for readingLocalId', reading.localId, {
+                  readingId: reading.id,
+                  readingType: reading.type,
+                });
+              }
+            }
+            await removeSyncedReading(reading.id);
+            success++;
+          } else {
+            await markAsFailed(reading.id, result.message || 'Unknown error');
+            failed++;
+            if (result.message?.toLowerCase().includes('network') || result.message?.toLowerCase().includes('timeout') || result.message?.toLowerCase().includes('failed to fetch')) {
+              hasNetworkError = true;
             }
           }
-          await removeSyncedReading(reading.id);
-          success++;
-        } else {
-          await markAsFailed(reading.id, result.message || 'Unknown error');
+        } catch (err: any) {
+          await markAsFailed(reading.id, err.message || 'Network error');
           failed++;
-          if (result.message?.toLowerCase().includes('network') || result.message?.toLowerCase().includes('timeout') || result.message?.toLowerCase().includes('failed to fetch')) {
-            hasNetworkError = true;
-          }
+          hasNetworkError = true;
         }
-      } catch (err: any) {
-        await markAsFailed(reading.id, err.message || 'Network error');
-        failed++;
-        hasNetworkError = true;
-      }
+      }));
 
       window.dispatchEvent(new Event('offline-queue-updated'));
       const progressPercent = totalToSync > 0 ? Math.round(((success + failed) / totalToSync) * 100) : 100;
@@ -279,37 +285,51 @@ export function SyncHub() {
       });
     } else {
       const uploadsToSync: UploadEntry[] = await db.uploads.where('status').equals('pending').toArray();
-      for (const upload of uploadsToSync) {
-        if (!upload.id || !upload.readingId || !upload.photoData) {
-          if (upload.photoData && !upload.readingId) {
-            console.warn('SyncHub: pending upload missing readingId, waiting for linked reading sync', upload.id, upload.readingLocalId);
-          }
-          continue;
-        }
-        await db.uploads.update(upload.id, { status: 'uploading' });
-
-        try {
-          const result = await uploadReadingPhotoAction(
-            String(upload.readingId),
-            upload.photoData
-          );
-
-          if (result && !result.error) {
-            await db.uploads.delete(upload.id);
-            success++;
-          } else {
-            const errMsg = result?.error?.message || 'Failed to upload photo';
-            await db.uploads.update(upload.id, { status: 'failed', errorMessage: errMsg });
-            failed++;
-            if (errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('timeout')) {
-              hasNetworkError = true;
+      const PHOTO_CHUNK_SIZE = 2;
+      for (let i = 0; i < uploadsToSync.length; i += PHOTO_CHUNK_SIZE) {
+        const chunk = uploadsToSync.slice(i, i + PHOTO_CHUNK_SIZE);
+        await Promise.all(chunk.map(async (upload) => {
+          if (!upload.id || !upload.readingId || (!upload.photoData && !upload.blob)) {
+            if ((upload.photoData || upload.blob) && !upload.readingId) {
+              console.warn('SyncHub: pending upload missing readingId, waiting for linked reading sync', upload.id, upload.readingLocalId);
             }
+            return;
           }
-        } catch (err: any) {
-          await db.uploads.update(upload.id, { status: 'failed', errorMessage: err.message || 'Network error' });
-          failed++;
-          hasNetworkError = true;
-        }
+          await db.uploads.update(upload.id, { status: 'uploading' });
+
+          try {
+            let photoDataString = upload.photoData;
+            if (!photoDataString && upload.blob) {
+              photoDataString = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(upload.blob!);
+              });
+            }
+
+            const result = await uploadReadingPhotoAction(
+              String(upload.readingId),
+              photoDataString || ''
+            );
+
+            if (result && !result.error) {
+              await db.uploads.delete(upload.id);
+              success++;
+            } else {
+              const errMsg = result?.error?.message || 'Failed to upload photo';
+              await db.uploads.update(upload.id, { status: 'failed', errorMessage: errMsg });
+              failed++;
+              if (errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('timeout')) {
+                hasNetworkError = true;
+              }
+            }
+          } catch (err: any) {
+            await db.uploads.update(upload.id, { status: 'failed', errorMessage: err.message || 'Network error' });
+            failed++;
+            hasNetworkError = true;
+          }
+        }));
 
         window.dispatchEvent(new Event('offline-queue-updated'));
         const progressPercent = totalToSync > 0 ? Math.round(((success + failed) / totalToSync) * 100) : 100;
@@ -514,8 +534,52 @@ export function SyncHub() {
     reader.readAsText(file);
   };
 
+  const handleResolveConflict = async (item: any, keepLocal: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!item.id) return;
+    if (keepLocal) {
+      setConflictIds(prev => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+      toast({
+        title: "Conflict Resolved",
+        description: `Reading for ${item.meterKey || item.payload?.individualCustomerId || 'meter'} queued for sync.`,
+      });
+      runSync();
+    } else {
+      await removeSyncedReading(item.id);
+      if (item.localId) {
+        const linkedUpload = await db.uploads.where('readingLocalId').equals(item.localId).first();
+        if (linkedUpload && linkedUpload.id) {
+          await db.uploads.delete(linkedUpload.id);
+        }
+      }
+      await checkPending();
+      window.dispatchEvent(new Event('offline-queue-updated'));
+      toast({
+        title: "Duplicate Discarded",
+        description: "The duplicate reading was removed from your offline queue.",
+      });
+    }
+  };
+
   React.useEffect(() => {
+    // Request persistent storage from browser to prevent eviction
+    requestPersistentStorage().catch(() => {});
+
     checkPending();
+
+    // iOS Safari / Tab Close Guard: warn user if unsynced readings exist
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (pendingCount > 0) {
+        e.preventDefault();
+        e.returnValue = `You have ${pendingCount} unsynced meter reading(s). Are you sure you want to leave?`;
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
     const handleBrowserOnline = () => {
       if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
@@ -663,10 +727,11 @@ export function SyncHub() {
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       }
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
       clearInterval(pollInterval);
     };
-  }, [checkPending, runSync, currentUser, isManagement]);
+  }, [checkPending, runSync, currentUser, isManagement, pendingCount]);
 
   if (pendingCount === 0 && failedCount === 0 && conflictCount === 0 && !isSyncing) return null;
 
@@ -728,8 +793,11 @@ export function SyncHub() {
           </div>
 
           <div className="flex flex-col gap-0.5 mt-0.5">
-            <span className="text-xs font-black text-slate-900 leading-tight">
-              {pendingCount} Items Pending
+            <span className="text-xs font-black text-slate-900 leading-tight flex items-center justify-between">
+              <span>{pendingCount} Items Pending</span>
+              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-flex items-center gap-0.5">
+                🛡️ Secured
+              </span>
             </span>
             {conflictCount > 0 && (
               <span className="text-[10px] font-bold text-orange-700">
@@ -960,6 +1028,33 @@ export function SyncHub() {
                             </span>
                           )}
                         </div>
+
+                        {/* Interactive Conflict Resolution Diff Banner */}
+                        {!isPhotoOnly && item.id && conflictIds.has(item.id) && (
+                          <div className="mt-3 p-2.5 bg-orange-50/90 border border-orange-200 rounded-lg text-xs flex flex-col gap-2">
+                            <div className="flex items-center gap-1.5 font-bold text-orange-800">
+                              <AlertTriangle className="h-3.5 w-3.5 text-orange-600 flex-shrink-0" />
+                              <span>Duplicate Meter Reading Conflict</span>
+                            </div>
+                            <p className="text-[11px] text-orange-700 leading-snug">
+                              Another reading was previously submitted for this meter ({customerKey}) in this billing period. Choose whether to overwrite or discard this entry.
+                            </p>
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                onClick={(e) => handleResolveConflict(item, true, e)}
+                                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] rounded shadow-sm transition-colors flex items-center gap-1"
+                              >
+                                <CheckCircle2 className="h-3 w-3" /> Keep & Sync
+                              </button>
+                              <button
+                                onClick={(e) => handleResolveConflict(item, false, e)}
+                                className="px-2.5 py-1 bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-bold text-[11px] rounded transition-colors flex items-center gap-1"
+                              >
+                                <Trash2 className="h-3 w-3" /> Discard Duplicate
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <button 

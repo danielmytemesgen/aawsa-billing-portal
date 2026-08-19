@@ -97,6 +97,7 @@ export const bulkMeters = pgTable('bulk_meters', {
   createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).defaultNow(),
   outStandingbill: numeric('outStandingbill').default('0.00'),
+  creditBalance: numeric('creditBalance').default('0.00'), // Overpayment deposit (credit note) — see docs/CREDIT_NOTE_PLAN.md
   bulkUsage: numeric('bulk_usage').default('0.000'),
   differenceBill: numeric('difference_bill').default('0.00'),
   differenceUsage: numeric('difference_usage').default('0.000'),
@@ -258,6 +259,31 @@ export const sessionSettings = pgTable('session_settings', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Staff session monitoring (one row per staff login — see 017_user_session_monitoring.sql)
+export const staffSessions = pgTable('staff_sessions', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  staffId: uuid('staff_id').notNull().references(() => staffMembers.id, { onDelete: 'cascade' }),
+  staffEmail: text('staff_email').notNull(),
+  roleName: text('role_name'),
+  branchId: uuid('branch_id'),
+  branchName: text('branch_name'),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  deviceName: text('device_name'),
+  location: text('location'),
+  loginTime: timestamp('login_time', { withTimezone: true }).defaultNow().notNull(),
+  logoutTime: timestamp('logout_time', { withTimezone: true }),
+  durationSeconds: integer('duration_seconds'),
+  lastActiveAt: timestamp('last_active_at', { withTimezone: true }).defaultNow().notNull(),
+  sessionEndReason: text('session_end_reason'),
+  pagesViewed: jsonb('pages_viewed').notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  staffSessionsEmailIdx: index('idx_staff_sessions_email').on(t.staffEmail),
+  staffSessionsActiveIdx: index('idx_staff_sessions_active').on(t.logoutTime).where(sql`${t.logoutTime} IS NULL`),
+  staffSessionsLoginIdx: index('idx_staff_sessions_login').on(t.loginTime),
+}));
 
 // 11. Spatial Data Management
 export const spatialRecords = pgTable('spatial_records', {

@@ -5,7 +5,7 @@ import { logCustomerPageViewAction } from '@/lib/actions';
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { sessionId, pageName } = body;
+        const { sessionId, pageName, path, label } = body;
 
         if (!sessionId || !pageName) {
             return NextResponse.json(
@@ -14,7 +14,9 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        await logCustomerPageViewAction(sessionId, pageName);
+        // pageName is the human-readable label; path (the actual route) is
+        // optional and falls back to pageName for legacy callers.
+        await logCustomerPageViewAction(sessionId, label || pageName, path || pageName);
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Error logging page view:', error);

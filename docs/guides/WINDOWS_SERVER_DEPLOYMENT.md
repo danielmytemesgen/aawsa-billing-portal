@@ -317,6 +317,30 @@ The helper restores the saved PM2 process list after a reboot.
 
 ---
 
+### STEP 8b: Schedule the Session Monitoring Sweep (Nightly)
+
+The session-monitoring feature includes a sweep that closes staff sessions idle longer than the configured session duration (default 7200s = 2h). **This is not enabled by default** — schedule it with Task Scheduler so "Active Now" counts and durations stay accurate:
+
+```powershell
+# Create a daily 3:00 AM task that runs the wrapper (logs to logs\session-sweep.log)
+schtasks /Create /SC DAILY /ST 03:00 /TN "AAWSA Session Sweep" ^
+  /TR "C:\Apps\aawsa-billing-portal\scripts\devops\session-sweep.bat" /F
+
+# Verify it was created
+schtasks /Query /TN "AAWSA Session Sweep"
+
+# Optional: run it once immediately to confirm it works
+schtasks /Run /TN "AAWSA Session Sweep"
+```
+
+Linux/Mac deployments use the equivalent cron entry (see `scripts/devops/session-sweep.sh`):
+
+```cron
+0 3 * * * /path/to/project/scripts/devops/session-sweep.sh >> /var/log/aawsa_session_sweep.log 2>&1
+```
+
+---
+
 ### STEP 9: Configure Firewall Rules
 
 ```powershell

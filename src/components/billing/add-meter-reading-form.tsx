@@ -133,13 +133,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     checkDeviceHealth().then(status => setDeviceHealth(status)).catch(() => {});
   }, []);
 
-  // Auto-refresh GPS every 60 seconds while the form is mounted to keep location fresh
-  React.useEffect(() => {
-    const intervalId = setInterval(() => {
-      if (!isAcquiringLocation) acquireLocation();
-    }, 60_000);
-    return () => clearInterval(intervalId);
-  }, [acquireLocation, isAcquiringLocation]);
+
 
   React.useEffect(() => {
     if (initialLocation) {

@@ -728,3 +728,54 @@ html, body {
   }
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   ☀️  Sunlight Mode — High-contrast glare-resistant mode for field readers
+   Activated via the ☀️ toggle in the route header. Persisted in localStorage.
+   ────────────────────────────────────────────────────────────────────────── */
+.sunlight-mode,
+.sunlight-mode * {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 0%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 0%;
+  --muted-foreground: 0 0% 20%;
+  --border: 0 0% 20%;
+  --input: 0 0% 88%;
+  --ring: 0 0% 0%;
+  color: #000 !important;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sunlight-mode input,
+.sunlight-mode textarea,
+.sunlight-mode select,
+.sunlight-mode button[type="button"],
+.sunlight-mode button[type="submit"] {
+  border-width: 2px !important;
+  border-color: #000 !important;
+  font-weight: 800 !important;
+  min-height: 3rem;
+}
+
+.sunlight-mode input[type="number"] {
+  font-size: 1.5rem !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.05em;
+}
+
+.sunlight-mode label {
+  font-weight: 900 !important;
+  font-size: 0.875rem;
+}
+
+.sunlight-mode .text-muted-foreground {
+  color: #333 !important;
+}
+
+/* High-contrast status badges in sunlight mode */
+.sunlight-mode [class*="badge"],
+.sunlight-mode [class*="Badge"] {
+  border: 2px solid currentColor !important;
+  font-weight: 900 !important;
+}

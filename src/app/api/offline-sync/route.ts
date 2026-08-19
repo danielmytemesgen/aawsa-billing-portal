@@ -1,16 +1,24 @@
 import { NextResponse } from 'next/server';
 import { createIndividualCustomerReadingAction, createBulkMeterReadingAction } from '@/lib/actions';
 import { query } from '@/lib/db';
+import { getSession } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
+    const session = await getSession(request);
+    if (!session || !session.id) {
+      return NextResponse.json({ error: 'Unauthorized: Active session or valid device token required' }, { status: 401 });
+    }
+
     const body = await request.json();
     const readings = Array.isArray(body.readings) ? body.readings : [];
 
-    const results: Array<{ localId?: string | number; serverId?: string; success: boolean; message?: string }> = [];
+
+    const results: Array<{ id?: string | number; localId?: string | number; serverId?: string; success: boolean; message?: string }> = [];
 
     for (const r of readings) {
       const localId = r.localId ?? r.id;
+      const rawId = r.id;
       const idempotencyKey = r.idempotencyKey || (r.payload && r.payload.idempotencyKey);
 
       try {
@@ -18,7 +26,7 @@ export async function POST(request: Request) {
         if (idempotencyKey) {
           const rows = await query('SELECT server_id FROM idempotency_keys WHERE idempotency_key = $1', [idempotencyKey]);
           if (rows && rows[0] && rows[0].server_id) {
-            results.push({ localId, serverId: rows[0].server_id, success: true });
+            results.push({ id: rawId ?? localId, localId, serverId: rows[0].server_id, success: true });
             continue;
           }
         }
@@ -29,7 +37,7 @@ export async function POST(request: Request) {
         } else if (r.type === 'bulk') {
           created = await createBulkMeterReadingAction(r.payload as any);
         } else {
-          results.push({ localId, success: false, message: 'Unknown reading type' });
+          results.push({ id: rawId ?? localId, localId, success: false, message: 'Unknown reading type' });
           continue;
         }
 
@@ -42,9 +50,16 @@ export async function POST(request: Request) {
           } catch (e) { /* ignore mapping failures */ }
         }
 
-        results.push({ localId, serverId, success: !!serverId, message: (created as any)?.message || undefined });
+        const isSuccess = !!serverId || (created && created.success !== false && !created.error);
+        results.push({ 
+          id: rawId ?? localId, 
+          localId, 
+          serverId, 
+          success: isSuccess, 
+          message: (created as any)?.message || undefined 
+        });
       } catch (err: any) {
-        results.push({ localId, success: false, message: err?.message || String(err) });
+        results.push({ id: rawId ?? localId, localId, success: false, message: err?.message || String(err) });
       }
     }
 
@@ -53,3 +68,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
   }
 }
+

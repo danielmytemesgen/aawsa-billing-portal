@@ -26,9 +26,10 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Eye, LogOut, Download, AlertTriangle } from 'lucide-react';
+import { Eye, Download, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AuditLogDetails } from '@/features/admin/components/audit-log-details';
+import { UserSessionsTab } from './user-sessions-tab';
 
 interface SecurityLogsResponse {
     logs: SecurityLog[];
@@ -36,19 +37,6 @@ interface SecurityLogsResponse {
     page: number;
     pageSize: number;
     lastPage: number;
-}
-
-interface CustomerSession {
-    id: string;
-    customer_key_number: string;
-    customer_type: string;
-    ip_address: string;
-    device_name: string;
-    location: string;
-    is_revoked: boolean;
-    pages_viewed: string[];
-    last_active_at: string;
-    created_at: string;
 }
 
 export default function SecurityLogsPage() {
@@ -65,8 +53,6 @@ export default function SecurityLogsPage() {
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [sessions, setSessions] = useState<CustomerSession[]>([]);
-    const [sessionsLoading, setSessionsLoading] = useState(false);
 
     useEffect(() => {
         const page = parseInt(searchParams?.get('page') || '1', 10);
@@ -114,29 +100,6 @@ export default function SecurityLogsPage() {
             setError(e.message);
         } finally {
             setLoading(false);
-        }
-    };
-
-    const fetchCustomerSessions = async () => {
-        setSessionsLoading(true);
-        try {
-            const { getActiveCustomerSessionsAction } = await import('@/lib/actions');
-            const { data } = await getActiveCustomerSessionsAction();
-            setSessions(data || []);
-        } catch (e) {
-            console.error('Failed to fetch sessions', e);
-        } finally {
-            setSessionsLoading(false);
-        }
-    };
-
-    const handleKickOut = async (sessionId: string) => {
-        try {
-            const { revokeCustomerSessionAction } = await import('@/lib/actions');
-            await revokeCustomerSessionAction(sessionId);
-            fetchCustomerSessions(); // Refresh the list
-        } catch (e) {
-            console.error('Failed to revoke session', e);
         }
     };
 
@@ -217,48 +180,39 @@ export default function SecurityLogsPage() {
         }
     };
 
-    const exportCustomerSessions = () => {
-        const headers = ['Customer Key', 'Type', 'IP Address', 'Device', 'Location', 'Pages Viewed', 'Last Active', 'Created At'];
-        const rows = sessions.map(s => [
-            s.customer_key_number || '',
-            s.customer_type || '',
-            s.ip_address || '',
-            s.device_name || '',
-            s.location || '',
-            (s.pages_viewed || []).join('; '),
-            format(new Date(s.last_active_at), 'yyyy-MM-dd HH:mm:ss'),
-            format(new Date(s.created_at), 'yyyy-MM-dd HH:mm:ss'),
-        ].map(v => escapeCsvField(String(v))));
-
-        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-        downloadCsv(csv, `customer_sessions_${format(new Date(), 'yyyy-MM-dd_HHmmss')}.csv`);
-    };
-
     if (loading) return <div className="p-4">Loading security logs...</div>;
     if (error) return <div className="p-4 text-red-500">Error: {error}</div>;
 
     return (
-        <div className="p-4">
+        <div className="p-4 rounded-xl bg-gradient-to-b from-slate-100/70 via-slate-50/40 to-white">
             <h1 className="text-2xl font-bold mb-4">Security Log Entries</h1>
 
             <Tabs defaultValue="logs" className="w-full">
-                <TabsList>
-                    <TabsTrigger value="logs">Security Logs</TabsTrigger>
-                    <TabsTrigger value="sessions" onClick={() => fetchCustomerSessions()}>
-                        Customer Sessions
+                <TabsList className="gap-1 bg-slate-200/60">
+                    <TabsTrigger
+                        value="logs"
+                        className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm bg-blue-100/70 text-blue-700 hover:bg-blue-200/70"
+                    >
+                        Security Logs
+                    </TabsTrigger>
+                    <TabsTrigger
+                        value="userSessions"
+                        className="data-[state=active]:bg-violet-600 data-[state=active]:text-white data-[state=active]:shadow-sm bg-violet-100/70 text-violet-700 hover:bg-violet-200/70"
+                    >
+                        User Sessions
                     </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="logs">
                     <div className="flex justify-end mb-3">
-                        <Button variant="outline" size="sm" onClick={exportSecurityLogs} className="gap-2">
+                        <Button variant="outline" size="sm" onClick={exportSecurityLogs} className="gap-2 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:text-blue-800">
                             <Download className="h-4 w-4" />
                             Export CSV
                         </Button>
                     </div>
-                    <div className="rounded-md border">
+                    <div className="rounded-md border bg-white shadow-sm">
                         <Table>
-                            <TableHeader>
+                            <TableHeader className="bg-slate-100/90">
                                 <TableRow>
                                     <TableHead className="cursor-pointer" onClick={() => handleSort('created_at')}>
                                         Timestamp {getSortIndicator('created_at')}
@@ -282,8 +236,13 @@ export default function SecurityLogsPage() {
                             </TableHeader>
                             <TableBody>
                                 {logs.length > 0 ? (
-                                    logs.map((log) => (
-                                        <TableRow key={log.id}>
+                                    logs.map((log) => {
+                                        const severityRowClass =
+                                            log.severity === 'critical' ? 'bg-red-50' :
+                                            log.severity === 'warning' ? 'bg-amber-50' :
+                                            'odd:bg-white even:bg-slate-50/60';
+                                        return (
+                                        <TableRow key={log.id} className={severityRowClass}>
                                             <TableCell>{format(new Date(log.created_at), 'yyyy-MM-dd HH:mm:ss')}</TableCell>
                                             <TableCell>{log.event}</TableCell>
                                             <TableCell>{log.staff_email || 'N/A'}</TableCell>
@@ -317,7 +276,8 @@ export default function SecurityLogsPage() {
                                                 </Dialog>
                                             </TableCell>
                                         </TableRow>
-                                    ))
+                                        );
+                                    })
                                 ) : (
                                     <TableRow>
                                         <TableCell colSpan={8} className="h-24 text-center">
@@ -337,85 +297,8 @@ export default function SecurityLogsPage() {
                     />
                 </TabsContent>
 
-                <TabsContent value="sessions">
-                    <div className="flex justify-end mb-3">
-                        <Button variant="outline" size="sm" onClick={exportCustomerSessions} disabled={sessions.length === 0} className="gap-2">
-                            <Download className="h-4 w-4" />
-                            Export CSV
-                        </Button>
-                    </div>
-                    <div className="rounded-md border">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Customer Key</TableHead>
-                                    <TableHead>Type</TableHead>
-                                    <TableHead>IP Address</TableHead>
-                                    <TableHead>Device</TableHead>
-                                    <TableHead>Location</TableHead>
-                                    <TableHead>Pages Viewed</TableHead>
-                                    <TableHead>Last Active</TableHead>
-                                    <TableHead>Actions</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {sessionsLoading ? (
-                                    <TableRow>
-                                        <TableCell colSpan={8} className="h-24 text-center">
-                                            Loading sessions...
-                                        </TableCell>
-                                    </TableRow>
-                                ) : sessions.length > 0 ? (
-                                    sessions.map((session) => {
-                                        const pagesViewed = session.pages_viewed || [];
-
-                                        return (
-                                            <TableRow key={session.id}>
-                                                <TableCell>{session.customer_key_number}</TableCell>
-                                                <TableCell>
-                                                    <Badge variant="outline">
-                                                        {session.customer_type}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell>{session.ip_address}</TableCell>
-                                                <TableCell>{session.device_name}</TableCell>
-                                                <TableCell>{session.location}</TableCell>
-                                                <TableCell>
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {pagesViewed.length > 0 ? (
-                                                            pagesViewed.map((page, idx) => (
-                                                                <Badge key={idx} variant="secondary" className="text-xs">
-                                                                    {page}
-                                                                </Badge>
-                                                            ))
-                                                        ) : (
-                                                            <span className="text-gray-400 text-xs">No pages viewed yet</span>
-                                                        )}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>{format(new Date(session.last_active_at), 'yyyy-MM-dd HH:mm:ss')}</TableCell>
-                                                <TableCell>
-                                                    <Button
-                                                        variant="destructive"
-                                                        size="sm"
-                                                        onClick={() => handleKickOut(session.id)}
-                                                    >
-                                                        <LogOut className="h-4 w-4 mr-1" /> Kick Out
-                                                    </Button>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })
-                                ) : (
-                                    <TableRow>
-                                        <TableCell colSpan={8} className="h-24 text-center">
-                                            No active customer sessions found.
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
+                <TabsContent value="userSessions">
+                    <UserSessionsTab />
                 </TabsContent>
             </Tabs>
         </div>

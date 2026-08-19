@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, Eye, EyeOff, CheckCircle2, Circle, Loader2, WifiOff, Wifi } from "lucide-react";
+import { LogIn, Eye, EyeOff, CheckCircle2, Circle, Loader2, WifiOff, Wifi, AlertTriangle } from "lucide-react";
 import { sha256 } from "@noble/hashes/sha256";
 import { loginAction } from "@/lib/auth-actions";
 import { syncAllBillsAgingDebtAction } from "@/lib/actions";
@@ -56,9 +56,31 @@ export function AuthForm() {
   const [showPassword, setShowPassword] = React.useState(false);
   const [isOfflineMode, setIsOfflineMode] = React.useState(false);
   const [hasOfflineCreds, setHasOfflineCreds] = React.useState(false);
+  const [kicked, setKicked] = React.useState(false);
   const [syncState, setSyncState] = React.useState<
     "idle" | "authenticating" | "caching_routes" | "caching_meters" | "caching_customers" | "caching_readings" | "caching_faults" | "completed"
   >("idle");
+
+  // Kicked-out notice: an admin ended this session, so the middleware redirected
+  // here with ?kicked=1 (and set a short-lived kicked_notice cookie). The flag is
+  // ALSO mirrored to sessionStorage: the login page can be remounted or reloaded
+  // right after the redirect (the dashboard logs the invalidated session out, and
+  // the following navigation can land here again), which would otherwise wipe
+  // the URL param and cookie before the notice is seen. sessionStorage survives
+  // reloads in the same tab and is cleared on a successful sign-in.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hasCookie = document.cookie.split(';').some(c => c.trim().startsWith('kicked_notice='));
+    const seenBefore = sessionStorage.getItem('kicked_notice_shown') === '1';
+    if (params.get("kicked") === "1" || hasCookie || seenBefore) {
+      setKicked(true);
+      sessionStorage.setItem('kicked_notice_shown', '1');
+      params.delete("kicked");
+      const qs = params.toString();
+      window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+      document.cookie = "kicked_notice=; Max-Age=0; path=/";
+    }
+  }, []);
 
   // Detect offline state and whether cached credentials exist on mount
   React.useEffect(() => {
@@ -129,6 +151,7 @@ export function AuthForm() {
               
               // Restore the user session to localStorage so dashboards can load
               localStorage.setItem("user", JSON.stringify(user));
+              sessionStorage.removeItem('kicked_notice_shown');
 
               const permissions = user.permissions || [];
               const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
@@ -205,6 +228,9 @@ export function AuthForm() {
         });
 
         localStorage.setItem("user", JSON.stringify(result.user));
+        // A successful sign-in resolves the kicked state — don't re-show the
+        // notice later in this tab.
+        sessionStorage.removeItem('kicked_notice_shown');
 
         // Try to register a device token for background SW uploads
         (async () => {
@@ -322,6 +348,18 @@ export function AuthForm() {
   return (
     <Card className="w-full max-w-md glass-card p-6 border-none relative overflow-hidden">
 
+      {/* Kicked-Out Banner */}
+      {kicked && (
+        <div className="mx-0 mb-0 flex items-start gap-3 px-5 py-3 text-sm rounded-t-xl bg-amber-900/80 text-amber-200 border-b border-amber-700">
+          <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+          <div>
+            <span className="font-semibold block">Session Ended by Administrator</span>
+            <span className="text-xs opacity-80">
+              Your session was ended by an administrator. Please sign in again — contact your branch admin if this was unexpected.
+            </span>
+          </div>
+        </div>
+      )}
       {/* Offline Status Banner */}
       {isOfflineMode && (
         <div className={`mx-0 mb-0 flex items-start gap-3 px-5 py-3 text-sm rounded-t-xl ${

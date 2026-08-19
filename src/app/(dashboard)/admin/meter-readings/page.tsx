@@ -109,8 +109,11 @@ export default function AdminMeterReadingsPage() {
     const customers = getCustomers();
     const bulkMeters = getBulkMeters();
 
+    const customerMap = new Map<string, IndividualCustomer>(customers.map(c => [c.customerKeyNumber, c]));
+    const bulkMeterMap = new Map<string, BulkMeter>(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+
     const displayedIndividualReadings: DisplayReading[] = individualReadingsRaw.map(r => {
-      const customer = customers.find(c => c.customerKeyNumber === r.individualCustomerId);
+      const customer = r.individualCustomerId ? customerMap.get(r.individualCustomerId) : undefined;
       return {
         id: r.id,
         meterId: r.individualCustomerId,
@@ -126,7 +129,7 @@ export default function AdminMeterReadingsPage() {
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
     const displayedBulkReadings: DisplayReading[] = bulkReadingsRaw.map(r => {
-      const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === r.CUSTOMERKEY);
+      const bulkMeter = r.CUSTOMERKEY ? bulkMeterMap.get(r.CUSTOMERKEY) : undefined;
       return {
         id: r.id,
         meterId: r.CUSTOMERKEY,

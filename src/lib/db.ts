@@ -21,10 +21,11 @@ function getPool() {
 
   pool = new Pool({
     ...params,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    max: 30,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000,
     statement_timeout: 30000,
+    allowExitOnIdle: true,
     ssl: env.POSTGRES_HOST !== '127.0.0.1' && env.POSTGRES_HOST !== 'localhost' ? { rejectUnauthorized: false } : false,
   });
   return pool;

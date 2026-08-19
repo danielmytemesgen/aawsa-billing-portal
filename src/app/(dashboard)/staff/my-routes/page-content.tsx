@@ -52,21 +52,38 @@ export default function MyRoutesPage() {
     const [periodStartDate, setPeriodStartDate] = React.useState<string>('');
     const [periodEndDate, setPeriodEndDate] = React.useState<string>('');
 
+    const PERIOD_STATUS_TTL_MS = 30 * 60 * 1000;
+
     React.useEffect(() => {
         const load = async () => {
             setIsLoading(true);
+            const cachedPeriodStart = localStorage.getItem('cached_period_start_date') || '';
+            const cachedPeriodEnd = localStorage.getItem('cached_period_end_date') || '';
+            const periodTs = parseInt(localStorage.getItem('cached_period_status_ts') || '0', 10);
+
+            const isPeriodFresh = periodTs > 0 && (Date.now() - periodTs < PERIOD_STATUS_TTL_MS) && cachedPeriodStart;
+            if (isPeriodFresh) {
+                setPeriodStartDate(cachedPeriodStart);
+                setPeriodEndDate(cachedPeriodEnd);
+            }
+
+            const fetchPeriod = isPeriodFresh ? Promise.resolve(null) : getReadingPeriodDetailsAction().then(details => {
+                if (details) {
+                    setPeriodStartDate(details.startDate || '');
+                    setPeriodEndDate(details.endDate || '');
+                    if (details.startDate) localStorage.setItem('cached_period_start_date', details.startDate);
+                    if (details.endDate) localStorage.setItem('cached_period_end_date', details.endDate);
+                    localStorage.setItem('cached_period_status_ts', String(Date.now()));
+                }
+            }).catch(e => console.warn("Failed to fetch period details for routes", e));
+
             await Promise.all([
                 fetchRoutes(),
                 initializeBulkMeters(),
                 initializeCustomers(),
                 initializeBulkMeterReadings(),
                 initializeIndividualCustomerReadings(),
-                getReadingPeriodDetailsAction().then(details => {
-                    if (details) {
-                        setPeriodStartDate(details.startDate || '');
-                        setPeriodEndDate(details.endDate || '');
-                    }
-                }).catch(e => console.warn("Failed to fetch period details for routes", e))
+                fetchPeriod
             ]);
             setBulkReadings(getBulkMeterReadings());
             setIndReadings(getIndividualCustomerReadings());
@@ -76,14 +93,21 @@ export default function MyRoutesPage() {
         load();
 
         // ── Real-time updates & listener ─────────────────────────────────────────
-        // On weak/offline: skip full HTTP re-fetch, pull from in-memory store
+        // Only refresh readings on background refresh; avoid heavy full refetches
         const handleDataRefreshed = () => {
           const currentOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
           const conn = typeof navigator !== 'undefined' ? (navigator as any).connection : null;
           const effType = conn?.effectiveType ?? 'unknown';
           const isWeak = !currentOnline || effType === '2g' || effType === 'slow-2g' || (conn?.downlink != null && conn.downlink < 1);
           if (!isWeak && currentOnline) {
-            load();
+            Promise.all([
+                initializeBulkMeterReadings(true),
+                initializeIndividualCustomerReadings(true)
+            ]).then(() => {
+                setBulkReadings(getBulkMeterReadings());
+                setIndReadings(getIndividualCustomerReadings());
+                setAllCustomers(getCustomers());
+            }).catch(() => {});
           } else {
             setBulkReadings(getBulkMeterReadings());
             setIndReadings(getIndividualCustomerReadings());
@@ -96,7 +120,9 @@ export default function MyRoutesPage() {
         const unsubInd = subscribeToIndividualCustomerReadings(() => setIndReadings(getIndividualCustomerReadings()));
         const unsubBulk = subscribeToBulkMeterReadings(() => setBulkReadings(getBulkMeterReadings()));
         const unsubCust = subscribeToCustomers((updated) => setAllCustomers(updated));
-        const unsubBM = subscribeToBulkMeters(() => load());
+        const unsubBM = subscribeToBulkMeters(() => {
+            setBulkReadings(getBulkMeterReadings());
+        });
 
         return () => {
           window.removeEventListener('data-refreshed', handleDataRefreshed);
@@ -131,26 +157,87 @@ export default function MyRoutesPage() {
         hasPermission('meter_readings_create_individual') ||
         hasPermission('meter_readings_create');
 
+    // Synthesize effective routes from routes table and any distinct route keys in bulk meters / customers
+    const effectiveRoutes = React.useMemo(() => {
+        const routeMap = new Map<string, any>();
+        for (const r of routes) {
+            if (r.routeKey) routeMap.set(r.routeKey, r);
+        }
+        for (const bm of allBulkMeters) {
+            const rk = bm.routeKey || (bm as any).route_key;
+            if (rk && !routeMap.has(rk)) {
+                routeMap.set(rk, {
+                    routeKey: rk,
+                    branchId: bm.branchId || (bm as any).branch_id,
+                    readerId: bm.readerStaffId || (bm as any).assignedReaderId || (bm as any).reader_staff_id,
+                    description: `Route ${rk}`
+                });
+            }
+        }
+        for (const c of allCustomers) {
+            const rk = c.routeKey || (c as any).route_key;
+            if (rk && !routeMap.has(rk)) {
+                routeMap.set(rk, {
+                    routeKey: rk,
+                    branchId: c.branchId || (c as any).branch_id,
+                    readerId: c.readerStaffId || (c as any).assignedReaderId || (c as any).reader_staff_id,
+                    description: `Route ${rk}`
+                });
+            }
+        }
+        return Array.from(routeMap.values());
+    }, [routes, allBulkMeters, allCustomers]);
+
     const myRoutes = React.useMemo(() => {
-        if (canViewAllRoutes) return routes;
+        if (canViewAllRoutes) return effectiveRoutes;
         // Branch-level supervisors: see all routes in their branch
         if (canViewBranchRoutes) {
-            if (!currentUser?.branchId) return routes;
-            return routes.filter(r => r.branchId === currentUser.branchId);
+            if (!currentUser?.branchId) return effectiveRoutes;
+            return effectiveRoutes.filter(r => !r.branchId || r.branchId === currentUser.branchId);
         }
-        // Field readers: only see routes assigned to them
+        // Field readers: see assigned routes or routes containing their branch / assigned meters
         if (!currentUser?.id) return [];
         const userIdRaw = currentUser.id.toLowerCase();
-        return routes.filter(r => r.readerId?.toLowerCase() === userIdRaw);
-    }, [routes, currentUser, canViewAllRoutes, canViewBranchRoutes]);
+        const userBranchId = currentUser.branchId;
+        return effectiveRoutes.filter(r => {
+            const isRouteAssigned = r.readerId?.toLowerCase() === userIdRaw;
+            const hasAssignedBulk = allBulkMeters.some(bm => (bm.routeKey === r.routeKey || (bm as any).route_key === r.routeKey) && (
+                bm.readerStaffId?.toLowerCase() === userIdRaw || 
+                (bm as any).assignedReaderId?.toLowerCase() === userIdRaw ||
+                (bm as any).reader_staff_id?.toLowerCase() === userIdRaw ||
+                (bm as any).assigned_reader_id?.toLowerCase() === userIdRaw
+            ));
+            const hasAssignedCustomer = allCustomers.some(c => (c.routeKey === r.routeKey || (c as any).route_key === r.routeKey) && (
+                c.readerStaffId?.toLowerCase() === userIdRaw ||
+                (c as any).assignedReaderId?.toLowerCase() === userIdRaw ||
+                (c as any).reader_staff_id?.toLowerCase() === userIdRaw ||
+                (c as any).assigned_reader_id?.toLowerCase() === userIdRaw
+            ));
+            // Also include routes belonging to the reader's branch if the reader is the branch reader
+            const isBranchMatch = Boolean(userBranchId && r.branchId && (
+                r.branchId === userBranchId || 
+                r.branchId.toLowerCase() === userBranchId.toLowerCase()
+            ));
+            
+            const isAssigned = isRouteAssigned || hasAssignedBulk || hasAssignedCustomer || isBranchMatch;
+            if (!isAssigned) return false;
+            if (userBranchId && r.branchId && r.branchId !== userBranchId && r.branchId.toLowerCase() !== userBranchId.toLowerCase()) return false;
+            return true;
+        });
+    }, [effectiveRoutes, currentUser, canViewAllRoutes, canViewBranchRoutes, allBulkMeters, allCustomers]);
 
-    const currentMonthYear = format(new Date(), 'yyyy-MM');
+    const currentMonthYear = React.useMemo(() => format(new Date(), 'yyyy-MM'), []);
 
-    // Calculate progress statistics per route
-    const getRouteStats = (routeKey: string) => {
-        const routeBulkMeters = allBulkMeters.filter(bm => bm.routeKey === routeKey);
-        const routeBulkKeys = new Set(routeBulkMeters.map(bm => bm.customerKeyNumber));
-        const routeCustomers = allCustomers.filter(c => c.assignedBulkMeterId && routeBulkKeys.has(c.assignedBulkMeterId));
+    // Pre-group data by route to pre-compute progress statistics in O(N) rather than O(R * N)
+    const routeStatsMap = React.useMemo(() => {
+        const statsMap = new Map<string, {
+            bulkMeterCount: number;
+            customerCount: number;
+            totalMeters: number;
+            totalRead: number;
+            pendingRead: number;
+            progressPercentage: number;
+        }>();
 
         const isRead = (r: any) => {
             const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
@@ -163,23 +250,65 @@ export default function MyRoutesPage() {
             return r.monthYear === currentMonthYear;
         };
 
-        const bulkReadCount = bulkReadings.filter(r => r.CUSTOMERKEY && routeBulkKeys.has(r.CUSTOMERKEY) && isRead(r)).length;
-        const indCustomerKeys = new Set(routeCustomers.map(c => c.customerKeyNumber));
-        const indReadCount = indReadings.filter(r => r.individualCustomerId && indCustomerKeys.has(r.individualCustomerId) && isRead(r)).length;
+        // Set of read bulk meter customer keys
+        const readBulkKeys = new Set<string>();
+        for (const r of bulkReadings) {
+            if (r.CUSTOMERKEY && isRead(r)) readBulkKeys.add(r.CUSTOMERKEY);
+        }
 
-        const totalMeters = routeBulkMeters.length + routeCustomers.length;
-        const totalRead = bulkReadCount + indReadCount;
-        const progressPercentage = totalMeters > 0 ? Math.round((totalRead / totalMeters) * 100) : 0;
+        // Group bulk meters by route
+        const bulkByRoute = new Map<string, any[]>();
+        const bulkToRouteMap = new Map<string, string>();
+        for (const bm of allBulkMeters) {
+            const rk = bm.routeKey || (bm as any).route_key;
+            if (rk) {
+                if (!bulkByRoute.has(rk)) bulkByRoute.set(rk, []);
+                bulkByRoute.get(rk)!.push(bm);
+                if (bm.customerKeyNumber) bulkToRouteMap.set(bm.customerKeyNumber, rk);
+            }
+        }
 
-        return {
-            bulkMeterCount: routeBulkMeters.length,
-            customerCount: routeCustomers.length,
-            totalMeters,
-            totalRead,
-            pendingRead: totalMeters - totalRead,
-            progressPercentage
+        // Count customers by route
+        const custCountByRoute = new Map<string, number>();
+        for (const c of allCustomers) {
+            const rk = c.routeKey || (c as any).route_key || (c.assignedBulkMeterId ? bulkToRouteMap.get(c.assignedBulkMeterId) : undefined);
+            if (rk) {
+                custCountByRoute.set(rk, (custCountByRoute.get(rk) || 0) + 1);
+            }
+        }
+
+        for (const r of myRoutes) {
+            const rk = r.routeKey;
+            const routeBulk = bulkByRoute.get(rk) || [];
+            let totalRead = 0;
+            for (const bm of routeBulk) {
+                if (readBulkKeys.has(bm.customerKeyNumber)) totalRead++;
+            }
+            const totalMeters = routeBulk.length;
+            const progressPercentage = totalMeters > 0 ? Math.round((totalRead / totalMeters) * 100) : 0;
+            statsMap.set(rk, {
+                bulkMeterCount: totalMeters,
+                customerCount: custCountByRoute.get(rk) || 0,
+                totalMeters,
+                totalRead,
+                pendingRead: totalMeters - totalRead,
+                progressPercentage
+            });
+        }
+
+        return statsMap;
+    }, [allBulkMeters, allCustomers, bulkReadings, myRoutes, periodStartDate, periodEndDate, currentMonthYear]);
+
+    const getRouteStats = React.useCallback((routeKey: string) => {
+        return routeStatsMap.get(routeKey) || {
+            bulkMeterCount: 0,
+            customerCount: 0,
+            totalMeters: 0,
+            totalRead: 0,
+            pendingRead: 0,
+            progressPercentage: 0
         };
-    };
+    }, [routeStatsMap]);
 
     if (!canViewRoutes) {
         return (
@@ -311,7 +440,7 @@ export default function MyRoutesPage() {
                                         <div className="flex justify-between text-xs font-bold text-slate-700">
                                             <span>Reading Completion</span>
                                             <span className={stats.progressPercentage === 100 ? "text-emerald-600 font-extrabold" : "text-blue-600"}>
-                                                {stats.totalRead}/{stats.totalMeters} Meters ({stats.progressPercentage}%)
+                                                {stats.totalRead}/{stats.totalMeters} Bulk Meters ({stats.progressPercentage}%)
                                             </span>
                                         </div>
                                         <Progress value={stats.progressPercentage} className="h-2.5 bg-slate-200" />
