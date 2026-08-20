@@ -132,6 +132,8 @@ export function IndividualCustomerDataEntryForm() {
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
+  // Tracks the locked branch for branch-scoped (non-head-office) users
+  const [lockedBranchId, setLockedBranchId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setIsLoadingBulkMeters(true);
@@ -195,6 +197,31 @@ export function IndividualCustomerDataEntryForm() {
       zCoordinate: undefined,
     },
   });
+
+  // Auto-lock branch for non-head-office users
+  React.useEffect(() => {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      const user = JSON.parse(userJson);
+      const branchId = user?.branchId;
+      const permissions: string[] = user?.permissions || [];
+      const isGlobal =
+        !branchId ||
+        branchId === 'all' ||
+        permissions.includes('*') ||
+        permissions.includes('all') ||
+        permissions.includes('admin') ||
+        permissions.includes('customers_view_all');
+      if (!isGlobal && branchId) {
+        setLockedBranchId(branchId);
+        // Pre-fill the form field
+        form.setValue('branchId', branchId);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
 
   // ── Live watchers ────────────────────────────────────────────────────────────
   const watchedValues = form.watch();
@@ -382,29 +409,39 @@ export function IndividualCustomerDataEntryForm() {
                     </FormLabel>
                     <div className="premium-input-group">
                       <Network className="h-4 w-4" />
-                      <Select
-                        onValueChange={handleBranchChange}
-                        value={field.value || BRANCH_UNASSIGNED_VALUE}
-                        disabled={isLoadingBranches || form.formState.isSubmitting}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm transition-all duration-300">
-                            <SelectValue
-                              placeholder={isLoadingBranches ? "Loading branches…" : "Select a branch"}
-                            />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent className="rounded-xl">
-                          <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
-                          {availableBranches.map((branch) =>
-                            branch?.id ? (
-                              <SelectItem key={branch.id} value={branch.id}>
-                                {branch.name}
-                              </SelectItem>
-                            ) : null
-                          )}
-                        </SelectContent>
-                      </Select>
+                      {lockedBranchId ? (
+                        /* Branch-scoped user: show locked branch, not a selector */
+                        <div className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full">
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate flex-1">
+                            {availableBranches.find(b => b.id === lockedBranchId)?.name || lockedBranchId}
+                          </span>
+                          <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full font-medium">Auto-assigned</span>
+                        </div>
+                      ) : (
+                        <Select
+                          onValueChange={handleBranchChange}
+                          value={field.value || BRANCH_UNASSIGNED_VALUE}
+                          disabled={isLoadingBranches || form.formState.isSubmitting}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm transition-all duration-300">
+                              <SelectValue
+                                placeholder={isLoadingBranches ? "Loading branches…" : "Select a branch"}
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent className="rounded-xl">
+                            <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
+                            {availableBranches.map((branch) =>
+                              branch?.id ? (
+                                <SelectItem key={branch.id} value={branch.id}>
+                                  {branch.name}
+                                </SelectItem>
+                              ) : null
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
                     <FormMessage />
                   </FormItem>

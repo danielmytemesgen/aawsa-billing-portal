@@ -103,7 +103,7 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       ],
     },
     {
-      match: (currentPath) => currentPath.startsWith('/admin/meter-readings') || currentPath.startsWith('/staff/meter-readings'),
+      match: (currentPath) => currentPath.startsWith('/admin/meter-readings') || currentPath.startsWith('/staff/meter-readings') || currentPath.startsWith('/staff/reader-progress'),
       anyOf: [
         PERMISSIONS.METER_READINGS_VIEW_ALL,
         PERMISSIONS.METER_READINGS_VIEW_BRANCH,
@@ -136,7 +136,15 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       anyOf: [
         PERMISSIONS.ROUTES_VIEW_ALL,
         PERMISSIONS.ROUTES_VIEW_ASSIGNED,
-        PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+        PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
+        'routes_view',
+        'routes_view_branch',
+        'routes_manage',
+        'routes_create',
+        'routes_update',
+        'routes_delete',
+        'meter_readings_create',
+        'reader_progress_view'
       ],
     },
     {

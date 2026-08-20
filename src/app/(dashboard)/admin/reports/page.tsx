@@ -1557,15 +1557,17 @@ export default function AdminReportsPage() {
       return [];
     }
 
+    const effectiveBranchId = isLockedToBranch && user?.branchId ? user.branchId : (selectedBranch === 'all' ? undefined : selectedBranch);
+
     const data = await selectedReport.getData({
-      branchId: selectedBranch === 'all' ? undefined : selectedBranch,
+      branchId: effectiveBranchId,
       startDate: dateRange?.from,
       endDate: dateRange?.to,
       chargeGroup: selectedChargeGroup,
     });
 
     return data;
-  }, [selectedReport, selectedBranch, dateRange, selectedChargeGroup]);
+  }, [selectedReport, selectedBranch, dateRange, selectedChargeGroup, isLockedToBranch, user]);
 
   const handleGenerateReport = async () => {
     if (!selectedReport) return;

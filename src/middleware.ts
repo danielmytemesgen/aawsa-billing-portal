@@ -100,11 +100,23 @@ function getRoleDashboardFallback(permissions: string[], role: string, request: 
   if (permissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
     return new URL('/admin/dashboard', request.url);
   }
-  if (permissions.includes(PERMISSIONS.DATA_ENTRY_ACCESS) || permissions.includes(PERMISSIONS.CUSTOMERS_CREATE) || permissions.includes(PERMISSIONS.BULK_METERS_CREATE)) {
+  if (hasAny(permissions, 'routes_view', 'routes_view_all', 'routes_view_branch', 'routes_view_assigned', 'routes_manage', 'routes_create', 'routes_update', 'routes_delete', PERMISSIONS.METER_READINGS_CREATE, 'reader_progress_view')) {
+    return new URL('/staff/my-routes', request.url);
+  }
+  if (hasAny(permissions, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.BULK_METERS_CREATE, 'data_entry_bulk_form', 'data_entry_individual_form', 'data_entry_bulk_csv', 'data_entry_individual_csv')) {
     return new URL('/admin/data-entry', request.url);
   }
-  if (permissions.includes(PERMISSIONS.METER_READINGS_CREATE) || permissions.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)) {
-    return new URL('/staff/my-routes', request.url);
+  if (hasAny(permissions, PERMISSIONS.CUSTOMERS_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
+    return new URL('/admin/individual-customers', request.url);
+  }
+  if (hasAny(permissions, PERMISSIONS.BULK_METERS_VIEW_ALL, PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
+    return new URL('/admin/bulk-meters', request.url);
+  }
+  if (hasAny(permissions, PERMISSIONS.REPORTS_GENERATE_ALL, PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
+    return new URL('/admin/reports', request.url);
+  }
+  if (hasAny(permissions, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.BILL_VIEW_BRANCH, PERMISSIONS.BILL_VIEW_DRAFTS, PERMISSIONS.BILL_VIEW_PENDING)) {
+    return new URL('/admin/bill-management', request.url);
   }
   return new URL('/admin/dashboard', request.url);
 }
@@ -268,7 +280,7 @@ export async function middleware(request: NextRequest) {
     return setSecurityHeaders(redirect);
   }
 
-  if ((path.startsWith('/admin/meter-readings') || path.startsWith('/staff/meter-readings')) &&
+  if ((path.startsWith('/admin/meter-readings') || path.startsWith('/staff/meter-readings') || path.startsWith('/staff/reader-progress')) &&
     !hasAny(permissions,
       PERMISSIONS.METER_READINGS_VIEW_ALL,
       PERMISSIONS.METER_READINGS_VIEW_BRANCH,
@@ -298,7 +310,19 @@ export async function middleware(request: NextRequest) {
   }
 
   if ((path.startsWith('/admin/routes') || path.startsWith('/staff/my-routes')) &&
-    !hasAny(permissions, PERMISSIONS.ROUTES_VIEW_ALL, PERMISSIONS.ROUTES_VIEW_ASSIGNED, PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
+    !hasAny(permissions,
+      PERMISSIONS.ROUTES_VIEW_ALL,
+      PERMISSIONS.ROUTES_VIEW_ASSIGNED,
+      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
+      'routes_view',
+      'routes_view_branch',
+      'routes_manage',
+      'routes_create',
+      'routes_update',
+      'routes_delete',
+      'meter_readings_create',
+      'reader_progress_view'
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }

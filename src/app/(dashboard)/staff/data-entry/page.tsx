@@ -208,7 +208,10 @@ export default function StaffDataEntryPage() {
     setTemplateDialogOpen(false);
   };
 
-  const canAccessDataEntry = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('bulk_meters_create');
+  const canIndividualManual = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('data_entry_individual_form');
+  const canBulkManual = hasPermission('data_entry_access') || hasPermission('bulk_meters_create') || hasPermission('data_entry_bulk_form');
+  const canCsvUpload = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('bulk_meters_create') || hasPermission('data_entry_bulk_csv') || hasPermission('data_entry_individual_csv');
+  const canAccessDataEntry = canIndividualManual || canBulkManual || canCsvUpload;
 
   if (!canAccessDataEntry) {
     return (
@@ -241,6 +244,8 @@ export default function StaffDataEntryPage() {
     );
   }
 
+  const defaultTab = canIndividualManual ? "manual-individual" : (canBulkManual ? "manual-bulk" : "csv-upload");
+
   return (
     <div className="space-y-6 relative min-h-[calc(100vh-100px)]">
       {/* Background Decorative Elements */}
@@ -256,29 +261,35 @@ export default function StaffDataEntryPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="manual-individual" className="w-full relative z-10">
-        <TabsList className="flex items-center p-1 bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-md border rounded-2xl h-auto w-fit">
-          <TabsTrigger 
-            value="manual-individual" 
-            className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
-          >
-            <FileText className="mr-2 h-4 w-4 text-primary" /> 
-            <span className="font-semibold">Individual (Manual)</span>
-          </TabsTrigger>
-          <TabsTrigger 
-            value="manual-bulk" 
-            className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
-          >
-            <FileText className="mr-2 h-4 w-4 text-primary" /> 
-            <span className="font-semibold">Bulk Meter (Manual)</span>
-          </TabsTrigger>
-          <TabsTrigger 
-            value="csv-upload" 
-            className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
-          >
-            <UploadCloud className="mr-2 h-4 w-4 text-primary" /> 
-            <span className="font-semibold">CSV Upload</span>
-          </TabsTrigger>
+      <Tabs defaultValue={defaultTab} className="w-full relative z-10">
+        <TabsList className="grid w-full max-w-xl grid-cols-3 p-1.5 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-200/50 dark:border-slate-800/50 h-auto">
+          {canIndividualManual && (
+            <TabsTrigger 
+              value="manual-individual" 
+              className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
+            >
+              <FileText className="mr-2 h-4 w-4 text-primary" /> 
+              <span className="font-semibold">Individual (Manual)</span>
+            </TabsTrigger>
+          )}
+          {canBulkManual && (
+            <TabsTrigger 
+              value="manual-bulk" 
+              className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
+            >
+              <FileText className="mr-2 h-4 w-4 text-primary" /> 
+              <span className="font-semibold">Bulk Meter (Manual)</span>
+            </TabsTrigger>
+          )}
+          {canCsvUpload && (
+            <TabsTrigger 
+              value="csv-upload" 
+              className="rounded-xl px-4 py-2.5 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-950 data-[state=active]:shadow-sm transition-all duration-300"
+            >
+              <UploadCloud className="mr-2 h-4 w-4 text-primary" /> 
+              <span className="font-semibold">CSV Upload</span>
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="manual-individual" className="mt-6 focus-visible:outline-none focus-visible:ring-0">

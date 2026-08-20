@@ -20,6 +20,7 @@ import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { Alert, AlertTitle } from '@/components/ui/alert';
@@ -27,19 +28,22 @@ import { Lock } from 'lucide-react';
 
 export default function UnsettledBillsReportPage() {
   const { hasPermission } = usePermissions();
+  const canViewAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission('reports_generate_all') || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
   // Permission check: ensure user can view reports
   if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
     return (
-      <div className="space-y-6">
-        <Alert variant="destructive">
-          <Lock className="h-4 w-4" />
-          <AlertTitle>Access Denied</AlertTitle>
-          <CardDescription>You do not have permission to view reports.</CardDescription>
+      <div className="p-8">
+        <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50 text-red-900">
+          <Lock className="h-5 w-5 text-red-600" />
+          <AlertTitle className="text-lg font-bold">Access Denied</AlertTitle>
+          <p className="mt-2 text-sm text-red-700">
+            You do not have permission to view Unsettled Bills reports.
+          </p>
         </Alert>
       </div>
     );
   }
-
 
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
 
@@ -71,7 +75,7 @@ export default function UnsettledBillsReportPage() {
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      if (parsedUser.branchId) {
+      if (parsedUser.branchId && !hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) && !hasPermission('reports_generate_all')) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }
@@ -97,16 +101,14 @@ export default function UnsettledBillsReportPage() {
       unsubBms();
       unsubBranches();
     };
-  }, []);
+  }, [hasPermission]);
 
   // Fetch paginated bills from server
   React.useEffect(() => {
     const fetchBills = async () => {
       setIsLoading(true);
-      const branchIdToFilter = (currentUser && currentUser.branchId && !hasPermission('reports_generate_all'))
-        ? currentUser.branchId
-        : selectedBranchId;
-      const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
 
       const result = await getUnsettledBillsAction({
         page,
@@ -115,15 +117,20 @@ export default function UnsettledBillsReportPage() {
         branchId: normalizedBranchId
       });
 
-      if (result.success) {
-        setBills(result.bills || []);
+      if (result.success && result.bills) {
+        setBills(result.bills);
         setTotalBills(result.total || 0);
+      } else {
+        setBills([]);
+        setTotalBills(0);
       }
       setIsLoading(false);
     };
 
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser, hasPermission]);
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser, canViewAllBranches]);
+
+  const assignedBranchName = branches.find(b => b.id === currentUser?.branchId)?.name || currentUser?.branchName;
 
   return (
     <div className="space-y-6 pb-10">
@@ -157,7 +164,7 @@ export default function UnsettledBillsReportPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              {hasPermission('reports_generate_all') && (
+              {canViewAllBranches ? (
                 <Select value={selectedBranchId || undefined} onValueChange={setSelectedBranchId}>
                   <SelectTrigger className="w-full sm:w-[220px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
                     <SelectValue placeholder="All Branches" />
@@ -173,6 +180,11 @@ export default function UnsettledBillsReportPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : (
+                <div className="flex items-center gap-2 px-3.5 h-11 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 shadow-sm">
+                  <span className="text-slate-400 font-medium">Branch:</span>
+                  <span className="text-slate-900">{assignedBranchName || "Your Branch"}</span>
+                </div>
               )}
             </div>
           </div>

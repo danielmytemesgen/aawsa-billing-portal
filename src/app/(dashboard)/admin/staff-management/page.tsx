@@ -1,8 +1,7 @@
-
 "use client";
 
 import * as React from "react";
-import { PlusCircle, UserCog, Search, Users, Activity, UserMinus, Clock, ShieldCheck } from "lucide-react";
+import { PlusCircle, UserCog, Search, Users, Activity, UserMinus, Clock, ShieldCheck, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,8 +43,8 @@ export default function StaffManagementPage() {
   const [selectedStaff, setSelectedStaff] = React.useState<StaffMember | null>(null);
   const [staffToDelete, setStaffToDelete] = React.useState<StaffMember | null>(null);
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
-  const [selectedBranch, setSelectedBranch] = React.useState("all");
-  const [selectedRole, setSelectedRole] = React.useState("all");
+  const [selectedRole, setSelectedRole] = React.useState<string>("all");
+  const [selectedBranch, setSelectedBranch] = React.useState<string>("all");
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
 
@@ -55,7 +54,13 @@ export default function StaffManagementPage() {
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
     if (userJson) {
-      setCurrentUser(JSON.parse(userJson));
+      const user = JSON.parse(userJson);
+      setCurrentUser(user);
+      const branchId = user?.branchId;
+      const isGlobal = !branchId || branchId === 'all' || hasPermission('staff_view_all');
+      if (!isGlobal && branchId) {
+        setSelectedBranch(branchId);
+      }
     }
 
     setIsLoading(true);
@@ -68,10 +73,10 @@ export default function StaffManagementPage() {
       setStaffMembers(updatedStaff);
     });
     return () => unsubscribe();
-  }, []);
+  }, [hasPermission]);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId || hasPermission('staff_view_all');
+  const isHeadOffice = !userBranchId || userBranchId === 'all' || hasPermission('staff_view_all');
 
   const handleAddStaff = () => {
     if (!hasPermission('staff_create')) return;
@@ -273,19 +278,28 @@ export default function StaffManagementPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-              <SelectTrigger className="w-full sm:w-40 h-10 bg-white border-slate-200 rounded-xl">
-                <SelectValue placeholder="Branch" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Branches</SelectItem>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id}>
-                    {branch.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {isHeadOffice ? (
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-full sm:w-40 h-10 bg-white border-slate-200 rounded-xl">
+                  <SelectValue placeholder="Branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {branches.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="w-full sm:w-40 h-10 px-3 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700 shadow-sm">
+                <Building2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                <span className="truncate">{branches.find(b => b.id === selectedBranch)?.name || 'Your Branch'}</span>
+                <span className="ml-auto text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">Locked</span>
+              </div>
+            )}
+
             <Select value={selectedRole} onValueChange={setSelectedRole}>
               <SelectTrigger className="w-full sm:w-40 h-10 bg-white border-slate-200 rounded-xl">
                 <SelectValue placeholder="Role" />

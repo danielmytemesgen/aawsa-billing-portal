@@ -34,7 +34,11 @@ export function useCurrentUser() {
     };
 
     window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    window.addEventListener('user-permissions-updated', readUser);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('user-permissions-updated', readUser);
+    };
   }, []);
 
   const roleLower = (currentUser?.role || '').toLowerCase().trim();

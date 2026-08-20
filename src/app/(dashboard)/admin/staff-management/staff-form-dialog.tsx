@@ -67,8 +67,16 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
   }, []);
 
   const { hasPermission } = usePermissions();
-  const userBranchName = currentUser?.branchName;
-  const isHeadOffice = !userBranchName || hasPermission('staff_view_all');
+  const userBranchName = currentUser?.branchName || currentUser?.branchId;
+  const permissions: string[] = currentUser?.permissions || [];
+  const isHeadOffice =
+    !userBranchName ||
+    userBranchName === 'all' ||
+    userBranchName === 'Head Office' ||
+    permissions.includes('*') ||
+    permissions.includes('all') ||
+    permissions.includes('admin') ||
+    permissions.includes('staff_view_all');
 
   React.useEffect(() => {
     if (open) {
@@ -118,7 +126,7 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
         name: defaultValues.name,
         email: defaultValues.email,
         password: "", // Always clear password field for security
-        branchName: defaultValues.branchName,
+        branchName: defaultValues.branchName || (!isHeadOffice && userBranchName ? userBranchName : ""),
         status: defaultValues.status,
         phone: defaultValues.phone || "",
         role: defaultValues.role,
@@ -128,18 +136,21 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
         name: "",
         email: "",
         password: "",
-        branchName: "",
+        branchName: !isHeadOffice && userBranchName ? userBranchName : "",
         status: "Active" as StaffStatus,
         phone: "",
         role: "Staff",
       });
     }
-  }, [defaultValues, form, open]);
+  }, [defaultValues, form, open, isHeadOffice, userBranchName]);
 
   const handleSubmit = (data: StaffFormValues) => {
     if (!isEditing && !data.password) {
         form.setError("password", { type: "manual", message: "Password is required for new staff members." });
         return;
+    }
+    if (!isHeadOffice && userBranchName) {
+      data.branchName = userBranchName;
     }
     onSubmit(data);
     onOpenChange(false); 

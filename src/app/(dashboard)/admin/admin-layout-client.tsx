@@ -48,7 +48,17 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     if (hasPermission(PERMISSIONS.ROLES_VIEW)) managementItems.push({ title: "Roles & Permissions", href: "/admin/roles-and-permissions", iconName: "ShieldCheck" });
     if (hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)) managementItems.push({ title: "Notifications", href: "/admin/notifications", iconName: "Bell" });
     if (hasPermission(PERMISSIONS.TARIFFS_VIEW)) managementItems.push({ title: "Tariff Management", href: "/admin/tariffs", iconName: "LibraryBig" });
-    if (hasPermission(PERMISSIONS.ROUTES_VIEW_ALL) || hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED) || hasPermission(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
+    const canViewRoutes = hasPermission(PERMISSIONS.ROUTES_VIEW_ALL)
+        || hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+        || hasPermission(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)
+        || hasPermission('routes_view')
+        || hasPermission('routes_view_branch')
+        || hasPermission('routes_manage')
+        || hasPermission('routes_create')
+        || hasPermission('routes_update')
+        || hasPermission('routes_delete');
+
+    if (canViewRoutes) {
         managementItems.push({ title: "Route Management", href: "/admin/routes", iconName: "Map" });
     }
     if (hasPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE)) managementItems.push({ title: "Knowledge Base", href: "/admin/knowledge-base", iconName: "BookText" });
@@ -124,15 +134,28 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
     const [user, setUser] = React.useState<UserProfile | null>(initialUser);
 
     const refreshPermissions = React.useCallback(async () => {
-        const result = await getLatestPermissionsAction();
-        if (result.data && !result.error) {
-            const latestPermissions = Array.isArray(result.data) ? result.data : String(result.data).split(',');
-            setUser(prev => {
-                if (!prev) return null;
-                const updatedUser = { ...prev, permissions: latestPermissions };
-                localStorage.setItem("user", JSON.stringify(updatedUser));
-                return updatedUser;
-            });
+        try {
+            const result = await getLatestPermissionsAction();
+            if (result.data && !result.error) {
+                const latestPermissions = Array.isArray(result.data) ? result.data : String(result.data).split(',');
+                setUser(prev => {
+                    if (!prev) return null;
+                    const prevPerms = prev.permissions || [];
+                    const isChanged = prevPerms.length !== latestPermissions.length || 
+                        latestPermissions.some((p: string) => !prevPerms.includes(p));
+                    if (!isChanged) return prev;
+
+                    const updatedUser = { ...prev, permissions: latestPermissions };
+                    localStorage.setItem("user", JSON.stringify(updatedUser));
+                    try {
+                        window.dispatchEvent(new CustomEvent('user-permissions-updated', { detail: latestPermissions }));
+                        window.dispatchEvent(new Event('storage'));
+                    } catch (_) {}
+                    return updatedUser;
+                });
+            }
+        } catch (err) {
+            console.warn("Permission sync background check skipped:", err);
         }
     }, []);
 
@@ -147,6 +170,8 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
                     console.error("Failed to parse user from localStorage", e);
                 }
             }
+            // Real-time live check on mount
+            await refreshPermissions();
         };
 
         fetchUser();
@@ -155,11 +180,29 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
             refreshPermissions();
         };
 
+        // Real-time background sync interval (checks every 20s for permission alterations)
+        const intervalId = setInterval(() => {
+            refreshPermissions();
+        }, 20_000);
+
+        // Immediate sync on tab refocus
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                refreshPermissions();
+            }
+        };
+
         const unsubscribeSync = subscribePermissionsSync(handlePermissionsUpdate);
         window.addEventListener('user-permissions-updated', handlePermissionsUpdate);
+        window.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('focus', handlePermissionsUpdate);
+
         return () => {
+            clearInterval(intervalId);
             unsubscribeSync();
             window.removeEventListener('user-permissions-updated', handlePermissionsUpdate);
+            window.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('focus', handlePermissionsUpdate);
         };
     }, [refreshPermissions]);
 

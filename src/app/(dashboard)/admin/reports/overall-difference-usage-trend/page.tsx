@@ -13,18 +13,31 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { usePermissions } from "@/hooks/use-permissions";
 import { TrendingUp } from "lucide-react";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 export default function OverallDifferenceUsageTrendPage() {
   const { hasPermission } = usePermissions();
+  const canViewAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission('reports_generate_all') || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+  const [currentUser, setCurrentUser] = React.useState<any>(null);
+
   const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
   const [branches, setBranches] = React.useState<Branch[]>([]);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [selectedBranchId, setSelectedBranchId] = React.useState("all");
+  const [selectedBranchId, setSelectedBranchId] = React.useState<string>("all");
   const [selectedYear, setSelectedYear] = React.useState<string>("all");
   const [selectedMonth, setSelectedMonth] = React.useState<string>("all");
+  const [isLoading, setIsLoading] = React.useState(true);
   const chartRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
+    const user = localStorage.getItem("user");
+    if (user) {
+      const parsedUser = JSON.parse(user);
+      setCurrentUser(parsedUser);
+      if (parsedUser.branchId && !hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) && !hasPermission('reports_generate_all')) {
+        setSelectedBranchId(parsedUser.branchId);
+      }
+    }
+
     const fetchData = async () => {
       setIsLoading(true);
       await Promise.all([
@@ -44,7 +57,7 @@ export default function OverallDifferenceUsageTrendPage() {
       unsubBms();
       unsubBranches();
     };
-  }, []);
+  }, [hasPermission]);
 
   const years = React.useMemo(() => {
     const allYears = new Set(bulkMeters.map(bm => bm.month.split('-')[0]));
@@ -62,6 +75,8 @@ export default function OverallDifferenceUsageTrendPage() {
       filteredBms = filteredBms.filter(bm => bm.month.split('-')[1] === selectedMonth);
     }
 
+    const effectiveBranchId = canViewAllBranches ? selectedBranchId : (currentUser?.branchId || selectedBranchId);
+
     const branchUsage: { [key: string]: { name: string; differenceUsage: number } } = {};
 
     branches.forEach(branch => {
@@ -78,12 +93,12 @@ export default function OverallDifferenceUsageTrendPage() {
 
     let data = Object.values(branchUsage);
 
-    if (selectedBranchId !== "all") {
-      data = data.filter(d => branches.find(b => b.name === d.name)?.id === selectedBranchId);
+    if (effectiveBranchId !== "all") {
+      data = data.filter(d => branches.find(b => b.name === d.name)?.id === effectiveBranchId);
     }
 
     return data;
-  }, [bulkMeters, branches, selectedBranchId, selectedYear, selectedMonth]);
+  }, [bulkMeters, branches, selectedBranchId, selectedYear, selectedMonth, canViewAllBranches, currentUser]);
 
   const downloadCSV = React.useCallback(() => {
     if (!chartData || chartData.length === 0) return;
@@ -109,43 +124,42 @@ export default function OverallDifferenceUsageTrendPage() {
     if (!svgString.includes('xmlns="http://www.w3.org/2000/svg"')) {
       svgString = svgString.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
     }
-    svgString = '<?xml version="1.0" standalone="no"?>\r\n' + svgString;
-    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     const img = new Image();
-    const bbox = (svg as any).getBBox ? (svg as any).getBBox() : { width: 800, height: 400 };
-    const width = (svg as any).clientWidth || bbox.width || 800;
-    const height = (svg as any).clientHeight || bbox.height || 400;
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const URLObject = window.URL || window.webkitURL || window;
+    const blobURL = URLObject.createObjectURL(svgBlob);
+
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = width * 2;
-      canvas.height = height * 2;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.scale(2, 2);
-        ctx.drawImage(img, 0, 0, width, height);
-        const png = canvas.toDataURL('image/png');
-        const a = document.createElement('a');
-        a.href = png;
-        a.download = 'difference-usage.png';
-        a.click();
-      }
-      URL.revokeObjectURL(url);
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      const png = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = png;
+      a.download = 'difference-usage.png';
+      a.click();
+      URLObject.revokeObjectURL(blobURL);
     };
-    img.onerror = () => { URL.revokeObjectURL(url); };
-    img.src = url;
-  }, [chartData]);
+    img.src = blobURL;
+  }, []);
+
+  const assignedBranchName = branches.find(b => b.id === currentUser?.branchId)?.name || currentUser?.branchName;
 
   return (
     <div className="space-y-6 pb-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-800">Difference Usage Trend</h1>
-          <p className="text-muted-foreground mt-1 text-base">Analyze discrepancy patterns between main and bulk meter readings.</p>
+          <h1 className="text-3xl font-bold tracking-tight">Overall Difference Usage Trend</h1>
+          <p className="text-muted-foreground mt-1 text-base">Visualize overall difference usage across different branches and time periods.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={downloadPNG} className="bg-white border-slate-200 hover:bg-slate-50 shadow-sm rounded-xl px-4 h-11">
-             Download PNG
+        <div className="flex gap-2">
+          <Button onClick={downloadPNG} variant="outline" className="shadow-sm rounded-xl px-4 h-11 border-slate-200">
+             Export PNG
           </Button>
           <Button onClick={downloadCSV} className="bg-slate-800 hover:bg-slate-900 text-white shadow-sm rounded-xl px-4 h-11 transition-all">
              Export CSV
@@ -167,7 +181,7 @@ export default function OverallDifferenceUsageTrendPage() {
             </div>
             
             <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-              {hasPermission('reports_generate_all') && (
+              {canViewAllBranches ? (
                 <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
                   <SelectTrigger className="w-full sm:w-[180px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
                     <SelectValue placeholder="All Branches" />
@@ -183,6 +197,11 @@ export default function OverallDifferenceUsageTrendPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : (
+                <div className="flex items-center gap-2 px-3.5 h-11 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 shadow-sm">
+                  <span className="text-slate-400 font-medium">Branch:</span>
+                  <span className="text-slate-900">{assignedBranchName || "Your Branch"}</span>
+                </div>
               )}
               <Select value={selectedYear} onValueChange={setSelectedYear}>
                 <SelectTrigger className="w-full sm:w-[130px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">

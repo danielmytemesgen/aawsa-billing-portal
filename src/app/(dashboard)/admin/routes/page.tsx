@@ -52,10 +52,14 @@ export default function RoutesPage() {
     const userBranchId = user?.branchId;
     const isHeadOffice = !userBranchId || hasPermission('routes_view_all');
 
-    const canView = hasPermission('routes_view') || hasPermission('routes_view_all');
-    const canCreate = hasPermission('routes_create');
-    const canUpdate = hasPermission('routes_update');
-    const canDelete = hasPermission('routes_delete');
+    const canView = hasPermission('routes_view') 
+        || hasPermission('routes_view_all') 
+        || hasPermission('routes_view_branch') 
+        || hasPermission('routes_view_assigned') 
+        || hasPermission('routes_manage');
+    const canCreate = hasPermission('routes_create') || hasPermission('routes_manage');
+    const canUpdate = hasPermission('routes_update') || hasPermission('routes_manage');
+    const canDelete = hasPermission('routes_delete') || hasPermission('routes_manage');
     const canManage = canView; // base access gating
 
     React.useEffect(() => {

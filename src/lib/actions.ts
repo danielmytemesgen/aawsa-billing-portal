@@ -561,6 +561,46 @@ const verifyBillBranchAccess = async (billId: string, session: any) => {
   return bill;
 };
 
+/**
+ * verifyEntityBranchAccess — Ensures a branch-scoped user can only mutate entities
+ * that belong to their own branch.
+ *
+ * @param entityBranchId  The branch_id recorded on the entity being mutated.
+ * @param session         The calling user's session (from checkPermission).
+ * @param viewAllPermission  The permission that grants cross-branch access (e.g. CUSTOMERS_VIEW_ALL).
+ * @param entityLabel     Human-readable label for error messages (e.g. 'customer', 'route').
+ */
+function verifyEntityBranchAccess(
+  entityBranchId: string | undefined | null,
+  session: any,
+  viewAllPermission: string,
+  entityLabel = 'record'
+) {
+  const perms: string[] = session?.permissions || [];
+
+  // Global admins and users with cross-branch view permission are unrestricted
+  const hasGlobalAccess =
+    perms.includes('*') ||
+    perms.includes('all') ||
+    perms.includes('admin') ||
+    perms.includes(viewAllPermission);
+
+  if (hasGlobalAccess) return;
+
+  // Branch-scoped user: their session must match the entity's branch
+  const userBranchId = session?.branchId;
+  if (!userBranchId || userBranchId === 'all') {
+    // No branch assigned — allow (Admin-level accounts without a branch restriction)
+    return;
+  }
+
+  if (!entityBranchId || entityBranchId !== userBranchId) {
+    throw new Error(
+      `Forbidden: You can only modify ${entityLabel} data within your own branch`
+    );
+  }
+}
+
 export async function getBranchByIdAction(id: string) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.BRANCHES_VIEW);
@@ -651,8 +691,10 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
     const session = await checkPermissionAny(PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
     // All data entry creations default to Pending Approval
     customer.status = customer.status || 'Pending Approval';
-    if (session.permissions?.includes(PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED)) {
-      customer.branch_id = customer.branch_id || (customer as any).branchId || session.branchId;
+    const perms = session.permissions || [];
+    const hasGlobalView = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    if (!hasGlobalView && session.branchId && session.branchId !== 'all') {
+      customer.branch_id = session.branchId;
     } else {
       // For non-restricted users, ensure branchId from form is mapped to branch_id
       customer.branch_id = customer.branch_id || (customer as any).branchId;
@@ -682,8 +724,20 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
 }
 export async function updateCustomerAction(customerKeyNumber: string, customer: IndividualCustomerUpdate) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    const session = await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    const existing = await dbGetCustomerById(customerKeyNumber);
+    if (!existing) {
+      throw new Error('Customer not found');
+    }
+    verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
     
+    // Prevent changing branch_id if lacking global customer view
+    const perms = session.permissions || [];
+    const hasGlobalView = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    if (!hasGlobalView && customer.branch_id && customer.branch_id !== existing.branch_id) {
+      customer.branch_id = existing.branch_id;
+    }
+
     const spatialData = {
       xCoordinate: (customer as any).xCoordinate || (customer as any).x_coordinate,
       yCoordinate: (customer as any).yCoordinate || (customer as any).y_coordinate,
@@ -709,6 +763,10 @@ export async function updateCustomerAction(customerKeyNumber: string, customer: 
 export async function deleteCustomerAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_DELETE);
+    const existing = await dbGetCustomerById(customerKeyNumber);
+    if (existing) {
+      verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
+    }
     await dbDeleteCustomer(customerKeyNumber, session.id);
     await logSecurityEventAction({
       event: 'Delete Customer',
@@ -721,6 +779,10 @@ export async function deleteCustomerAction(customerKeyNumber: string) {
 export async function approveCustomerAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_APPROVE);
+    const existing = await dbGetCustomerById(customerKeyNumber);
+    if (existing) {
+      verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
+    }
     const result = await dbUpdateCustomer(customerKeyNumber, {
       status: 'Active',
       approved_by: session.id,
@@ -734,6 +796,10 @@ export async function approveCustomerAction(customerKeyNumber: string) {
 export async function rejectCustomerAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_APPROVE);
+    const existing = await dbGetCustomerById(customerKeyNumber);
+    if (existing) {
+      verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
+    }
     const result = await dbUpdateCustomer(customerKeyNumber, {
       status: 'Rejected',
       approved_by: session.id,
@@ -746,13 +812,16 @@ export async function rejectCustomerAction(customerKeyNumber: string) {
 
 export async function getCustomerByIdAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    await checkPermission();
-    const session = await getSession();
-    const perms = await dbGetStaffPermissions(session!.id);
+    const session = await checkPermission();
+    const perms = session.permissions || [];
     if (!perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) && !perms.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
       throw new Error('Forbidden: Missing customer view permission');
     }
-    return await dbGetCustomerById(customerKeyNumber);
+    const customer = await dbGetCustomerById(customerKeyNumber);
+    if (customer) {
+      verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
+    }
+    return customer;
   });
 }
 export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
@@ -793,13 +862,16 @@ export async function getBulkMetersSummaryAction() {
 }
 export async function getBulkMeterByIdAction(customerKeyNumber: string) {
   return await wrap(async () => {
-    await checkPermission();
-    const session = await getSession();
-    const perms = await dbGetStaffPermissions(session!.id);
+    const session = await checkPermission();
+    const perms = session.permissions || [];
     if (!perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) && !perms.includes(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
       throw new Error('Forbidden: Missing bulk meter view permission');
     }
-    return await dbGetBulkMeterById(customerKeyNumber);
+    const bulkMeter = await dbGetBulkMeterById(customerKeyNumber);
+    if (bulkMeter) {
+      verifyEntityBranchAccess(bulkMeter.branch_id || bulkMeter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+    }
+    return bulkMeter;
   });
 }
 export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
@@ -807,8 +879,10 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
     const session = await checkPermissionAny(PERMISSIONS.BULK_METERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
     // All data entry creations default to Pending Approval
     bulkMeter.status = bulkMeter.status || 'Pending Approval';
-    if (session.permissions?.includes(PERMISSIONS.BULK_METERS_CREATE_RESTRICTED)) {
-      bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId || session.branchId;
+    const perms = session.permissions || [];
+    const hasGlobalView = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
+    if (!hasGlobalView && session.branchId && session.branchId !== 'all') {
+      bulkMeter.branch_id = session.branchId;
     } else {
       // For non-restricted users, ensure branchId from form is mapped to branch_id
       bulkMeter.branch_id = bulkMeter.branch_id || (bulkMeter as any).branchId;
@@ -838,7 +912,19 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
 }
 export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter: BulkMeterUpdate) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.BULK_METERS_UPDATE);
+    const session = await checkPermission(PERMISSIONS.BULK_METERS_UPDATE);
+    const existing = await dbGetBulkMeterById(customerKeyNumber);
+    if (!existing) {
+      throw new Error('Bulk meter not found');
+    }
+    verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+
+    // Prevent changing branch_id if lacking global view
+    const perms = session.permissions || [];
+    const hasGlobalView = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
+    if (!hasGlobalView && bulkMeter.branch_id && bulkMeter.branch_id !== existing.branch_id) {
+      bulkMeter.branch_id = existing.branch_id;
+    }
 
     const spatialData = {
       xCoordinate: (bulkMeter as any).xCoordinate || (bulkMeter as any).x_coordinate,
@@ -866,6 +952,10 @@ export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter
 export async function deleteBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_DELETE);
+    const existing = await dbGetBulkMeterById(customerKeyNumber);
+    if (existing) {
+      verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+    }
     await dbDeleteBulkMeter(customerKeyNumber, session.id);
     await logSecurityEventAction({
       event: 'Delete Bulk Meter',
@@ -878,6 +968,10 @@ export async function deleteBulkMeterAction(customerKeyNumber: string) {
 export async function approveBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_APPROVE);
+    const existing = await dbGetBulkMeterById(customerKeyNumber);
+    if (existing) {
+      verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+    }
     const result = await dbUpdateBulkMeter(customerKeyNumber, {
       status: 'Active',
       approved_by: session.id,
@@ -894,6 +988,10 @@ export async function approveBulkMeterAction(customerKeyNumber: string) {
 export async function rejectBulkMeterAction(customerKeyNumber: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_APPROVE);
+    const existing = await dbGetBulkMeterById(customerKeyNumber);
+    if (existing) {
+      verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+    }
     const result = await dbUpdateBulkMeter(customerKeyNumber, {
       status: 'Rejected',
       approved_by: session.id,
@@ -1998,6 +2096,19 @@ export async function upsertSpatialRecordAction(entityId: string, entityType: 'i
     if (!canAdd) throw new Error('Forbidden: Missing create reading permission');
     
     return await withTransaction(async (client) => {
+      // Branch isolation: verify the entity belongs to the user's branch
+      if (entityType === 'individual_customer') {
+        const customer = await dbGetCustomerById(entityId, client);
+        if (customer) {
+          verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
+        }
+      } else {
+        const meter = await dbGetBulkMeterById(entityId, client);
+        if (meter) {
+          verifyEntityBranchAccess(meter.branch_id || meter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+        }
+      }
+
       const res = await dbUpsertSpatialRecord(entityId, entityType, data, client);
       
       // Update legacy columns
@@ -2017,6 +2128,7 @@ export async function upsertSpatialRecordAction(entityId: string, entityType: 'i
     });
   });
 }
+
 
 export async function getLatestReadingsByRouteAction(routeKey: string) {
   return await wrap(async () => {
@@ -2085,6 +2197,9 @@ export async function createIndividualCustomerReadingAction(
       const custId = reading.individual_customer_id || (reading as any).CUST_KEY;
       const customer = await dbGetCustomerById(custId, client);
       if (!customer) throw new Error("Customer not found");
+      // Branch isolation: ensure the customer belongs to the user's branch
+      verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'customer');
+
 
       const result = await dbCreateIndividualCustomerReading(reading, client);
       
@@ -2152,7 +2267,19 @@ export async function batchCreateIndividualCustomerReadingsAction(
 
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
+    // Fetch the reading to get its CUST_KEY, then verify branch ownership
+    const rows: any = await query(
+      'SELECT "CUST_KEY" FROM individual_customer_readings WHERE id = $1 AND deleted_at IS NULL LIMIT 1',
+      [id]
+    );
+    const row = Array.isArray(rows) ? rows[0] : rows?.rows?.[0];
+    if (row?.CUST_KEY) {
+      const customer = await dbGetCustomerById(row.CUST_KEY);
+      if (customer) {
+        verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'meter reading');
+      }
+    }
     const result = await dbUpdateIndividualCustomerReading(id, reading);
     await logSecurityEventAction({
       event: 'Update Indiv. Reading',
@@ -2164,6 +2291,18 @@ export async function updateIndividualCustomerReadingAction(id: string, reading:
 export async function deleteIndividualCustomerReadingAction(id: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.METER_READINGS_DELETE);
+    // Fetch the reading to get its CUST_KEY, then verify branch ownership
+    const rows: any = await query(
+      'SELECT "CUST_KEY" FROM individual_customer_readings WHERE id = $1 AND deleted_at IS NULL LIMIT 1',
+      [id]
+    );
+    const row = Array.isArray(rows) ? rows[0] : rows?.rows?.[0];
+    if (row?.CUST_KEY) {
+      const customer = await dbGetCustomerById(row.CUST_KEY);
+      if (customer) {
+        verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'meter reading');
+      }
+    }
     await dbDeleteIndividualCustomerReading(id, session.id);
     await logSecurityEventAction({
       event: 'Delete Indiv. Reading',
@@ -2214,6 +2353,8 @@ export async function createBulkMeterReadingAction(
       const custKey = reading.CUSTOMERKEY || (reading as any).CUST_KEY;
       const meter = await dbGetBulkMeterById(custKey, client);
       if (!meter) throw new Error("Bulk meter not found");
+      // Branch isolation: ensure the target meter belongs to the user's branch
+      verifyEntityBranchAccess(meter.branch_id || meter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
 
       const result = await dbCreateBulkMeterReading(reading, client);
       
@@ -3461,7 +3602,16 @@ export async function createRouteAction(route: RouteInsert) {
 export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpdate) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
-    
+    const existingRoute = await dbGetRouteByKey(routeKey);
+    if (existingRoute) {
+      verifyEntityBranchAccess(existingRoute.branch_id, session, PERMISSIONS.ROUTES_VIEW_ALL, 'route');
+    }
+    // Prevent changing branch_id if lacking global route view
+    const perms = session.permissions || [];
+    const hasGlobalView = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.ROUTES_VIEW_ALL);
+    if (!hasGlobalView && (routeUpdates as any).branch_id && existingRoute && (routeUpdates as any).branch_id !== existingRoute.branch_id) {
+      (routeUpdates as any).branch_id = existingRoute.branch_id;
+    }
     const result = await dbUpdateRoute(routeKey, routeUpdates);
     await logSecurityEventAction({ event: 'Update Route', details: { routeKey, routeUpdates } });
     return result;
@@ -3471,7 +3621,10 @@ export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpd
 export async function deleteRouteAction(routeKey: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
-
+    const existingRoute = await dbGetRouteByKey(routeKey);
+    if (existingRoute) {
+      verifyEntityBranchAccess(existingRoute.branch_id, session, PERMISSIONS.ROUTES_VIEW_ALL, 'route');
+    }
     await dbDeleteRoute(routeKey, session.id);
     await logSecurityEventAction({ event: 'Delete Route', severity: 'warning', details: { routeKey } });
   });
@@ -4403,11 +4556,13 @@ export async function getUnsettledBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+    const roleLower = session.role?.toLowerCase() || '';
+    const isGlobalAdmin = ['admin', 'super admin', 'head office'].includes(roleLower) && !session.branchId;
+    const hasGlobalAccess = isGlobalAdmin || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all');
 
-    // If user doesn't have global access, they are restricted to their own branch
-    const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
-    const normalizedBranchId = effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+    // If user doesn't have global access, they are strictly restricted to their own branch
+    const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
     const [bills, total] = await Promise.all([
@@ -4432,10 +4587,11 @@ export async function getPaidBillsAction(params: {
 
     const perms = session.permissions || [];
     const roleLower = session.role?.toLowerCase() || '';
-    const isAdminOrGlobal = ['admin', 'super admin', 'head office', 'staff management', 'staff'].includes(roleLower) || !session.branchId;
-    const hasGlobalAccess = isAdminOrGlobal || perms.includes('reports_generate_all') || perms.includes('bill:manage_all') || perms.includes('reports_generate_branch');
+    const isGlobalAdmin = ['admin', 'super admin', 'head office'].includes(roleLower) && !session.branchId;
+    const hasGlobalAccess = isGlobalAdmin || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all');
 
-    const effectiveBranchId = (params.branchId && params.branchId !== 'all') ? params.branchId : (hasGlobalAccess ? undefined : session.branchId);
+    // If user doesn't have global access, they are strictly restricted to their own branch
+    const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
@@ -4460,10 +4616,11 @@ export async function getAllSentBillsAction(params: {
 
     const perms = session.permissions || [];
     const roleLower = session.role?.toLowerCase() || '';
-    const isAdminOrGlobal = ['admin', 'super admin', 'head office', 'staff management'].includes(roleLower);
-    const hasGlobalAccess = isAdminOrGlobal || perms.includes('reports_generate_all') || perms.includes('bill:manage_all');
+    const isGlobalAdmin = ['admin', 'super admin', 'head office'].includes(roleLower) && !session.branchId;
+    const hasGlobalAccess = isGlobalAdmin || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all');
 
-    const effectiveBranchId = hasGlobalAccess ? params.branchId : session.branchId;
+    // If user doesn't have global access, they are strictly restricted to their own branch
+    const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;

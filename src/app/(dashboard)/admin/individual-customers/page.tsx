@@ -101,14 +101,11 @@ export default function IndividualCustomersPage() {
     fetchSummaryStats();
   }, [page, rowsPerPage, debouncedSearch, statusFilter, branchFilter, fetchData, fetchSummaryStats]);
 
-  React.useEffect(() => {
-    const userJson = localStorage.getItem('user');
-    if (userJson) {
-      setCurrentUser(JSON.parse(userJson));
-    }
 
+  React.useEffect(() => {
     // Initialize secondary data (use cache when available)
     Promise.all([
+
       initializeBulkMeters(),
       initializeBranches(),
       initializeTariffs()
@@ -129,6 +126,21 @@ export default function IndividualCustomersPage() {
       unsubscribeBranches();
     };
   }, []);
+
+  // Load current user and auto-lock branch for non-head-office
+  React.useEffect(() => {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      const user = JSON.parse(userJson);
+      setCurrentUser(user);
+      const branchId = user?.branchId;
+      // If user is branch-scoped (not head office), lock them to their branch
+      const isGlobal = !branchId || hasPermission('customers_view_all');
+      if (!isGlobal && branchId) {
+        setBranchFilter(branchId);
+      }
+    }
+  }, [hasPermission]);
 
   const userBranchId = currentUser?.branchId;
   const isHeadOffice = !userBranchId || hasPermission('customers_view_all');
@@ -368,32 +380,45 @@ export default function IndividualCustomersPage() {
               </div>
 
               {/* Branch Selector */}
-              <div className="w-full sm:w-48 flex-shrink-0">
-                <Select
-                  value={branchFilter}
-                  onValueChange={(val) => {
-                    setBranchFilter(val);
-                    setPage(0);
-                  }}
-                >
-                  <SelectTrigger className="h-10 px-3 border-slate-200 shadow-sm rounded-xl font-medium bg-white hover:bg-slate-50 transition-colors">
-                    <div className="flex items-center gap-1.5 truncate text-sm">
-                      <Building2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
-                      <SelectValue placeholder="All Branches" />
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    <SelectItem value="All" className="font-semibold text-slate-800">
-                      🏢 All Branches
-                    </SelectItem>
-                    {branches.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.name}
+              {isHeadOffice ? (
+                <div className="w-full sm:w-48 flex-shrink-0">
+                  <Select
+                    value={branchFilter}
+                    onValueChange={(val) => {
+                      setBranchFilter(val);
+                      setPage(0);
+                    }}
+                  >
+                    <SelectTrigger className="h-10 px-3 border-slate-200 shadow-sm rounded-xl font-medium bg-white hover:bg-slate-50 transition-colors">
+                      <div className="flex items-center gap-1.5 truncate text-sm">
+                        <Building2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                        <SelectValue placeholder="All Branches" />
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      <SelectItem value="All" className="font-semibold text-slate-800">
+                        🏢 All Branches
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                      {branches.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                /* Branch-scoped users: locked to their branch */
+                <div className="w-full sm:w-48 flex-shrink-0">
+                  <div className="h-10 px-3 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+                    <Building2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                    <span className="text-sm font-medium text-slate-700 truncate">
+                      {branches.find(b => b.id === branchFilter)?.name || 'Your Branch'}
+                    </span>
+                    <span className="ml-auto text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">Locked</span>
+                  </div>
+                </div>
+              )}
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

@@ -76,7 +76,14 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
   }, []);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId;
+  const permissions: string[] = currentUser?.permissions || [];
+  const isHeadOffice =
+    !userBranchId ||
+    userBranchId === 'all' ||
+    permissions.includes('*') ||
+    permissions.includes('all') ||
+    permissions.includes('admin') ||
+    permissions.includes('bulk_meters_view_all');
 
 
   React.useEffect(() => {
@@ -111,7 +118,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
       branchId: undefined,
       chargeGroup: "Non-domestic",
       sewerageConnection: "No",
-      status: "Active",
+      status: "Pending Approval",
       paymentStatus: "Unpaid",
       xCoordinate: undefined,
       yCoordinate: undefined,
@@ -121,6 +128,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
   });
 
   React.useEffect(() => {
+    const effectiveBranchId = defaultValues?.branchId || (!isHeadOffice && userBranchId ? userBranchId : undefined);
     if (defaultValues) {
       form.reset({
         ...defaultValues,
@@ -129,7 +137,7 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
         NUMBER_OF_DIALS: defaultValues.NUMBER_OF_DIALS ?? undefined,
         previousReading: defaultValues.previousReading ?? undefined,
         currentReading: defaultValues.currentReading ?? undefined,
-        branchId: defaultValues.branchId || undefined,
+        branchId: effectiveBranchId,
         chargeGroup: defaultValues.chargeGroup || "Non-domestic",
         sewerageConnection: defaultValues.sewerageConnection || "No",
         status: defaultValues.status || "Active",
@@ -158,10 +166,10 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
         subCity: staffBranchName || "", // Use staff branch name for subCity
         woreda: "",
         phoneNumber: "",
-        branchId: undefined,
+        branchId: effectiveBranchId,
         chargeGroup: "Non-domestic",
         sewerageConnection: "No",
-        status: "Active",
+        status: "Pending Approval",
         paymentStatus: "Unpaid",
         xCoordinate: undefined,
         yCoordinate: undefined,
@@ -170,12 +178,12 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
         ordinal: undefined,
       });
     }
-  }, [defaultValues, form, open, staffBranchName]);
+  }, [defaultValues, form, open, staffBranchName, isHeadOffice, userBranchId]);
 
   const handleSubmit = (data: BulkMeterFormValues) => {
     const submissionData = {
       ...data,
-      branchId: data.branchId === BRANCH_UNASSIGNED_VALUE ? undefined : data.branchId,
+      branchId: !isHeadOffice && userBranchId ? userBranchId : (data.branchId === BRANCH_UNASSIGNED_VALUE ? undefined : data.branchId),
     };
     onSubmit(submissionData);
     onOpenChange(false);
@@ -715,10 +723,10 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Status <span className="text-destructive">*</span></FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || "Active"} defaultValue={field.value || "Active"}>
+                    <Select onValueChange={field.onChange} value={field.value || "Pending Approval"}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="Select status" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>

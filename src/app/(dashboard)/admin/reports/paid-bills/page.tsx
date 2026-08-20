@@ -23,6 +23,7 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
@@ -57,14 +58,14 @@ export default function PaidBillsReportPage() {
 
   const monthOptions = React.useMemo(() => getAvailableMonthYearOptions(), []);
 
+  const canViewAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission('reports_generate_all') || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
   const handleExport = async (type: 'csv' | 'xlsx') => {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching paid bill records..." });
     try {
-      const roleLower = (currentUser?.role || '').toLowerCase();
-      const isBranchMgr = roleLower.includes('management') || roleLower.includes('manager');
-      const branchIdToFilter = isBranchMgr ? currentUser?.branchId : selectedBranchId;
-      const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -105,10 +106,8 @@ export default function PaidBillsReportPage() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching paid bill records across all pages..." });
     try {
-      const roleLower = (currentUser?.role || '').toLowerCase();
-      const isBranchMgr = roleLower.includes('management') || roleLower.includes('manager');
-      const branchIdToFilter = isBranchMgr ? currentUser?.branchId : selectedBranchId;
-      const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -146,7 +145,7 @@ export default function PaidBillsReportPage() {
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      if ((parsedUser.role?.toLowerCase().includes('management') || parsedUser.role?.toLowerCase().includes('manager')) && parsedUser.branchId) {
+      if (parsedUser.branchId && !hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) && !hasPermission('reports_generate_all')) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }
@@ -180,16 +179,14 @@ export default function PaidBillsReportPage() {
       unsubBranches();
       window.removeEventListener("payment-csv-upload-success", handleUploadSuccess);
     };
-  }, []);
+  }, [hasPermission]);
 
   // Fetch paginated paid bills from server
   React.useEffect(() => {
     const fetchBills = async () => {
       setIsLoading(true);
-      const roleLower = (currentUser?.role || '').toLowerCase();
-      const isBranchMgr = roleLower.includes('management') || roleLower.includes('manager');
-      const branchIdToFilter = isBranchMgr ? currentUser?.branchId : selectedBranchId;
-      const normalizedBranchId = branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -200,27 +197,34 @@ export default function PaidBillsReportPage() {
         monthYear: normalizedMonthYear
       });
 
-      if (result.success) {
-        setBills(result.bills || []);
+      if (result.success && result.bills) {
+        setBills(result.bills);
         setTotalBills(result.total || 0);
+      } else {
+        setBills([]);
+        setTotalBills(0);
       }
       setIsLoading(false);
     };
 
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, refreshTrigger]);
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, refreshTrigger, currentUser, canViewAllBranches]);
 
   if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
     return (
-      <div className="space-y-6">
-        <Alert variant="destructive">
-          <Lock className="h-4 w-4" />
-          <AlertTitle>Access Denied</AlertTitle>
-          <CardDescription>You do not have permission to view reports.</CardDescription>
+      <div className="p-8">
+        <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50 text-red-900">
+          <Lock className="h-5 w-5 text-red-600" />
+          <AlertTitle className="text-lg font-bold">Access Denied</AlertTitle>
+          <p className="mt-2 text-sm text-red-700">
+            You do not have permission to view Paid Bills reports.
+          </p>
         </Alert>
       </div>
     );
   }
+
+  const assignedBranchName = branches.find(b => b.id === currentUser?.branchId)?.name || currentUser?.branchName;
 
   return (
     <div className="space-y-6 pb-10">
@@ -274,7 +278,7 @@ export default function PaidBillsReportPage() {
                 </SelectContent>
               </Select>
 
-              {hasPermission('reports_generate_all') && (
+              {canViewAllBranches ? (
                 <Select value={selectedBranchId || undefined} onValueChange={(val) => { setSelectedBranchId(val); setPage(0); }}>
                   <SelectTrigger className="w-full sm:w-[180px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
                     <SelectValue placeholder="All Branches" />
@@ -290,6 +294,11 @@ export default function PaidBillsReportPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : (
+                <div className="flex items-center gap-2 px-3.5 h-11 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 shadow-sm">
+                  <span className="text-slate-400 font-medium">Branch:</span>
+                  <span className="text-slate-900">{assignedBranchName || "Your Branch"}</span>
+                </div>
               )}
 
               <DropdownMenu>

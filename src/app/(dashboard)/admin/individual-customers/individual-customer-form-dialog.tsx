@@ -69,7 +69,14 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
   }, []);
 
   const userBranchId = currentUser?.branchId;
-  const isHeadOffice = !userBranchId;
+  const permissions: string[] = currentUser?.permissions || [];
+  const isHeadOffice =
+    !userBranchId ||
+    userBranchId === 'all' ||
+    permissions.includes('*') ||
+    permissions.includes('all') ||
+    permissions.includes('admin') ||
+    permissions.includes('customers_view_all');
 
   const form = useForm<IndividualCustomerFormValues>({
     resolver: zodResolver(individualCustomerFormObjectSchema),
@@ -91,7 +98,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
       sewerageConnection: undefined,
       assignedBulkMeterId: UNASSIGNED_BULK_METER_VALUE,
       branchId: undefined,
-      status: "Active",
+      status: "Pending Approval",
       paymentStatus: "Unpaid",
       xCoordinate: undefined,
       yCoordinate: undefined,
@@ -138,6 +145,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
   }, [propBulkMeters, open]);
 
   React.useEffect(() => {
+    const effectiveBranchId = defaultValues?.branchId || (!isHeadOffice && userBranchId ? userBranchId : undefined);
     if (defaultValues) {
       form.reset({
         name: defaultValues.name || "",
@@ -158,7 +166,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
         woreda: defaultValues.woreda || "",
         sewerageConnection: defaultValues.sewerageConnection || undefined,
         assignedBulkMeterId: defaultValues.assignedBulkMeterId || UNASSIGNED_BULK_METER_VALUE,
-        branchId: defaultValues.branchId || undefined,
+        branchId: effectiveBranchId,
         status: defaultValues.status || "Active",
         paymentStatus: defaultValues.paymentStatus || "Unpaid",
         xCoordinate: defaultValues.xCoordinate ?? undefined,
@@ -185,21 +193,21 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
         woreda: "",
         sewerageConnection: undefined,
         assignedBulkMeterId: UNASSIGNED_BULK_METER_VALUE,
-        branchId: undefined,
-        status: "Active",
+        branchId: effectiveBranchId,
+        status: "Pending Approval",
         paymentStatus: "Unpaid",
         xCoordinate: undefined,
         yCoordinate: undefined,
         zCoordinate: undefined,
       });
     }
-  }, [defaultValues, form, open, staffBranchName]);
+  }, [defaultValues, form, open, staffBranchName, isHeadOffice, userBranchId]);
 
   const handleSubmit = (data: IndividualCustomerFormValues) => {
     const submissionData = {
       ...data,
       assignedBulkMeterId: data.assignedBulkMeterId === UNASSIGNED_BULK_METER_VALUE ? undefined : data.assignedBulkMeterId,
-      branchId: data.branchId === BRANCH_UNASSIGNED_VALUE ? undefined : data.branchId,
+      branchId: !isHeadOffice && userBranchId ? userBranchId : (data.branchId === BRANCH_UNASSIGNED_VALUE ? undefined : data.branchId),
     };
     onSubmit(submissionData);
     onOpenChange(false);
@@ -451,7 +459,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <FormField control={form.control} name="status" render={({ field }) => (<FormItem><FormLabel>Customer Status <span className="text-destructive">*</span></FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger></FormControl><SelectContent>{individualCustomerStatuses.map(status => (status !== undefined && String(status).trim() !== "" ? <SelectItem key={String(status)} value={String(status)}>{status}</SelectItem> : null))}</SelectContent></Select><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="status" render={({ field }) => (<FormItem><FormLabel>Customer Status <span className="text-destructive">*</span></FormLabel><Select onValueChange={field.onChange} value={field.value || "Pending Approval"}><FormControl><SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger></FormControl><SelectContent>{individualCustomerStatuses.map(status => (status !== undefined && String(status).trim() !== "" ? <SelectItem key={String(status)} value={String(status)}>{status}</SelectItem> : null))}</SelectContent></Select><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="paymentStatus" render={({ field }) => (<FormItem><FormLabel>Payment Status <span className="text-destructive">*</span></FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select payment status" /></SelectTrigger></FormControl><SelectContent>{paymentStatuses.map(status => (status !== undefined && String(status).trim() !== "" ? <SelectItem key={String(status)} value={String(status)}>{status}</SelectItem> : null))}</SelectContent></Select><FormMessage /></FormItem>)} />
             </div>
 

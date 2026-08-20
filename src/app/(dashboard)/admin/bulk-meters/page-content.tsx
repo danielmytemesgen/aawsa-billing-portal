@@ -61,6 +61,8 @@ export default function BulkMetersPage() {
   const [statusFilter, setStatusFilter] = React.useState<BulkMeterStatus | 'All'>('All');
   const [branchFilter, setBranchFilter] = React.useState<string>('All');
   const [isExporting, setIsExporting] = React.useState(false);
+  // Determines if user can see all branches (Head Office / Admin)
+  const userBranchIdRaw = React.useRef<string | null>(null);
 
 
   const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string, branch?: string) => {
@@ -102,7 +104,15 @@ export default function BulkMetersPage() {
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
     if (userJson) {
-      setCurrentUser(JSON.parse(userJson));
+      const user = JSON.parse(userJson);
+      setCurrentUser(user);
+      // Auto-lock branch filter for non-head-office users on initial load
+      const branchId = user?.branchId;
+      const isGlobal = !branchId || hasPermission('bulk_meters_view_all');
+      if (!isGlobal && branchId) {
+        userBranchIdRaw.current = branchId;
+        setBranchFilter(branchId);
+      }
     }
     fetchSummaryStats();
     initializeBranches().then(() => {
@@ -116,7 +126,7 @@ export default function BulkMetersPage() {
     return () => {
       unsubscribeBranches();
     };
-  }, [fetchSummaryStats]);
+  }, [fetchSummaryStats, hasPermission]);
 
   const userBranchId = currentUser?.branchId;
   const isHeadOffice = !userBranchId || hasPermission('bulk_meters_view_all');
@@ -383,33 +393,46 @@ export default function BulkMetersPage() {
             />
           </div>
 
-          {/* Branch Filter Dropdown */}
-          <div className="w-full md:w-64 flex-shrink-0">
-            <Select
-              value={branchFilter}
-              onValueChange={(val) => {
-                setBranchFilter(val);
-                setPage(0);
-              }}
-            >
-              <SelectTrigger className="h-14 px-4 border-slate-200 shadow-sm rounded-xl text-base font-medium bg-white hover:bg-slate-50 transition-colors">
-                <div className="flex items-center gap-2 truncate">
-                  <Building2 className="h-5 w-5 text-blue-600 flex-shrink-0" />
-                  <SelectValue placeholder="All Branches" />
-                </div>
-              </SelectTrigger>
-              <SelectContent className="max-h-72">
-                <SelectItem value="All" className="font-semibold text-slate-800">
-                  🏢 All Branches
-                </SelectItem>
-                {branches.map((b) => (
-                  <SelectItem key={b.id} value={b.id}>
-                    {b.name}
+          {/* Branch Filter Dropdown — Head Office only */}
+          {isHeadOffice ? (
+            <div className="w-full md:w-64 flex-shrink-0">
+              <Select
+                value={branchFilter}
+                onValueChange={(val) => {
+                  setBranchFilter(val);
+                  setPage(0);
+                }}
+              >
+                <SelectTrigger className="h-14 px-4 border-slate-200 shadow-sm rounded-xl text-base font-medium bg-white hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center gap-2 truncate">
+                    <Building2 className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                    <SelectValue placeholder="All Branches" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="All" className="font-semibold text-slate-800">
+                    🏢 All Branches
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            /* Branch-scoped users see a locked branch badge */
+            <div className="w-full md:w-64 flex-shrink-0">
+              <div className="h-14 px-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+                <Building2 className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                <span className="text-base font-medium text-slate-700 truncate">
+                  {branches.find(b => b.id === branchFilter)?.name || 'Your Branch'}
+                </span>
+                <span className="ml-auto text-xs text-slate-400 font-medium bg-slate-100 px-2 py-0.5 rounded-full">Locked</span>
+              </div>
+            </div>
+          )}
 
           {/* Export button */}
           <DropdownMenu>

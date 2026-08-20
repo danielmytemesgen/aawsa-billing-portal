@@ -71,29 +71,7 @@ export function BulkMeterDataEntryForm() {
   const { toast } = useToast();
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
-
-  React.useEffect(() => {
-    initializeCustomers();
-    initializeBulkMeters();
-
-    setIsLoadingBranches(true);
-    initializeAdminBranches().then(() => {
-      setAvailableBranches(getBranches());
-      setIsLoadingBranches(false);
-    });
-
-    // Auto-generate keys for new entries
-    const existingMeters = getBulkMeters();
-    const { customerKey, instKey } = generateBulkMeterKeys(existingMeters);
-    form.setValue("customerKeyNumber", customerKey);
-    form.setValue("instKey", instKey);
-
-    const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
-      setAvailableBranches(updatedBranches);
-      setIsLoadingBranches(false);
-    });
-    return () => unsubscribeBranches();
-  }, []);
+  const [lockedBranchId, setLockedBranchId] = React.useState<string | null>(null);
 
   const form = useForm<BulkMeterDataEntryFormValues>({
     resolver: zodResolver(bulkMeterDataEntrySchema),
@@ -121,6 +99,48 @@ export function BulkMeterDataEntryForm() {
       ordinal: undefined,
     },
   });
+
+  React.useEffect(() => {
+    initializeCustomers();
+    initializeBulkMeters();
+
+    setIsLoadingBranches(true);
+    initializeAdminBranches().then(() => {
+      setAvailableBranches(getBranches());
+      setIsLoadingBranches(false);
+    });
+
+    // Auto-generate keys for new entries
+    const existingMeters = getBulkMeters();
+    const { customerKey, instKey } = generateBulkMeterKeys(existingMeters);
+    form.setValue("customerKeyNumber", customerKey);
+    form.setValue("instKey", instKey);
+
+    // Auto-lock branch for non-head-office users
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      const user = JSON.parse(userJson);
+      const branchId = user?.branchId;
+      const permissions: string[] = user?.permissions || [];
+      const isGlobal =
+        !branchId ||
+        branchId === 'all' ||
+        permissions.includes('*') ||
+        permissions.includes('all') ||
+        permissions.includes('admin') ||
+        permissions.includes('bulk_meters_view_all');
+      if (!isGlobal && branchId) {
+        setLockedBranchId(branchId);
+        form.setValue('branchId', branchId);
+      }
+    }
+
+    const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
+      setAvailableBranches(updatedBranches);
+      setIsLoadingBranches(false);
+    });
+    return () => unsubscribeBranches();
+  }, []);
 
   const watchedValues = form.watch();
   const xValue = watchedValues.xCoordinate;
@@ -209,27 +229,36 @@ export function BulkMeterDataEntryForm() {
                     <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Assign to Branch</FormLabel>
                     <div className="premium-input-group">
                       <Network className="h-4 w-4" />
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value || BRANCH_UNASSIGNED_VALUE}
-                        disabled={isLoadingBranches || form.formState.isSubmitting}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm transition-all duration-300">
-                            <SelectValue placeholder={isLoadingBranches ? "Loading branches..." : "Select a branch"} />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent className="rounded-xl">
-                          <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
-                          {availableBranches.map((branch) => (
-                            branch?.id ? (
-                              <SelectItem key={branch.id} value={branch.id}>
-                                {branch.name}
-                              </SelectItem>
-                            ) : null
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      {lockedBranchId ? (
+                        <div className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full">
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate flex-1">
+                            {availableBranches.find(b => b.id === lockedBranchId)?.name || lockedBranchId}
+                          </span>
+                          <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full font-medium">Auto-assigned</span>
+                        </div>
+                      ) : (
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value || BRANCH_UNASSIGNED_VALUE}
+                          disabled={isLoadingBranches || form.formState.isSubmitting}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm transition-all duration-300">
+                              <SelectValue placeholder={isLoadingBranches ? "Loading branches..." : "Select a branch"} />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent className="rounded-xl">
+                            <SelectItem value={BRANCH_UNASSIGNED_VALUE}>None</SelectItem>
+                            {availableBranches.map((branch) => (
+                              branch?.id ? (
+                                <SelectItem key={branch.id} value={branch.id}>
+                                  {branch.name}
+                                </SelectItem>
+                              ) : null
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
                     <FormMessage />
                   </FormItem>

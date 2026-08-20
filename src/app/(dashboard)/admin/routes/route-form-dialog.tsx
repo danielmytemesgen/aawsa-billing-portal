@@ -59,6 +59,24 @@ export function RouteFormDialog({
 }: RouteFormDialogProps) {
     const branches = useBranches();
     const staffMembers = useStaffMembers();
+    const [currentUser, setCurrentUser] = React.useState<any>(null);
+
+    React.useEffect(() => {
+        const userJson = localStorage.getItem('user');
+        if (userJson) {
+            setCurrentUser(JSON.parse(userJson));
+        }
+    }, []);
+
+    const userBranchId = currentUser?.branchId;
+    const permissions: string[] = currentUser?.permissions || [];
+    const isHeadOffice =
+        !userBranchId ||
+        userBranchId === 'all' ||
+        permissions.includes('*') ||
+        permissions.includes('all') ||
+        permissions.includes('admin') ||
+        permissions.includes('routes_view_all');
 
     const form = useForm<RouteFormValues>({
         resolver: zodResolver(routeFormSchema),
@@ -85,10 +103,11 @@ export function RouteFormDialog({
     }, [branchIdWatcher, form, staffMembers]);
 
     React.useEffect(() => {
+        const effectiveBranchId = defaultValues?.branchId || (!isHeadOffice && userBranchId ? userBranchId : "");
         if (defaultValues) {
             form.reset({
                 routeKey: defaultValues.routeKey || "",
-                branchId: defaultValues.branchId || "",
+                branchId: effectiveBranchId,
                 readerId: defaultValues.readerId || "",
                 description: defaultValues.description || "",
                 status: defaultValues.status || "Active",
@@ -96,13 +115,20 @@ export function RouteFormDialog({
         } else {
             form.reset({
                 routeKey: "",
-                branchId: "",
+                branchId: effectiveBranchId,
                 readerId: "",
                 description: "",
                 status: "Active",
             });
         }
-    }, [defaultValues, form, open]);
+    }, [defaultValues, form, open, isHeadOffice, userBranchId]);
+
+    const handleFormSubmit = (values: RouteFormValues) => {
+        if (!isHeadOffice && userBranchId) {
+            values.branchId = userBranchId;
+        }
+        onSubmit(values);
+    };
 
     const filteredReaders = staffMembers.filter((staff: any) => {
         const isReader = isReaderStaff(staff);
@@ -125,7 +151,7 @@ export function RouteFormDialog({
 
                 <div className="p-6 bg-white">
                     <Form {...form}>
-                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+                        <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-5">
                             <div className="grid grid-cols-2 gap-4">
                                 <FormField
                                     control={form.control}
@@ -175,37 +201,54 @@ export function RouteFormDialog({
                                 />
                             </div>
 
-                            <FormField
-                                control={form.control}
-                                name="branchId"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel className="text-[13px] font-bold uppercase tracking-wider text-slate-900">Territory / Branch</FormLabel>
-                                        <Select
-                                            onValueChange={field.onChange}
-                                            value={field.value || ""}
-                                        >
-                                            <FormControl>
-                                                <div className="relative group">
-                                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
-                                                    <SelectTrigger className="pl-10 h-11 border-slate-100 bg-slate-50/50 rounded-xl focus:ring-2 focus:ring-blue-500/10 transition-all font-bold">
-                                                        <SelectValue placeholder="Assign a branch" />
-                                                    </SelectTrigger>
-                                                </div>
-                                            </FormControl>
-                                            <SelectContent className="rounded-xl border-slate-100">
-                                                <SelectItem value="">Universal (Unassigned)</SelectItem>
-                                                {branches.map((branch: any) => (
-                                                    <SelectItem key={branch.id} value={branch.id}>
-                                                        {branch.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <FormMessage className="text-[10px]" />
-                                    </FormItem>
-                                )}
-                            />
+                            {!isHeadOffice && userBranchId ? (
+                                <FormItem>
+                                    <FormLabel className="text-[13px] font-bold uppercase tracking-wider text-slate-900">Territory / Branch</FormLabel>
+                                    <FormControl>
+                                        <div className="relative group">
+                                            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+                                            <Input
+                                                value={branches.find((b: any) => b.id === userBranchId)?.name || "Current Branch"}
+                                                readOnly
+                                                disabled
+                                                className="pl-10 h-11 border-slate-100 bg-slate-50/50 rounded-xl font-bold text-slate-600 cursor-not-allowed"
+                                            />
+                                        </div>
+                                    </FormControl>
+                                </FormItem>
+                            ) : (
+                                <FormField
+                                    control={form.control}
+                                    name="branchId"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel className="text-[13px] font-bold uppercase tracking-wider text-slate-900">Territory / Branch</FormLabel>
+                                            <Select
+                                                onValueChange={field.onChange}
+                                                value={field.value || ""}
+                                            >
+                                                <FormControl>
+                                                    <div className="relative group">
+                                                        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+                                                        <SelectTrigger className="pl-10 h-11 border-slate-100 bg-slate-50/50 rounded-xl focus:ring-2 focus:ring-blue-500/10 transition-all font-bold">
+                                                            <SelectValue placeholder="Assign a branch" />
+                                                        </SelectTrigger>
+                                                    </div>
+                                                </FormControl>
+                                                <SelectContent className="rounded-xl border-slate-100">
+                                                    <SelectItem value="">Universal (Unassigned)</SelectItem>
+                                                    {branches.map((branch: any) => (
+                                                        <SelectItem key={branch.id} value={branch.id}>
+                                                            {branch.name}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <FormMessage className="text-[10px]" />
+                                        </FormItem>
+                                    )}
+                                />
+                            )}
 
                             <FormField
                                 control={form.control}

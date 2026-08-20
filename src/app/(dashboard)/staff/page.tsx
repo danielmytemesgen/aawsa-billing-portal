@@ -28,6 +28,45 @@ export default function StaffRedirectPage() {
           router.replace('/staff/dashboard');
           return;
         }
+
+        // If user has route permissions
+        const hasRouteAccess = assignedPermissions.some((p: string) => 
+          ['routes_view', 'routes_view_all', 'routes_view_branch', 'routes_view_assigned', 'routes_manage', 'routes_create', 'routes_update', 'routes_delete', 'meter_readings_create', 'reader_progress_view'].includes(p)
+        );
+        if (hasRouteAccess) {
+          router.replace('/staff/my-routes');
+          return;
+        }
+
+        // If user has data entry access
+        const hasDataEntryAccess = assignedPermissions.some((p: string) => 
+          ['data_entry_access', 'customers_create', 'bulk_meters_create', 'data_entry_bulk_form', 'data_entry_individual_form', 'data_entry_bulk_csv', 'data_entry_individual_csv'].includes(p)
+        );
+        if (hasDataEntryAccess) {
+          router.replace('/admin/data-entry');
+          return;
+        }
+
+        // If user has reports access
+        const hasReportsAccess = assignedPermissions.some((p: string) => 
+          ['reports_generate_all', 'reports_generate_branch'].includes(p)
+        );
+        if (hasReportsAccess) {
+          router.replace('/admin/reports');
+          return;
+        }
+
+        // If user has customer access
+        if (assignedPermissions.includes('customers_view_all') || assignedPermissions.includes('customers_view_branch')) {
+          router.replace('/admin/individual-customers');
+          return;
+        }
+
+        // If user has bulk meter access
+        if (assignedPermissions.includes('bulk_meters_view_all') || assignedPermissions.includes('bulk_meters_view_branch')) {
+          router.replace('/admin/bulk-meters');
+          return;
+        }
       }
     } catch (e) {
       // ignore parse errors
