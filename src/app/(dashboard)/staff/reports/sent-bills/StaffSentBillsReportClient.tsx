@@ -18,6 +18,7 @@ import { Send, Search, Lock, Download, Loader2, Calendar, ChevronDown, FileSprea
 import { Button } from "@/components/ui/button";
 import { exportSentBillsToCsv, exportSentBillsToXlsx, getAvailableMonthYearOptions } from "@/lib/export-utils";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { getEffectiveBranchId } from "@/lib/branch-permissions";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -205,7 +206,15 @@ export default function StaffSentBillsReportClient() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser]);
 
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+  const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+    || hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS)
+    || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_SENT_BILLS)
+    || hasPermission(PERMISSIONS.BILL_SEND)
+    || hasPermission(PERMISSIONS.BILL_POST)
+    || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+  if (!canAccess) {
     return (
       <div className="space-y-6">
         <Alert variant="destructive">

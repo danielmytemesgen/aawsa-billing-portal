@@ -23,6 +23,7 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Check, Frown, Lock, ShieldCheck, UserCheck, FileEdit } from "lucide-react";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
@@ -226,7 +227,12 @@ export default function StaffApprovalsPage() {
         }
     };
 
-    const hasApprovalPermission = hasPermission('customers_approve') || hasPermission('bulk_meters_approve');
+    const hasApprovalPermission = hasPermission('customers_approve') 
+        || hasPermission('bulk_meters_approve')
+        || hasPermission('bill:approve')
+        || hasPermission(PERMISSIONS.CUSTOMERS_APPROVE)
+        || hasPermission(PERMISSIONS.BULK_METERS_APPROVE)
+        || hasPermission(PERMISSIONS.BILL_APPROVE);
 
     if (!hasApprovalPermission) {
         return (

@@ -423,6 +423,15 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     if (custRes.data) {
                         setRelatedData({ type: 'individual', ...custRes.data });
                         customerType = custRes.data.customerType || custRes.data.customer_type || "Domestic";
+                    } else {
+                        setRelatedData({
+                            type: 'individual',
+                            customerKeyNumber: b.individual_customer_id,
+                            customerType: 'Domestic',
+                            meterSize: 0.5,
+                            sewerageConnection: 'No',
+                        });
+                        customerType = "Domestic";
                     }
                 } else if (b.CUSTOMERKEY) {
                     const bulkRes = await getBulkMeterByIdAction(b.CUSTOMERKEY);
@@ -434,6 +443,19 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                         }
                         setRelatedData({ type: 'bulk', ...bulkData });
                         customerType = bulkData.chargeGroup || bulkData.charge_group || "Non-domestic";
+                    } else {
+                        const snap = b.snapshot_data || {};
+                        setRelatedData({
+                            type: 'bulk',
+                            customerKeyNumber: b.CUSTOMERKEY,
+                            charge_group: snap.chargeGroup || 'Non-domestic',
+                            chargeGroup: snap.chargeGroup || 'Non-domestic',
+                            sewerage_connection: snap.sewerageConnection || 'No',
+                            sewerageConnection: snap.sewerageConnection || 'No',
+                            meterSize: 0.5,
+                            branch_id: b.branch_id,
+                        });
+                        customerType = snap.chargeGroup || "Non-domestic";
                     }
                 }
 
@@ -796,15 +818,16 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     }, [isEditing, bill?.id]);
 
     const handleRecalculate = async () => {
-        if (!relatedData) return;
+        if (!bill) return;
         setIsCalculating(true);
         try {
             const usage = editValues.current - editValues.previous;
-            const isBulk = relatedData.type === 'bulk';
-            const typeParam = isBulk ? relatedData.charge_group : relatedData.customerType;
-            const sizeParam = relatedData.meterSize;
-            const sewerage = relatedData.sewerageConnection || relatedData.sewerage_connection;
-            const month = bill?.month_year || '2025-01';
+            const isBulk = !!bill.CUSTOMERKEY;
+            const snap = bill.snapshot_data || {};
+            const typeParam = (relatedData?.charge_group || relatedData?.chargeGroup || relatedData?.customerType || snap.chargeGroup || (isBulk ? 'Non-domestic' : 'Domestic')) as any;
+            const sizeParam = Number(relatedData?.meterSize || 0.5);
+            const sewerage = (relatedData?.sewerageConnection || relatedData?.sewerage_connection || snap.sewerageConnection || 'No') as any;
+            const month = bill.month_year || '2026-08';
 
             let effectiveUsage = usage;
             if (isBulk) {
@@ -824,16 +847,20 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
             if (calcRes.data) {
                 setCalculatedPreview({ usage: calcRes.data.effectiveUsage, amount: calcRes.data.totalBill });
+                toast({ title: "Preview Updated", description: `Recalculated Bill Amount: ETB ${Number(calcRes.data.totalBill).toFixed(2)}` });
+            } else if (calcRes.error) {
+                toast({ title: "Preview Failed", description: calcRes.error.message || "Failed to calculate preview.", variant: "destructive" });
             }
-        } catch (error) {
-            console.error(error);
+        } catch (error: any) {
+            console.error("Preview error", error);
+            toast({ title: "Calculation Error", description: error?.message || "Failed to calculate preview.", variant: "destructive" });
         } finally {
             setIsCalculating(false);
         }
     };
 
     const handleSave = async () => {
-        if (!bill || !relatedData) return;
+        if (!bill) return;
         setLoading(true);
         try {
             const isBulk = !!(bill.CUSTOMERKEY);
@@ -854,7 +881,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 if (res?.error) {
                     toast({ title: "Save Failed", description: res.error.message || "An error occurred.", variant: "destructive" });
                 } else {
-                    toast({ title: "Saved", description: "Bulk meter and assigned customer readings updated and rebilled." });
+                    toast({ title: "Saved", description: "Bulk meter readings updated and rebilled successfully." });
                     await loadData();
                     setIsEditing(false);
                     setCalculatedPreview(null);
@@ -862,9 +889,10 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     setAssignedReadingEdits({});
                 }
             } else {
-                const typeParam = relatedData.type === 'bulk' ? relatedData.charge_group : relatedData.customerType;
-                const sizeParam = relatedData.meterSize;
-                const sewerage = relatedData.sewerageConnection || relatedData.sewerage_connection;
+                const snap = bill.snapshot_data || {};
+                const typeParam = (relatedData?.charge_group || relatedData?.customerType || snap.chargeGroup || 'Domestic') as any;
+                const sizeParam = Number(relatedData?.meterSize || 0.5);
+                const sewerage = (relatedData?.sewerageConnection || relatedData?.sewerage_connection || snap.sewerageConnection || 'No') as any;
                 const month = bill.month_year;
 
                 const calcRes = await calculateBillAction(Math.max(0, usage), typeParam, sewerage, sizeParam, month);
@@ -879,14 +907,15 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                         THISMONTHBILLAMT: calcRes.data.totalBill,
                         TOTALBILLAMOUNT: calcRes.data.totalBill + currentOutstanding,
                     });
+                    toast({ title: "Saved", description: "Bill readings updated and recalculated successfully." });
                     await loadData();
                     setIsEditing(false);
                     setCalculatedPreview(null);
                 }
             }
-        } catch (error) {
-            console.error(error);
-            toast({ title: "Error", description: "Failed to save changes.", variant: "destructive" });
+        } catch (error: any) {
+            console.error("Save error", error);
+            toast({ title: "Error", description: error?.message || "Failed to save changes.", variant: "destructive" });
         } finally {
             setLoading(false);
         }

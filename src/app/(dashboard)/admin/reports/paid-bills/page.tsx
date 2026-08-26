@@ -76,7 +76,7 @@ export default function PaidBillsReportPage() {
         monthYear: normalizedMonthYear
       });
 
-      const exportBills = (result.success && result.bills && result.bills.length > 0) ? result.bills : bills;
+      const exportBills = (result?.bills && result.bills.length > 0) ? result.bills : (result?.data?.bills || bills);
 
       if (exportBills.length === 0) {
         toast({ title: "No Records", description: "No paid bills available matching your filters.", variant: "destructive" });
@@ -118,7 +118,7 @@ export default function PaidBillsReportPage() {
         monthYear: normalizedMonthYear
       });
 
-      const allBills = (result.success && result.bills && result.bills.length > 0) ? result.bills : bills;
+      const allBills = (result?.bills && result.bills.length > 0) ? result.bills : (result?.data?.bills || bills);
       setPrintBills(allBills);
       setIsPrintSummaryOpen(true);
     } catch (err) {
@@ -197,9 +197,12 @@ export default function PaidBillsReportPage() {
         monthYear: normalizedMonthYear
       });
 
-      if (result.success && result.bills) {
+      if (result?.success && result?.bills) {
         setBills(result.bills);
         setTotalBills(result.total || 0);
+      } else if (result?.data?.bills) {
+        setBills(result.data.bills);
+        setTotalBills(result.data.total || 0);
       } else {
         setBills([]);
         setTotalBills(0);
@@ -210,7 +213,14 @@ export default function PaidBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, refreshTrigger, currentUser, canViewAllBranches]);
 
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+  const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+    || hasPermission(PERMISSIONS.REPORT_LIST_OF_PAID_BILLS)
+    || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS)
+    || hasPermission(PERMISSIONS.BILL_VIEW_PAID)
+    || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+  if (!canAccess) {
     return (
       <div className="p-8">
         <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50 text-red-900">

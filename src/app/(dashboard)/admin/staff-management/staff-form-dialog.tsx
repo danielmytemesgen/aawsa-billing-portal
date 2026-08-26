@@ -40,6 +40,7 @@ const formSchema = z.object({
   status: z.enum(staffStatuses, { errorMap: () => ({ message: "Please select a valid status."}) }),
   phone: z.string().optional(),
   role: z.string({ required_error: "Role is required." }).min(1, "Role is required."),
+  roleId: z.number().optional(), // FK to roles.id — stored alongside role name for integrity
 });
 
 
@@ -115,6 +116,7 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
       status: undefined,
       phone: "",
       role: undefined,
+      roleId: undefined,
     },
   });
   
@@ -130,6 +132,7 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
         status: defaultValues.status,
         phone: defaultValues.phone || "",
         role: defaultValues.role,
+        roleId: typeof defaultValues.roleId === 'number' ? defaultValues.roleId : (typeof defaultValues.role_id === 'number' ? defaultValues.role_id : undefined),
       });
     } else {
       form.reset({
@@ -140,6 +143,7 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
         status: "Active" as StaffStatus,
         phone: "",
         role: "Staff",
+        roleId: undefined,
       });
     }
   }, [defaultValues, form, open, isHeadOffice, userBranchName]);
@@ -264,7 +268,18 @@ export function StaffFormDialog({ open, onOpenChange, onSubmit, defaultValues }:
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Role</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value} disabled={isLoadingRoles}>
+                  <Select
+                    onValueChange={(value) => {
+                      field.onChange(value);
+                      // BN-2 fix: Also store roleId FK when role name is selected
+                      const selectedRole = availableRoles.find(r => r.role_name === value);
+                      if (selectedRole?.id != null) {
+                        form.setValue('roleId', Number(selectedRole.id));
+                      }
+                    }}
+                    value={field.value}
+                    disabled={isLoadingRoles}
+                  >
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder={isLoadingRoles ? "Loading roles..." : "Select a role"} />

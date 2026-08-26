@@ -10,7 +10,7 @@ import { Lock } from "lucide-react";
 export default function StaffTariffsPage() {
     const { hasPermission } = usePermissions();
 
-    if (!hasPermission(PERMISSIONS.TARIFFS_VIEW)) {
+    if (!hasPermission(PERMISSIONS.TARIFFS_VIEW) && !hasPermission(PERMISSIONS.TARIFFS_MANAGE)) {
         return (
             <div className="p-6">
                 <Alert variant="destructive">

@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { ShieldCheck, Save, Loader2, PlusCircle, Pencil, Trash2, ChevronLeft, ChevronRight, Search, Users, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -124,7 +125,7 @@ export default function RolesAndPermissionsPage() {
     }
   }, [selectedRoleId, rolePermissions]);
 
-  if (!hasPermission('permissions_view')) {
+  if (!hasPermission(PERMISSIONS.ROLES_VIEW) && !hasPermission(PERMISSIONS.ROLES_MANAGE) && !hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl md:text-3xl font-bold">Roles & Permissions</h1>

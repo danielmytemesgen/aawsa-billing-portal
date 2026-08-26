@@ -58,6 +58,20 @@ export async function getSession(requestOrHeaders?: Request | NextRequest | Head
           return null;
         }
       }
+
+      // Dynamic RBAC: Load live permissions from database to ensure immediate effect on assign/unassign
+      if (session?.id) {
+        try {
+          const { dbGetStaffPermissions } = await import('./db-queries');
+          const livePerms = await dbGetStaffPermissions(session.id);
+          if (Array.isArray(livePerms)) {
+            session.permissions = livePerms;
+          }
+        } catch (permErr) {
+          console.warn('Failed to load live permissions in getSession:', permErr);
+        }
+      }
+
       return session;
     } catch (e) {
       console.warn('Failed to decrypt session token:', e instanceof Error ? e.message : e);

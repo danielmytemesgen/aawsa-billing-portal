@@ -113,9 +113,15 @@ export default function StaffManagementPage() {
 
   const handleSubmitStaff = async (data: StaffFormValues) => {
     try {
+      // BN-2 fix: Include role_id FK alongside role name string for integrity
+      const staffPayload = {
+        ...data,
+        role_id: data.roleId ?? null,
+      } as any;
+
       if (selectedStaff && (selectedStaff as StaffMember).email) {
         if (!hasPermission('staff_update')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to update staff.' }); return; }
-        const result = await updateStaffMemberInStore(selectedStaff.email, data);
+        const result = await updateStaffMemberInStore(selectedStaff.email, staffPayload);
         if (result.success) {
           logSecurityEventAction(`Staff member ${data.name} (${data.email}) updated by ${currentUser?.email}.`);
           toast({ title: "Staff Updated", description: `${data.name} has been updated.` });
@@ -124,7 +130,7 @@ export default function StaffManagementPage() {
         }
       } else {
         if (!hasPermission('staff_create')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create staff.' }); return; }
-        const result = await addStaffMemberToStore(data as StaffMember);
+        const result = await addStaffMemberToStore(staffPayload as StaffMember);
         if (result.success) {
           logSecurityEventAction(`Staff member ${data.name} (${data.email}) added by ${currentUser?.email}.`);
           toast({ title: "Staff Added", description: `${data.name} has been added.` });

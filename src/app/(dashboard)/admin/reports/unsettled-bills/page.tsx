@@ -30,8 +30,14 @@ export default function UnsettledBillsReportPage() {
   const { hasPermission } = usePermissions();
   const canViewAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission('reports_generate_all') || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
+  const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+    || hasPermission(PERMISSIONS.BILL_VIEW_UNPAID)
+    || hasPermission(PERMISSIONS.BILL_VIEW_OVERDUE)
+    || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
   // Permission check: ensure user can view reports
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+  if (!canAccess) {
     return (
       <div className="p-8">
         <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50 text-red-900">
@@ -117,9 +123,12 @@ export default function UnsettledBillsReportPage() {
         branchId: normalizedBranchId
       });
 
-      if (result.success && result.bills) {
+      if (result?.success && result?.bills) {
         setBills(result.bills);
         setTotalBills(result.total || 0);
+      } else if (result?.data?.bills) {
+        setBills(result.data.bills);
+        setTotalBills(result.data.total || 0);
       } else {
         setBills([]);
         setTotalBills(0);

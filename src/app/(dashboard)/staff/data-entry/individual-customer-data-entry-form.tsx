@@ -27,8 +27,10 @@ import {
   initializeBulkMeters,
   initializeCustomers,
   getBranches,
-  initializeBranches as initializeAdminBranches
+  initializeBranches as initializeAdminBranches,
+  getCustomers,
 } from "@/lib/data-store";
+import { generateCustomerKeys } from "@/lib/utils";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
@@ -36,6 +38,21 @@ import { customerTypes, sewerageConnections } from "@/lib/billing-calculations";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getAllFaultCodes } from "@/lib/fault-codes";
 import { subscribeToFaultCodes } from "@/lib/data-store";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   User,
   Hash,
@@ -50,6 +67,12 @@ import {
   TrendingUp,
   CheckCircle2,
   Lock,
+  Search,
+  Check,
+  ChevronsUpDown,
+  Sparkles,
+  Crosshair,
+  Globe,
 } from "lucide-react";
 
 interface StaffIndividualCustomerEntryFormProps {
@@ -90,11 +113,13 @@ const REQUIRED_FIELDS: (keyof StaffEntryFormValues)[] = [
 
 export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividualCustomerEntryFormProps) {
   const { toast } = useToast();
-  const [availableBulkMeters, setAvailableBulkMeters] = React.useState<{ customerKeyNumber: string; name: string }[]>([]);
+  const [availableBulkMeters, setAvailableBulkMeters] = React.useState<{ customerKeyNumber: string; name: string; specificArea?: string }[]>([]);
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
   const [staffBranchId, setStaffBranchId] = React.useState<string | undefined>(undefined);
   const [hasFault, setHasFault] = React.useState(false);
   const [faultCodesList, setFaultCodesList] = React.useState(getAllFaultCodes());
+  const [bulkMeterComboboxOpen, setBulkMeterComboboxOpen] = React.useState(false);
+  const [keepBulkMeterAfterSubmit, setKeepBulkMeterAfterSubmit] = React.useState(true);
 
   React.useEffect(() => {
     const unsubscribe = subscribeToFaultCodes(() => {
@@ -111,21 +136,24 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
       customerKeyNumber: "",
       instKey: "",
       contractNumber: "",
-      customerType: undefined,
+      customerType: "Domestic",
       bookNumber: "",
       ordinal: undefined,
-      meterSize: undefined,
+      meterSize: 0.5,
       NUMBER_OF_DIALS: undefined,
       meterNumber: "",
       previousReading: undefined,
       currentReading: undefined,
-      month: "",
+      month: format(new Date(), "yyyy-MM"),
       specificArea: "",
       subCity: "",
       branchId: staffBranchId,
       woreda: "",
-      sewerageConnection: undefined,
+      sewerageConnection: "No",
       faultCode: undefined,
+      xCoordinate: undefined,
+      yCoordinate: undefined,
+      zCoordinate: undefined,
     },
   });
 
@@ -133,11 +161,18 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
   const prevReading = watchedValues.previousReading;
   const currReading = watchedValues.currentReading;
   const assignedBulkMeterIdValue = watchedValues.assignedBulkMeterId;
+  const xValue = watchedValues.xCoordinate;
+  const yValue = watchedValues.yCoordinate;
+  const hasCoordinates = !!(xValue && yValue);
 
   const isBulkMeterSelected =
     !!assignedBulkMeterIdValue &&
     assignedBulkMeterIdValue !== "" &&
     assignedBulkMeterIdValue !== UNASSIGNED_BULK_METER_VALUE;
+
+  const selectedBmObj = availableBulkMeters.find(
+    (b) => b.customerKeyNumber === assignedBulkMeterIdValue
+  );
 
   const consumption =
     currReading !== undefined &&
@@ -147,7 +182,6 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
       ? currReading - prevReading
       : null;
 
-  // Track progress
   const filledCount = REQUIRED_FIELDS.filter((field) => {
     const val = watchedValues[field];
     return val !== undefined && val !== "" && val !== null && val !== UNASSIGNED_BULK_METER_VALUE;
@@ -183,18 +217,16 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
           (bm) => bm.branchId === staffBranch.id
         );
 
-        // Fallback: If no bulk meters are tagged specifically to this branch, show all available bulk meters so user is never blocked
         if (filteredBms.length === 0) {
           filteredBms = allBms;
         }
 
         setAvailableBulkMeters(
-          filteredBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+          filteredBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name, specificArea: bm.specificArea }))
         );
       } else {
-        // Fallback if branch lookup by string name is exact mismatch
         setAvailableBulkMeters(
-          allBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+          allBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name, specificArea: bm.specificArea }))
         );
       }
       setIsLoadingBulkMeters(false);
@@ -205,11 +237,11 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
         let branchFilteredBms = updatedBulkMeters.filter((bm) => bm.branchId === staffBranchId);
         if (branchFilteredBms.length === 0) branchFilteredBms = updatedBulkMeters;
         setAvailableBulkMeters(
-          branchFilteredBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+          branchFilteredBms.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name, specificArea: bm.specificArea }))
         );
       } else {
         setAvailableBulkMeters(
-          updatedBulkMeters.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+          updatedBulkMeters.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name, specificArea: bm.specificArea }))
         );
       }
     });
@@ -217,10 +249,22 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
     return () => {
       unsubscribeBMs();
     };
-  }, [branchName]);
+  }, [branchName, form, staffBranchId]);
 
-  const handleBulkMeterChange = (value: string | undefined) => {
-    form.setValue("assignedBulkMeterId", value || "", { shouldValidate: true });
+  const handleBulkMeterSelect = (keyNumber: string) => {
+    form.setValue("assignedBulkMeterId", keyNumber, { shouldValidate: true });
+    setBulkMeterComboboxOpen(false);
+  };
+
+  const handleAutoGenerateKeys = () => {
+    const existing = getCustomers();
+    const { customerKey, instKey } = generateCustomerKeys(existing);
+    form.setValue("customerKeyNumber", customerKey, { shouldValidate: true });
+    form.setValue("instKey", instKey, { shouldValidate: true });
+    toast({
+      title: "Keys Auto-Generated",
+      description: `Assigned Key: ${customerKey}, INST_KEY: ${instKey}`,
+    });
   };
 
   async function onSubmit(data: StaffEntryFormValues) {
@@ -244,27 +288,33 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
         title: "Data Entry Submitted for Approval",
         description: `Customer "${result.data.name}" has been recorded and is pending approval.`,
       });
+
+      const retainedBulkMeter = keepBulkMeterAfterSubmit ? data.assignedBulkMeterId : "";
+
       form.reset({
-        assignedBulkMeterId: "",
+        assignedBulkMeterId: retainedBulkMeter,
         name: "",
         customerKeyNumber: "",
         instKey: "",
         contractNumber: "",
-        customerType: undefined,
+        customerType: "Domestic",
         bookNumber: "",
         ordinal: undefined,
-        meterSize: undefined,
+        meterSize: 0.5,
         NUMBER_OF_DIALS: undefined,
         meterNumber: "",
         previousReading: undefined,
         currentReading: undefined,
-        month: "",
+        month: format(new Date(), "yyyy-MM"),
         specificArea: "",
         subCity: "",
         branchId: staffBranchId,
         woreda: "",
-        sewerageConnection: undefined,
+        sewerageConnection: "No",
         faultCode: undefined,
+        xCoordinate: undefined,
+        yCoordinate: undefined,
+        zCoordinate: undefined,
       });
       setHasFault(false);
     } else {
@@ -329,49 +379,107 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                 </div>
               </FormItem>
 
-              {/* Assign to Bulk Meter — MANDATORY */}
+              {/* Assign to Bulk Meter — Searchable Combobox */}
               <FormField
                 control={form.control}
                 name="assignedBulkMeterId"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                      Assign to Bulk Meter <span className="text-destructive">*</span>
-                    </FormLabel>
-                    <div className="premium-input-group">
-                      <Layers className="h-4 w-4 text-primary" />
-                      <Select
-                        onValueChange={handleBulkMeterChange}
-                        value={field.value || undefined}
-                        disabled={isLoadingBulkMeters || form.formState.isSubmitting}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="rounded-xl border-primary/40 dark:border-primary/40 bg-primary/5 focus:ring-primary">
-                            <SelectValue
-                              placeholder={
-                                isLoadingBulkMeters ? "Loading Bulk Meters…" : "Select a Bulk Meter (Required)"
-                              }
-                            />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent className="rounded-xl">
-                          {availableBulkMeters.length === 0 && !isLoadingBulkMeters && (
-                            <SelectItem value="no-bms-available" disabled>
-                              No bulk meters found
-                            </SelectItem>
-                          )}
-                          {availableBulkMeters.map((bm) => (
-                            <SelectItem key={bm.customerKeyNumber} value={bm.customerKeyNumber}>
-                              {bm.name} ({bm.customerKeyNumber})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                  <FormItem className="flex flex-col justify-end">
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Assign to Bulk Meter <span className="text-destructive">*</span>
+                      </FormLabel>
+                      {availableBulkMeters.length > 0 && (
+                        <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full font-medium">
+                          {availableBulkMeters.length} available
+                        </span>
+                      )}
                     </div>
+
+                    <Popover open={bulkMeterComboboxOpen} onOpenChange={setBulkMeterComboboxOpen}>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={bulkMeterComboboxOpen}
+                            disabled={isLoadingBulkMeters || form.formState.isSubmitting}
+                            className={`w-full justify-between rounded-xl h-11 border transition-all ${
+                              field.value
+                                ? "border-primary/50 bg-primary/5 font-semibold text-primary"
+                                : "border-slate-200 dark:border-slate-800 text-muted-foreground"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Layers className="h-4 w-4 flex-shrink-0 text-primary" />
+                              <span className="truncate">
+                                {isLoadingBulkMeters
+                                  ? "Loading bulk meters…"
+                                  : selectedBmObj
+                                  ? `${selectedBmObj.name} (${selectedBmObj.customerKeyNumber})`
+                                  : "Search and select a Bulk Meter…"}
+                              </span>
+                            </div>
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[360px] sm:w-[420px] p-0 rounded-2xl shadow-xl" align="start">
+                        <Command>
+                          <CommandInput placeholder="Type meter name or key number…" className="h-10" />
+                          <CommandList>
+                            <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
+                              No matching bulk meter found.
+                            </CommandEmpty>
+                            <CommandGroup heading="Available Bulk Meters">
+                              {availableBulkMeters.map((bm) => (
+                                <CommandItem
+                                  key={bm.customerKeyNumber}
+                                  value={`${bm.name} ${bm.customerKeyNumber} ${bm.specificArea || ""}`}
+                                  onSelect={() => handleBulkMeterSelect(bm.customerKeyNumber)}
+                                  className="flex items-center justify-between py-2 px-3 rounded-lg cursor-pointer"
+                                >
+                                  <div className="flex flex-col min-w-0 pr-2">
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                      {bm.name}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground font-mono">
+                                      {bm.customerKeyNumber} {bm.specificArea ? `· ${bm.specificArea}` : ""}
+                                    </span>
+                                  </div>
+                                  <Check
+                                    className={`h-4 w-4 flex-shrink-0 text-primary transition-opacity ${
+                                      field.value === bm.customerKeyNumber ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+            </div>
+
+            {/* Quick Helper / Persistent bulk meter switch */}
+            <div className="mt-3 flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 text-xs">
+              <span className="text-muted-foreground">
+                Entering multiple customers under the same Bulk Meter?
+              </span>
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="keep-bulk-meter-staff"
+                  checked={keepBulkMeterAfterSubmit}
+                  onCheckedChange={setKeepBulkMeterAfterSubmit}
+                />
+                <Label htmlFor="keep-bulk-meter-staff" className="text-xs font-semibold cursor-pointer">
+                  Keep selection on submit
+                </Label>
+              </div>
             </div>
           </div>
 
@@ -391,6 +499,25 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
               !isBulkMeterSelected ? "opacity-40 pointer-events-none filter blur-[0.3px]" : ""
             }`}
           >
+            {/* Customer Identity Header with Auto-Generate */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h4 className="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">Customer Identity</h4>
+                <p className="text-xs text-muted-foreground">Unique keys & contract reference</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAutoGenerateKeys}
+                disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                className="text-xs gap-1.5 h-8 border-primary/30 hover:border-primary font-semibold self-start sm:self-auto"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Auto-Generate Keys
+              </Button>
+            </div>
+
             {/* Customer Identity */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
@@ -425,8 +552,8 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                       <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                         Cust. Key No. <span className="text-destructive">*</span>
                       </FormLabel>
-                      <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 uppercase tracking-wider">
-                        From Ext. System
+                      <span className="text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-2 py-0.5 rounded-full font-bold border border-slate-200 uppercase tracking-wider">
+                        Key / Ext
                       </span>
                     </div>
                     <div className="premium-input-group">
@@ -434,7 +561,7 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                       <FormControl>
                         <Input
                           {...field}
-                          placeholder="e.g., CUST-00123"
+                          placeholder="e.g., IND-12345678 or CUST-00123"
                           disabled={!isBulkMeterSelected || form.formState.isSubmitting}
                           className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                         />
@@ -453,8 +580,8 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                       <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                         INST_KEY <span className="text-destructive">*</span>
                       </FormLabel>
-                      <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 uppercase tracking-wider">
-                        From Ext. System
+                      <span className="text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-2 py-0.5 rounded-full font-bold border border-slate-200 uppercase tracking-wider">
+                        Inst / Ext
                       </span>
                     </div>
                     <div className="premium-input-group">
@@ -917,40 +1044,140 @@ export function StaffIndividualCustomerEntryForm({ branchName }: StaffIndividual
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="sewerageConnection"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                      Sewerage Conn. <span className="text-destructive">*</span>
-                    </FormLabel>
-                    <div className="premium-input-group">
-                      <Droplets className="h-4 w-4" />
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value}
-                        disabled={!isBulkMeterSelected || form.formState.isSubmitting}
-                      >
+                {/* Sewerage Connection */}
+                <FormField
+                  control={form.control}
+                  name="sewerageConnection"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Sewerage Conn. <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <div className="premium-input-group">
+                        <Droplets className="h-4 w-4" />
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                          disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                              <SelectValue placeholder="Select connection" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent className="rounded-xl">
+                            {sewerageConnections.map((conn) => (
+                              <SelectItem key={conn} value={conn}>
+                                {conn}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Latitude / X Coordinate */}
+                <FormField
+                  control={form.control}
+                  name="xCoordinate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Latitude / X (Northing, ~9.0°)
+                      </FormLabel>
+                      <div className="premium-input-group">
+                        <Crosshair className="h-4 w-4" />
                         <FormControl>
-                          <SelectTrigger className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
-                            <SelectValue placeholder="Select connection" />
-                          </SelectTrigger>
+                          <Input
+                            type="number"
+                            step="any"
+                            placeholder="e.g., 9.005401"
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value === "" ? undefined : parseFloat(e.target.value)
+                              )
+                            }
+                            disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                            className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                          />
                         </FormControl>
-                        <SelectContent className="rounded-xl">
-                          {sewerageConnections.map((conn) => (
-                            <SelectItem key={conn} value={conn}>
-                              {conn}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Longitude / Y Coordinate */}
+                <FormField
+                  control={form.control}
+                  name="yCoordinate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Longitude / Y (Easting, ~38.7°)
+                      </FormLabel>
+                      <div className="premium-input-group">
+                        <Crosshair className="h-4 w-4" />
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="any"
+                            placeholder="e.g., 38.763611"
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value === "" ? undefined : parseFloat(e.target.value)
+                              )
+                            }
+                            disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                            className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                          />
+                        </FormControl>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Z Coordinate */}
+                <FormField
+                  control={form.control}
+                  name="zCoordinate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Z Coordinate (Altitude)
+                      </FormLabel>
+                      <div className="premium-input-group">
+                        <Globe className="h-4 w-4" />
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="any"
+                            placeholder="e.g., 2300"
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value === "" ? undefined : parseFloat(e.target.value)
+                              )
+                            }
+                            disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                            className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                          />
+                        </FormControl>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
             {/* ── Submit Button ─────────────────────────────────────────── */}
             <div className="pt-4 flex justify-end">

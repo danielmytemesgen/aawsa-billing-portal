@@ -470,7 +470,7 @@ export async function checkPermission(permission?: string) {
     return { ...session, permissions: perms };
   }
 
-  if (permission && !perms.includes(permission)) {
+  if (permission && !perms.includes(permission) && !perms.includes('*') && !perms.includes('all') && !perms.includes('admin')) {
     await logPermissionDenial(`Missing permission ${permission}`, permission, { ...session, permissions: perms });
     throw new Error(`Forbidden: Missing permission ${permission}`);
   }
@@ -610,7 +610,8 @@ export async function getBranchByIdAction(id: string) {
 
 export async function getAllBranchesAction() {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.BRANCHES_VIEW);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
     return await dbGetAllBranches();
   });
 }
@@ -653,16 +654,21 @@ export async function deleteBranchAction(id: string) {
 
 export async function getAllCustomersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
   return await wrap(async () => {
-    // Use checkPermission (live DB permissions) for branch isolation to reflect role changes immediately
     const session = await checkPermission();
-
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.CUSTOMERS_VIEW_ALL);
-    
-    // Reader isolation:
+
+    // Reader isolation: field readers (with routes_view_assigned or meter_readings_create perms)
+    // but without global view-all — scope to their assigned routes only
     const perms = session.permissions || [];
-    const readerId = !perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
-      ? session.id
-      : undefined;
+    const hasGlobalView = perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const hasBranchView = perms.includes('customers_view_branch') || perms.includes('staff_view_branch');
+    const isFieldReader = !hasGlobalView && !hasBranchView && (
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) ||
+      perms.includes('meter_readings_create') ||
+      perms.includes('meter_readings_create_individual') ||
+      perms.includes('meter_readings_view_individual')
+    );
+    const readerId = isFieldReader ? session.id : undefined;
 
     return await dbGetAllCustomers({ branchId, readerId, ...options });
   });
@@ -826,18 +832,21 @@ export async function getCustomerByIdAction(customerKeyNumber: string) {
 }
 export async function getAllBulkMetersAction(options?: { branchId?: string; limit?: number; offset?: number; searchTerm?: string; excludePending?: boolean; routeKey?: string; status?: string }) {
   return await wrap(async () => {
-    // Use checkPermission (live DB permissions) for branch isolation to reflect role changes immediately
     const session = await checkPermission();
-
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.BULK_METERS_VIEW_ALL);
-    
-    // Reader isolation: Use permission-based check for bulk meter view access
+
+    // Reader isolation: field readers (with routes_view_assigned or meter_readings_create perms)
+    // but without global view-all — scope to their assigned routes only
     const perms = session.permissions || [];
-    const hasBulkViewPermission = perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
-    const hasAssignedViewPermission = perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
-    const readerId = !hasBulkViewPermission && hasAssignedViewPermission
-      ? session.id
-      : undefined;
+    const hasGlobalView = perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const hasBranchView = perms.includes('bulk_meters_view_branch');
+    const isFieldReader = !hasGlobalView && !hasBranchView && (
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) ||
+      perms.includes('meter_readings_create') ||
+      perms.includes('meter_readings_create_bulk') ||
+      perms.includes('meter_readings_view_bulk')
+    );
+    const readerId = isFieldReader ? session.id : undefined;
 
     return await dbGetAllBulkMeters({ branchId, readerId, ...options });
   });
@@ -1008,10 +1017,20 @@ export async function rejectBulkMeterAction(customerKeyNumber: string) {
 
 export async function getAllStaffMembersAction() {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.STAFF_VIEW);
+    const session = await checkPermissionAny(
+      PERMISSIONS.STAFF_VIEW,
+      PERMISSIONS.STAFF_VIEW_ALL,
+      PERMISSIONS.STAFF_VIEW_BRANCH,
+      PERMISSIONS.ROUTES_MANAGE,
+      'routes_manage',
+      'routes_create',
+      'routes_update',
+      'routes_view_all',
+      'routes_view_branch'
+    );
     
     // Determine the branch isolation:
-    // If the user has 'staff_view_all', they can see everyone.
+    // If the user has 'staff_view_all' or 'routes_view_all', they can see everyone.
     // Otherwise, they are locked to their own branch.
     const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.STAFF_VIEW_ALL);
     
@@ -1128,13 +1147,18 @@ export async function getAllBillsAction(options?: { branchId?: string; excludeUn
 
     const perms = await dbGetStaffPermissions(session.id);
     
-    // Check for any billing-related permission
+    // Check for any billing-related or reader permission
     const hasBillPerm = perms.includes(PERMISSIONS.BILL_VIEW_ALL) || 
                        perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) || 
-                       perms.some((p: string) => p.startsWith('bill:'));
+                       perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) ||
+                       perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+                       perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+                       perms.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH) ||
+                       perms.some((p: string) => p.startsWith('bill:')) ||
+                       perms.includes('*') || perms.includes('all') || perms.includes('admin');
                        
     if (!hasBillPerm) {
-      throw new Error('Forbidden: Missing billing permissions');
+      return [];
     }
 
     // Apply branch filtering if they don't have global access
@@ -1387,7 +1411,13 @@ export async function runBillingCycleAction(payload: {
   allowOverlap?: boolean;
 }) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BILL_CLOSE_CYCLE);
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_CLOSE_CYCLE,
+      'billing:close_cycle',
+      'bill:close_cycle',
+      'bill:manage_all',
+      PERMISSIONS.BILL_CREATE
+    );
 
     // 1. Fetch latest data
     const bulkMeter = await dbGetBulkMeterById(payload.bulkMeterId);
@@ -1762,8 +1792,10 @@ export async function getBillByIdAction(id: string) {
     const session = await checkPermission(); 
     
     // Check if user has global read access based on new bill/dashboard patterns
+    const sessPerms: string[] = session.permissions || [];
+    const sessHasPerm = (p: string) => sessPerms.includes('*') || sessPerms.includes('admin') || sessPerms.includes('all') || sessPerms.includes(p);
     let viewAllPermission: string | undefined = undefined;
-    if (session.permissions?.includes(PERMISSIONS.BILL_VIEW_ALL) || session.permissions?.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+    if (sessHasPerm(PERMISSIONS.BILL_VIEW_ALL) || sessHasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
       viewAllPermission = PERMISSIONS.BILL_VIEW_ALL; // Use as a proxy token to allow global access in the helper
     }
 
@@ -2042,6 +2074,11 @@ export async function correctBillAction(id: string, reason: string) {
       billData.notes = `Correction of ${originalBill.bill_number}. Reason: ${reason}`;
 
       const replacementBill = await dbCreateBill(billData, client);
+      if (replacementBill?.id) {
+        const billKey = generateBillKey(replacementBill.id);
+        await dbUpdateBill(replacementBill.id, { BILLKEY: billKey }, client);
+        replacementBill.BILLKEY = billKey;
+      }
 
       await dbCreateBillWorkflowLog({
         bill_id: id,
@@ -2810,9 +2847,9 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         month: monthYear
       }, client);
 
-      const chargeGroup = bulkMeter.charge_group || bulkMeter.customerType || 'Non-domestic';
-      const sewerageConn = bulkMeter.sewerageConnection || bulkMeter.sewerage_connection || 'No';
-      const meterSize = Number(bulkMeter.meterSize || 0.5);
+      const chargeGroup = bulkMeter?.charge_group || bulkMeter?.customerType || bulkBill.snapshot_data?.chargeGroup || 'Non-domestic';
+      const sewerageConn = bulkMeter?.sewerageConnection || bulkMeter?.sewerage_connection || bulkBill.snapshot_data?.sewerageConnection || 'No';
+      const meterSize = Number(bulkMeter?.meterSize || 0.5);
 
       const bulkCalc = await calculateBill(
         bulkDiffUsage,
@@ -2894,7 +2931,8 @@ export async function getAllPaymentsAction() {
 
     const perms: string[] = session.permissions || [];
 
-    const hasPerm = perms.includes(PERMISSIONS.PAYMENTS_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
+    const hasPerm = perms.includes('*') || perms.includes('admin') || perms.includes('all') ||
+      perms.includes(PERMISSIONS.PAYMENTS_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     if (!hasPerm) {
       throw new Error('Forbidden: No payment permissions');
@@ -3043,7 +3081,8 @@ export async function getAllNotificationsAction() {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms: string[] = session.permissions || [];
-    const hasPerm = perms.includes(PERMISSIONS.NOTIFICATIONS_VIEW) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
+    const hasPerm = perms.includes('*') || perms.includes('admin') || perms.includes('all') ||
+      perms.includes(PERMISSIONS.NOTIFICATIONS_VIEW) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
 
     if (!hasPerm) {
       throw new Error('Forbidden: No notification permissions');
@@ -3093,7 +3132,8 @@ export async function createNotificationAction(notification: NotificationInsert)
 
 export async function getAllRolesAction() {
   return await wrap(async () => {
-    await checkPermission(PERMISSIONS.ROLES_VIEW);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
     return await dbGetAllRoles();
   });
 }
@@ -3340,7 +3380,8 @@ export async function calculateBillAction(
   return await wrap(async () => {
     const session = await checkPermission();
     const perms = session.permissions || [];
-    const hasPerm = perms.includes(PERMISSIONS.BILL_CREATE) ||
+    const hasPerm = perms.includes('*') || perms.includes('admin') || perms.includes('all') ||
+      perms.includes(PERMISSIONS.BILL_CREATE) ||
       perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
       perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
       perms.includes(PERMISSIONS.TARIFFS_VIEW) ||
@@ -3553,21 +3594,26 @@ export async function getAllRoutesAction(options?: { branchId?: string }) {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
-    const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || (session?.role || '').toLowerCase() === 'admin';
+    const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin');
 
     if (!perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) && 
         !perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) && 
         !perms.includes(PERMISSIONS.ROUTES_VIEW_BRANCH) &&
+        !perms.includes('routes_view') &&
         !perms.includes('routes_manage') &&
+        !perms.includes('routes_create') &&
+        !perms.includes('routes_update') &&
+        !perms.includes('routes_delete') &&
         !perms.includes('meter_readings_create_bulk') &&
         !perms.includes('meter_readings_create_individual') &&
         !perms.includes('meter_readings_create') &&
-        !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
+        !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW) &&
+        !isSuperAdmin) {
       throw new Error('Forbidden: Missing route view permissions');
     }
     
     const canViewAll = perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) || isSuperAdmin;
-    const canViewBranch = perms.includes(PERMISSIONS.ROUTES_VIEW_BRANCH) || perms.includes('routes_manage');
+    const canViewBranch = perms.includes(PERMISSIONS.ROUTES_VIEW_BRANCH) || perms.includes('routes_manage') || perms.includes('routes_view');
 
     // Determine branch isolation:
     const branchId = getEffectiveBranchId(session, options?.branchId, PERMISSIONS.ROUTES_VIEW_ALL);
@@ -3581,46 +3627,82 @@ export async function getAllRoutesAction(options?: { branchId?: string }) {
 
 export async function createRouteAction(route: RouteInsert) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
+    const session = await checkPermissionAny(
+      PERMISSIONS.ROUTES_MANAGE,
+      'routes_create',
+      'routes_manage'
+    );
 
-    // Map branchId to branch_id if needed
-    if (!route.branch_id && (route as any).branchId) {
-      route.branch_id = (route as any).branchId;
-    }
-    
+    const dbPayload: any = {
+      route_key: (route as any).route_key || (route as any).routeKey,
+      branch_id: (route as any).branch_id || (route as any).branchId || null,
+      reader_id: (route as any).reader_id || (route as any).readerId || null,
+      description: (route as any).description || null,
+      status: (route as any).status || 'Active',
+    };
+
     // Enforce branch creation rules if lacking global oversight
-    if (!session.permissions?.includes('routes_view_all') && session.branchId && session.branchId !== 'all') {
-      route.branch_id = session.branchId;
+    const routePerms: string[] = session.permissions || [];
+    const hasRoutesGlobal = routePerms.includes('*') || routePerms.includes('admin') || routePerms.includes('all') || routePerms.includes('routes_view_all');
+    if (!hasRoutesGlobal && session.branchId && session.branchId !== 'all') {
+      dbPayload.branch_id = session.branchId;
     }
 
-    const result = await dbCreateRoute(route);
-    await logSecurityEventAction({ event: 'Create Route', details: { route } });
+    const result = await dbCreateRoute(dbPayload);
+    await logSecurityEventAction({ event: 'Create Route', details: { route: dbPayload } });
     return result;
   });
 }
 
 export async function updateRouteAction(routeKey: string, routeUpdates: RouteUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
+    const session = await checkPermissionAny(
+      PERMISSIONS.ROUTES_MANAGE,
+      'routes_update',
+      'routes_manage'
+    );
     const existingRoute = await dbGetRouteByKey(routeKey);
     if (existingRoute) {
       verifyEntityBranchAccess(existingRoute.branch_id, session, PERMISSIONS.ROUTES_VIEW_ALL, 'route');
     }
+
+    const dbUpdates: any = {};
+    if ((routeUpdates as any).route_key || (routeUpdates as any).routeKey) {
+      dbUpdates.route_key = (routeUpdates as any).route_key || (routeUpdates as any).routeKey;
+    }
+    if ((routeUpdates as any).branch_id !== undefined || (routeUpdates as any).branchId !== undefined) {
+      dbUpdates.branch_id = (routeUpdates as any).branch_id !== undefined ? (routeUpdates as any).branch_id : (routeUpdates as any).branchId;
+    }
+    if ((routeUpdates as any).reader_id !== undefined || (routeUpdates as any).readerId !== undefined) {
+      dbUpdates.reader_id = (routeUpdates as any).reader_id !== undefined ? (routeUpdates as any).reader_id : (routeUpdates as any).readerId;
+    }
+    if ((routeUpdates as any).description !== undefined) {
+      dbUpdates.description = (routeUpdates as any).description;
+    }
+    if ((routeUpdates as any).status !== undefined) {
+      dbUpdates.status = (routeUpdates as any).status;
+    }
+
     // Prevent changing branch_id if lacking global route view
     const perms = session.permissions || [];
     const hasGlobalView = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.ROUTES_VIEW_ALL);
-    if (!hasGlobalView && (routeUpdates as any).branch_id && existingRoute && (routeUpdates as any).branch_id !== existingRoute.branch_id) {
-      (routeUpdates as any).branch_id = existingRoute.branch_id;
+    if (!hasGlobalView && dbUpdates.branch_id && existingRoute && dbUpdates.branch_id !== existingRoute.branch_id) {
+      dbUpdates.branch_id = existingRoute.branch_id;
     }
-    const result = await dbUpdateRoute(routeKey, routeUpdates);
-    await logSecurityEventAction({ event: 'Update Route', details: { routeKey, routeUpdates } });
+
+    const result = await dbUpdateRoute(routeKey, dbUpdates);
+    await logSecurityEventAction({ event: 'Update Route', details: { routeKey, routeUpdates: dbUpdates } });
     return result;
   });
 }
 
 export async function deleteRouteAction(routeKey: string) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.ROUTES_MANAGE);
+    const session = await checkPermissionAny(
+      PERMISSIONS.ROUTES_MANAGE,
+      'routes_delete',
+      'routes_manage'
+    );
     const existingRoute = await dbGetRouteByKey(routeKey);
     if (existingRoute) {
       verifyEntityBranchAccess(existingRoute.branch_id, session, PERMISSIONS.ROUTES_VIEW_ALL, 'route');
@@ -3742,12 +3824,12 @@ export async function revokeCustomerSessionAction(sessionId: string, reason: 're
     let authorized = false;
     if (staffSession && staffSession.id) {
       const perms = await dbGetStaffPermissions(staffSession.id);
-      if (perms.includes(PERMISSIONS.SETTINGS_MANAGE) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+      const wildcard = perms.includes('*') || perms.includes('admin') || perms.includes('all');
+      if (wildcard || perms.includes(PERMISSIONS.SETTINGS_MANAGE) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
         authorized = true;
       }
     }
     if (!authorized) {
-      // Customer self-revoke: verify the session being revoked exists.
       const target = await dbGetCustomerSession(sessionId);
       if (target) authorized = true;
     }
@@ -3772,7 +3854,9 @@ export async function revokeUserSessionAction(userType: 'staff' | 'customer', se
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
-    if (!perms.includes(PERMISSIONS.SETTINGS_MANAGE) && !perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+    const canRevoke = perms.includes('*') || perms.includes('admin') || perms.includes('all') ||
+      perms.includes(PERMISSIONS.SETTINGS_MANAGE) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+    if (!canRevoke) {
       throw new Error('Forbidden: Missing permission to revoke sessions');
     }
 
@@ -4022,13 +4106,29 @@ export async function getBillsByMonthAction(monthYear: string, branchId?: string
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
+    const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin');
 
-    if (!perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) && 
-        !perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH) && 
-        !perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)) {
-      throw new Error('Forbidden: Missing reports view permissions');
+    const canView = perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+      perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_DRAFTS) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_PENDING) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_APPROVED) ||
+      perms.includes(PERMISSIONS.BILL_CREATE) ||
+      perms.includes(PERMISSIONS.BILL_APPROVE) ||
+      perms.includes(PERMISSIONS.BILL_POST) ||
+      perms.includes('bill:manage_all') ||
+      perms.includes('bill:view_branch') ||
+      perms.includes('bill:view_drafts') ||
+      isSuperAdmin;
+
+    if (!canView) {
+      throw new Error('Forbidden: Missing bill or report view permissions');
     }
-    const hasManageAll = session.permissions?.includes('bill:manage_all');
+    
+    const hasManageAll = perms.includes('*') || perms.includes('admin') || perms.includes('all') || perms.includes('bill:manage_all') || isSuperAdmin;
     const effectiveBranchId = !hasManageAll ? session.branchId : branchId;
 
     return await dbGetBillsWithBulkMeterInfoByMonth(monthYear, effectiveBranchId);
@@ -4091,7 +4191,13 @@ export async function startBillingJobAction(payload: {
   allowOverlap?: boolean;
 }) {
   return await wrap(async () => {
-    await checkPermission('billing:close_cycle');
+    await checkPermissionAny(
+      PERMISSIONS.BILL_CLOSE_CYCLE,
+      'billing:close_cycle',
+      'bill:close_cycle',
+      'bill:manage_all',
+      PERMISSIONS.BILL_CREATE
+    );
 
     // 1. Count total items to process
     let totalItems = 0;
@@ -4184,7 +4290,13 @@ export async function startBillingJobAction(payload: {
 
 export async function processBillingJobChunkAction(jobId: string, chunkSize: number = 200) {
   return await wrap(async () => {
-    await checkPermission('billing:close_cycle');
+    await checkPermissionAny(
+      PERMISSIONS.BILL_CLOSE_CYCLE,
+      'billing:close_cycle',
+      'bill:close_cycle',
+      'bill:manage_all',
+      PERMISSIONS.BILL_CREATE
+    );
 
     const job = await dbGetBillingJob(jobId);
     if (!job) throw new Error("Job not found");
@@ -4556,9 +4668,7 @@ export async function getUnsettledBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const roleLower = session.role?.toLowerCase() || '';
-    const isGlobalAdmin = ['admin', 'super admin', 'head office'].includes(roleLower) && !session.branchId;
-    const hasGlobalAccess = isGlobalAdmin || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all');
+    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') || perms.includes('bill:view_unpaid') || perms.includes('reports_view');
 
     // If user doesn't have global access, they are strictly restricted to their own branch
     const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
@@ -4586,9 +4696,7 @@ export async function getPaidBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const roleLower = session.role?.toLowerCase() || '';
-    const isGlobalAdmin = ['admin', 'super admin', 'head office'].includes(roleLower) && !session.branchId;
-    const hasGlobalAccess = isGlobalAdmin || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all');
+    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') || perms.includes('bill:view_paid') || perms.includes('reports_view');
 
     // If user doesn't have global access, they are strictly restricted to their own branch
     const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
@@ -4615,9 +4723,7 @@ export async function getAllSentBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const roleLower = session.role?.toLowerCase() || '';
-    const isGlobalAdmin = ['admin', 'super admin', 'head office'].includes(roleLower) && !session.branchId;
-    const hasGlobalAccess = isGlobalAdmin || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all');
+    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') || perms.includes('reports_view');
 
     // If user doesn't have global access, they are strictly restricted to their own branch
     const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
@@ -4634,10 +4740,7 @@ export async function getAllSentBillsAction(params: {
 
 export async function archiveOldRecordsAction(monthsThreshold: number = 36) {
   try {
-    const session = await checkPermission();
-    if (session.role?.toLowerCase() !== 'admin') {
-      throw new Error('Forbidden: Only administrators can archive old records.');
-    }
+    const session = await checkPermission(PERMISSIONS.SETTINGS_MANAGE);
     const result = await dbArchiveOldRecords(monthsThreshold);
     await logSecurityEventAction({
       event: 'Archive Old Records',
@@ -4653,9 +4756,9 @@ export async function archiveOldRecordsAction(monthsThreshold: number = 36) {
 export async function getSystemStatsAction() {
   try {
     const session = await checkPermission();
-    const perms = await dbGetStaffPermissions(session.id!);
-    const isAdmin = session.role?.toLowerCase() === 'admin';
-    if (!isAdmin && !perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) && !perms.includes(PERMISSIONS.SETTINGS_MANAGE)) {
+    const perms = session.permissions || await dbGetStaffPermissions(session.id!);
+    const hasAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || perms.includes(PERMISSIONS.SETTINGS_MANAGE);
+    if (!hasAccess) {
       throw new Error('Forbidden: Missing permission to view system stats.');
     }
     const stats = await dbGetSystemStats();
@@ -4668,11 +4771,7 @@ export async function getSystemStatsAction() {
 
 export async function runDataAuditAction() {
   return await wrap(async () => {
-    const session = await checkPermission();
-    if (session.role?.toLowerCase() !== 'admin') {
-      throw new Error('Forbidden: Only administrators can run data integrity audits.');
-    }
-
+    const session = await checkPermission(PERMISSIONS.SETTINGS_MANAGE);
     const branchId = getEffectiveBranchId(session, undefined, 'dashboard_view_all');
     const result = await dbRunDataAudit(branchId);
     
@@ -5040,12 +5139,30 @@ export async function batchImportBulkMetersAction(rows: any[]) {
     });
 
     const ALLOWED_BULK_COLS = new Set([
-      "customerKeyNumber", "INST_KEY", "name", "contractNumber", "meterSize",
-      "METER_KEY", "previousReading", "currentReading", "month", "specificArea",
-      "subCity", "woreda", "branch_id", "NUMBER_OF_DIALS", "status",
-      "paymentStatus", "charge_group", "ROUTE_KEY", "sewerage_connection",
-      "ordinal", "phoneNumber", "roundKey"
-    ]);
+  "customerKeyNumber",
+  "INST_KEY",
+  "name",
+  "contractNumber",
+  "meterSize",
+  "METER_KEY",
+  "previousReading",
+  "currentReading",
+  "month",
+  "specificArea",
+  "subCity",
+  "woreda",
+  "branch_id",
+  "NUMBER_OF_DIALS",
+  "status",
+  "paymentStatus",
+  "charge_group",
+  "ROUTE_KEY",
+  "ROUND_KEY",
+  "sewerage_connection",
+  "ordinal",
+  "phoneNumber",
+  "outStandingbill"
+]);
 
     const preparedRows = rows.map((row: any) => {
       const r = { ...row };
@@ -5056,6 +5173,7 @@ export async function batchImportBulkMetersAction(rows: any[]) {
       const instKey = r.INST_KEY || r.instKey || `INST-${generateRandomDigits(6)}`;
       const meterKey = r.METER_KEY || r.meterNumber || r.meter_key;
       const routeKey = r.ROUTE_KEY || r.routeKey || r.route_key || null;
+      const roundKey = r.ROUND_KEY || r.roundKey || r.round_key || null;
       const spatial = { xCoordinate: r.xCoordinate, yCoordinate: r.yCoordinate, zCoordinate: r.zCoordinate };
 
       const normalizedRow: Record<string, any> = {
@@ -5077,9 +5195,10 @@ export async function batchImportBulkMetersAction(rows: any[]) {
         paymentStatus: r.paymentStatus || 'Unpaid',
         charge_group: r.charge_group || r.chargeGroup || null,
         ROUTE_KEY: routeKey,
+        ROUND_KEY: roundKey,
         sewerage_connection: r.sewerage_connection || r.sewerageConnection || 'No',
         ordinal: r.ordinal !== undefined ? Number(r.ordinal) || null : null,
-        phoneNumber: normalizePhoneNumber(r.phoneNumber),
+        phoneNumber: normalizePhoneNumber(r.phoneNumber || r.phone_number || r.PHONE_NUMBER),
       };
 
       // Strip keys not in the allowed database columns
@@ -5232,13 +5351,32 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
     });
 
     const ALLOWED_IND_COLS = new Set([
-      "customerKeyNumber", "INST_KEY", "name", "contractNumber", "customerType",
-      "bookNumber", "ordinal", "meterSize", "METER_KEY", "previousReading",
-      "currentReading", "month", "assignedBulkMeterId", "branch_id",
-      "NUMBER_OF_DIALS", "status", "paymentStatus", "ROUTE_KEY", "roundKey",
-      "calculatedBill", "outStandingbill", "sewerageConnection", "specificArea",
-      "subCity", "woreda", "phoneNumber"
-    ]);
+  "customerKeyNumber",
+  "INST_KEY",
+  "name",
+  "contractNumber",
+  "customerType",
+  "bookNumber",
+  "ordinal",
+  "meterSize",
+  "METER_KEY",
+  "previousReading",
+  "currentReading",
+  "month",
+  "assignedBulkMeterId",
+  "branch_id",
+  "NUMBER_OF_DIALS",
+  "status",
+  "paymentStatus",
+  "ROUTE_KEY",
+  "ROUND_KEY",
+  "calculatedBill",
+  "sewerageConnection",
+  "specificArea",
+  "subCity",
+  "woreda",
+  "phone_number"
+]);
 
     const preparedRows = rows.map((row: any) => {
       const r = { ...row };
@@ -5270,14 +5408,13 @@ export async function batchImportIndividualCustomersAction(rows: any[]) {
         status: 'Pending Approval',
         paymentStatus: r.paymentStatus || 'Unpaid',
         ROUTE_KEY: routeKey,
-        roundKey: r.roundKey || null,
+        ROUND_KEY: r.ROUND_KEY || r.roundKey || r.round_key || null,
         calculatedBill: r.calculatedBill !== undefined ? Number(r.calculatedBill) || 0 : 0,
-        outStandingbill: r.outStandingbill !== undefined ? Number(r.outStandingbill) || 0 : 0,
         sewerageConnection: r.sewerageConnection || r.sewerage_connection || 'No',
         specificArea: r.specificArea || null,
         subCity: r.subCity || null,
         woreda: r.woreda || null,
-        phoneNumber: normalizePhoneNumber(r.phoneNumber),
+        phone_number: normalizePhoneNumber(r.phoneNumber || r.phone_number || r.PHONE_NUMBER),
       };
 
       for (const k of Object.keys(normalizedRow)) {

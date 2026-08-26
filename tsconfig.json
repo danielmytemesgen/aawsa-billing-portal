@@ -42,6 +42,9 @@
     "aawsa-billing-portal-main",
     "scripts",
     "archives",
-    "database"
+    "database",
+    "original_*",
+    "**/original_*/**",
+    "**/.original_*/**"
   ]
 }

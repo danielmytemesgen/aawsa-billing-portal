@@ -50,9 +50,14 @@ Thumbs.db
 # Project Duplicates & Dumps
 /aawsa-billing-portal-main/
 *.sql
-<<<<<<< Updated upstream
+# Local temp & certificates
+certificates/
+*.bak
+test-*.js
+test-*.ts
+inspect-*.js
+pm2_csv_logs.txt
 .freebuff/
-=======
-
 y/
->>>>>>> Stashed changes
+
+

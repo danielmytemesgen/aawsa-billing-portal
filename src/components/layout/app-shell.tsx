@@ -123,9 +123,10 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
 
   let dashboardHref = "/";
   if (user) {
-    const role = user.role.toLowerCase().trim();
+    const role = (user.role || '').toLowerCase().trim();
     const permissions = user.permissions || [];
-    const isAdminArea = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+    const hasPerm = (p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p);
+    const isAdminArea = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL) || role === 'admin' || role === 'system administrator';
 
     if (isAdminArea) {
       dashboardHref = '/admin/dashboard';

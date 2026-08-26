@@ -34,23 +34,19 @@ export const baseIndividualCustomerDataSchema = z.object({
   ordinal: z.coerce.number().int().min(1, { message: "Ordinal must be a positive integer." }),
   NUMBER_OF_DIALS: z.coerce.number().int().min(1, { message: "Number of Dials must be a positive integer." }).optional(),
   meterSize: z.coerce.number().positive({ message: "Meter Size must be a positive number (inch)." }),
-  // Relaxed regex: prefix of 1+ alphanumeric/special chars, dash, then digits
-  meterNumber: z.string().min(1, { message: "METER_KEY is required." }).regex(
-    /^[A-Za-z0-9&%!]{1,}-\d+$/,
-    { message: "METER_KEY must be in format: PREFIX-NUMBER (e.g., MET-2822965, METER-123, A&M-12345)" }
-  ),
+  meterNumber: z.string().trim().min(1, { message: "METER_KEY is required." }),
   previousReading: z.coerce.number().min(0, { message: "Previous Reading cannot be negative." }),
   currentReading: z.coerce.number().min(0, { message: "Current Reading cannot be negative." }),
-  // Validate actual month range (01-12), not just format
   month: z.string()
     .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format (e.g., 2024-03)." })
     .refine(val => {
-      const month = parseInt(val.split('-')[1], 10);
+      const parts = val.split('-');
+      const month = parseInt(parts[1], 10);
       return month >= 1 && month <= 12;
     }, { message: "Month must be between 01 and 12." })
     .refine(val => {
       const year = parseInt(val.split('-')[0], 10);
-      return year >= 2000 && year <= new Date().getFullYear() + 1;
+      return year >= 2000 && year <= new Date().getFullYear() + 2;
     }, { message: "Year must be between 2000 and next year." }),
   specificArea: z.string().trim().min(2, { message: "Specific Area must be at least 2 characters." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
@@ -64,14 +60,9 @@ export const baseIndividualCustomerDataSchema = z.object({
     .optional(),
   branchId: z.string().optional().describe("The ID of the branch this customer belongs to."),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
-  // Coordinates validated for Addis Ababa/Ethiopia region
-  xCoordinate: z.coerce.number()
-    .refine(v => v >= 3 && v <= 15, { message: "Latitude appears out of Ethiopia range (3–15°N)." })
-    .optional(),
-  yCoordinate: z.coerce.number()
-    .refine(v => v >= 33 && v <= 48, { message: "Longitude appears out of Ethiopia range (33–48°E)." })
-    .optional(),
-  zCoordinate: z.coerce.number().optional(),
+  xCoordinate: z.preprocess((val) => (val === "" || val === null || val === undefined) ? undefined : typeof val === "string" ? parseFloat(val) : val, z.number().optional()),
+  yCoordinate: z.preprocess((val) => (val === "" || val === null || val === undefined) ? undefined : typeof val === "string" ? parseFloat(val) : val, z.number().optional()),
+  zCoordinate: z.preprocess((val) => (val === "" || val === null || val === undefined) ? undefined : typeof val === "string" ? parseFloat(val) : val, z.number().optional()),
 });
 
 export const individualCustomerDataEntrySchema = baseIndividualCustomerDataSchema.refine(data => data.currentReading >= data.previousReading, {
@@ -88,23 +79,23 @@ export const baseBulkMeterDataSchema = z.object({
   contractNumber: z.string().min(1, { message: "Contract Number is required." }),
   meterSize: z.coerce.number().positive({ message: "Meter Size must be a positive number (inch)." }),
   NUMBER_OF_DIALS: z.coerce.number().int().min(1, { message: "Number of Dials must be a positive integer." }).optional(),
-  meterNumber: z.string().min(1, { message: "Meter Number is required." }),
+  meterNumber: z.string().trim().min(1, { message: "Meter Number is required." }),
   previousReading: z.coerce.number().min(0, { message: "Previous Reading cannot be negative." }),
   currentReading: z.coerce.number().min(0, { message: "Current Reading cannot be negative." }),
   month: z.string()
     .regex(/^\d{4}-\d{2}$/, { message: "Month must be in YYYY-MM format (e.g., 2024-03)." })
     .refine(val => {
-      const month = parseInt(val.split('-')[1], 10);
+      const parts = val.split('-');
+      const month = parseInt(parts[1], 10);
       return month >= 1 && month <= 12;
     }, { message: "Month must be between 01 and 12." })
     .refine(val => {
       const year = parseInt(val.split('-')[0], 10);
-      return year >= 2000 && year <= new Date().getFullYear() + 1;
+      return year >= 2000 && year <= new Date().getFullYear() + 2;
     }, { message: "Year must be between 2000 and next year." }),
   specificArea: z.string().trim().min(2, { message: "Specific Area must be at least 2 characters." }),
   subCity: z.string().min(1, { message: "Sub-City is required." }),
   woreda: z.string().min(1, { message: "Woreda is required." }),
-  // Ethiopian phone: 9xx, 09xx, 07xx, +2519xx, +2517xx, or 2519xx/2517xx
   phoneNumber: z.string()
     .regex(/^(?:\+251|251|0)?[79]\d{8}$/, { message: "Phone must be Ethiopian format: 9xxxxxxxx, 09xxxxxxxx, 07xxxxxxxx, or +251xxxxxxxxx" })
     .optional()
@@ -116,14 +107,9 @@ export const baseBulkMeterDataSchema = z.object({
   routeKey: z.string().optional(),
   ordinal: z.coerce.number().int().min(1, { message: "Ordinal must be a positive integer." }).optional(),
   faultCode: z.string().optional().describe("Fault code if the meter is faulty"),
-  // Coordinates validated for Ethiopia region
-  xCoordinate: z.coerce.number()
-    .refine(v => v >= 3 && v <= 15, { message: "Latitude appears out of Ethiopia range (3–15°N)." })
-    .optional(),
-  yCoordinate: z.coerce.number()
-    .refine(v => v >= 33 && v <= 48, { message: "Longitude appears out of Ethiopia range (33–48°E)." })
-    .optional(),
-  zCoordinate: z.coerce.number().optional(),
+  xCoordinate: z.preprocess((val) => (val === "" || val === null || val === undefined) ? undefined : typeof val === "string" ? parseFloat(val) : val, z.number().optional()),
+  yCoordinate: z.preprocess((val) => (val === "" || val === null || val === undefined) ? undefined : typeof val === "string" ? parseFloat(val) : val, z.number().optional()),
+  zCoordinate: z.preprocess((val) => (val === "" || val === null || val === undefined) ? undefined : typeof val === "string" ? parseFloat(val) : val, z.number().optional()),
 });
 
 export const bulkMeterDataEntrySchema = baseBulkMeterDataSchema.refine(data => data.currentReading >= data.previousReading, {
@@ -133,4 +119,5 @@ export const bulkMeterDataEntrySchema = baseBulkMeterDataSchema.refine(data => d
 
 export type BulkMeterDataEntryFormValues = z.infer<typeof bulkMeterDataEntrySchema>;
 
-export type MockBulkMeter = { id: string; name: string };
+export type MockBulkMeter = { id: string; name: string; branchId?: string };
+

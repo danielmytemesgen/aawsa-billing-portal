@@ -27,6 +27,7 @@ import type { BulkMeter, BulkMeterStatus } from "../bulk-meters/bulk-meter-types
 import type { IndividualCustomer, IndividualCustomerStatus } from "../individual-customers/individual-customer-types";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
+import { format } from "date-fns";
 import type { StaffMember } from "../staff-management/staff-types";
 
 const bulkMeterCsvHeaders = ["name", "contractNumber", "meterSize", "NUMBER_OF_DIALS", "meterNumber", "previousReading", "currentReading", "month", "specificArea", "subCity", "woreda", "phoneNumber", "chargeGroup", "sewerageConnection", "xCoordinate", "yCoordinate", "zCoordinate", "routeKey", "ordinal", "branchId"];
@@ -136,17 +137,87 @@ export default function AdminDataEntryPage() {
     if (!pendingTemplate) return;
     const { headers, fileName } = pendingTemplate;
     const branchIdToUse = selectedBranchId || currentUser?.branchId || '';
-    // Build a sample row with the selected branchId pre-filled
-    const sampleRow = headers.map(h => {
-      if (h.toLowerCase() === 'branchid') return branchIdToUse;
-      return '';
-    });
-    // Build comment rows listing all valid branch IDs
+    const currentMonth = format(new Date(), 'yyyy-MM');
+    const existingBMs = getBulkMeters();
+    const sampleBulkMeterKey = existingBMs.length > 0 ? existingBMs[0].customerKeyNumber : 'BM-12345678';
+
+    let sampleRow: string[] = [];
+
+    if (fileName.includes('bulk_meter')) {
+      // Sample row for Bulk Meter Template
+      sampleRow = headers.map(h => {
+        const norm = h.toLowerCase();
+        if (norm === 'branchid') return branchIdToUse;
+        if (norm === 'name') return 'Commercial Center Bulk Meter';
+        if (norm === 'contractnumber') return 'CNT-2024-001';
+        if (norm === 'metersize') return '2';
+        if (norm.includes('dial')) return '5';
+        if (norm === 'meternumber') return 'MET-2822965';
+        if (norm === 'previousreading') return '100.00';
+        if (norm === 'currentreading') return '150.00';
+        if (norm === 'month') return currentMonth;
+        if (norm === 'specificarea') return 'Bole Medhanealem';
+        if (norm === 'subcity') return 'Bole';
+        if (norm === 'woreda') return '03';
+        if (norm === 'phonenumber') return '0911223344';
+        if (norm === 'chargegroup') return 'Non-domestic';
+        if (norm === 'sewerageconnection') return 'No';
+        if (norm === 'xcoordinate') return '9.005401';
+        if (norm === 'ycoordinate') return '38.763611';
+        if (norm === 'zcoordinate') return '2300';
+        if (norm === 'routekey') return 'RT-01';
+        if (norm === 'ordinal') return '1';
+        return '';
+      });
+    } else {
+      // Sample row for Individual Customer Template
+      sampleRow = headers.map(h => {
+        const norm = h.toLowerCase();
+        if (norm === 'branchid') return branchIdToUse;
+        if (norm === 'name') return 'Abebe Bekele';
+        if (norm === 'customerkeynumber') return 'IND-12345678';
+        if (norm === 'instkey') return 'INST-123456';
+        if (norm === 'contractnumber') return 'CNT-2024-101';
+        if (norm === 'customertype') return 'Domestic';
+        if (norm === 'booknumber') return 'BK-01';
+        if (norm === 'ordinal') return '1';
+        if (norm === 'metersize') return '0.5';
+        if (norm.includes('dial')) return '5';
+        if (norm === 'meternumber') return 'MET-8899001';
+        if (norm === 'previousreading') return '12.00';
+        if (norm === 'currentreading') return '25.50';
+        if (norm === 'month') return currentMonth;
+        if (norm === 'specificarea') return 'Bole Medhanealem';
+        if (norm === 'subcity') return 'Bole';
+        if (norm === 'woreda') return '03';
+        if (norm === 'sewerageconnection') return 'Yes';
+        if (norm === 'assignedbulkmeterid') return sampleBulkMeterKey;
+        if (norm === 'xcoordinate') return '9.005401';
+        if (norm === 'ycoordinate') return '38.763611';
+        if (norm === 'zcoordinate') return '2300';
+        return '';
+      });
+    }
+
+    // Build reference comments
     const branchComments = allBranches.map(b => `# Branch: ${b.name} | ID: ${b.id}`).join('\n');
+    const bulkMeterComments = fileName.includes('individual')
+      ? existingBMs.slice(0, 10).map(bm => `# Valid Bulk Meter: ${bm.name} | Key: ${bm.customerKeyNumber}`).join('\n')
+      : '';
+
+    const commentsHeader = [
+      '# AAWSA Bulk Billing Portal - CSV Import Template',
+      '# Lines starting with # are reference guides and will be skipped during import.',
+      branchComments ? `# -- Active Branches --\n${branchComments}` : '',
+      bulkMeterComments ? `# -- Sample Bulk Meter Keys (for assignedBulkMeterId) --\n${bulkMeterComments}` : '',
+      '# ----------------------------------------------------'
+    ].filter(Boolean).join('\n');
+
     const csvString =
-      (branchComments ? branchComments + '\n' : '') +
+      commentsHeader + '\n' +
       headers.join(',') + '\n' +
       sampleRow.join(',') + '\n';
+
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     if (link.download !== undefined) {

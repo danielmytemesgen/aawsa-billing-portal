@@ -199,7 +199,15 @@ export default function SentBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
 
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+  const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+    || hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS)
+    || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_SENT_BILLS)
+    || hasPermission(PERMISSIONS.BILL_SEND)
+    || hasPermission(PERMISSIONS.BILL_POST)
+    || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+  if (!canAccess) {
     return (
       <div className="p-8">
         <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50 text-red-900">

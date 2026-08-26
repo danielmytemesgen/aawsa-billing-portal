@@ -129,7 +129,7 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
         FROM
             staff_members sm
         LEFT JOIN
-            roles r ON sm.role_id = r.id
+            roles r ON (sm.role_id = r.id OR LOWER(r.role_name) = LOWER(sm.role))
         LEFT JOIN
             role_permissions rp ON r.id = rp.role_id
         LEFT JOIN
@@ -164,14 +164,14 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
 export const dbGetStaffPermissions = async (staffId: string) => {
     const sql = `
         SELECT
-            STRING_AGG(p.name, ',') AS permissions
+            STRING_AGG(DISTINCT p.name, ',') AS permissions
         FROM
             staff_members sm
-        JOIN
-            roles r ON sm.role_id = r.id
-        JOIN
+        LEFT JOIN
+            roles r ON (sm.role_id = r.id OR LOWER(r.role_name) = LOWER(sm.role))
+        LEFT JOIN
             role_permissions rp ON r.id = rp.role_id
-        JOIN
+        LEFT JOIN
             permissions p ON rp.permission_id = p.id
         WHERE
             sm.id = $1
@@ -256,8 +256,9 @@ export const dbGetAllCustomers = async (options?: { branchId?: string; readerId?
     }
 
     if (options?.routeKey) {
-        sql += ` AND bm."ROUTE_KEY" = $${paramIndex++}`;
+        sql += ` AND (ic."ROUTE_KEY" = $${paramIndex} OR bm."ROUTE_KEY" = $${paramIndex})`;
         params.push(options.routeKey);
+        paramIndex++;
     }
 
     if (options?.excludePending) {
@@ -459,6 +460,14 @@ export const dbCreateIndividualCustomer = async (customer: any, client?: any) =>
     if (cleanCust.routeKey !== undefined) {
         cleanCust.ROUTE_KEY = cleanCust.routeKey;
         delete cleanCust.routeKey;
+    }
+    if (cleanCust.roundKey !== undefined) {
+        cleanCust.ROUND_KEY = cleanCust.roundKey;
+        delete cleanCust.roundKey;
+    }
+    if (cleanCust.phoneNumber !== undefined) {
+        cleanCust.phone_number = cleanCust.phoneNumber;
+        delete cleanCust.phoneNumber;
     }
 
     const keys = Object.keys(cleanCust);
@@ -823,15 +832,17 @@ export const dbGetBillsWithBulkMeterInfoByMonth = async (monthYear: string, bran
         return await query(`
             SELECT b.*, bm.name, bm."phoneNumber", bm."contractNumber", bm."METER_KEY" as "meterNumber", bm."meterSize", bm."specificArea", bm."subCity", bm.woreda, bm.charge_group, bm.sewerage_connection
             FROM bills b
-            JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
-            WHERE b.month_year = $1 AND b.deleted_at IS NULL AND bm.branch_id = $2
+            LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+            WHERE b.month_year = $1 AND b.deleted_at IS NULL AND (b.branch_id = $2 OR bm.branch_id = $2)
+            ORDER BY b.created_at DESC
         `, [monthYear, branchId]);
     }
     return await query(`
       SELECT b.*, bm.name, bm."phoneNumber", bm."contractNumber", bm."METER_KEY" as "meterNumber", bm."meterSize", bm."specificArea", bm."subCity", bm.woreda, bm.charge_group, bm.sewerage_connection
       FROM bills b
-      JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+      LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
       WHERE b.month_year = $1 AND b.deleted_at IS NULL
+      ORDER BY b.created_at DESC
     `, [monthYear]);
 };
 
@@ -2539,30 +2550,28 @@ export const dbDeleteFaultCode = async (id: string, deletedBy?: string) => {
 // =====================================================
 
 export const dbGetAllRoutes = async (branchId?: string, readerId?: string) => {
-    let sql = 'SELECT * FROM routes WHERE deleted_at IS NULL';
+    let sql = `
+        SELECT r.*, b.name as branch_name, sm.name as reader_name, sm.email as reader_email
+        FROM routes r
+        LEFT JOIN branches b ON r.branch_id = b.id
+        LEFT JOIN staff_members sm ON r.reader_id = sm.id
+        WHERE r.deleted_at IS NULL
+    `;
     const params: any[] = [];
+    let paramIndex = 1;
 
     if (branchId) {
+        sql += ` AND r.branch_id = $${paramIndex++}`;
         params.push(branchId);
-        sql += ` AND branch_id = $${params.length}`;
-    }
-    
-    if (readerId) {
-        params.push(readerId);
-        const idx = params.length;
-        sql += ` AND (
-            reader_id = $${idx}
-            OR route_key IN (
-                SELECT DISTINCT route_key FROM bulk_meters 
-                WHERE reader_staff_id = $${idx} OR assigned_reader_id = $${idx} OR "readerStaffId" = $${idx} OR "assignedReaderId" = $${idx}
-            )
-            OR route_key IN (
-                SELECT DISTINCT route_key FROM individual_customers 
-                WHERE reader_staff_id = $${idx} OR assigned_reader_id = $${idx} OR "readerStaffId" = $${idx} OR "assignedReaderId" = $${idx}
-            )
-        )`;
     }
 
+    // Reader isolation: only routes where this staff member is the assigned reader
+    if (readerId) {
+        sql += ` AND r.reader_id = $${paramIndex++}`;
+        params.push(readerId);
+    }
+
+    sql += ' ORDER BY r.route_key';
     return await query(sql, params);
 };
 
@@ -2580,11 +2589,18 @@ export const dbCreateRoute = async (route: any) => {
 };
 
 export const dbUpdateRoute = async (routeKey: string, routeUpdates: any) => {
-    const keys = Object.keys(routeUpdates);
-    if (keys.length === 0) return null;
-    const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE routes SET ${setClause} WHERE route_key = $${keys.length + 1} RETURNING *`, [...keys.map(k => routeUpdates[k]), routeKey]);
-    return rows[0] ?? null;
+    return await withTransaction(async (client) => {
+        if (routeUpdates.route_key && routeUpdates.route_key !== routeKey) {
+            // First update child references if route_key changes
+            await client.query('UPDATE bulk_meters SET "ROUTE_KEY" = $1 WHERE "ROUTE_KEY" = $2', [routeUpdates.route_key, routeKey]);
+            await client.query('UPDATE individual_customers SET "ROUTE_KEY" = $1 WHERE "ROUTE_KEY" = $2', [routeUpdates.route_key, routeKey]);
+        }
+        const keys = Object.keys(routeUpdates);
+        if (keys.length === 0) return null;
+        const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+        const res = await client.query(`UPDATE routes SET ${setClause}, updated_at = now() WHERE route_key = $${keys.length + 1} RETURNING *`, [...keys.map(k => routeUpdates[k]), routeKey]);
+        return res.rows[0] ?? null;
+    });
 };
 
 export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
@@ -2638,8 +2654,8 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         ? 'JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber" WHERE DATE(bmr."READING_DATE") = $1 AND bm.branch_id = $2'
         : 'WHERE DATE(bmr."READING_DATE") = $1';
     let todayIndReadingsBranchJoin = branchId
-        ? 'JOIN individual_customers ic ON imr.individual_customer_id = ic."customerKeyNumber" WHERE DATE(imr.created_at) = $1 AND ic.branch_id = $2'
-        : 'WHERE DATE(imr.created_at) = $1';
+        ? 'JOIN individual_customers ic ON imr."CUST_KEY" = ic."customerKeyNumber" WHERE (DATE(imr."READING_DATE") = $1 OR DATE(imr.created_at) = $1) AND ic.branch_id = $2'
+        : 'WHERE DATE(imr."READING_DATE") = $1 OR DATE(imr.created_at) = $1';
     let todayCustFilter = branchId ? 'AND branch_id = $2' : '';
 
     // ── Step 3: Run all independent queries in parallel ────────────────────────
@@ -2777,7 +2793,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
 
         // 8c. Individual meter readings today
         query(
-            `SELECT COUNT(*) as count FROM individual_meter_readings imr ${todayIndReadingsBranchJoin}`,
+            `SELECT COUNT(*) as count FROM individual_customer_readings imr ${todayIndReadingsBranchJoin}`,
             branchId ? [todayIso, branchId] : [todayIso]
         ).catch(() => [{ count: 0 }]),
 
@@ -3197,7 +3213,8 @@ export const dbGetUnsettledBillsPaginated = async (params: {
         FROM bills b
         LEFT JOIN individual_customers c ON b.individual_customer_id = c."customerKeyNumber"
         LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
-        WHERE b.payment_status = 'Unpaid'
+        WHERE b.deleted_at IS NULL 
+          AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' OR b.payment_status IS NULL)
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
@@ -3211,7 +3228,7 @@ export const dbGetUnsettledBillsPaginated = async (params: {
         queryParams.push(params.branchId);
     }
 
-    if (params.monthYear) {
+    if (params.monthYear && params.monthYear !== 'all') {
         sql += ` AND b.month_year = $${paramIndex++}`;
         queryParams.push(params.monthYear);
     }
@@ -3241,7 +3258,7 @@ export const dbGetUnsettledBillsCount = async (params: {
     statusFilter?: 'all' | 'overdue' | 'unpaid';
     excludeUnfinalized?: boolean;
 }) => {
-    let sql = `SELECT COUNT(*) FROM bills WHERE payment_status = 'Unpaid'`;
+    let sql = `SELECT COUNT(*) FROM bills WHERE deleted_at IS NULL AND (LOWER(TRIM(COALESCE(payment_status::text, ''))) != 'paid' OR payment_status IS NULL)`;
     if (params.excludeUnfinalized) {
         sql += " AND status = 'Posted'";
     }
@@ -3253,7 +3270,7 @@ export const dbGetUnsettledBillsCount = async (params: {
         queryParams.push(params.branchId);
     }
 
-    if (params.monthYear) {
+    if (params.monthYear && params.monthYear !== 'all') {
         sql += ` AND month_year = $${paramIndex++}`;
         queryParams.push(params.monthYear);
     }
@@ -3275,18 +3292,6 @@ export const dbGetUnsettledBillsCount = async (params: {
 
 export const dbEnsurePaymentColumnsExist = async () => {
     try {
-        console.log('[DB] Checking and ensuring payment columns exist on bills table...');
-        
-        // First, verify columns don't already exist
-        const existingColumns = await query(`
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'bills' 
-            AND column_name IN ('reconciliation_status', 'payment_channel', 'bank_ref', 'last_payment_date', 'phone', 'route_key', 'walk_order', 'meter_key')
-        `);
-        
-        console.log(`[DB] Found ${existingColumns?.length || 0} existing payment columns on bills table`);
-        
-        // Add missing columns one by one to catch specific failures
         const columns = [
             { name: 'reconciliation_status', def: "text DEFAULT 'Not reconciled'" },
             { name: 'payment_channel', def: 'text' },
@@ -3301,17 +3306,12 @@ export const dbEnsurePaymentColumnsExist = async () => {
         for (const col of columns) {
             try {
                 await query(`ALTER TABLE bills ADD COLUMN IF NOT EXISTS ${col.name} ${col.def}`);
-                console.log(`[DB] ✅ Column '${col.name}' ensured on bills table`);
             } catch (colErr) {
-                console.error(`[DB] ❌ Failed to add column '${col.name}':`, colErr);
-                throw colErr; // Re-throw so caller knows this failed
+                console.error(`[DB] Failed to add column '${col.name}':`, colErr);
             }
         }
-        
-        console.log('[DB] ✅ All payment columns verified on bills table');
     } catch (e) {
-        console.error('[DB] ❌ Critical error ensuring payment columns exist:', e);
-        throw new Error(`Database schema initialization failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.error('[DB] Error ensuring payment columns exist:', e);
     }
 };
 
@@ -3323,7 +3323,6 @@ export const dbGetPaidBillsPaginated = async (params: {
     monthYear?: string;
     excludeUnfinalized?: boolean;
 }) => {
-    await dbEnsurePaymentColumnsExist();
     let sql = `
         SELECT b.*,
                COALESCE(NULLIF(b.phone, '-'), bm."phoneNumber", c.phone_number, '-') as phone_computed,
@@ -4492,12 +4491,12 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         isBulk = true;
     } else {
         const custRes = await qFunc(
-            `SELECT "customerType", customer_type FROM individual_customers WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+            `SELECT "customerType" FROM individual_customers WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
             [customerKey]
         );
         const cust = client ? custRes.rows[0] : custRes[0];
         if (cust) {
-            customerType = cust.customerType || cust.customer_type || 'Domestic';
+            customerType = cust.customerType || 'Domestic';
         }
     }
 

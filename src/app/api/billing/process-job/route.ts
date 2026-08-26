@@ -25,17 +25,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Validate billing permission
-  const permRows: any[] = await query(
-    `SELECT p.name FROM staff_members sm
-     JOIN roles r ON sm.role_id = r.id
-     JOIN role_permissions rp ON r.id = rp.role_id
-     JOIN permissions p ON rp.permission_id = p.id
-     WHERE sm.id = $1 AND p.name = 'billing:close_cycle'`,
-    [session.id]
-  );
-  if (permRows.length === 0) {
-    return NextResponse.json({ error: 'Forbidden: billing:close_cycle permission required' }, { status: 403 });
+  // Validate billing permission (check session permissions with wildcard support)
+  const perms = new Set(session.permissions || []);
+  const isWildcard = perms.has('*') || perms.has('all') || perms.has('admin');
+
+  const hasCloseCyclePerm = 
+    isWildcard ||
+    perms.has('billing:close_cycle') ||
+    perms.has('bill:close_cycle') ||
+    perms.has('bill:manage_all') ||
+    perms.has('bill:create') ||
+    perms.has('bill:approve');
+
+  if (!hasCloseCyclePerm) {
+    const permRows: any[] = await query(
+      `SELECT p.name FROM staff_members sm
+       LEFT JOIN roles r ON (sm.role_id = r.id OR LOWER(sm.role) = LOWER(r.role_name))
+       LEFT JOIN role_permissions rp ON r.id = rp.role_id
+       LEFT JOIN permissions p ON rp.permission_id = p.id
+       WHERE sm.id = $1 AND (p.name = 'billing:close_cycle' OR p.name = 'bill:manage_all' OR p.name = 'bill:create' OR p.name = 'bill:approve')`,
+      [session.id]
+    );
+    if (permRows.length === 0) {
+      return NextResponse.json({ error: 'Forbidden: billing:close_cycle permission required' }, { status: 403 });
+    }
   }
 
   // ── 2. Parse body ──────────────────────────────────────────────────────────

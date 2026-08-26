@@ -9,6 +9,7 @@ import {
     updateRolePermissions,
     deletePermission
 } from "@/lib/data-store";
+import { broadcastPermissionsUpdated } from "@/lib/permissions-sync";
 import type { DomainRole, DomainPermission, DomainRolePermission } from "@/lib/data-store";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -32,6 +33,7 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 
@@ -62,7 +64,7 @@ export default function StaffRolesAndPermissionsPage() {
     const [currentPage, setCurrentPage] = React.useState(1);
     const [rowsPerPage, setRowsPerPage] = React.useState(10);
 
-    const canView = hasPermission('permissions_view');
+    const canView = hasPermission(PERMISSIONS.ROLES_VIEW) || hasPermission(PERMISSIONS.ROLES_MANAGE) || hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     React.useEffect(() => {
         const fetchData = async () => {
@@ -131,9 +133,9 @@ export default function StaffRolesAndPermissionsPage() {
             const selectedRole = roles.find(r => r.id === roleIdNum);
             toast({ title: "Permissions Updated", description: `Permissions for the role "${selectedRole?.role_name}" have been saved successfully.` });
 
-            setTimeout(() => {
-                window.location.reload();
-            }, 500);
+            // Dispatch events to instantly sync permissions across UI components and tabs
+            window.dispatchEvent(new CustomEvent('user-permissions-updated'));
+            broadcastPermissionsUpdated();
         } else {
             toast({ variant: "destructive", title: "Update Failed", description: result.message || "An unexpected error occurred." });
         }

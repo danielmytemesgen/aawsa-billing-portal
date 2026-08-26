@@ -24,14 +24,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  // Permission check: User must have either bill:manage_all or billing:close_cycle permission
-  // or must have created the job themselves.
-  const hasViewAllPerm = session.permissions?.some((p: string) => 
-    p === 'bill:manage_all' || p === 'billing:close_cycle'
-  );
+  // Permission check: Allow users with wildcard or billing permissions, or the job creator
+  const perms = new Set(session.permissions || []);
+  const isWildcard = perms.has('*') || perms.has('all') || perms.has('admin');
+  const hasBillingPerm = 
+    isWildcard ||
+    perms.has('billing:close_cycle') ||
+    perms.has('bill:close_cycle') ||
+    perms.has('bill:manage_all') ||
+    perms.has('bill:view_all') ||
+    perms.has('bill:view_branch') ||
+    perms.has('bill:view_drafts') ||
+    perms.has('bill:create') ||
+    perms.has('bill:approve') ||
+    perms.has('bill:post');
+
   const createdByThisUser = rows[0].created_by === session.id;
   
-  if (!hasViewAllPerm && !createdByThisUser) {
+  if (!hasBillingPerm && !createdByThisUser) {
     return NextResponse.json({ error: 'Forbidden: insufficient permissions' }, { status: 403 });
   }
 

@@ -124,6 +124,10 @@ export const PERMISSIONS = {
 
     // Data Entry
     DATA_ENTRY_ACCESS: 'data_entry_access',
+    DATA_ENTRY_BULK_FORM: 'data_entry_bulk_form',
+    DATA_ENTRY_INDIVIDUAL_FORM: 'data_entry_individual_form',
+    DATA_ENTRY_BULK_CSV: 'data_entry_bulk_csv',
+    DATA_ENTRY_INDIVIDUAL_CSV: 'data_entry_individual_csv',
 
     // Notifications
     NOTIFICATIONS_VIEW: 'notifications_view',
@@ -137,9 +141,13 @@ export const PERMISSIONS = {
 
     // Routes & Reader Monitoring
     ROUTES_VIEW_ALL: 'routes_view_all',
+    ROUTES_VIEW: 'routes_view',
     ROUTES_VIEW_BRANCH: 'routes_view_branch',
     ROUTES_VIEW_ASSIGNED: 'routes_view_assigned',
     ROUTES_MANAGE: 'routes_manage',
+    ROUTES_CREATE: 'routes_create',
+    ROUTES_UPDATE: 'routes_update',
+    ROUTES_DELETE: 'routes_delete',
     READER_PROGRESS_VIEW: 'reader_progress_view',
 
     // Fault Codes
@@ -160,6 +168,10 @@ export const PERMISSIONS = {
     CREDIT_VIEW_BRANCH: 'credit_view_branch',
     CREDIT_CREATE: 'credit_create',
     CREDIT_VOID: 'credit_void',
+
+    // Promotions
+    PROMOTIONS_MANAGE: 'promotions_manage',
+    PROMOTIONS_VIEW: 'promotions_view',
 } as const;
 
 export const BRANCHES = {

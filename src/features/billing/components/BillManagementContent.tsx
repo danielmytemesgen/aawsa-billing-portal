@@ -262,7 +262,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     });
 
     const myDrafts = filteredForStats.filter(b => b.status === 'Draft' || !b.status);
-    const pendingApprovals = filteredForStats.filter(b => b.status === 'Pending');
+    const pendingApprovals = filteredForStats.filter(b => b.status === 'Pending' || b.status === 'Pending Approval');
     const approvedBills = filteredForStats.filter(b => b.status === 'Approved');
     const reworkItems = filteredForStats.filter(b => b.status === 'Rework');
     const postedBills = filteredForStats.filter(b => b.status === 'Posted');
@@ -301,12 +301,18 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             }
         };
 
+        const tariffCache = new Map<string, any>();
         const findActiveTariff = (customerType: string, dateStr: string) => {
+            const cacheKey = `${customerType}_${dateStr}`;
+            if (tariffCache.has(cacheKey)) return tariffCache.get(cacheKey);
             try {
-                return getTariff(customerType as any, dateStr);
+                const t = getTariff(customerType as any, dateStr);
+                tariffCache.set(cacheKey, t);
+                return t;
             } catch (e) {
                 console.error(e);
             }
+            tariffCache.set(cacheKey, null);
             return null;
         };
 
@@ -717,19 +723,62 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
 
 
-        const handleExportCSV = () => {
-        const headers = ['Bill ID', 'Customer Key', 'Month', 'Date Billed', 'Due Date', 'Status', 'Total Payable'];
+    const handleExportCSV = () => {
+        const headers = [
+            'Bill Key',
+            'Customer Key',
+            'Customer Name',
+            'Branch',
+            'Billing Month',
+            'Date Billed',
+            'Due Date',
+            'Prev Reading',
+            'Curr Reading',
+            'Usage (m3)',
+            'Difference Usage (m3)',
+            'Debit 30 (1 Mo)',
+            'Debit 30-60 (2 Mo)',
+            'Debit 60+ (3+ Mo)',
+            'Penalty (ETB)',
+            'Outstanding (ETB)',
+            'Current Bill (ETB)',
+            'Total Payable (ETB)',
+            'Payment Status',
+            'Workflow Status'
+        ];
         const exportSet = outstandingBills.length > 0 ? outstandingBills : filteredOutstanding;
         const rows = exportSet.map(b => {
             const isBillOverdue = b.due_date && isBefore(new Date(b.due_date), now);
+            const recon = reconstructedHistoryMap.get(b.id);
+            const d30 = recon ? recon.d30 : Number(b.debit_30 || b.debit30 || 0);
+            const d30_60 = recon ? recon.d30_60 : Number(b.debit_30_60 || b.debit30_60 || 0);
+            const d60 = recon ? recon.d60 : Number(b.debit_60 || b.debit60 || 0);
+            const penalty = recon ? recon.penalty : Number(b.PENALTYAMT || 0);
+            const outstanding = recon ? recon.outstanding : Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penalty;
+            const currentBill = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(b);
+            const totalPayable = outstanding + currentBill;
+
             return [
-                b.id,
-                b.CUSTOMERKEY || b.individual_customer_id || 'N/A',
-                b.month_year,
-                formatDate(b.created_at),
-                formatDate(b.due_date),
-                isBillOverdue ? 'Overdue' : 'Unpaid',
-                getBillTotalPayable(b).toFixed(2)
+                `"${b.BILLKEY || b.id}"`,
+                `"${b.CUSTOMERKEY || b.individual_customer_id || ''}"`,
+                `"${(b.CUSTOMERNAME || b.name || '').replace(/"/g, '""')}"`,
+                `"${b.CUSTOMERBRANCH || ''}"`,
+                `"${b.month_year || ''}"`,
+                `"${formatDate(b.created_at)}"`,
+                `"${formatDate(b.due_date)}"`,
+                Number(b.PREVREAD || 0).toFixed(2),
+                Number(b.CURRREAD || 0).toFixed(2),
+                Number(b.CONS || 0).toFixed(2),
+                Number(b.difference_usage || b.CONS || 0).toFixed(2),
+                d30.toFixed(2),
+                d30_60.toFixed(2),
+                d60.toFixed(2),
+                penalty.toFixed(2),
+                outstanding.toFixed(2),
+                currentBill.toFixed(2),
+                totalPayable.toFixed(2),
+                `"${b.payment_status === 'Paid' ? 'Paid' : isBillOverdue ? 'Overdue' : 'Unpaid'}"`,
+                `"${b.status || 'Draft'}"`
             ];
         });
 
@@ -740,10 +789,11 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `outstanding_bills_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+        link.setAttribute("download", `bills_export_${monthFilter === 'all' ? 'all_months' : monthFilter}_${format(new Date(), 'yyyy-MM-dd')}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        toast({ title: "CSV Exported", description: `Exported ${rows.length} bill record(s) successfully.` });
     };
 
     const role = hasPermission('bill:approve') ? 'manager' : 'staff';
@@ -1046,7 +1096,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             <BillingCycleDialog
                 open={isCycleDialogOpen}
                 onOpenChange={setIsCycleDialogOpen}
-                onComplete={() => loadData()}
+                onComplete={() => {
+                    setMonthFilter('all');
+                    loadData({ monthFilter: 'all' });
+                }}
             />
 
             {/* Bulk Action Confirmation Dialog */}
@@ -1145,7 +1198,7 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
                             const totalPayable = currentOutstanding + currentBillAmt;
                             
-                            const fmt = (val: number) => val > 0.01 ? val.toFixed(2) : '—';
+                            const fmt = (val: number) => Number(val || 0) > 0.001 ? Number(val).toFixed(2) : '0.00';
 
 
                             return (

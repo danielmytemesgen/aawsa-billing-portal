@@ -11,6 +11,7 @@ import type { KnowledgeBaseArticle } from "@/app/(dashboard)/admin/knowledge-bas
 import { KnowledgeBaseFormDialog, type KnowledgeBaseFormValues } from "@/app/(dashboard)/admin/knowledge-base/knowledge-base-form-dialog";
 import { KnowledgeBaseTable } from "@/app/(dashboard)/admin/knowledge-base/knowledge-base-table";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { uploadPdfFile } from "@/lib/upload";
 import {
@@ -32,8 +33,6 @@ export default function StaffKnowledgeBasePage() {
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
     const [selectedArticle, setSelectedArticle] = React.useState<KnowledgeBaseArticle | null>(null);
     const [articleToDelete, setArticleToDelete] = React.useState<KnowledgeBaseArticle | null>(null);
-
-    const canManage = hasPermission('knowledge_base_manage');
 
     React.useEffect(() => {
         setIsLoading(true);
@@ -119,14 +118,17 @@ export default function StaffKnowledgeBasePage() {
         (article.category && article.category.toLowerCase().includes(searchTerm.toLowerCase()))
     );
 
-    if (!canManage) {
+    const canManage = hasPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE) || hasPermission('knowledge_base_manage') || hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL);
+    const canView = canManage || hasPermission(PERMISSIONS.KNOWLEDGE_BASE_VIEW) || hasPermission('knowledge_base_view');
+
+    if (!canView) {
         return (
             <div className="space-y-6">
                 <h1 className="text-2xl md:text-3xl font-bold">Knowledge Base</h1>
                 <Alert variant="destructive">
                     <Lock className="h-4 w-4" />
                     <AlertTitle>Access Denied</AlertTitle>
-                    <CardDescription>You do not have permission to manage the knowledge base.</CardDescription>
+                    <CardDescription>You do not have permission to view the knowledge base.</CardDescription>
                 </Alert>
             </div>
         )
@@ -147,9 +149,11 @@ export default function StaffKnowledgeBasePage() {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-                    <Button onClick={handleAddArticle} className="w-full sm:w-auto flex-shrink-0">
-                        <PlusCircle className="mr-2 h-4 w-4" /> Add New Article
-                    </Button>
+                    {canManage && (
+                        <Button onClick={handleAddArticle} className="w-full sm:w-auto flex-shrink-0">
+                            <PlusCircle className="mr-2 h-4 w-4" /> Add New Article
+                        </Button>
+                    )}
                 </div>
             </div>
 

@@ -41,26 +41,27 @@ export function useCurrentUser() {
     };
   }, []);
 
-  const roleLower = (currentUser?.role || '').toLowerCase().trim();
   const permissions = new Set(currentUser?.permissions || []);
+  const isWildcard = permissions.has('*') || permissions.has('all');
 
   /**
-   * Robust check for management/admin-area access.
-   * Based purely on specific high-level permission.
+   * Pure permission-driven evaluation.
    */
-  const isManagement = permissions.has(PERMISSIONS.DASHBOARD_VIEW_ALL);
-
-  const isReader = !isManagement && isReaderStaff(currentUser);
+  const isManagement = isWildcard || permissions.has(PERMISSIONS.DASHBOARD_VIEW_ALL);
+  const isStaffManagement = isWildcard || permissions.has(PERMISSIONS.STAFF_VIEW_ALL) || permissions.has(PERMISSIONS.STAFF_VIEW);
+  const isReader = !isManagement && (permissions.has(PERMISSIONS.ROUTES_VIEW_ASSIGNED) || permissions.has(PERMISSIONS.METER_READINGS_CREATE));
 
   return {
     currentUser,
-    isStaff: !isManagement, // Basic distinction if requested, but routes drive access
+    isStaff: !isManagement,
     isReader,
-    isStaffManagement: permissions.has(PERMISSIONS.STAFF_VIEW_ALL) || roleLower.includes('management') || roleLower.includes('manager'),
+    isStaffManagement,
     isManagement,
     isAdminAreaUser: isManagement,
     branchId: currentUser?.branchId,
     branchName: currentUser?.branchName,
+    hasPermission: (p: string) => isWildcard || permissions.has(p),
+    hasAnyPermission: (...pList: string[]) => isWildcard || pList.some(p => permissions.has(p)),
   } as const;
 }
 

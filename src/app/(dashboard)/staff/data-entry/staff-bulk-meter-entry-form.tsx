@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { generateBulkMeterKeys } from "@/lib/utils";
 import { bulkMeterDataEntrySchema, type BulkMeterDataEntryFormValues, meterSizeOptions, subCityOptions, woredaOptions } from "@/app/(dashboard)/admin/data-entry/customer-data-entry-types";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, getBulkMeters, getBranches, initializeBranches } from "@/lib/data-store";
+import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, getBulkMeters, getBranches, initializeBranches, getRoutes, subscribeToRoutes, fetchRoutes } from "@/lib/data-store";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse } from "date-fns";
@@ -26,6 +26,7 @@ import { customerTypes, sewerageConnections } from "@/lib/billing-calculations";
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getAllFaultCodes } from "@/lib/fault-codes";
+import { Sparkles, Activity, TrendingUp } from "lucide-react";
 
 interface StaffBulkMeterEntryFormProps {
   branchName: string;
@@ -34,9 +35,7 @@ interface StaffBulkMeterEntryFormProps {
 export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormProps) {
   const { toast } = useToast();
   const [staffBranchId, setStaffBranchId] = React.useState<string | undefined>(undefined);
-
-
-
+  const [availableRoutes, setAvailableRoutes] = React.useState<any[]>([]);
   const [hasFault, setHasFault] = React.useState(false);
 
   const form = useForm<BulkMeterDataEntryFormValues>({
@@ -46,26 +45,28 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
       customerKeyNumber: "",
       instKey: "",
       contractNumber: "",
-      meterSize: undefined,
+      meterSize: 1,
       NUMBER_OF_DIALS: undefined,
       meterNumber: "",
       previousReading: undefined,
       currentReading: undefined,
-      month: "",
+      month: format(new Date(), "yyyy-MM"),
       specificArea: "",
       subCity: "",
       woreda: "",
       phoneNumber: "",
       chargeGroup: "Non-domestic",
       sewerageConnection: "No",
+      routeKey: undefined,
+      ordinal: undefined,
       xCoordinate: undefined,
       yCoordinate: undefined,
+      zCoordinate: undefined,
     },
   });
 
-  // Initialize staff branch and generate bulk meter keys for staff entry
+  // Initialize staff branch, routes, and generate bulk meter keys for staff entry
   React.useEffect(() => {
-    // Initialize branch based on provided branchName
     initializeBranches().then(() => {
       const allBranches = getBranches();
       const normalizedStaffBranchName = (branchName || "").trim().toLowerCase();
@@ -79,6 +80,10 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
       }
     });
 
+    // Fetch and subscribe to routes
+    fetchRoutes().then(() => setAvailableRoutes(getRoutes()));
+    const unsubRoutes = subscribeToRoutes((r) => setAvailableRoutes(r));
+
     // Initialize bulk meters and generate unique keys
     initializeBulkMeters().then(() => {
       const existing = getBulkMeters();
@@ -86,7 +91,20 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
       form.setValue("customerKeyNumber", customerKey);
       form.setValue("instKey", instKey);
     });
-  }, [branchName]);
+
+    return () => unsubRoutes();
+  }, [branchName, form]);
+
+  const handleRegenerateKeys = () => {
+    const existing = getBulkMeters();
+    const { customerKey, instKey } = generateBulkMeterKeys(existing);
+    form.setValue("customerKeyNumber", customerKey, { shouldValidate: true });
+    form.setValue("instKey", instKey, { shouldValidate: true });
+    toast({
+      title: "New Keys Generated",
+      description: `Assigned Key: ${customerKey}, INST_KEY: ${instKey}`,
+    });
+  };
 
   async function onSubmit(data: BulkMeterDataEntryFormValues) {
     const bulkMeterDataForStore = {
@@ -100,26 +118,35 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
     if (result.success && result.data) {
       toast({
         title: "Bulk Meter Submitted for Approval",
-        description: `Data for bulk meter ${result.data.name} (Branch: ${branchName}) has been successfully recorded.`,
+        description: `Data for bulk meter "${result.data.name}" (Branch: ${branchName}) has been successfully recorded.`,
       });
+
+      const existing = getBulkMeters();
+      const { customerKey, instKey } = generateBulkMeterKeys(existing);
+
       form.reset({
         name: "",
-        customerKeyNumber: "",
-        instKey: "",
+        customerKeyNumber: customerKey,
+        instKey: instKey,
         contractNumber: "",
-        meterSize: undefined,
+        meterSize: 1,
         NUMBER_OF_DIALS: undefined,
         meterNumber: "",
         previousReading: undefined,
         currentReading: undefined,
-        month: "",
+        month: format(new Date(), "yyyy-MM"),
         specificArea: "",
         subCity: "",
         woreda: "",
+        phoneNumber: "",
+        branchId: staffBranchId,
         chargeGroup: "Non-domestic",
         sewerageConnection: "No",
+        routeKey: undefined,
+        ordinal: undefined,
         xCoordinate: undefined,
         yCoordinate: undefined,
+        zCoordinate: undefined,
         faultCode: undefined,
       });
       setHasFault(false);
@@ -157,7 +184,23 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
-
+            <div className="md:col-span-2 flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <div>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Auto-Generated Meter Keys</p>
+                <p className="text-[11px] text-muted-foreground">Unique keys are automatically assigned. Click regenerate if needed.</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRegenerateKeys}
+                disabled={form.formState.isSubmitting}
+                className="text-xs gap-1.5 h-8"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Generate Fresh Keys
+              </Button>
+            </div>
 
             <FormField
               control={form.control}
@@ -166,7 +209,7 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                 <FormItem>
                   <FormLabel>Customer Key Number <span className="text-destructive">*</span></FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Input {...field} readOnly className="bg-slate-50 dark:bg-slate-900 font-mono font-bold" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -180,14 +223,12 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                 <FormItem>
                   <FormLabel>INST_KEY <span className="text-destructive">*</span></FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., INST-123456" {...field} />
+                    <Input {...field} readOnly className="bg-slate-50 dark:bg-slate-900 font-mono font-bold" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-
 
             <FormField
               control={form.control}
@@ -196,14 +237,26 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                 <FormItem>
                   <FormLabel>Contract Number <span className="text-destructive">*</span></FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Input {...field} placeholder="e.g., CNT-2024-001" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-
+            <FormField
+              control={form.control}
+              name="meterNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>METER_KEY / Meter Number <span className="text-destructive">*</span></FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g., MET-2822965" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}
@@ -211,14 +264,15 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Meter Size (inch) <span className="text-destructive">*</span></FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value ? String(field.value) : undefined}>
+                  <Select
+                    onValueChange={(val) => field.onChange(parseFloat(val))}
+                    value={field.value ? String(field.value) : "1"}
+                  >
                     <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a meter size" />
-                      </SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Select size" /></SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {meterSizeOptions.map(option => (
+                      {meterSizeOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
@@ -235,41 +289,20 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               name="NUMBER_OF_DIALS"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Number of Dials</FormLabel>
+                  <FormLabel>Number of Dials (Optional)</FormLabel>
                   <FormControl>
                     <Input
                       type="number"
-                      placeholder="Enter number of dials"
+                      placeholder="e.g., 5"
                       {...field}
                       value={field.value ?? ""}
-                      onChange={e => {
-                        const val = e.target.value;
-                        field.onChange(val === "" ? undefined : parseInt(val, 10));
-                      }}
+                      onChange={e => { const val = e.target.value; field.onChange(val === "" ? undefined : parseInt(val, 10)); }}
                     />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-
-
-            <FormField
-              control={form.control}
-              name="meterNumber"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Meter Number <span className="text-destructive">*</span></FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-
 
             <FormField
               control={form.control}
@@ -279,22 +312,15 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                   <FormLabel>Previous Reading <span className="text-destructive">*</span></FormLabel>
                   <FormControl>
                     <Input
-                      type="number"
-                      step="0.01"
-                      {...field}
+                      type="number" step="0.01" placeholder="e.g., 100.00" {...field}
                       value={field.value ?? ""}
-                      onChange={e => {
-                        const val = e.target.value;
-                        field.onChange(val === "" ? undefined : parseFloat(val));
-                      }}
+                      onChange={e => { const val = e.target.value; field.onChange(val === "" ? undefined : parseFloat(val)); }}
                     />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-
 
             <FormField
               control={form.control}
@@ -304,14 +330,9 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                   <FormLabel>Current Reading <span className="text-destructive">*</span></FormLabel>
                   <FormControl>
                     <Input
-                      type="number"
-                      step="0.01"
-                      {...field}
+                      type="number" step="0.01" placeholder="e.g., 150.00" {...field}
                       value={field.value ?? ""}
-                      onChange={e => {
-                        const val = e.target.value;
-                        field.onChange(val === "" ? undefined : parseFloat(val));
-                      }}
+                      onChange={e => { const val = e.target.value; field.onChange(val === "" ? undefined : parseFloat(val)); }}
                     />
                   </FormControl>
                   <FormMessage />
@@ -319,26 +340,23 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
-
-
             <FormField
               control={form.control}
               name="month"
               render={({ field }) => (
                 <FormItem className="flex flex-col">
-                  <FormLabel>Reading Month <span className="text-destructive">*</span></FormLabel>
+                  <FormLabel className="mb-2">Reading Month <span className="text-destructive">*</span></FormLabel>
                   <DatePicker
                     date={field.value ? parse(field.value, "yyyy-MM", new Date()) : undefined}
                     setDate={(selectedDate) => {
                       field.onChange(selectedDate ? format(selectedDate, "yyyy-MM") : "");
                     }}
+                    disabledTrigger={form.formState.isSubmitting}
                   />
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-
 
             <FormField
               control={form.control}
@@ -347,14 +365,12 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                 <FormItem>
                   <FormLabel>Specific Area <span className="text-destructive">*</span></FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Input placeholder="e.g., Bole Medhanealem" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-
 
             <FormField
               control={form.control}
@@ -381,8 +397,6 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
-
-
             <FormField
               control={form.control}
               name="woreda"
@@ -408,8 +422,6 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
-
-
             <FormField
               control={form.control}
               name="phoneNumber"
@@ -423,8 +435,6 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                 </FormItem>
               )}
             />
-
-
 
             <FormField
               control={form.control}
@@ -445,7 +455,52 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
+            <FormField
+              control={form.control}
+              name="routeKey"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Route Key</FormLabel>
+                  <FormControl>
+                    <div>
+                      <Input
+                        placeholder="Enter or select route (e.g., RT-01)"
+                        {...field}
+                        list="staff-bulk-routes-list"
+                      />
+                      <datalist id="staff-bulk-routes-list">
+                        {availableRoutes.map((r: any) => (
+                          <option key={r.routeKey || r.route_key} value={r.routeKey || r.route_key}>
+                            {r.description ? `${r.routeKey || r.route_key} (${r.description})` : r.routeKey || r.route_key}
+                          </option>
+                        ))}
+                      </datalist>
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
+            <FormField
+              control={form.control}
+              name="ordinal"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Ordinal</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 1"
+                      {...field}
+                      value={field.value ?? ""}
+                      onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}
@@ -466,14 +521,12 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
-
-
             <FormField
               control={form.control}
               name="xCoordinate"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>X Coordinate (Optional)</FormLabel>
+                  <FormLabel>Latitude / X (Northing, ~9.0°)</FormLabel>
                   <FormControl>
                     <Input
                       type="number" step="any" placeholder="e.g., 9.005401" {...field}
@@ -486,14 +539,12 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
               )}
             />
 
-
-
             <FormField
               control={form.control}
               name="yCoordinate"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Y Coordinate (Optional)</FormLabel>
+                  <FormLabel>Longitude / Y (Easting, ~38.7°)</FormLabel>
                   <FormControl>
                     <Input
                       type="number" step="any" placeholder="e.g., 38.763611" {...field}
@@ -505,13 +556,31 @@ export function StaffBulkMeterEntryForm({ branchName }: StaffBulkMeterEntryFormP
                 </FormItem>
               )}
             />
+
+            <FormField
+              control={form.control}
+              name="zCoordinate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Z Coordinate (Altitude)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number" step="any" placeholder="e.g., 2300" {...field}
+                      value={field.value ?? ""}
+                      onChange={e => { const val = e.target.value; field.onChange(val === "" ? undefined : parseFloat(val)); }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
 
           <Button type="submit" className="w-full md:w-auto" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting ? "Submitting..." : "Submit for Approval"}
+            {form.formState.isSubmitting ? "Submitting..." : "Submit Bulk Meter for Approval"}
           </Button>
         </form>
-      </Form >
-    </ScrollArea >
+      </Form>
+    </ScrollArea>
   );
 }

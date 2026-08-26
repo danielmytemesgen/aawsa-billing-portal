@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { getEffectiveBranchId } from "@/lib/branch-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
@@ -195,9 +196,15 @@ export default function StaffPaidBillsReportPage() {
         monthYear: normalizedMonthYear
       });
 
-      if (result.success) {
+      if (result?.success && result?.bills) {
         setBills(result.bills || []);
         setTotalBills(result.total || 0);
+      } else if (result?.data?.bills) {
+        setBills(result.data.bills || []);
+        setTotalBills(result.data.total || 0);
+      } else {
+        setBills([]);
+        setTotalBills(0);
       }
       setIsLoading(false);
     };
@@ -205,7 +212,14 @@ export default function StaffPaidBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, refreshTrigger]);
 
-  if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
+  const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+    || hasPermission(PERMISSIONS.REPORT_LIST_OF_PAID_BILLS)
+    || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS)
+    || hasPermission(PERMISSIONS.BILL_VIEW_PAID)
+    || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+  if (!canAccess) {
     return (
       <div className="space-y-6">
         <Alert variant="destructive">

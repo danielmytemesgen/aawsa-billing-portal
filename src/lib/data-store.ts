@@ -1664,14 +1664,14 @@ async function fetchAllNotifications() {
 
 async function fetchAllRoles() {
   try {  
-    const { data, error } = await getAllRolesAction();
-    if (data) {
-      roles = data;
+    const res = await getAllRolesAction();
+    if (res && res.data) {
+      roles = res.data;
       notifyRoleListeners();
-    } else {
-      console.error("DataStore: Failed to fetch roles. Database error:", JSON.stringify(error, null, 2));
+    } else if (res && res.error) {
+      console.warn("DataStore: Failed to fetch roles:", res.error);
     }
-    } catch (err) {
+  } catch (err) {
     console.warn("DataStore: fetchAllRoles failed (offline?)", err);
   }
   rolesFetched = true;
@@ -1680,14 +1680,14 @@ async function fetchAllRoles() {
 
 async function fetchAllPermissions() {
   try {  
-    const { data, error } = await getAllPermissionsAction();
-    if (data) {
-      permissions = data;
+    const res = await getAllPermissionsAction();
+    if (res && res.data) {
+      permissions = res.data;
       notifyPermissionListeners();
-    } else {
-      console.error("DataStore: Failed to fetch permissions. Database error:", JSON.stringify(error, null, 2));
+    } else if (res && res.error) {
+      console.warn("DataStore: Failed to fetch permissions:", res.error);
     }
-    } catch (err) {
+  } catch (err) {
     console.warn("DataStore: fetchAllPermissions failed (offline?)", err);
   }
   permissionsFetched = true;
@@ -1696,12 +1696,12 @@ async function fetchAllPermissions() {
 
 async function fetchAllRolePermissions() {
   try {  
-    const { data, error } = await getAllRolePermissionsAction();
-    if (data) {
-      rolePermissions = data;
+    const res = await getAllRolePermissionsAction();
+    if (res && res.data) {
+      rolePermissions = res.data;
       notifyRolePermissionListeners();
-    } else {
-      console.error("DataStore: Failed to fetch role permissions. Database error:", JSON.stringify(error, null, 2));
+    } else if (res && res.error) {
+      console.warn("DataStore: Failed to fetch role permissions:", res.error);
     }
     rolePermissionsFetched = true;
   } catch (err) {
@@ -1807,17 +1807,36 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
           const userRaw = localStorage.getItem('user');
           if (userRaw) {
             const parsed = JSON.parse(userRaw || '{}');
-            const perms = parsed.permissions || [];
-            const readerId = (!perms.includes('customers_view_all') && perms.includes('routes_view_assigned')) ? parsed.id : undefined;
-            const userBranchId = (!perms.includes('customers_view_all') && parsed.branchId && parsed.branchId !== 'all') ? parsed.branchId : undefined;
+            const perms: string[] = parsed.permissions || [];
+            const hasGlobalView = perms.includes('customers_view_all') || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+            const hasBranchView = perms.includes('customers_view_branch');
+            const isFieldReader = !hasGlobalView && !hasBranchView && (
+              perms.includes('routes_view_assigned') ||
+              perms.includes('meter_readings_create') ||
+              perms.includes('meter_readings_create_individual') ||
+              perms.includes('meter_readings_view_individual')
+            );
+            const userBranchId = (!hasGlobalView && parsed.branchId && parsed.branchId !== 'all') ? parsed.branchId : undefined;
 
-            if (readerId || userBranchId) {
+            if (isFieldReader || userBranchId) {
+              // Build the set of route_keys this reader is assigned to from the cached routes
+              let assignedRouteKeys: Set<string> | undefined;
+              if (isFieldReader && parsed.id) {
+                try {
+                  const cachedRoutesRaw = await offlineDb.getCachedRoutes();
+                  const assignedRoutes = (cachedRoutesRaw || []).map((r: any) => r.data || r).filter((r: any) =>
+                    r.readerId === parsed.id || r.reader_id === parsed.id
+                  );
+                  assignedRouteKeys = new Set(assignedRoutes.map((r: any) => r.routeKey || r.route_key).filter(Boolean));
+                } catch { /* fall through — show all */ }
+              }
+
               const matches = (rec: any) => {
-                if (userBranchId && rec.branchId && rec.branchId !== userBranchId && rec.branch_id !== userBranchId) {
-                  return false;
-                }
-                if (readerId) {
-                  return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
+                const recBranchId = rec.branchId || rec.branch_id;
+                if (userBranchId && recBranchId && recBranchId !== userBranchId) return false;
+                if (assignedRouteKeys && assignedRouteKeys.size > 0) {
+                  const recRouteKey = rec.routeKey || rec['ROUTE_KEY'] || rec.route_key;
+                  return recRouteKey ? assignedRouteKeys.has(recRouteKey) : false;
                 }
                 return true;
               };
@@ -1856,17 +1875,36 @@ export const initializeBulkMeters = async (force: boolean = false, options?: { l
           const userRaw = localStorage.getItem('user');
           if (userRaw) {
             const parsed = JSON.parse(userRaw || '{}');
-            const perms = parsed.permissions || [];
-            const readerId = (!perms.includes('bulk_meters_view_all') && perms.includes('routes_view_assigned')) ? parsed.id : undefined;
-            const userBranchId = (!perms.includes('bulk_meters_view_all') && parsed.branchId && parsed.branchId !== 'all') ? parsed.branchId : undefined;
+            const perms: string[] = parsed.permissions || [];
+            const hasGlobalView = perms.includes('bulk_meters_view_all') || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+            const hasBranchView = perms.includes('bulk_meters_view_branch');
+            const isFieldReader = !hasGlobalView && !hasBranchView && (
+              perms.includes('routes_view_assigned') ||
+              perms.includes('meter_readings_create') ||
+              perms.includes('meter_readings_create_bulk') ||
+              perms.includes('meter_readings_view_bulk')
+            );
+            const userBranchId = (!hasGlobalView && parsed.branchId && parsed.branchId !== 'all') ? parsed.branchId : undefined;
 
-            if (readerId || userBranchId) {
+            if (isFieldReader || userBranchId) {
+              // Build the set of route_keys this reader is assigned to from the cached routes
+              let assignedRouteKeys: Set<string> | undefined;
+              if (isFieldReader && parsed.id) {
+                try {
+                  const cachedRoutesRaw = await offlineDb.getCachedRoutes();
+                  const assignedRoutes = (cachedRoutesRaw || []).map((r: any) => r.data || r).filter((r: any) =>
+                    r.readerId === parsed.id || r.reader_id === parsed.id
+                  );
+                  assignedRouteKeys = new Set(assignedRoutes.map((r: any) => r.routeKey || r.route_key).filter(Boolean));
+                } catch { /* fall through — show all */ }
+              }
+
               const matches = (rec: any) => {
-                if (userBranchId && rec.branchId && rec.branchId !== userBranchId && rec.branch_id !== userBranchId) {
-                  return false;
-                }
-                if (readerId) {
-                  return rec.reader_staff_id === readerId || rec.readerStaffId === readerId || rec.assignedReaderId === readerId || rec.assigned_reader_id === readerId;
+                const recBranchId = rec.branchId || rec.branch_id;
+                if (userBranchId && recBranchId && recBranchId !== userBranchId) return false;
+                if (assignedRouteKeys && assignedRouteKeys.size > 0) {
+                  const recRouteKey = rec.routeKey || rec['ROUTE_KEY'] || rec.route_key;
+                  return recRouteKey ? assignedRouteKeys.has(recRouteKey) : false;
                 }
                 return true;
               };
@@ -3555,7 +3593,11 @@ const mapDbRouteToDomain = (dbRoute: RouteRow): Route => ({
   routeKey: dbRoute.route_key,
   branchId: dbRoute.branch_id,
   readerId: dbRoute.reader_id,
+  readerName: (dbRoute as any).reader_name || undefined,
+  readerEmail: (dbRoute as any).reader_email || undefined,
+  branchName: (dbRoute as any).branch_name || undefined,
   description: dbRoute.description,
+  status: (dbRoute as any).status || undefined,
   createdAt: dbRoute.created_at,
   updatedAt: dbRoute.updated_at,
 });

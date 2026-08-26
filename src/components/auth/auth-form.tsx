@@ -154,7 +154,8 @@ export function AuthForm() {
               sessionStorage.removeItem('kicked_notice_shown');
 
               const permissions = user.permissions || [];
-              const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
+              const hasPerm = (p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p);
+              const isManagement = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL);
               const offlineRole = (user.role || '').toLowerCase().trim();
               
               setTimeout(() => {

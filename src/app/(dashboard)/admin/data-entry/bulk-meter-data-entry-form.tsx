@@ -18,7 +18,18 @@ import { useToast } from "@/hooks/use-toast";
 import { bulkMeterDataEntrySchema, type BulkMeterDataEntryFormValues, meterSizeOptions, subCityOptions, woredaOptions } from "./customer-data-entry-types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
-import { addBulkMeter as addBulkMeterToStore, initializeBulkMeters, initializeCustomers, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, getBulkMeters } from "@/lib/data-store";
+import {
+  addBulkMeter as addBulkMeterToStore,
+  initializeBulkMeters,
+  initializeCustomers,
+  getBranches,
+  subscribeToBranches,
+  initializeBranches as initializeAdminBranches,
+  getBulkMeters,
+  getRoutes,
+  subscribeToRoutes,
+  fetchRoutes,
+} from "@/lib/data-store";
 import { generateBulkMeterKeys } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse } from "date-fns";
@@ -41,6 +52,7 @@ import {
   Layers,
   TrendingUp,
   CheckCircle2,
+  Sparkles,
 } from "lucide-react";
 
 // Section header helper
@@ -70,6 +82,7 @@ const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_BULK_METER_";
 export function BulkMeterDataEntryForm() {
   const { toast } = useToast();
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
+  const [availableRoutes, setAvailableRoutes] = React.useState<any[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
   const [lockedBranchId, setLockedBranchId] = React.useState<string | null>(null);
 
@@ -80,11 +93,11 @@ export function BulkMeterDataEntryForm() {
       customerKeyNumber: "",
       instKey: "",
       contractNumber: "",
-      meterSize: undefined,
+      meterSize: 1,
       meterNumber: "",
       previousReading: undefined,
       currentReading: undefined,
-      month: "",
+      month: format(new Date(), "yyyy-MM"),
       specificArea: "",
       subCity: "",
       woreda: "",
@@ -116,6 +129,10 @@ export function BulkMeterDataEntryForm() {
     form.setValue("customerKeyNumber", customerKey);
     form.setValue("instKey", instKey);
 
+    // Fetch and subscribe to routes
+    fetchRoutes().then(() => setAvailableRoutes(getRoutes()));
+    const unsubscribeRoutes = subscribeToRoutes((r) => setAvailableRoutes(r));
+
     // Auto-lock branch for non-head-office users
     const userJson = localStorage.getItem('user');
     if (userJson) {
@@ -139,8 +156,11 @@ export function BulkMeterDataEntryForm() {
       setAvailableBranches(updatedBranches);
       setIsLoadingBranches(false);
     });
-    return () => unsubscribeBranches();
-  }, []);
+    return () => {
+      unsubscribeBranches();
+      unsubscribeRoutes();
+    };
+  }, [form]);
 
   const watchedValues = form.watch();
   const xValue = watchedValues.xCoordinate;
@@ -166,6 +186,16 @@ export function BulkMeterDataEntryForm() {
     }
   };
 
+  const handleRegenerateKeys = () => {
+    const existingMeters = getBulkMeters();
+    const { customerKey, instKey } = generateBulkMeterKeys(existingMeters);
+    form.setValue("customerKeyNumber", customerKey, { shouldValidate: true });
+    form.setValue("instKey", instKey, { shouldValidate: true });
+    toast({
+      title: "New Keys Generated",
+      description: `Assigned Key: ${customerKey}, INST_KEY: ${instKey}`,
+    });
+  };
 
   async function onSubmit(data: BulkMeterDataEntryFormValues) {
     const result = await addBulkMeterToStore(data);
@@ -173,9 +203,36 @@ export function BulkMeterDataEntryForm() {
     if (result.success && result.data) {
       toast({
         title: "Data Entry Submitted",
-        description: `Data for bulk meter ${result.data.name} has been successfully recorded and is pending approval.`,
+        description: `Data for bulk meter "${result.data.name}" has been successfully recorded and is pending approval.`,
       });
-      form.reset();
+
+      // Generate FRESH keys for the next entry immediately to prevent duplicate key collisions
+      const existingMeters = getBulkMeters();
+      const { customerKey, instKey } = generateBulkMeterKeys(existingMeters);
+
+      form.reset({
+        name: "",
+        customerKeyNumber: customerKey,
+        instKey: instKey,
+        contractNumber: "",
+        meterSize: 1,
+        meterNumber: "",
+        previousReading: undefined,
+        currentReading: undefined,
+        month: format(new Date(), "yyyy-MM"),
+        specificArea: "",
+        subCity: "",
+        woreda: "",
+        phoneNumber: "",
+        branchId: lockedBranchId || undefined,
+        chargeGroup: "Non-domestic",
+        sewerageConnection: "No",
+        routeKey: undefined,
+        xCoordinate: undefined,
+        yCoordinate: undefined,
+        zCoordinate: undefined,
+        ordinal: undefined,
+      });
     } else {
       toast({
         variant: "destructive",
@@ -269,7 +326,30 @@ export function BulkMeterDataEntryForm() {
 
           {/* Section: Meter Identity */}
           <div>
-            <SectionHeader icon={Package} title="Meter Identity" description="Unique identifiers and contract information" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 bg-primary/10 rounded-lg flex-shrink-0">
+                  <Package className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">Meter Identity</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Unique identifiers and contract information</p>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRegenerateKeys}
+                disabled={form.formState.isSubmitting}
+                className="rounded-xl border-primary/30 hover:border-primary text-xs font-semibold gap-1.5 self-start sm:self-auto"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Generate Fresh Keys
+              </Button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
@@ -294,12 +374,12 @@ export function BulkMeterDataEntryForm() {
                   <FormItem>
                     <div className="flex items-center justify-between">
                       <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Cust. Key No. <span className="text-destructive">*</span></FormLabel>
-                      <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Auto-Generated</span>
+                      <span className="text-[10px] bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 px-2 py-0.5 rounded-full font-bold border border-blue-100 dark:border-blue-800 uppercase tracking-wider">Auto-Generated</span>
                     </div>
                     <div className="premium-input-group">
                       <Hash className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Auto-generated" {...field} readOnly className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 backdrop-blur-sm cursor-not-allowed text-slate-500" />
+                        <Input {...field} readOnly className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 font-mono font-bold" />
                       </FormControl>
                     </div>
                     <FormMessage />
@@ -313,12 +393,12 @@ export function BulkMeterDataEntryForm() {
                   <FormItem>
                     <div className="flex items-center justify-between">
                       <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">INST_KEY <span className="text-destructive">*</span></FormLabel>
-                      <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold border border-blue-100 uppercase tracking-wider">Auto-Generated</span>
+                      <span className="text-[10px] bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 px-2 py-0.5 rounded-full font-bold border border-blue-100 dark:border-blue-800 uppercase tracking-wider">Auto-Generated</span>
                     </div>
                     <div className="premium-input-group">
                       <Hash className="h-4 w-4" />
                       <FormControl>
-                        <Input placeholder="Auto-generated" {...field} readOnly className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 backdrop-blur-sm cursor-not-allowed text-slate-500" />
+                        <Input {...field} readOnly className="rounded-xl border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 font-mono font-bold" />
                       </FormControl>
                     </div>
                     <FormMessage />
@@ -652,11 +732,21 @@ export function BulkMeterDataEntryForm() {
                     <div className="premium-input-group">
                       <GitBranch className="h-4 w-4" />
                       <FormControl>
-                        <Input
-                          placeholder="Enter route key"
-                          {...field}
-                          className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
-                        />
+                        <div>
+                          <Input
+                            placeholder="Enter or select route key (e.g., RT-01)"
+                            {...field}
+                            list="bulk-routes-list"
+                            className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
+                          />
+                          <datalist id="bulk-routes-list">
+                            {availableRoutes.map((r: any) => (
+                              <option key={r.routeKey || r.route_key} value={r.routeKey || r.route_key}>
+                                {r.description ? `${r.routeKey || r.route_key} (${r.description})` : r.routeKey || r.route_key}
+                              </option>
+                            ))}
+                          </datalist>
+                        </div>
                       </FormControl>
                     </div>
                     <FormMessage />
@@ -723,7 +813,7 @@ export function BulkMeterDataEntryForm() {
                 render={({ field }) => (
                   <FormItem>
                     <div className="flex items-center justify-between">
-                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">X Coordinate (Optional)</FormLabel>
+                      <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Latitude / X (Northing, ~9.0°)</FormLabel>
                       {hasCoordinates && (
                         <Button
                           type="button"
@@ -763,7 +853,7 @@ export function BulkMeterDataEntryForm() {
                 name="yCoordinate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Y Coordinate (Optional)</FormLabel>
+                    <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">Longitude / Y (Easting, ~38.7°)</FormLabel>
                     <div className="premium-input-group">
                       <Crosshair className="h-4 w-4" />
                       <FormControl>

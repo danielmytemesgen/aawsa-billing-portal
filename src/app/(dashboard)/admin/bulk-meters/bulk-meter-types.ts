@@ -40,6 +40,9 @@ export interface Route {
   routeKey: string;
   branchId?: string | null;
   readerId?: string | null;
+  readerName?: string | null;
+  readerEmail?: string | null;
+  branchName?: string | null;
   description?: string | null;
   status?: string | null;
   createdAt?: string;

@@ -7,8 +7,46 @@ const protectedRoutes = ['/admin', '/staff'];
 const adminRoutes = ['/admin'];
 const staffRoutes = ['/staff'];
 
-const hasAny = (permissions: string[], ...perms: string[]) =>
-  perms.some(p => permissions.includes(p));
+const hasPerm = (permissions: string[], p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes(p);
+const hasAny = (permissions: string[], ...perms: string[]) => perms.some(p => hasPerm(permissions, p));
+
+// ── BN-1 Fix: Live permissions cache ───────────────────────────────────────
+// Caches live DB permissions per sessionId for 30 seconds to avoid a DB hit
+// on every request while still catching role changes within half a minute.
+const LIVE_PERM_CACHE_TTL_MS = 30_000;
+const livePermCache = new Map<string, { perms: string[]; ts: number }>();
+
+async function getLivePermissions(session: any, request: NextRequest): Promise<string[] | null> {
+  const sessionId = session?.sessionId;
+  const staffId = session?.id;
+  if (!sessionId || !staffId) return null;
+
+  const now = Date.now();
+  const cached = livePermCache.get(sessionId);
+  if (cached && now - cached.ts < LIVE_PERM_CACHE_TTL_MS) {
+    return cached.perms;
+  }
+
+  try {
+    const res = await fetch(
+      `${request.nextUrl.origin}/api/permissions/live?staffId=${encodeURIComponent(staffId)}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
+        },
+      }
+    );
+    if (!res.ok) return null; // fail-open: fall back to JWT permissions
+    const data = await res.json();
+    const perms: string[] = Array.isArray(data.permissions) ? data.permissions : [];
+    livePermCache.set(sessionId, { perms, ts: now });
+    return perms;
+  } catch (e) {
+    console.warn('Live permission fetch failed (fail-open):', e);
+    return null; // fail-open
+  }
+}
 
 // Kicked-out staff sessions: the Edge runtime can't import pg, so we ask the
 // internal /api/session/revocation-status endpoint (which short-circuits in
@@ -31,8 +69,6 @@ async function isSessionRevoked(session: any, request: NextRequest): Promise<boo
       {
         headers: {
           Accept: 'application/json',
-          // Shared secret: the status endpoint rejects requests without it.
-          // Mirrors env.ts's dev default so dev and prod stay consistent.
           'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
         },
       }
@@ -55,21 +91,15 @@ function setSecurityHeaders(res: NextResponse) {
   const isDev = process.env.NODE_ENV !== 'production';
   const csp = [
     "default-src 'self'",
-    // Allow inline scripts (Next.js needs this) and eval in dev
     isDev
       ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
       : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    // Images: self, data URIs, blob (for camera captures), and known remote hosts
     "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org https://veiethiopia.com https://www.shutterstock.com https://lh3.googleusercontent.com https://picsum.photos https://*.picsum.photos https://*.freepik.com https://img.freepik.com https://*.unsplash.com https://images.unsplash.com",
-    // Connections: self + local dev ports + any https/wss (needed for Supabase, API calls, SW)
     "connect-src 'self' http://127.0.0.1:* http://localhost:* https: wss: blob:",
-    // Fonts: self, data URIs, and Google Fonts CDN
     "font-src 'self' data: https://fonts.gstatic.com",
     "object-src 'none'",
-    // Allow camera and media for meter photo capture
     "media-src 'self' blob:",
-    // Workers need blob: for service worker
     "worker-src 'self' blob:",
     "frame-ancestors 'none'",
   ].join('; ');
@@ -80,8 +110,6 @@ function setSecurityHeaders(res: NextResponse) {
   res.headers.set('X-Frame-Options', 'DENY');
   res.headers.set('Permissions-Policy', "geolocation=(self), camera=(), microphone=()");
 
-  // Only enable HSTS in production if explicitly configured via environment variables
-  // to avoid blocking HTTP-only local network/intranet deployments.
   if (process.env.NODE_ENV === 'production' && process.env.ENABLE_HSTS === 'true') {
     res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   }
@@ -90,40 +118,61 @@ function setSecurityHeaders(res: NextResponse) {
 }
 
 function getRoleDashboardFallback(permissions: string[], role: string, request: NextRequest): URL {
-  const roleLower = role?.toLowerCase() || '';
-  if (permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL)) {
-    return new URL(roleLower.includes('head office') ? '/admin/head-office-dashboard' : '/admin/dashboard', request.url);
-  }
-  if (permissions.includes(PERMISSIONS.STAFF_VIEW) && !permissions.includes(PERMISSIONS.BILL_VIEW_ALL)) {
-    return new URL('/admin/staff-management-dashboard', request.url);
-  }
-  if (permissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
+  const isGlobalAdmin = hasPerm(permissions, '*') || hasPerm(permissions, 'all') || hasPerm(permissions, PERMISSIONS.DASHBOARD_VIEW_ALL);
+  
+  if (isGlobalAdmin) {
     return new URL('/admin/dashboard', request.url);
   }
-  if (hasAny(permissions, 'routes_view', 'routes_view_all', 'routes_view_branch', 'routes_view_assigned', 'routes_manage', 'routes_create', 'routes_update', 'routes_delete', PERMISSIONS.METER_READINGS_CREATE, 'reader_progress_view')) {
+  if (hasPerm(permissions, PERMISSIONS.STAFF_VIEW) && !hasPerm(permissions, PERMISSIONS.BILL_VIEW_ALL)) {
+    return new URL('/staff/staff-management-dashboard', request.url);
+  }
+  if (hasAny(permissions, 'routes_view_assigned', 'meter_readings_create_bulk', 'meter_readings_create_individual', PERMISSIONS.METER_READINGS_CREATE)) {
+    return new URL('/staff/dashboard', request.url);
+  }
+  if (hasPerm(permissions, PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
+    return new URL('/staff/dashboard', request.url);
+  }
+  if (hasAny(permissions, 
+    PERMISSIONS.ROUTES_VIEW, 
+    PERMISSIONS.ROUTES_VIEW_ALL, 
+    PERMISSIONS.ROUTES_VIEW_BRANCH, 
+    PERMISSIONS.ROUTES_VIEW_ASSIGNED, 
+    PERMISSIONS.ROUTES_MANAGE, 
+    PERMISSIONS.ROUTES_CREATE, 
+    PERMISSIONS.ROUTES_UPDATE, 
+    PERMISSIONS.ROUTES_DELETE, 
+    PERMISSIONS.READER_PROGRESS_VIEW
+  )) {
     return new URL('/staff/my-routes', request.url);
   }
-  if (hasAny(permissions, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.BULK_METERS_CREATE, 'data_entry_bulk_form', 'data_entry_individual_form', 'data_entry_bulk_csv', 'data_entry_individual_csv')) {
-    return new URL('/admin/data-entry', request.url);
+  if (hasAny(permissions, 
+    PERMISSIONS.DATA_ENTRY_ACCESS, 
+    PERMISSIONS.CUSTOMERS_CREATE, 
+    PERMISSIONS.BULK_METERS_CREATE, 
+    PERMISSIONS.DATA_ENTRY_BULK_FORM, 
+    PERMISSIONS.DATA_ENTRY_INDIVIDUAL_FORM, 
+    PERMISSIONS.DATA_ENTRY_BULK_CSV, 
+    PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV
+  )) {
+    return new URL(isGlobalAdmin ? '/admin/data-entry' : '/staff/data-entry', request.url);
   }
   if (hasAny(permissions, PERMISSIONS.CUSTOMERS_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
-    return new URL('/admin/individual-customers', request.url);
+    return new URL(isGlobalAdmin ? '/admin/individual-customers' : '/staff/individual-customers', request.url);
   }
   if (hasAny(permissions, PERMISSIONS.BULK_METERS_VIEW_ALL, PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
-    return new URL('/admin/bulk-meters', request.url);
+    return new URL(isGlobalAdmin ? '/admin/bulk-meters' : '/staff/bulk-meters', request.url);
   }
   if (hasAny(permissions, PERMISSIONS.REPORTS_GENERATE_ALL, PERMISSIONS.REPORTS_GENERATE_BRANCH)) {
-    return new URL('/admin/reports', request.url);
+    return new URL(isGlobalAdmin ? '/admin/reports' : '/staff/reports', request.url);
   }
   if (hasAny(permissions, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.BILL_VIEW_BRANCH, PERMISSIONS.BILL_VIEW_DRAFTS, PERMISSIONS.BILL_VIEW_PENDING)) {
     return new URL('/admin/bill-management', request.url);
   }
-  return new URL('/admin/dashboard', request.url);
+  return new URL(isGlobalAdmin ? '/admin/dashboard' : '/staff/dashboard', request.url);
 }
 
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  // Short-circuit static assets and service worker to avoid running full middleware
   const staticPrefixes = ['/_next/', '/favicon.ico', '/manifest.json', '/sw.js', '/public/', '/api/'];
   if (staticPrefixes.some(p => path === p || path.startsWith(p))) {
     const res = NextResponse.next();
@@ -137,41 +186,38 @@ export async function middleware(request: NextRequest) {
     try {
       session = await decrypt(cookie);
     } catch (e) {
-      // If session decryption fails, log minimally and continue as unauthenticated
       console.warn('middleware: failed to decrypt session cookie', e);
       session = null;
     }
   }
 
-  // If route isn't protected, just continue and add security headers
   if (!isProtectedRoute) {
     const res = NextResponse.next();
     return setSecurityHeaders(res);
   }
 
-  // Protected route: require valid session
   if (!session) {
     const redirect = NextResponse.redirect(new URL('/', request.url));
     return setSecurityHeaders(redirect);
   }
 
-  // Kick-out enforcement: a staff session whose row was revoked gets logged
-  // out immediately (clear the cookie so the JWT dies in this browser too) and
-  // lands on the login page with ?kicked=1 so the user sees an explanation.
   if (session.sessionId && await isSessionRevoked(session, request)) {
     const redirect = NextResponse.redirect(new URL('/?kicked=1', request.url));
     redirect.cookies.delete('session');
     redirect.cookies.set('kicked_notice', '1', {
       path: '/',
-      maxAge: 300, // 5 min — long enough to survive the redirect + any reload
-      httpOnly: false, // the login page reads it to show the notice
+      maxAge: 300,
+      httpOnly: false,
       sameSite: 'lax',
     });
     return setSecurityHeaders(redirect);
   }
 
   const role = session.role?.toLowerCase()?.trim();
-  const permissions: string[] = session.permissions || [];
+  // BN-1 fix: Prefer live DB permissions over stale JWT-embedded permissions.
+  // Falls back to JWT permissions if the live fetch fails (fail-open).
+  const livePerms = await getLivePermissions(session, request);
+  const permissions: string[] = livePerms ?? (session.permissions || []);
 
   if (!role && permissions.length === 0) {
     console.warn('middleware: permission denied', {
@@ -185,10 +231,8 @@ export async function middleware(request: NextRequest) {
 
   const dashboardFallback = getRoleDashboardFallback(permissions, role || '', request);
 
-  // Granular, role-agnostic permission gates for all dashboard & system modules:
-
   if ((path.startsWith('/admin/roles-and-permissions') || path.startsWith('/staff/roles-and-permissions')) &&
-    !permissions.includes(PERMISSIONS.ROLES_VIEW)) {
+    !hasAny(permissions, PERMISSIONS.ROLES_VIEW, PERMISSIONS.ROLES_MANAGE, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -212,13 +256,13 @@ export async function middleware(request: NextRequest) {
   }
 
   if ((path.startsWith('/admin/settings') || path.startsWith('/staff/settings')) &&
-    !hasAny(permissions, PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.SETTINGS_MANAGE, 'promotions_manage')) {
+    !hasAny(permissions, PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.PROMOTIONS_MANAGE, PERMISSIONS.PROMOTIONS_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/tariffs') || path.startsWith('/staff/tariffs')) &&
-    !permissions.includes(PERMISSIONS.TARIFFS_VIEW)) {
+    !hasAny(permissions, PERMISSIONS.TARIFFS_VIEW, PERMISSIONS.TARIFFS_MANAGE)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -228,20 +272,30 @@ export async function middleware(request: NextRequest) {
       PERMISSIONS.REPORTS_GENERATE_ALL,
       PERMISSIONS.REPORTS_GENERATE_BRANCH,
       PERMISSIONS.ROUTES_VIEW_ASSIGNED,
-      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
+      PERMISSIONS.REPORT_LIST_OF_PAID_BILLS,
+      PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS,
+      PERMISSIONS.REPORT_LIST_OF_SENT_BILLS,
+      PERMISSIONS.REPORT_BRANCH_LIST_OF_SENT_BILLS,
+      PERMISSIONS.BILL_VIEW_PAID,
+      PERMISSIONS.BILL_SEND,
+      PERMISSIONS.BILL_POST,
+      PERMISSIONS.BILL_VIEW_UNPAID,
+      PERMISSIONS.BILL_VIEW_OVERDUE,
+      PERMISSIONS.BILL_VIEW_ALL,
     )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/branches') || path.startsWith('/staff/branches')) &&
-    !permissions.includes(PERMISSIONS.BRANCHES_VIEW)) {
+    !hasPerm(permissions, PERMISSIONS.BRANCHES_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/staff') || path.startsWith('/staff/staff')) &&
-    !permissions.includes(PERMISSIONS.STAFF_VIEW)) {
+    !hasPerm(permissions, PERMISSIONS.STAFF_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -292,13 +346,21 @@ export async function middleware(request: NextRequest) {
   }
 
   if ((path.startsWith('/admin/data-entry') || path.startsWith('/staff/data-entry')) &&
-    !hasAny(permissions, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.BULK_METERS_CREATE)) {
+    !hasAny(permissions,
+      PERMISSIONS.DATA_ENTRY_ACCESS,
+      PERMISSIONS.CUSTOMERS_CREATE,
+      PERMISSIONS.BULK_METERS_CREATE,
+      PERMISSIONS.DATA_ENTRY_BULK_FORM,
+      PERMISSIONS.DATA_ENTRY_INDIVIDUAL_FORM,
+      PERMISSIONS.DATA_ENTRY_BULK_CSV,
+      PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV,
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/notifications') || path.startsWith('/staff/notifications')) &&
-    !permissions.includes(PERMISSIONS.NOTIFICATIONS_VIEW)) {
+    !hasPerm(permissions, PERMISSIONS.NOTIFICATIONS_VIEW)) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -312,23 +374,31 @@ export async function middleware(request: NextRequest) {
   if ((path.startsWith('/admin/routes') || path.startsWith('/staff/my-routes')) &&
     !hasAny(permissions,
       PERMISSIONS.ROUTES_VIEW_ALL,
+      PERMISSIONS.ROUTES_VIEW,
+      PERMISSIONS.ROUTES_VIEW_BRANCH,
       PERMISSIONS.ROUTES_VIEW_ASSIGNED,
+      PERMISSIONS.ROUTES_MANAGE,
+      PERMISSIONS.ROUTES_CREATE,
+      PERMISSIONS.ROUTES_UPDATE,
+      PERMISSIONS.ROUTES_DELETE,
+      PERMISSIONS.METER_READINGS_CREATE,
+      PERMISSIONS.READER_PROGRESS_VIEW,
       PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
-      'routes_view',
-      'routes_view_branch',
-      'routes_manage',
-      'routes_create',
-      'routes_update',
-      'routes_delete',
-      'meter_readings_create',
-      'reader_progress_view'
     )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
-  if (path.startsWith('/admin/fault-codes') &&
-    !hasAny(permissions, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.DASHBOARD_VIEW_ALL)) {
+  // BN-4 fix: Include FAULT_CODES_VIEW/MANAGE in the fault-codes middleware guard,
+  // and extend to /staff/fault-codes path
+  if ((path.startsWith('/admin/fault-codes') || path.startsWith('/staff/fault-codes')) &&
+    !hasAny(permissions,
+      PERMISSIONS.SETTINGS_MANAGE,
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.DASHBOARD_VIEW_ALL,
+      PERMISSIONS.FAULT_CODES_VIEW,
+      PERMISSIONS.FAULT_CODES_MANAGE,
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }

@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -20,12 +18,23 @@ import { baseIndividualCustomerDataSchema, meterSizeOptions, subCityOptions, wor
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   addCustomer as addCustomerToStore,
   getBulkMeters,
   subscribeToBulkMeters,
   initializeBulkMeters,
   initializeCustomers,
+  getCustomers,
   getBranches,
   subscribeToBranches,
   initializeBranches as initializeAdminBranches,
@@ -35,6 +44,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
 import { customerTypes, sewerageConnections, paymentStatuses } from "@/lib/billing-calculations";
 import { individualCustomerStatuses } from "../individual-customers/individual-customer-types";
+import { generateCustomerKeys } from "@/lib/utils";
 
 import {
   User,
@@ -53,6 +63,10 @@ import {
   TrendingUp,
   CheckCircle2,
   Lock,
+  Search,
+  Sparkles,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 
 // ─── Section Header ────────────────────────────────────────────────────────────
@@ -127,13 +141,16 @@ const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_INDIVIDUAL_";
 export function IndividualCustomerDataEntryForm() {
   const { toast } = useToast();
   const [availableBulkMeters, setAvailableBulkMeters] = React.useState<
-    { customerKeyNumber: string; name: string }[]
+    { customerKeyNumber: string; name: string; branchId?: string }[]
   >([]);
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
-  // Tracks the locked branch for branch-scoped (non-head-office) users
   const [lockedBranchId, setLockedBranchId] = React.useState<string | null>(null);
+
+  // Combobox & persistent assignment states
+  const [bulkMeterPopoverOpen, setBulkMeterPopoverOpen] = React.useState(false);
+  const [keepBulkMeterAfterSubmit, setKeepBulkMeterAfterSubmit] = React.useState(true);
 
   React.useEffect(() => {
     setIsLoadingBulkMeters(true);
@@ -146,6 +163,7 @@ export function IndividualCustomerDataEntryForm() {
         getBulkMeters().map((bm) => ({
           customerKeyNumber: bm.customerKeyNumber,
           name: bm.name,
+          branchId: bm.branchId,
         }))
       );
       setIsLoadingBulkMeters(false);
@@ -155,7 +173,11 @@ export function IndividualCustomerDataEntryForm() {
 
     const unsubscribeBMs = subscribeToBulkMeters((updated) => {
       setAvailableBulkMeters(
-        updated.map((bm) => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))
+        updated.map((bm) => ({
+          customerKeyNumber: bm.customerKeyNumber,
+          name: bm.name,
+          branchId: bm.branchId,
+        }))
       );
       setIsLoadingBulkMeters(false);
     });
@@ -178,18 +200,18 @@ export function IndividualCustomerDataEntryForm() {
       customerKeyNumber: "",
       instKey: "",
       contractNumber: "",
- customerType: undefined,
+      customerType: "Domestic",
       bookNumber: "",
       ordinal: undefined,
-      meterSize: undefined,
+      meterSize: 0.5,
       meterNumber: "",
       previousReading: undefined,
       currentReading: undefined,
-      month: "",
+      month: format(new Date(), "yyyy-MM"),
       specificArea: "",
       subCity: "",
       woreda: "",
-      sewerageConnection: undefined,
+      sewerageConnection: "No",
       status: "Pending Approval",
       paymentStatus: "Unpaid",
       xCoordinate: undefined,
@@ -200,28 +222,24 @@ export function IndividualCustomerDataEntryForm() {
 
   // Auto-lock branch for non-head-office users
   React.useEffect(() => {
-    const userJson = localStorage.getItem('user');
+    const userJson = localStorage.getItem("user");
     if (userJson) {
       const user = JSON.parse(userJson);
       const branchId = user?.branchId;
       const permissions: string[] = user?.permissions || [];
       const isGlobal =
         !branchId ||
-        branchId === 'all' ||
-        permissions.includes('*') ||
-        permissions.includes('all') ||
-        permissions.includes('admin') ||
-        permissions.includes('customers_view_all');
+        branchId === "all" ||
+        permissions.includes("*") ||
+        permissions.includes("all") ||
+        permissions.includes("admin") ||
+        permissions.includes("customers_view_all");
       if (!isGlobal && branchId) {
         setLockedBranchId(branchId);
-        // Pre-fill the form field
-        form.setValue('branchId', branchId);
+        form.setValue("branchId", branchId);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
+  }, [form]);
 
   // ── Live watchers ────────────────────────────────────────────────────────────
   const watchedValues = form.watch();
@@ -236,6 +254,10 @@ export function IndividualCustomerDataEntryForm() {
     !!watchedValues.assignedBulkMeterId &&
     watchedValues.assignedBulkMeterId !== "" &&
     watchedValues.assignedBulkMeterId !== UNASSIGNED_BULK_METER_VALUE;
+
+  const selectedBulkMeter = availableBulkMeters.find(
+    (bm) => bm.customerKeyNumber === watchedValues.assignedBulkMeterId
+  );
 
   const consumption =
     currReading !== undefined &&
@@ -267,8 +289,16 @@ export function IndividualCustomerDataEntryForm() {
     }
   };
 
-  const handleBulkMeterChange = (value: string | undefined) => {
-    form.setValue("assignedBulkMeterId", value || "", { shouldValidate: true });
+  const handleBulkMeterSelect = (keyNumber: string) => {
+    form.setValue("assignedBulkMeterId", keyNumber, { shouldValidate: true });
+    // If branch is not locked, sync with bulk meter branch if available
+    if (!lockedBranchId) {
+      const bm = availableBulkMeters.find((b) => b.customerKeyNumber === keyNumber);
+      if (bm?.branchId) {
+        form.setValue("branchId", bm.branchId);
+      }
+    }
+    setBulkMeterPopoverOpen(false);
   };
 
   const handleBranchChange = (branchIdValue: string) => {
@@ -278,6 +308,17 @@ export function IndividualCustomerDataEntryForm() {
     } else if (branchIdValue === BRANCH_UNASSIGNED_VALUE) {
       form.setValue("branchId", undefined);
     }
+  };
+
+  const handleAutoGenerateKeys = () => {
+    const existingCustomers = getCustomers();
+    const { customerKey, instKey } = generateCustomerKeys(existingCustomers);
+    form.setValue("customerKeyNumber", customerKey, { shouldValidate: true });
+    form.setValue("instKey", instKey, { shouldValidate: true });
+    toast({
+      title: "Keys Auto-Generated",
+      description: `Assigned Customer Key: ${customerKey}, INST_KEY: ${instKey}`,
+    });
   };
 
   async function onSubmit(data: AdminDataEntryFormValues) {
@@ -291,13 +332,42 @@ export function IndividualCustomerDataEntryForm() {
         data.branchId === BRANCH_UNASSIGNED_VALUE ? undefined : data.branchId,
     };
 
+    const currentBulkMeter = data.assignedBulkMeterId;
+    const currentBranch = data.branchId;
+
     const result = await addCustomerToStore(submissionData);
     if (result.success && result.data) {
       toast({
         title: "Data Entry Submitted",
         description: `Customer "${result.data.name}" has been recorded successfully.`,
       });
-      form.reset();
+
+      // Reset form while keeping bulk meter if toggled
+      form.reset({
+        assignedBulkMeterId: keepBulkMeterAfterSubmit ? currentBulkMeter : "",
+        branchId: keepBulkMeterAfterSubmit ? currentBranch : (lockedBranchId || undefined),
+        name: "",
+        customerKeyNumber: "",
+        instKey: "",
+        contractNumber: "",
+        customerType: "Domestic",
+        bookNumber: "",
+        ordinal: undefined,
+        meterSize: 0.5,
+        meterNumber: "",
+        previousReading: undefined,
+        currentReading: undefined,
+        month: format(new Date(), "yyyy-MM"),
+        specificArea: "",
+        subCity: "",
+        woreda: "",
+        sewerageConnection: "No",
+        status: "Pending Approval",
+        paymentStatus: "Unpaid",
+        xCoordinate: undefined,
+        yCoordinate: undefined,
+        zCoordinate: undefined,
+      });
     } else {
       toast({
         variant: "destructive",
@@ -314,9 +384,9 @@ export function IndividualCustomerDataEntryForm() {
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-10">
 
-          {/* ── Progress Indicator ─────────────────────────────────────── */}
-          <div className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 p-4 space-y-2">
-            <div className="flex items-center justify-between">
+          {/* ── Progress Indicator & Quick Controls ─────────────────────── */}
+          <div className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 {progressPct === 100 ? (
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -326,16 +396,31 @@ export function IndividualCustomerDataEntryForm() {
                 <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                   Form Completion
                 </span>
+                <span
+                  className={`ml-2 text-xs font-bold tabular-nums ${
+                    progressPct === 100
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-primary"
+                  }`}
+                >
+                  {filledCount} / {REQUIRED_FIELDS.length} required &nbsp;·&nbsp; {progressPct}%
+                </span>
               </div>
-              <span
-                className={`text-xs font-bold tabular-nums ${
-                  progressPct === 100
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-primary"
-                }`}
-              >
-                {filledCount} / {REQUIRED_FIELDS.length} required fields &nbsp;·&nbsp; {progressPct}%
-              </span>
+
+              {/* Keep bulk meter toggle for rapid batch entry */}
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="keep-bulk-meter-admin"
+                  checked={keepBulkMeterAfterSubmit}
+                  onCheckedChange={setKeepBulkMeterAfterSubmit}
+                />
+                <label
+                  htmlFor="keep-bulk-meter-admin"
+                  className="text-xs font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none"
+                >
+                  Keep Bulk Meter after submission
+                </label>
+              </div>
             </div>
             <Progress
               value={progressPct}
@@ -353,51 +438,84 @@ export function IndividualCustomerDataEntryForm() {
               description="Assign this customer to a Bulk Meter to unlock the form"
             />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Assign to Bulk Meter — MANDATORY */}
+              {/* Assign to Bulk Meter — Searchable Combobox */}
               <FormField
                 control={form.control}
                 name="assignedBulkMeterId"
                 render={({ field }) => (
-                  <FormItem>
+                  <FormItem className="flex flex-col">
                     <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                       Assign to Bulk Meter <span className="text-destructive">*</span>
                     </FormLabel>
-                    <div className="premium-input-group">
-                      <Layers className="h-4 w-4 text-primary" />
-                      <Select
-                        onValueChange={handleBulkMeterChange}
-                        value={field.value || undefined}
-                        disabled={isLoadingBulkMeters || form.formState.isSubmitting}
-                      >
+                    <Popover open={bulkMeterPopoverOpen} onOpenChange={setBulkMeterPopoverOpen}>
+                      <PopoverTrigger asChild>
                         <FormControl>
-                          <SelectTrigger className="rounded-xl border-primary/40 dark:border-primary/40 bg-primary/5 focus:ring-primary">
-                            <SelectValue
-                              placeholder={
-                                isLoadingBulkMeters
-                                  ? "Loading Bulk Meters…"
-                                  : "Select a Bulk Meter (Required)"
-                              }
-                            />
-                          </SelectTrigger>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={bulkMeterPopoverOpen}
+                            disabled={isLoadingBulkMeters || form.formState.isSubmitting}
+                            className={`w-full justify-between rounded-xl h-11 border-primary/40 dark:border-primary/40 bg-primary/5 hover:bg-primary/10 transition-all font-normal ${
+                              !field.value && "text-muted-foreground"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Layers className="h-4 w-4 text-primary shrink-0" />
+                              {selectedBulkMeter ? (
+                                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                                  {selectedBulkMeter.name}{" "}
+                                  <span className="text-xs text-muted-foreground font-mono font-normal">
+                                    ({selectedBulkMeter.customerKeyNumber})
+                                  </span>
+                                </span>
+                              ) : isLoadingBulkMeters ? (
+                                "Loading Bulk Meters…"
+                              ) : (
+                                "Search or select a Bulk Meter…"
+                              )}
+                            </div>
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
                         </FormControl>
-                        <SelectContent className="rounded-xl">
-                          {availableBulkMeters.length === 0 && !isLoadingBulkMeters && (
-                            <SelectItem value="no-bms-available" disabled>
-                              No bulk meters available
-                            </SelectItem>
-                          )}
-                          {availableBulkMeters.map((bm) => (
-                            <SelectItem key={bm.customerKeyNumber} value={bm.customerKeyNumber}>
-                              {bm.name} ({bm.customerKeyNumber})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[380px] p-0 rounded-2xl shadow-xl" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search bulk meter by name or key..." className="h-10" />
+                          <CommandList>
+                            <CommandEmpty className="p-4 text-sm text-center text-muted-foreground">
+                              No bulk meter found.
+                            </CommandEmpty>
+                            <CommandGroup heading="Available Bulk Meters" className="max-h-64 overflow-auto">
+                              {availableBulkMeters.map((bm) => (
+                                <CommandItem
+                                  key={bm.customerKeyNumber}
+                                  value={`${bm.name} ${bm.customerKeyNumber}`}
+                                  onSelect={() => handleBulkMeterSelect(bm.customerKeyNumber)}
+                                  className="flex items-center justify-between py-2 cursor-pointer"
+                                >
+                                  <div className="flex flex-col">
+                                    <span className="font-medium text-sm">{bm.name}</span>
+                                    <span className="text-xs text-muted-foreground font-mono">
+                                      {bm.customerKeyNumber}
+                                    </span>
+                                  </div>
+                                  <Check
+                                    className={`h-4 w-4 text-primary ${
+                                      field.value === bm.customerKeyNumber ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
               {/* Assign to Branch */}
               <FormField
                 control={form.control}
@@ -410,10 +528,9 @@ export function IndividualCustomerDataEntryForm() {
                     <div className="premium-input-group">
                       <Network className="h-4 w-4" />
                       {lockedBranchId ? (
-                        /* Branch-scoped user: show locked branch, not a selector */
                         <div className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full">
                           <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate flex-1">
-                            {availableBranches.find(b => b.id === lockedBranchId)?.name || lockedBranchId}
+                            {availableBranches.find((b) => b.id === lockedBranchId)?.name || lockedBranchId}
                           </span>
                           <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full font-medium">Auto-assigned</span>
                         </div>
@@ -455,7 +572,7 @@ export function IndividualCustomerDataEntryForm() {
             <div className="flex items-center gap-3 p-4 rounded-2xl border border-amber-200/80 bg-amber-50/80 dark:bg-amber-950/30 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 transition-all duration-300">
               <Lock className="h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
               <p className="text-sm font-medium">
-                <strong>Form Locked:</strong> You must select a Bulk Meter above to unlock the rest of the customer entry form.
+                <strong>Form Locked:</strong> Please select a Bulk Meter above using the search box to unlock the rest of the customer entry form.
               </p>
             </div>
           )}
@@ -470,11 +587,34 @@ export function IndividualCustomerDataEntryForm() {
           >
             {/* ── Section: Customer Identity ─────────────────────────────── */}
             <div>
-              <SectionHeader
-                icon={User}
-                title="Customer Identity"
-                description="Core identification fields — obtained from the external billing system"
-              />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 bg-primary/10 rounded-lg flex-shrink-0">
+                    <User className="h-4 w-4 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                      Customer Identity
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Core identification fields — from external billing system or auto-generated
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAutoGenerateKeys}
+                  disabled={!isBulkMeterSelected || form.formState.isSubmitting}
+                  className="rounded-xl border-primary/30 hover:border-primary text-xs font-semibold gap-1.5 self-start sm:self-auto"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  Auto-Generate Keys
+                </Button>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {/* Full Name */}
                 <FormField
@@ -510,8 +650,8 @@ export function IndividualCustomerDataEntryForm() {
                         <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                           Cust. Key No. <span className="text-destructive">*</span>
                         </FormLabel>
-                        <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 uppercase tracking-wider">
-                          From Ext. System
+                        <span className="text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-2 py-0.5 rounded-full font-bold border border-slate-200 uppercase tracking-wider">
+                          Key / Ext
                         </span>
                       </div>
                       <div className="premium-input-group">
@@ -519,7 +659,7 @@ export function IndividualCustomerDataEntryForm() {
                         <FormControl>
                           <Input
                             {...field}
-                            placeholder="e.g., CUST-00123"
+                            placeholder="e.g., IND-12345678 or CUST-00123"
                             disabled={!isBulkMeterSelected || form.formState.isSubmitting}
                             className="rounded-xl border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm"
                           />
@@ -539,8 +679,8 @@ export function IndividualCustomerDataEntryForm() {
                         <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                           INST_KEY <span className="text-destructive">*</span>
                         </FormLabel>
-                        <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 uppercase tracking-wider">
-                          From Ext. System
+                        <span className="text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-2 py-0.5 rounded-full font-bold border border-slate-200 uppercase tracking-wider">
+                          Inst / Ext
                         </span>
                       </div>
                       <div className="premium-input-group">
@@ -1026,7 +1166,7 @@ export function IndividualCustomerDataEntryForm() {
                     </FormItem>
                   )}
                 />
-                {/* X Coordinate */}
+                {/* Latitude / X (Northing) */}
                 <FormField
                   control={form.control}
                   name="xCoordinate"
@@ -1034,7 +1174,7 @@ export function IndividualCustomerDataEntryForm() {
                     <FormItem>
                       <div className="flex items-center justify-between">
                         <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                          X Coordinate (Lat)
+                          Latitude / X (Northing, ~9.0°)
                         </FormLabel>
                         {hasCoordinates && (
                           <Button
@@ -1073,14 +1213,14 @@ export function IndividualCustomerDataEntryForm() {
                     </FormItem>
                   )}
                 />
-                {/* Y Coordinate */}
+                {/* Longitude / Y (Easting) */}
                 <FormField
                   control={form.control}
                   name="yCoordinate"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                        Y Coordinate (Long)
+                        Longitude / Y (Easting, ~38.7°)
                       </FormLabel>
                       <div className="premium-input-group">
                         <Crosshair className="h-4 w-4" />

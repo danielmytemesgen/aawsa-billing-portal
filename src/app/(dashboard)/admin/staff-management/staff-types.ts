@@ -14,5 +14,6 @@ export interface StaffMember {
   phone?: string; // Optional
   hireDate?: string; // Optional, ISO date string
   roleId?: number; // Added
+  role_id?: number | null; // DB column compatibility
   permissions?: string[]; // Added
 }

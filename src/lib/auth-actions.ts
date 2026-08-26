@@ -136,13 +136,14 @@ export async function loginAction(formData: FormData) {
         }
 
         const expires = new Date(Date.now() + sessionDurationSeconds * 1000);
+    const isAdmin = user.role_name?.toLowerCase() === 'admin' || user.role?.toLowerCase() === 'admin';
     const sessionUser = {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role_name,
+        role: user.role_name || user.role,
         branchId: user.branch_id,
-        permissions: user.permissions || [],
+        permissions: isAdmin ? ['*'] : (user.permissions || []),
         expires,
         sessionId: staffSessionId,
     };

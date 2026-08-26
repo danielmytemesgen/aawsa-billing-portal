@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   // Skip ESLint during production builds (warnings are non-blocking locally
   // but Vercel CI treats them as fatal errors in some configurations)
   eslint: {
