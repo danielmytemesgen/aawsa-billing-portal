@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Edit2, Upload, FileDown, X, Save, RefreshCcw } from "lucide-react";
 import { format } from "date-fns";
 import {
-  getAssignedCustomerReadingsAction,
+  getBulkAndSubmeterPeriodReadingsAction,
   updateBulkAndAssignedReadingsAction,
   calculateBillAction,
 } from "@/lib/actions";
@@ -17,6 +17,7 @@ import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-t
 import type { DomainBill } from "@/lib/data-store";
 import { PERMISSIONS } from "@/lib/constants/auth";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useRouter } from "next/navigation";
 
 interface EditReadingsRecalculateSectionProps {
   bulkMeter: BulkMeter;
@@ -31,6 +32,7 @@ export function EditReadingsRecalculateSection({
   onClose,
   onSaveSuccess,
 }: EditReadingsRecalculateSectionProps) {
+  const router = useRouter();
   const { toast } = useToast();
   const { hasPermission } = usePermissions();
   const canView =
@@ -52,6 +54,8 @@ export function EditReadingsRecalculateSection({
   const [bulkCurrRead, setBulkCurrRead] = useState<number>(
     latestBill?.CURRREAD ?? bulkMeter.currentReading ?? 0
   );
+  const [isPostedBill, setIsPostedBill] = useState<boolean>(latestBill?.status === 'Posted');
+  const [resolvedBillId, setResolvedBillId] = useState<string | null>(latestBill?.id || null);
 
   const [assignedReadings, setAssignedReadings] = useState<any[]>([]);
   const [assignedReadingEdits, setAssignedReadingEdits] = useState<Record<string, { previous: number; current: number }>>({});
@@ -64,19 +68,29 @@ export function EditReadingsRecalculateSection({
   useEffect(() => {
     let isMounted = true;
     setIsLoadingAssigned(true);
-    getAssignedCustomerReadingsAction(bulkMeter.customerKeyNumber, monthYear)
+    const keyToQuery = bulkMeter.customerKeyNumber || (bulkMeter as any).id || (bulkMeter as any).meterNumber;
+    getBulkAndSubmeterPeriodReadingsAction(keyToQuery, monthYear)
       .then((res) => {
         if (!isMounted) return;
-        if (res.data && Array.isArray(res.data)) {
-          setAssignedReadings(res.data);
-          const initEdits: Record<string, { previous: number; current: number }> = {};
-          for (const row of res.data as any[]) {
-            initEdits[row.customerKeyNumber] = { previous: row.previous, current: row.current };
+        if (res.data) {
+          const { bulkMeter: serverBM, assignedCustomers } = res.data;
+          if (serverBM) {
+            setBulkPrevRead(serverBM.previousReading);
+            setBulkCurrRead(serverBM.currentReading);
+            setIsPostedBill(serverBM.isPosted);
+            setResolvedBillId(serverBM.billId || latestBill?.id || null);
           }
-          setAssignedReadingEdits(initEdits);
+          if (assignedCustomers && Array.isArray(assignedCustomers)) {
+            setAssignedReadings(assignedCustomers);
+            const initEdits: Record<string, { previous: number; current: number }> = {};
+            for (const row of assignedCustomers) {
+              initEdits[row.customerKeyNumber] = { previous: row.previous, current: row.current };
+            }
+            setAssignedReadingEdits(initEdits);
+          }
         }
       })
-      .catch((err) => console.error(err))
+      .catch((err) => console.error("Error loading period readings", err))
       .finally(() => {
         if (isMounted) setIsLoadingAssigned(false);
       });
@@ -84,7 +98,7 @@ export function EditReadingsRecalculateSection({
     return () => {
       isMounted = false;
     };
-  }, [bulkMeter.customerKeyNumber, monthYear]);
+  }, [bulkMeter.customerKeyNumber, (bulkMeter as any).id, (bulkMeter as any).meterNumber, monthYear, latestBill?.id]);
 
   const handleAssignedReadingChange = (key: string, field: "current" | "previous", value: string) => {
     const num = parseFloat(value) || 0;
@@ -214,6 +228,15 @@ export function EditReadingsRecalculateSection({
   };
 
   const handleSave = async () => {
+    if (isPostedBill) {
+      toast({
+        variant: "destructive",
+        title: "Posted Bill Locked",
+        description: "This bill is posted. Please use the Bill Correction workflow to reverse and create an audited replacement draft.",
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       const assignedUpdates = Object.entries(assignedReadingEdits).map(([key, vals]) => ({
@@ -222,36 +245,18 @@ export function EditReadingsRecalculateSection({
         prevRead: vals.previous,
       }));
 
-      let success = false;
+      const res = await updateBulkAndAssignedReadingsAction({
+        bulkBillId: resolvedBillId || undefined,
+        bulkMeterKey: bulkMeter.customerKeyNumber,
+        monthYear,
+        bulkCurrRead,
+        bulkPrevRead,
+        assignedUpdates,
+      });
 
-      if (latestBill?.id) {
-        const res = await updateBulkAndAssignedReadingsAction({
-          bulkBillId: latestBill.id,
-          bulkCurrRead,
-          bulkPrevRead,
-          assignedUpdates,
-        });
-
-        if (res?.error) {
-          toast({ variant: "destructive", title: "Save Failed", description: res.error.message || "An error occurred." });
-        } else {
-          success = true;
-        }
+      if (res?.error) {
+        toast({ variant: "destructive", title: "Save Failed", description: res.error.message || "An error occurred." });
       } else {
-        await updateBulkMeterInStore(bulkMeter.customerKeyNumber, {
-          previousReading: bulkPrevRead,
-          currentReading: bulkCurrRead,
-        });
-        for (const update of assignedUpdates) {
-          await updateCustomerInStore(update.customerKeyNumber, {
-            previousReading: update.prevRead,
-            currentReading: update.currRead,
-          });
-        }
-        success = true;
-      }
-
-      if (success) {
         toast({ title: "Saved", description: "Bulk meter and assigned customer readings updated and rebilled." });
         onSaveSuccess();
         onClose();
@@ -276,12 +281,50 @@ export function EditReadingsRecalculateSection({
         <h4 className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-2 text-base sm:text-lg">
           <Edit2 className="h-5 w-5 text-amber-600 dark:text-amber-400" /> Edit Readings &amp; Recalculate
         </h4>
-        {!canSave && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-            🔍 View Only
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isPostedBill && (
+            <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300">
+              Posted Bill
+            </Badge>
+          )}
+          {!canSave && (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+              🔍 View Only
+            </span>
+          )}
+        </div>
       </div>
+
+      {isPostedBill && (
+        <div className="p-3 bg-amber-100/90 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 dark:text-amber-200">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🔒</span>
+            <div>
+              <span className="font-semibold">Posted Bill Notice: </span>
+              This bill for {monthYear} is officially posted. To adjust finalized readings, initiate a formal Bill Correction in Bill Management.
+            </div>
+          </div>
+          {resolvedBillId && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => router.push(`/admin/bill-management/${resolvedBillId}`)}
+              className="shrink-0 bg-white dark:bg-amber-900/40 border-amber-400 text-amber-900 dark:text-amber-200 font-semibold"
+            >
+              Go to Bill Correction
+            </Button>
+          )}
+        </div>
+      )}
+
+      {bulkDiff < 0 && (
+        <div className="p-2.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 rounded-lg text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+          <span>⚠️</span>
+          <span>
+            <strong>Negative Bulk Difference:</strong> Total sub-meter usage ({totalSubmeterUsage.toFixed(2)} m³) exceeds bulk meter consumption ({(bulkCurrRead - bulkPrevRead).toFixed(2)} m³). Bulk difference is {bulkDiff.toFixed(2)} m³. Please verify readings.
+          </span>
+        </div>
+      )}
 
       {/* Main Bulk Meter Readings */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -291,8 +334,8 @@ export function EditReadingsRecalculateSection({
             type="number"
             value={bulkPrevRead}
             onChange={(e) => setBulkPrevRead(parseFloat(e.target.value) || 0)}
-            readOnly={!canSave}
-            disabled={!canSave}
+            readOnly={!canSave || isPostedBill}
+            disabled={!canSave || isPostedBill}
             className="h-10 border-amber-300 dark:border-amber-800 bg-white dark:bg-amber-950/40 disabled:opacity-70 disabled:cursor-not-allowed"
           />
         </div>
@@ -302,8 +345,8 @@ export function EditReadingsRecalculateSection({
             type="number"
             value={bulkCurrRead}
             onChange={(e) => setBulkCurrRead(parseFloat(e.target.value) || 0)}
-            readOnly={!canSave}
-            disabled={!canSave}
+            readOnly={!canSave || isPostedBill}
+            disabled={!canSave || isPostedBill}
             className="h-10 border-amber-300 dark:border-amber-800 bg-white dark:bg-amber-950/40 disabled:opacity-70 disabled:cursor-not-allowed"
           />
         </div>
@@ -474,8 +517,8 @@ export function EditReadingsRecalculateSection({
               <Button
                 size="sm"
                 onClick={handleSave}
-                disabled={isSaving}
-                className="rounded-lg h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm"
+                disabled={isSaving || isPostedBill}
+                className="rounded-lg h-9 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold shadow-sm"
               >
                 {isSaving ? (
                   <><RefreshCcw className="mr-1.5 h-4 w-4 animate-spin" /> Saving...</>

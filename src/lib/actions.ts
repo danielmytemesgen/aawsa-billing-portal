@@ -2285,21 +2285,94 @@ export async function createIndividualCustomerReadingAction(
 
 export async function batchCreateIndividualCustomerReadingsAction(
   items: Array<{ reading: IndividualCustomerReadingInsert; previousReading?: number }>
-) {
-  return await wrap(async () => {
-    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+): Promise<{ success: boolean; data?: { count: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
+  if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
-    let createdCount = 0;
-    for (const item of items || []) {
-      const rowResult = await createIndividualCustomerReadingAction(item.reading);
-      if (!rowResult || (rowResult as any).success === false) {
-        throw new Error((rowResult as any)?.message || 'Failed to create individual customer reading');
+  // 1. Check reading period status ONCE
+  const periodStatus = await getReadingPeriodStatusAction();
+  if (periodStatus === 'Closed') {
+    return { success: false, message: 'Reading period is currently closed globally.' };
+  }
+
+  // 2. Authenticate once
+  const session = await getSession();
+  if (!session || !session.id) return { success: false, message: 'Unauthorized' };
+  const perms = session.permissions || [];
+  if (!canCreateMeterReadingForType((p) => perms.includes(p), 'individual')) {
+    return { success: false, message: 'Forbidden: Missing permission to add individual readings' };
+  }
+
+  // 3. Pre-fetch all customers in a SINGLE query
+  const custKeys = [...new Set(items.map(i => (i.reading as any).CUST_KEY || (i.reading as any).individual_customer_id).filter(Boolean))];
+  const custRows: any[] = custKeys.length > 0
+    ? await query(
+        `SELECT "customerKeyNumber", "currentReading", branch_id FROM individual_customers WHERE "customerKeyNumber" = ANY($1) AND deleted_at IS NULL`,
+        [custKeys]
+      )
+    : [];
+  const custMap = new Map<string, any>(custRows.map(c => [String(c.customerKeyNumber).trim(), c]));
+
+  // 4. Execute all inserts in a single transaction, collect per-row results
+  const rowResults: Array<{ custKey: string; success: boolean; error?: string }> = [];
+  let createdCount = 0;
+
+  // Track meter updates: custKey -> { previousReading, currentReading, monthYear }
+  const meterUpdates = new Map<string, { previousReading: number; currentReading: number; monthYear: string }>();
+
+  await withTransaction(async (client) => {
+    for (const item of items) {
+      const reading = item.reading as any;
+      const custKey = String(reading.CUST_KEY || reading.individual_customer_id || '').trim();
+
+      const customer = custMap.get(custKey);
+      if (!customer) {
+        rowResults.push({ custKey, success: false, error: `Customer '${custKey}' not found.` });
+        continue;
       }
-      createdCount += 1;
+
+      // Branch isolation
+      try {
+        verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'customer');
+      } catch (e) {
+        rowResults.push({ custKey, success: false, error: (e as Error).message });
+        continue;
+      }
+
+      try {
+        await dbCreateIndividualCustomerReading(reading, client);
+        createdCount++;
+        rowResults.push({ custKey, success: true });
+
+        // Collect meter state for batch update
+        const rDate = reading.READING_DATE || reading.reading_date || '';
+        const monthYear = rDate ? String(rDate).slice(0, 7) : format(new Date(), 'yyyy-MM');
+        const rValue = Number(reading.METER_READING ?? reading.reading_value ?? 0);
+        const prevValue = item.previousReading ?? Number(reading.PREVIOUS_READING ?? customer.currentReading ?? 0);
+        // Only keep the latest reading per meter
+        const existing = meterUpdates.get(custKey);
+        if (!existing || monthYear >= existing.monthYear) {
+          meterUpdates.set(custKey, { previousReading: prevValue, currentReading: rValue, monthYear });
+        }
+      } catch (e) {
+        rowResults.push({ custKey, success: false, error: (e as Error).message });
+      }
     }
 
-    return { count: createdCount };
+    // 5. Batch update all meter records with a single UPDATE...CASE query
+    if (meterUpdates.size > 0) {
+      const entries = [...meterUpdates.entries()];
+      const prevCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 2}::numeric`).join(' ');
+      const currCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 3}::numeric`).join(' ');
+      const monthCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 4}::text`).join(' ');
+      const params: any[] = [];
+      entries.forEach(([key, val]) => params.push(key, val.previousReading, val.currentReading, val.monthYear));
+      const keys = entries.map((_, i) => `$${i * 4 + 1}`);
+      const batchUpdateSql = `UPDATE individual_customers SET "previousReading" = CASE ${prevCases} END, "currentReading" = CASE ${currCases} END, "month" = CASE ${monthCases} END WHERE "customerKeyNumber" IN (${keys.join(',')}) AND deleted_at IS NULL`;
+      await client.query(batchUpdateSql, params);
+    }
   });
+
+  return { success: true, data: { count: createdCount, rowResults } };
 }
 
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
@@ -2440,21 +2513,93 @@ export async function createBulkMeterReadingAction(
 
 export async function batchCreateBulkMeterReadingsAction(
   items: Array<{ reading: BulkMeterReadingInsert; previousReading?: number }>
-) {
-  return await wrap(async () => {
-    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+): Promise<{ success: boolean; data?: { count: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
+  if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
-    let createdCount = 0;
-    for (const item of items || []) {
-      const rowResult = await createBulkMeterReadingAction(item.reading);
-      if (!rowResult || (rowResult as any).success === false) {
-        throw new Error((rowResult as any)?.message || 'Failed to create bulk meter reading');
+  // 1. Check reading period status ONCE
+  const periodStatus = await getReadingPeriodStatusAction();
+  if (periodStatus === 'Closed') {
+    return { success: false, message: 'Reading period is currently closed globally.' };
+  }
+
+  // 2. Authenticate once
+  const session = await getSession();
+  if (!session || !session.id) return { success: false, message: 'Unauthorized' };
+  const perms = session.permissions || [];
+  if (!canCreateMeterReadingForType((p) => perms.includes(p), 'bulk')) {
+    return { success: false, message: 'Forbidden: Missing permission to add bulk readings' };
+  }
+
+  // 3. Pre-fetch all bulk meters in a SINGLE query
+  const custKeys = [...new Set(items.map(i => (i.reading as any).CUSTOMERKEY || (i.reading as any).CUST_KEY).filter(Boolean))];
+  const meterRows: any[] = custKeys.length > 0
+    ? await query(
+        `SELECT "customerKeyNumber", "currentReading", branch_id FROM bulk_meters WHERE "customerKeyNumber" = ANY($1) AND deleted_at IS NULL`,
+        [custKeys]
+      )
+    : [];
+  const meterMap = new Map<string, any>(meterRows.map(m => [String(m.customerKeyNumber).trim(), m]));
+
+  // 4. Execute all inserts in a single transaction, collect per-row results
+  const rowResults: Array<{ custKey: string; success: boolean; error?: string }> = [];
+  let createdCount = 0;
+
+  // Track meter updates: custKey -> { previousReading, currentReading, monthYear }
+  const meterUpdates = new Map<string, { previousReading: number; currentReading: number; monthYear: string }>();
+
+  await withTransaction(async (client) => {
+    for (const item of items) {
+      const reading = item.reading as any;
+      const custKey = String(reading.CUSTOMERKEY || reading.CUST_KEY || '').trim();
+
+      const meter = meterMap.get(custKey);
+      if (!meter) {
+        rowResults.push({ custKey, success: false, error: `Bulk meter '${custKey}' not found.` });
+        continue;
       }
-      createdCount += 1;
+
+      // Branch isolation
+      try {
+        verifyEntityBranchAccess(meter.branch_id || meter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+      } catch (e) {
+        rowResults.push({ custKey, success: false, error: (e as Error).message });
+        continue;
+      }
+
+      try {
+        await dbCreateBulkMeterReading(reading, client);
+        createdCount++;
+        rowResults.push({ custKey, success: true });
+
+        // Collect meter state for batch update
+        const rDate = reading.READING_DATE || reading.reading_date || '';
+        const monthYear = rDate ? String(rDate).slice(0, 7) : format(new Date(), 'yyyy-MM');
+        const rValue = Number(reading.METER_READING ?? reading.reading_value ?? 0);
+        const prevValue = item.previousReading ?? Number(reading.PREVIOUS_READING ?? meter.currentReading ?? 0);
+        const existing = meterUpdates.get(custKey);
+        if (!existing || monthYear >= existing.monthYear) {
+          meterUpdates.set(custKey, { previousReading: prevValue, currentReading: rValue, monthYear });
+        }
+      } catch (e) {
+        rowResults.push({ custKey, success: false, error: (e as Error).message });
+      }
     }
 
-    return { count: createdCount };
+    // 5. Batch update all bulk meter records with a single UPDATE...CASE query
+    if (meterUpdates.size > 0) {
+      const entries = [...meterUpdates.entries()];
+      const prevCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 2}::numeric`).join(' ');
+      const currCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 3}::numeric`).join(' ');
+      const monthCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 4}::text`).join(' ');
+      const params: any[] = [];
+      entries.forEach(([key, val]) => params.push(key, val.previousReading, val.currentReading, val.monthYear));
+      const keys = entries.map((_, i) => `$${i * 4 + 1}`);
+      const batchUpdateSql = `UPDATE bulk_meters SET "previousReading" = CASE ${prevCases} END, "currentReading" = CASE ${currCases} END, "month" = CASE ${monthCases} END WHERE "customerKeyNumber" IN (${keys.join(',')}) AND deleted_at IS NULL`;
+      await client.query(batchUpdateSql, params);
+    }
   });
+
+  return { success: true, data: { count: createdCount, rowResults } };
 }
 
 export async function getPhotosByReadingIdAction(readingId: string) {
@@ -2468,27 +2613,166 @@ export async function uploadReadingPhotoAction(
   photoData: string
 ) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
+    await checkPermission(PERMISSIONS.METER_READINGS_CREATE);
     return await dbCreateMeterReadingPhoto({
       reading_id: readingId,
       photo_data: photoData,
     });
   });
 }
-export async function getAssignedCustomerReadingsAction(bulkMeterId: string, monthYear: string) {
+
+export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: string, monthYear: string) {
   return await wrap(async () => {
-    // View OR edit permission grants access to read assigned readings
     await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_VIEW_ALL,
+      PERMISSIONS.BULK_METERS_VIEW_BRANCH,
       PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW,
       PERMISSIONS.BULK_METERS_EDIT_READINGS,
       PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW,
-      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE
+      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE,
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.BILL_VIEW_BRANCH
     );
+
+    const bulkKey = (bulkMeterKey || '').trim();
+    if (!bulkKey) return { bulkMeter: null, assignedCustomers: [] };
+
     const [year, month] = monthYear.split('-').map(Number);
     const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
 
-    const sql = `
+    // 0. Resolve bulk meter — the PK is customerKeyNumber; also try METER_KEY / INST_KEY
+    const bmLookup: any[] = await query(
+      `SELECT "customerKeyNumber", name, "METER_KEY", "INST_KEY", "meterSize", charge_group, sewerage_connection, "previousReading", "currentReading" 
+       FROM bulk_meters 
+       WHERE (LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) 
+          OR LOWER(TRIM("METER_KEY"::text)) = LOWER(TRIM($1))
+          OR LOWER(TRIM("INST_KEY"::text)) = LOWER(TRIM($1)))
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [bulkKey]
+    );
+
+    const bm = bmLookup[0];
+    // Use the resolved customerKeyNumber so the rest of the queries use the canonical key
+    const resolvedKey = bm?.customerKeyNumber || bulkKey;
+
+    // 1. Fetch Bulk Meter Period Reading & Bill info
+    const bulkSql = `
+      SELECT 
+        bm."customerKeyNumber",
+        bm.name,
+        bm."METER_KEY",
+        bm."meterSize",
+        bm.charge_group,
+        bm.sewerage_connection,
+        bm."previousReading" as "bmPrevReading",
+        bm."currentReading" as "bmCurrReading",
+        r."PREVIOUS_READING" as "rPrevReading",
+        r."METER_READING" as "rCurrReading",
+        r."READING_DATE" as "readingDate",
+        prev_r."METER_READING" as "priorReading",
+        b.id as "billId",
+        b.status as "billStatus",
+        b."THISMONTHBILLAMT" as "billAmount",
+        b."TOTALBILLAMOUNT" as "totalBillAmount",
+        b.difference_usage as "diffUsage",
+        b."PREVREAD" as "billPrevRead",
+        b."CURRREAD" as "billCurrRead",
+        last_b."CURRREAD" as "lastBillCurr"
+      FROM bulk_meters bm
+      LEFT JOIN LATERAL (
+        SELECT "PREVIOUS_READING", "METER_READING", "READING_DATE"
+        FROM bulk_meter_readings
+        WHERE "CUST_KEY" = bm."customerKeyNumber"
+          AND deleted_at IS NULL
+          AND (
+            ("READING_DATE" >= $1 AND "READING_DATE" < $2)
+            OR (TO_CHAR("READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') = $3)
+          )
+        ORDER BY "READING_DATE" DESC
+        LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT "METER_READING", "READING_DATE"
+        FROM bulk_meter_readings
+        WHERE "CUST_KEY" = bm."customerKeyNumber"
+          AND deleted_at IS NULL
+          AND "READING_DATE" < COALESCE(r."READING_DATE", $1::timestamptz)
+        ORDER BY "READING_DATE" DESC
+        LIMIT 1
+      ) prev_r ON true
+      LEFT JOIN bills b ON bm."customerKeyNumber" = b."CUSTOMERKEY"
+        AND b.month_year = $3
+        AND b.status != 'Reversed'
+      LEFT JOIN bills last_b ON bm."customerKeyNumber" = last_b."CUSTOMERKEY"
+        AND last_b.month_year = (SELECT TO_CHAR(TO_DATE($3, 'YYYY-MM') - INTERVAL '1 month', 'YYYY-MM'))
+        AND last_b.status != 'Reversed'
+      WHERE LOWER(TRIM(bm."customerKeyNumber")) = LOWER(TRIM($4))
+        AND bm.deleted_at IS NULL
+      LIMIT 1
+    `;
+    const bulkRows: any[] = await query(bulkSql, [startDate, endDate, monthYear, resolvedKey]);
+    
+    let bulkData: any = null;
+    if (bulkRows.length > 0) {
+      const bRow = bulkRows[0];
+      let curr = Number(bRow.billCurrRead ?? bRow.rCurrReading ?? bRow.bmCurrReading ?? 0);
+      let prev: number;
+
+      if (bRow.billPrevRead != null) {
+        prev = Number(bRow.billPrevRead);
+      } else if (bRow.rPrevReading != null && Number(bRow.rPrevReading) !== Number(bRow.rCurrReading) && Number(bRow.rPrevReading) > 0) {
+        prev = Number(bRow.rPrevReading);
+      } else if (bRow.priorReading != null) {
+        prev = Number(bRow.priorReading);
+      } else if (bRow.lastBillCurr != null) {
+        prev = Number(bRow.lastBillCurr);
+      } else if (Number(bRow.bmPrevReading ?? 0) !== Number(bRow.bmCurrReading ?? 0)) {
+        prev = Number(bRow.bmPrevReading);
+      } else {
+        prev = curr;
+      }
+
+      bulkData = {
+        customerKeyNumber: bRow.customerKeyNumber,
+        name: bRow.name,
+        meterKey: bRow.METER_KEY,
+        meterSize: Number(bRow.meterSize || 0.5),
+        chargeGroup: bRow.charge_group || 'Non-domestic',
+        sewerageConnection: bRow.sewerage_connection || 'No',
+        previousReading: prev,
+        currentReading: curr,
+        billId: bRow.billId,
+        billStatus: bRow.billStatus,
+        billAmount: bRow.billAmount ? Number(bRow.billAmount) : null,
+        totalBillAmount: bRow.totalBillAmount ? Number(bRow.totalBillAmount) : null,
+        differenceUsage: bRow.diffUsage != null ? Number(bRow.diffUsage) : null,
+        isPosted: bRow.billStatus === 'Posted',
+      };
+    } else if (bm) {
+      // Bulk meter exists but no bill/reading for this period
+      bulkData = {
+        customerKeyNumber: bm.customerKeyNumber,
+        name: bm.name,
+        meterKey: bm.METER_KEY,
+        meterSize: Number(bm.meterSize || 0.5),
+        chargeGroup: bm.charge_group || 'Non-domestic',
+        sewerageConnection: bm.sewerage_connection || 'No',
+        previousReading: Number(bm.previousReading || 0),
+        currentReading: Number(bm.currentReading || 0),
+        billId: null,
+        billStatus: null,
+        billAmount: null,
+        totalBillAmount: null,
+        differenceUsage: null,
+        isPosted: false,
+      };
+    }
+
+    // 2. Fetch Assigned Sub-meter Period Readings
+    // individual_customers.assignedBulkMeterId stores the bulk meter's customerKeyNumber
+    const subSql = `
       SELECT 
         ic."customerKeyNumber",
         ic.name,
@@ -2497,9 +2781,10 @@ export async function getAssignedCustomerReadingsAction(bulkMeterId: string, mon
         ic."sewerageConnection",
         ic."previousReading" as "icPrevReading",
         ic."currentReading" as "icCurrReading",
-        r.id as "readingId",
         r."PREVIOUS_READING" as "rPrevReading",
         r."METER_READING" as "rCurrReading",
+        r."READING_DATE" as "readingDate",
+        prev_r."METER_READING" as "priorReading",
         b.id as "billId",
         b.status as "billStatus",
         b."THISMONTHBILLAMT" as "billAmount",
@@ -2507,63 +2792,59 @@ export async function getAssignedCustomerReadingsAction(bulkMeterId: string, mon
         b."CURRREAD" as "billCurrRead",
         last_b."CURRREAD" as "lastMonthCurr"
       FROM individual_customers ic
-      LEFT JOIN individual_customer_readings r ON ic."customerKeyNumber" = r."CUST_KEY" 
-        AND r.deleted_at IS NULL
-        AND r."READING_DATE" >= $1 AND r."READING_DATE" < $2
+      LEFT JOIN LATERAL (
+        SELECT "PREVIOUS_READING", "METER_READING", "READING_DATE"
+        FROM individual_customer_readings
+        WHERE "CUST_KEY" = ic."customerKeyNumber"
+          AND deleted_at IS NULL
+          AND (
+            ("READING_DATE" >= $1 AND "READING_DATE" < $2)
+            OR (TO_CHAR("READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') = $3)
+          )
+        ORDER BY "READING_DATE" DESC
+        LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT "METER_READING", "READING_DATE"
+        FROM individual_customer_readings
+        WHERE "CUST_KEY" = ic."customerKeyNumber"
+          AND deleted_at IS NULL
+          AND "READING_DATE" < COALESCE(r."READING_DATE", $1::timestamptz)
+        ORDER BY "READING_DATE" DESC
+        LIMIT 1
+      ) prev_r ON true
       LEFT JOIN bills b ON ic."customerKeyNumber" = b.individual_customer_id
         AND b.month_year = $3
         AND b.status != 'Reversed'
       LEFT JOIN bills last_b ON ic."customerKeyNumber" = last_b.individual_customer_id
         AND last_b.month_year = (SELECT TO_CHAR(TO_DATE($3, 'YYYY-MM') - INTERVAL '1 month', 'YYYY-MM'))
         AND last_b.status != 'Reversed'
-      WHERE ic."assignedBulkMeterId" = $4
+      WHERE (
+        LOWER(TRIM(ic."assignedBulkMeterId")) = LOWER(TRIM($4))
+        OR LOWER(TRIM(ic."assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($4)) LIMIT 1)
+      )
         AND ic.deleted_at IS NULL
+      ORDER BY ic.name ASC, ic."customerKeyNumber" ASC
     `;
-    const rows: any[] = await query(sql, [startDate, endDate, monthYear, bulkMeterId]);
-    return rows.map((row: any) => {
-      // Priority 1: The customer's own bill for this month stores the exact PREVREAD/CURRREAD
-      // used at bill-creation time. This is immune to post-bill rollover and covers both
-      // normal bill edits and bill-correction (Rework) scenarios where ic values are already rolled over.
-      if (row.billId != null && row.billPrevRead != null && row.billCurrRead != null) {
-        return {
-          customerKeyNumber: row.customerKeyNumber,
-          name: row.name,
-          meterSize: Number(row.meterSize || 0.5),
-          customerType: row.customerType || 'Domestic',
-          sewerageConnection: row.sewerageConnection || 'No',
-          readingId: row.readingId,
-          previous: Number(row.billPrevRead),
-          current: Number(row.billCurrRead),
-          billId: row.billId,
-          billStatus: row.billStatus,
-          billAmount: row.billAmount ? Number(row.billAmount) : null
-        };
-      }
+    const subRows: any[] = await query(subSql, [startDate, endDate, monthYear, resolvedKey]);
 
-      // Priority 2: A reading record exists for this month (customer was read but not yet billed).
-      if (row.readingId != null) {
-        return {
-          customerKeyNumber: row.customerKeyNumber,
-          name: row.name,
-          meterSize: Number(row.meterSize || 0.5),
-          customerType: row.customerType || 'Domestic',
-          sewerageConnection: row.sewerageConnection || 'No',
-          readingId: row.readingId,
-          previous: Number(row.rPrevReading ?? row.icPrevReading ?? 0),
-          current: Number(row.rCurrReading ?? row.icCurrReading ?? 0),
-          billId: row.billId,
-          billStatus: row.billStatus,
-          billAmount: row.billAmount ? Number(row.billAmount) : null
-        };
-      }
+    const assignedCustomers = subRows.map((row: any) => {
+      let curr = Number(row.billCurrRead ?? row.rCurrReading ?? row.icCurrReading ?? 0);
+      let prev: number;
 
-      // Priority 3: No bill and no reading record — fall back to ic readings.
-      // After the monthly rollover, previousReading is set equal to currentReading.
-      // Detect this "post-rollover" state: prevReading == currReading AND a previous-month bill exists.
-      const icPrev = Number(row.icPrevReading ?? 0);
-      const icCurr = Number(row.icCurrReading ?? 0);
-      const lastMonthCurr = row.lastMonthCurr != null ? Number(row.lastMonthCurr) : null;
-      const rolledOver = icPrev === icCurr && lastMonthCurr !== null;
+      if (row.billPrevRead != null) {
+        prev = Number(row.billPrevRead);
+      } else if (row.rPrevReading != null && Number(row.rPrevReading) !== Number(row.rCurrReading) && Number(row.rPrevReading) > 0) {
+        prev = Number(row.rPrevReading);
+      } else if (row.priorReading != null) {
+        prev = Number(row.priorReading);
+      } else if (row.lastMonthCurr != null) {
+        prev = Number(row.lastMonthCurr);
+      } else if (Number(row.icPrevReading ?? 0) !== Number(row.icCurrReading ?? 0)) {
+        prev = Number(row.icPrevReading);
+      } else {
+        prev = curr;
+      }
 
       return {
         customerKeyNumber: row.customerKeyNumber,
@@ -2571,16 +2852,25 @@ export async function getAssignedCustomerReadingsAction(bulkMeterId: string, mon
         meterSize: Number(row.meterSize || 0.5),
         customerType: row.customerType || 'Domestic',
         sewerageConnection: row.sewerageConnection || 'No',
-        readingId: row.readingId,
-        // When rolled over, the original prev reading is the previous month's bill CURRREAD.
-        // The current reading stays as icCurr (the current meter value = rolled-over value).
-        previous: rolledOver ? lastMonthCurr! : icPrev,
-        current: icCurr,
+        previous: prev,
+        current: curr,
         billId: row.billId,
         billStatus: row.billStatus,
         billAmount: row.billAmount ? Number(row.billAmount) : null
       };
     });
+
+    return {
+      bulkMeter: bulkData,
+      assignedCustomers
+    };
+  });
+}
+
+export async function getAssignedCustomerReadingsAction(bulkMeterId: string, monthYear: string) {
+  return await wrap(async () => {
+    const res = await getBulkAndSubmeterPeriodReadingsAction(bulkMeterId, monthYear);
+    return res.assignedCustomers || [];
   });
 }
 
@@ -2610,26 +2900,70 @@ export async function recalculateBulkBillAction(bulkMeterId: string, monthYear: 
       const bulkBill = await dbGetBillById(bulkBillId);
 
       const subCustomersRes = await client.query(
-        `SELECT "customerKeyNumber" FROM individual_customers WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL`,
+        `SELECT "customerKeyNumber" FROM individual_customers 
+         WHERE (
+           LOWER(TRIM("assignedBulkMeterId")) = LOWER(TRIM($1))
+           OR LOWER(TRIM("assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) LIMIT 1)
+         ) AND deleted_at IS NULL`,
         [bulkMeterId]
       );
       const subCustKeys = subCustomersRes.rows.map((r: any) => r.customerKeyNumber);
 
       let totalIndivUsage = 0;
       if (subCustKeys.length > 0) {
-        const placeholders = subCustKeys.map((_: string, i: number) => `$${i + 3}`).join(',');
         const [year, month] = monthYear.split('-').map(Number);
         const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
         const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
-        
-        const readingsRes = await client.query(
-          `SELECT "METER_READING", "PREVIOUS_READING" FROM individual_customer_readings
-           WHERE "READING_DATE" >= $1 AND "READING_DATE" < $2
-           AND "CUST_KEY" IN (${placeholders}) AND deleted_at IS NULL`,
-          [startDate, endDate, ...subCustKeys]
+        const placeholders = subCustKeys.map((_: string, i: number) => `$${i + 3}`).join(',');
+
+        const usageRes = await client.query(
+          `SELECT
+             ic."customerKeyNumber",
+             COALESCE(b."CURRREAD", r."METER_READING", ic."currentReading", 0) AS curr_read,
+             COALESCE(
+               b."PREVREAD",
+               CASE WHEN r."PREVIOUS_READING" IS NOT NULL AND r."PREVIOUS_READING" != r."METER_READING" AND r."PREVIOUS_READING" > 0 THEN r."PREVIOUS_READING" END,
+               prev_r."METER_READING",
+               last_b."CURRREAD",
+               CASE WHEN ic."previousReading" != ic."currentReading" THEN ic."previousReading" END,
+               ic."currentReading",
+               0
+             ) AS prev_read
+           FROM individual_customers ic
+           LEFT JOIN LATERAL (
+             SELECT "PREVIOUS_READING", "METER_READING", "READING_DATE"
+             FROM individual_customer_readings
+             WHERE "CUST_KEY" = ic."customerKeyNumber"
+               AND deleted_at IS NULL
+               AND (
+                 ("READING_DATE" >= $1 AND "READING_DATE" < $2)
+                 OR (TO_CHAR("READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') = $${subCustKeys.length + 3})
+               )
+             ORDER BY "READING_DATE" DESC
+             LIMIT 1
+           ) r ON true
+           LEFT JOIN LATERAL (
+             SELECT "METER_READING"
+             FROM individual_customer_readings
+             WHERE "CUST_KEY" = ic."customerKeyNumber"
+               AND deleted_at IS NULL
+               AND "READING_DATE" < COALESCE(r."READING_DATE", $1::timestamptz)
+             ORDER BY "READING_DATE" DESC
+             LIMIT 1
+           ) prev_r ON true
+           LEFT JOIN bills b
+             ON b.individual_customer_id = ic."customerKeyNumber"
+             AND b.month_year = $${subCustKeys.length + 3}
+             AND b.status != 'Reversed'
+           LEFT JOIN bills last_b
+             ON last_b.individual_customer_id = ic."customerKeyNumber"
+             AND last_b.month_year = (SELECT TO_CHAR(TO_DATE($${subCustKeys.length + 3}, 'YYYY-MM') - INTERVAL '1 month', 'YYYY-MM'))
+             AND last_b.status != 'Reversed'
+           WHERE ic."customerKeyNumber" IN (${placeholders})`,
+          [startDate, endDate, ...subCustKeys, monthYear]
         );
-        for (const row of readingsRes.rows) {
-          totalIndivUsage += (Number(row.METER_READING || 0) - Number(row.PREVIOUS_READING || 0));
+        for (const row of usageRes.rows) {
+          totalIndivUsage += Math.max(0, Number(row.curr_read || 0) - Number(row.prev_read || 0));
         }
       }
 
@@ -2637,9 +2971,9 @@ export async function recalculateBulkBillAction(bulkMeterId: string, monthYear: 
       const bulkUsage = Number(bulkBill.CURRREAD || 0) - Number(bulkBill.PREVREAD || 0);
       const bulkDiffUsage = bulkUsage - totalIndivUsage;
 
-      const chargeGroup = bulkMeter.charge_group || bulkMeter.customerType || 'Non-domestic';
-      const sewerageConn = bulkMeter.sewerageConnection || bulkMeter.sewerage_connection || 'No';
-      const meterSize = Number(bulkMeter.meterSize || 0.5);
+      const chargeGroup = bulkMeter?.charge_group || bulkMeter?.customerType || bulkBill.snapshot_data?.chargeGroup || 'Non-domestic';
+      const sewerageConn = bulkMeter?.sewerageConnection || bulkMeter?.sewerage_connection || bulkBill.snapshot_data?.sewerageConnection || 'No';
+      const meterSize = Number(bulkMeter?.meterSize || 0.5);
 
       const bulkCalc = await calculateBill(
         bulkDiffUsage,
@@ -2681,7 +3015,9 @@ export async function recalculateBulkBillAction(bulkMeterId: string, monthYear: 
 }
 
 export async function updateBulkAndAssignedReadingsAction(payload: {
-  bulkBillId: string;
+  bulkBillId?: string;
+  bulkMeterKey?: string;
+  monthYear?: string;
   bulkCurrRead: number;
   bulkPrevRead: number;
   assignedUpdates: Array<{
@@ -2700,7 +3036,6 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
       dbGetBillById,
       dbUpdateBill,
       dbGetCustomerById,
-      dbUpdateCustomer,
       dbUpdateBulkMeter,
       dbSyncAgingForCustomer,
       dbCreateBillWorkflowLog,
@@ -2709,110 +3044,139 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
     const { calculateBill } = await import('./billing');
 
     return await withTransaction(async (client) => {
-      const bulkBill = await dbGetBillById(payload.bulkBillId);
-      if (!bulkBill) throw new Error("Bulk bill not found");
-      const monthYear = bulkBill.month_year;
-      const bulkMeterId = bulkBill.CUSTOMERKEY;
+      let bulkBill: any = null;
+      let bulkMeterId = payload.bulkMeterKey;
+      let monthYear = payload.monthYear;
 
-      if (!bulkMeterId) throw new Error("Bill is not a bulk meter bill");
-
-      // 1. Update individual customer readings only — do NOT calculate or rebill individual customers.
-      // Individual customers under a bulk meter are billed via the bulk meter's difference calculation.
-      for (const update of payload.assignedUpdates) {
-        const custId = update.customerKeyNumber;
-        const customer = await dbGetCustomerById(custId, client);
-        if (!customer) continue;
-
-        const [year, month] = monthYear.split('-').map(Number);
-        const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
-        const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
-
-        // Update or insert the reading record for this month
-        const readingRes = await client.query(
-          `SELECT id FROM individual_customer_readings 
-           WHERE "CUST_KEY" = $1 AND deleted_at IS NULL
-           AND "READING_DATE" >= $2 AND "READING_DATE" < $3 LIMIT 1`,
-          [custId, startDate, endDate]
-        );
-        
-        if (readingRes.rows.length > 0) {
-          await client.query(
-            `UPDATE individual_customer_readings 
-             SET "METER_READING" = $1, "PREVIOUS_READING" = $2 
-             WHERE id = $3`,
-            [update.currRead, update.prevRead, readingRes.rows[0].id]
-          );
-        } else {
-          await client.query(
-            `INSERT INTO individual_customer_readings 
-             ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE") 
-             VALUES ($1, $2, $3, $4)`,
-            [custId, update.currRead, update.prevRead, new Date(Date.UTC(year, month - 1, 15)).toISOString()]
-          );
-        }
-
-        // Update the customer's stored reading fields
-        await dbUpdateCustomer(custId, {
-          previousReading: update.prevRead,
-          currentReading: update.currRead,
-          month: monthYear
-        }, client);
-
-        // Also update the individual customer's bill PREVREAD/CURRREAD if one exists,
-        // so that the "Edit Readings" view stays in sync with what was saved.
-        // We do NOT recalculate or rebill — only update the reading columns.
-        const indivBillRes = await client.query(
-          `SELECT id, status FROM bills WHERE individual_customer_id = $1 AND month_year = $2 AND status != 'Reversed' LIMIT 1`,
-          [custId, monthYear]
-        );
-        if (indivBillRes.rows.length > 0) {
-          const indivBill = indivBillRes.rows[0];
-          // Only update readings on non-Posted bills to avoid altering finalised records.
-          if (indivBill.status !== 'Posted') {
-            await dbUpdateBill(indivBill.id, {
-              CURRREAD: update.currRead,
-              PREVREAD: update.prevRead,
-              CONS: Math.max(0, update.currRead - update.prevRead),
-            }, client, monthYear);
+      if (payload.bulkBillId) {
+        bulkBill = await dbGetBillById(payload.bulkBillId);
+        if (bulkBill) {
+          monthYear = bulkBill.month_year;
+          bulkMeterId = bulkBill.CUSTOMERKEY;
+          if (bulkBill.status === 'Posted') {
+            throw new Error("Cannot directly edit readings on a Posted bill. Please use 'Bill Correction' to reverse and create an auditable replacement draft.");
           }
         }
       }
 
-      // 2. Recalculate bulk meter's bill using the updated sub-meter readings.
-      // Sum individual usage from reading records; fall back to the customer's bill PREVREAD/CURRREAD
-      // for customers who have a bill but no separate reading record this month.
+      if (!bulkMeterId) throw new Error("Bulk meter identifier is required");
+      if (!monthYear) throw new Error("Billing month is required");
+
+      const [year, month] = monthYear.split('-').map(Number);
+      const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+      const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
+      const midMonthDate = new Date(Date.UTC(year, month - 1, 15)).toISOString();
+
+      // 1. Update individual customer readings
+      if (payload.assignedUpdates.length > 0) {
+        for (const update of payload.assignedUpdates) {
+          const custId = update.customerKeyNumber;
+
+          // Upsert reading record
+          const readingRes = await client.query(
+            `SELECT id FROM individual_customer_readings 
+             WHERE "CUST_KEY" = $1 AND deleted_at IS NULL
+             AND "READING_DATE" >= $2 AND "READING_DATE" < $3 LIMIT 1`,
+            [custId, startDate, endDate]
+          );
+          
+          if (readingRes.rows.length > 0) {
+            await client.query(
+              `UPDATE individual_customer_readings 
+               SET "METER_READING" = $1, "PREVIOUS_READING" = $2 
+               WHERE id = $3`,
+              [update.currRead, update.prevRead, readingRes.rows[0].id]
+            );
+          } else {
+            await client.query(
+              `INSERT INTO individual_customer_readings 
+               ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE") 
+               VALUES ($1, $2, $3, $4)`,
+              [custId, update.currRead, update.prevRead, midMonthDate]
+            );
+          }
+
+          // Update individual_customers table
+          await client.query(
+            `UPDATE individual_customers 
+             SET "previousReading" = $1, "currentReading" = $2, month = $3 
+             WHERE "customerKeyNumber" = $4`,
+            [update.prevRead, update.currRead, monthYear, custId]
+          );
+
+          // Update non-Posted bills if any
+          const indivUsage = Math.max(0, update.currRead - update.prevRead);
+          await client.query(
+            `UPDATE bills 
+             SET "CURRREAD" = $1, "PREVREAD" = $2, "CONS" = $3
+             WHERE individual_customer_id = $4 AND month_year = $5 AND status NOT IN ('Posted', 'Reversed', 'Void', 'Deleted')`,
+            [update.currRead, update.prevRead, indivUsage, custId, monthYear]
+          );
+        }
+      }
+
+      // 2. Recalculate bulk difference
       const subCustomersRes = await client.query(
-        `SELECT "customerKeyNumber" FROM individual_customers WHERE "assignedBulkMeterId" = $1 AND deleted_at IS NULL`,
+        `SELECT "customerKeyNumber" FROM individual_customers 
+         WHERE (
+           LOWER(TRIM("assignedBulkMeterId")) = LOWER(TRIM($1))
+           OR LOWER(TRIM("assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) LIMIT 1)
+         ) AND deleted_at IS NULL`,
         [bulkMeterId]
       );
       const subCustKeys = subCustomersRes.rows.map((r: any) => r.customerKeyNumber);
 
       let totalIndivUsage = 0;
       if (subCustKeys.length > 0) {
-        const [year, month] = monthYear.split('-').map(Number);
-        const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
-        const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
         const placeholders = subCustKeys.map((_: string, i: number) => `$${i + 3}`).join(',');
-
-        // Prefer reading records; fall back to the individual customer's bill readings
         const usageRes = await client.query(
           `SELECT
-             COALESCE(r."METER_READING", b."CURRREAD", ic."currentReading", 0) AS curr_read,
-             COALESCE(r."PREVIOUS_READING", b."PREVREAD", ic."previousReading", 0) AS prev_read
+             ic."customerKeyNumber",
+             COALESCE(b."CURRREAD", r."METER_READING", ic."currentReading", 0) AS curr_read,
+             COALESCE(
+               b."PREVREAD",
+               CASE WHEN r."PREVIOUS_READING" IS NOT NULL AND r."PREVIOUS_READING" != r."METER_READING" AND r."PREVIOUS_READING" > 0 THEN r."PREVIOUS_READING" END,
+               prev_r."METER_READING",
+               last_b."CURRREAD",
+               CASE WHEN ic."previousReading" != ic."currentReading" THEN ic."previousReading" END,
+               ic."currentReading",
+               0
+             ) AS prev_read
            FROM individual_customers ic
-           LEFT JOIN individual_customer_readings r
-             ON r."CUST_KEY" = ic."customerKeyNumber"
-             AND r.deleted_at IS NULL
-             AND r."READING_DATE" >= $1 AND r."READING_DATE" < $2
+           LEFT JOIN LATERAL (
+             SELECT "PREVIOUS_READING", "METER_READING", "READING_DATE"
+             FROM individual_customer_readings
+             WHERE "CUST_KEY" = ic."customerKeyNumber"
+               AND deleted_at IS NULL
+               AND (
+                 ("READING_DATE" >= $1 AND "READING_DATE" < $2)
+                 OR (TO_CHAR("READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') = $${subCustKeys.length + 3})
+               )
+             ORDER BY "READING_DATE" DESC
+             LIMIT 1
+           ) r ON true
+           LEFT JOIN LATERAL (
+             SELECT "METER_READING"
+             FROM individual_customer_readings
+             WHERE "CUST_KEY" = ic."customerKeyNumber"
+               AND deleted_at IS NULL
+               AND "READING_DATE" < COALESCE(r."READING_DATE", $1::timestamptz)
+             ORDER BY "READING_DATE" DESC
+             LIMIT 1
+           ) prev_r ON true
            LEFT JOIN bills b
              ON b.individual_customer_id = ic."customerKeyNumber"
              AND b.month_year = $${subCustKeys.length + 3}
              AND b.status != 'Reversed'
+           LEFT JOIN bills last_b
+             ON last_b.individual_customer_id = ic."customerKeyNumber"
+             AND last_b.month_year = (SELECT TO_CHAR(TO_DATE($${subCustKeys.length + 3}, 'YYYY-MM') - INTERVAL '1 month', 'YYYY-MM'))
+             AND last_b.status != 'Reversed'
            WHERE ic."customerKeyNumber" IN (${placeholders})`,
           [startDate, endDate, ...subCustKeys, monthYear]
         );
         for (const row of usageRes.rows) {
-          totalIndivUsage += (Number(row.curr_read || 0) - Number(row.prev_read || 0));
+          totalIndivUsage += Math.max(0, Number(row.curr_read || 0) - Number(row.prev_read || 0));
         }
       }
 
@@ -2820,13 +3184,10 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
       const bulkUsage = payload.bulkCurrRead - payload.bulkPrevRead;
       const bulkDiffUsage = bulkUsage - totalIndivUsage;
 
-      const [bYear, bMonth] = monthYear.split('-').map(Number);
-      const bStartDate = new Date(Date.UTC(bYear, bMonth - 1, 1)).toISOString();
-      const bEndDate = new Date(Date.UTC(bYear, bMonth, 1)).toISOString();
       const bulkReadingRes = await client.query(
         `SELECT id FROM bulk_meter_readings WHERE "CUST_KEY" = $1 AND deleted_at IS NULL
          AND "READING_DATE" >= $2 AND "READING_DATE" < $3 LIMIT 1`,
-        [bulkMeterId, bStartDate, bEndDate]
+        [bulkMeterId, startDate, endDate]
       );
       if (bulkReadingRes.rows.length > 0) {
         await client.query(
@@ -2837,7 +3198,7 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         await client.query(
           `INSERT INTO bulk_meter_readings ("CUST_KEY", "METER_READING", "PREVIOUS_READING", "READING_DATE") 
            VALUES ($1, $2, $3, $4)`,
-          [bulkMeterId, payload.bulkCurrRead, payload.bulkPrevRead, new Date(Date.UTC(bYear, bMonth - 1, 15)).toISOString()]
+          [bulkMeterId, payload.bulkCurrRead, payload.bulkPrevRead, midMonthDate]
         );
       }
 
@@ -2847,55 +3208,64 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         month: monthYear
       }, client);
 
-      const chargeGroup = bulkMeter?.charge_group || bulkMeter?.customerType || bulkBill.snapshot_data?.chargeGroup || 'Non-domestic';
-      const sewerageConn = bulkMeter?.sewerageConnection || bulkMeter?.sewerage_connection || bulkBill.snapshot_data?.sewerageConnection || 'No';
-      const meterSize = Number(bulkMeter?.meterSize || 0.5);
-
-      const bulkCalc = await calculateBill(
-        bulkDiffUsage,
-        chargeGroup as any,
-        sewerageConn as any,
-        meterSize,
-        monthYear
+      const targetBillId = payload.bulkBillId || (
+        await client.query(
+          `SELECT id FROM bills WHERE "CUSTOMERKEY" = $1 AND month_year = $2 AND status NOT IN ('Posted', 'Reversed', 'Void', 'Deleted') LIMIT 1`,
+          [bulkMeterId, monthYear]
+        ).then((r: any) => r.rows[0]?.id)
       );
 
-      const currentOutstanding = Number(bulkBill.OUTSTANDINGAMT || bulkBill.balance_carried_forward || 0);
+      if (targetBillId) {
+        const currentBillRecord = bulkBill || await dbGetBillById(targetBillId);
+        const chargeGroup = bulkMeter?.charge_group || bulkMeter?.customerType || currentBillRecord?.snapshot_data?.chargeGroup || 'Non-domestic';
+        const sewerageConn = bulkMeter?.sewerageConnection || bulkMeter?.sewerage_connection || currentBillRecord?.snapshot_data?.sewerageConnection || 'No';
+        const meterSize = Number(bulkMeter?.meterSize || 0.5);
 
-      const existingSnapshotRes2 = await client.query(
-        `SELECT snapshot_data FROM bills WHERE id = $1 LIMIT 1`,
-        [payload.bulkBillId]
-      );
-      const existingSnapshot2 = existingSnapshotRes2.rows[0]?.snapshot_data || {};
+        const bulkCalc = await calculateBill(
+          bulkDiffUsage,
+          chargeGroup as any,
+          sewerageConn as any,
+          meterSize,
+          monthYear
+        );
 
-      await dbUpdateBill(payload.bulkBillId, {
-        CURRREAD: payload.bulkCurrRead,
-        PREVREAD: payload.bulkPrevRead,
-        CONS: Math.max(0, bulkUsage),
-        difference_usage: bulkCalc.effectiveUsage,
-        THISMONTHBILLAMT: bulkCalc.totalBill,
-        TOTALBILLAMOUNT: bulkCalc.totalBill + currentOutstanding,
-        base_water_charge: bulkCalc.baseWaterCharge,
-        sewerage_charge: bulkCalc.sewerageCharge,
-        meter_rent: bulkCalc.meterRent,
-        maintenance_fee: bulkCalc.maintenanceFee,
-        sanitation_fee: bulkCalc.sanitationFee,
-        vat_amount: bulkCalc.vatAmount,
-        snapshot_data: {
-          ...existingSnapshot2,
-          totalIndividualUsage: totalIndivUsage,
-        } as any,
-      }, client, monthYear);
+        const currentOutstanding = Number(currentBillRecord?.OUTSTANDINGAMT || currentBillRecord?.balance_carried_forward || 0);
 
-      await dbCreateBillWorkflowLog({
-        bill_id: payload.bulkBillId,
-        from_status: bulkBill.status,
-        to_status: bulkBill.status,
-        changed_by: session.id,
-        reason: `Meter readings updated. Bulk reading: ${bulkBill.PREVREAD}/${bulkBill.CURRREAD} -> ${payload.bulkPrevRead}/${payload.bulkCurrRead}`
-      }, client);
+        const existingSnapshotRes = await client.query(
+          `SELECT snapshot_data FROM bills WHERE id = $1 LIMIT 1`,
+          [targetBillId]
+        );
+        const existingSnapshot = existingSnapshotRes.rows[0]?.snapshot_data || {};
+
+        await dbUpdateBill(targetBillId, {
+          CURRREAD: payload.bulkCurrRead,
+          PREVREAD: payload.bulkPrevRead,
+          CONS: Math.max(0, bulkUsage),
+          difference_usage: bulkCalc.effectiveUsage,
+          THISMONTHBILLAMT: bulkCalc.totalBill,
+          TOTALBILLAMOUNT: bulkCalc.totalBill + currentOutstanding,
+          base_water_charge: bulkCalc.baseWaterCharge,
+          sewerage_charge: bulkCalc.sewerageCharge,
+          meter_rent: bulkCalc.meterRent,
+          maintenance_fee: bulkCalc.maintenanceFee,
+          sanitation_fee: bulkCalc.sanitationFee,
+          vat_amount: bulkCalc.vatAmount,
+          snapshot_data: {
+            ...existingSnapshot,
+            totalIndividualUsage: totalIndivUsage,
+          } as any,
+        }, client, monthYear);
+
+        await dbCreateBillWorkflowLog({
+          bill_id: targetBillId,
+          from_status: currentBillRecord?.status || 'Draft',
+          to_status: currentBillRecord?.status || 'Draft',
+          changed_by: session.id,
+          reason: `Meter readings updated. Bulk reading: ${currentBillRecord?.PREVREAD}/${currentBillRecord?.CURRREAD} -> ${payload.bulkPrevRead}/${payload.bulkCurrRead}`
+        }, client);
+      }
 
       await dbSyncAgingForCustomer(bulkMeterId, client);
-
       return { success: true };
     });
   });
@@ -3408,16 +3778,26 @@ export async function calculateBillAction(
           const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
           const placeholders = subCustKeys.map((_, i) => `$${i + 3}`).join(',');
           
-          const readingsRes: any[] = await query(
-            `SELECT "METER_READING", "PREVIOUS_READING" FROM individual_customer_readings
-             WHERE "READING_DATE" >= $1 AND "READING_DATE" < $2
-             AND "CUST_KEY" IN (${placeholders}) AND deleted_at IS NULL`,
-            [startDate, endDate, ...subCustKeys]
+          const usageRes: any[] = await query(
+            `SELECT
+               COALESCE(r."METER_READING", b."CURRREAD", ic."currentReading", 0) AS curr_read,
+               COALESCE(r."PREVIOUS_READING", b."PREVREAD", ic."previousReading", 0) AS prev_read
+             FROM individual_customers ic
+             LEFT JOIN individual_customer_readings r
+               ON r."CUST_KEY" = ic."customerKeyNumber"
+               AND r.deleted_at IS NULL
+               AND r."READING_DATE" >= $1 AND r."READING_DATE" < $2
+             LEFT JOIN bills b
+               ON b.individual_customer_id = ic."customerKeyNumber"
+               AND b.month_year = $${subCustKeys.length + 3}
+               AND b.status != 'Reversed'
+             WHERE ic."customerKeyNumber" IN (${placeholders})`,
+            [startDate, endDate, ...subCustKeys, billingMonth]
           );
 
           let totalIndivUsage = 0;
-          for (const row of readingsRes) {
-            totalIndivUsage += (Number(row.METER_READING || 0) - Number(row.PREVIOUS_READING || 0));
+          for (const row of usageRes) {
+            totalIndivUsage += (Number(row.curr_read || 0) - Number(row.prev_read || 0));
           }
           finalConsumption = consumption - totalIndivUsage;
         }

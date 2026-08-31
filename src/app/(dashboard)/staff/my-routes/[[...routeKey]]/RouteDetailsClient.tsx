@@ -718,15 +718,20 @@ export default function RouteDetailsClient() {
             } as any;
 
             let result;
+            const activeFaultCode = values.faultCode === 'none' ? undefined : values.faultCode;
+            // Fault-code rule: if a fault code is active, force reading = previous (usage = 0 m³)
+            const prevReading = selectedMeter?.lastReading ?? 0;
+            const finalReading = activeFaultCode ? prevReading : values.reading;
+
             if (values.meterType === 'bulk_meter') {
                 result = await addBulkMeterReading({
                     CUSTOMERKEY: values.entityId,
                     readerStaffId: currentUser.id,
-                    readingValue: values.reading,
+                    readingValue: finalReading,
                     readingDate: format(values.date, "yyyy-MM-dd"),
                     monthYear: format(values.date, "yyyy-MM"),
-                    faultCode: values.faultCode === 'none' ? undefined : values.faultCode,
-                    notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
+                    faultCode: activeFaultCode,
+                    notes: activeFaultCode ? `Fault: ${activeFaultCode}. Reading forced to previous (${prevReading}) — usage 0 m³. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
                     capturedCoordinates: values.capturedCoordinates,
                     meter_photo: values.meterPhoto,
                     ...readingContext,
@@ -735,11 +740,11 @@ export default function RouteDetailsClient() {
                 result = await addIndividualCustomerReading({
                     individualCustomerId: values.entityId,
                     readerStaffId: currentUser.id,
-                    readingValue: values.reading,
+                    readingValue: finalReading,
                     readingDate: format(values.date, "yyyy-MM-dd"),
                     monthYear: format(values.date, "yyyy-MM"),
-                    faultCode: values.faultCode === 'none' ? undefined : values.faultCode,
-                    notes: values.faultCode && values.faultCode !== 'none' ? `Fault: ${values.faultCode}. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
+                    faultCode: activeFaultCode,
+                    notes: activeFaultCode ? `Fault: ${activeFaultCode}. Reading forced to previous (${prevReading}) — usage 0 m³. Reader: ${currentUser.email}` : `Reading by reader: ${currentUser.email}`,
                     capturedCoordinates: values.capturedCoordinates,
                     meter_photo: values.meterPhoto,
                     ...readingContext,

@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils";
 import { getFaultCodeLabel } from "@/lib/fault-codes";
 import { getPhotosByReadingIdAction } from "@/lib/reading-photo-actions";
+import { getBulkMeters, getCustomers, getBranches } from "@/lib/data-store";
 
 export interface ReadingData {
     id: string;
@@ -82,6 +83,33 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
         return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="hidden" /></Dialog>;
     }
 
+    // Dynamic resolution of branchName if missing
+    let resolvedBranchName = reading.branchName;
+    if (!resolvedBranchName || resolvedBranchName === "N/A") {
+        const branches = getBranches();
+        if (reading.meterType === 'Bulk') {
+            const bm = getBulkMeters().find(b => b.customerKeyNumber === reading.meterId || b.meterNumber === reading.meterId);
+            if (bm) {
+                if (bm.branchId) {
+                    const b = branches.find(br => br.id === bm.branchId);
+                    if (b) resolvedBranchName = b.name;
+                } else if ((bm as any).branchName) {
+                    resolvedBranchName = (bm as any).branchName;
+                }
+            }
+        } else {
+            const cust = getCustomers().find(c => c.customerKeyNumber === reading.meterId || c.meterNumber === reading.meterId);
+            if (cust) {
+                if (cust.branchId) {
+                    const b = branches.find(br => br.id === cust.branchId);
+                    if (b) resolvedBranchName = b.name;
+                } else if ((cust as any).branchName) {
+                    resolvedBranchName = (cust as any).branchName;
+                }
+            }
+        }
+    }
+
     const {
         meterIdentifier,
         meterId,
@@ -95,9 +123,9 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
         notes,
         readerName = "System/Admin",
         readerPhone,
-        branchName = "N/A",
+        branchName = resolvedBranchName || "N/A",
         hasPhoto
-    } = reading;
+    } = { ...reading, branchName: resolvedBranchName || reading.branchName || "N/A" };
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>

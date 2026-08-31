@@ -4621,7 +4621,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     };
 
     for (const bill of bills) {
-        const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed';
+        const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed' || bill.status === 'Draft' || bill.status === 'Rework' || bill.status === 'Pending' || bill.status === 'Pending_Approval';
         const billMonth = bill.month_year || (bill.created_at ? (bill.created_at instanceof Date ? bill.created_at.toISOString().slice(0,7) : String(bill.created_at).slice(0,7)) : '');
         
         const activeTariff = findActiveTariff(billMonth);

@@ -707,6 +707,12 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                         difference_usage: calcRes.data.effectiveUsage,
                         THISMONTHBILLAMT: calcRes.data.totalBill,
                         TOTALBILLAMOUNT: calcRes.data.totalBill + currentOutstanding,
+                        base_water_charge: calcRes.data.baseWaterCharge,
+                        sewerage_charge: calcRes.data.sewerageCharge,
+                        meter_rent: calcRes.data.meterRent,
+                        maintenance_fee: calcRes.data.maintenanceFee,
+                        sanitation_fee: calcRes.data.sanitationFee,
+                        vat_amount: calcRes.data.vatAmount,
                     });
                     await loadData();
                     setIsEditing(false);

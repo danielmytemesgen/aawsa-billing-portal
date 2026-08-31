@@ -24,7 +24,11 @@ import {
   initializeCustomers,
   initializeBulkMeters,
   initializeIndividualCustomerReadings,
-  initializeBulkMeterReadings
+  initializeBulkMeterReadings,
+  initializeFaultCodes,
+  getFaultCodes,
+  subscribeToFaultCodes,
+  type DomainFaultCode
 } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
@@ -50,6 +54,7 @@ interface CsvReadingUploadDialogProps {
 }
 
 const readingCsvRequiredHeaders = ["CUST_KEY", "PREVIOUS_READING", "METER_READING", "READING_DATE"];
+const readingCsvOptionalHeaders = ["FAULT_CODE"];
 
 const CSV_SPLIT_REGEX = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
 
@@ -153,6 +158,15 @@ export function CsvReadingUploadDialog({
   const [issues, setIssues] = React.useState<ValidationIssue[]>([]);
   const [successCount, setSuccessCount] = React.useState(0);
   const [totalRows, setTotalRows] = React.useState(0);
+  const [liveFaultCodes, setLiveFaultCodes] = React.useState<DomainFaultCode[]>([]);
+
+  React.useEffect(() => {
+    if (open) {
+      initializeFaultCodes();
+      const unsub = subscribeToFaultCodes((codes) => setLiveFaultCodes(codes));
+      return () => unsub();
+    }
+  }, [open]);
 
   const errors = React.useMemo(() => issues.filter(i => i.type === "error"), [issues]);
   const warnings = React.useMemo(() => issues.filter(i => i.type === "warning"), [issues]);
@@ -192,7 +206,11 @@ export function CsvReadingUploadDialog({
 
   // ── STEP 1: Validate only (no DB writes) ──────────────────────────────────
   const handleValidate = async () => {
-    if (!csvFile || !currentUser) return;
+    if (!csvFile) return;
+    if (!currentUser) {
+      toast({ variant: "destructive", title: "Not Authenticated", description: "You must be logged in to upload readings." });
+      return;
+    }
     setStage("validating");
     setProgress(5);
     setProgressLabel("Loading existing data…");
@@ -205,6 +223,7 @@ export function CsvReadingUploadDialog({
       await initializeBulkMeters(true);
       await initializeBulkMeterReadings(true);
     }
+    await initializeFaultCodes(true);
 
     setProgress(20);
     setProgressLabel("Parsing CSV…");
@@ -218,8 +237,9 @@ export function CsvReadingUploadDialog({
     }
 
     const firstLineValues = lines[0].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ""));
-    const headerLower = firstLineValues.map(h => h.toLowerCase());
-    const missing = readingCsvRequiredHeaders.filter(req => !headerLower.includes(req.toLowerCase()));
+    const normalizeHeaderName = (h: string) => h.toUpperCase().replace(/[\s\-]+/g, "_");
+    const headerCleanSet = new Set(firstLineValues.map(h => normalizeHeaderName(h)));
+    const missing = readingCsvRequiredHeaders.filter(req => !headerCleanSet.has(normalizeHeaderName(req)));
     if (missing.length > 0) {
       setIssues([{ row: 0, custKey: "", type: "error", message: `Missing required columns: ${missing.join(", ")}` }]);
       setStage("validated");
@@ -252,22 +272,30 @@ export function CsvReadingUploadDialog({
       if (m?.meterNumber) byMeter.set(String(m.meterNumber).trim(), m);
     }
 
-    const isHeaderRow = firstLineValues.some(v =>
-      readingCsvRequiredHeaders.some(h => h.toLowerCase() === v.toLowerCase())
-    );
     const headerMapping: Record<string, number> = {};
-    if (isHeaderRow) {
-      firstLineValues.forEach((val, i) => { headerMapping[val.toUpperCase()] = i; });
-    } else {
-      readingCsvRequiredHeaders.forEach((req, i) => { headerMapping[req] = i; });
-    }
-    const dataRows = isHeaderRow ? lines.slice(1) : lines;
+    firstLineValues.forEach((val, i) => {
+      const norm = normalizeHeaderName(val);
+      headerMapping[norm] = i;
+      if (norm === "FAULTCODE") headerMapping["FAULT_CODE"] = i;
+    });
+
+    const dataRows = lines.slice(1);
     setTotalRows(dataRows.length);
 
     const localIssues: ValidationIssue[] = [];
     const localValid: ValidRow[] = [];
 
+    // Process validation in async chunks to avoid blocking the UI
+    const CHUNK = 50;
     for (let i = 0; i < dataRows.length; i++) {
+      // Yield control to browser every CHUNK rows so progress bar stays live
+      if (i > 0 && i % CHUNK === 0) {
+        const pct = 20 + Math.round((i / dataRows.length) * 75);
+        setProgress(pct);
+        setProgressLabel(`Validating row ${i} / ${dataRows.length}…`);
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+      }
+
       const values = dataRows[i].split(CSV_SPLIT_REGEX).map(v => v.trim().replace(/^"|"$/g, ""));
       const rowData = Object.fromEntries(
         Object.entries(headerMapping).map(([h, idx]) => [h, values[idx]])
@@ -334,7 +362,7 @@ export function CsvReadingUploadDialog({
       }
 
       // Negative consumption warning
-      const curr = validated.METER_READING ?? 0;
+      let curr = validated.METER_READING ?? 0;
       const prev = validated.PREVIOUS_READING ?? 0;
       if (curr < prev) {
         localIssues.push({
@@ -350,6 +378,38 @@ export function CsvReadingUploadDialog({
           row: i + 1, custKey: custKeyTrimmed, type: "warning",
           message: `Reading date ${normDate} is in the future.`,
         });
+      }
+
+      // Fault code validation / check (supports code identifiers like A, B, C, P, etc.)
+      let resolvedFaultCode: string | undefined = undefined;
+      const rawFaultCode = validated.FAULT_CODE?.trim();
+      if (rawFaultCode) {
+        const matched = (liveFaultCodes.length > 0 ? liveFaultCodes : getFaultCodes())
+          .find(fc => fc.code.trim().toUpperCase() === rawFaultCode.toUpperCase());
+        if (matched) {
+          resolvedFaultCode = matched.code;
+        } else {
+          // Standardize code identifiers (e.g. single letters 'a' -> 'A', 'p' -> 'P', or preserve code string)
+          resolvedFaultCode = rawFaultCode.length <= 4 ? rawFaultCode.toUpperCase() : rawFaultCode;
+          const knownList = liveFaultCodes.length > 0 ? liveFaultCodes : getFaultCodes();
+          if (knownList.length > 0) {
+            localIssues.push({
+              row: i + 1, custKey: custKeyTrimmed, type: "warning",
+              message: `Fault code '${rawFaultCode}' is not in the registered list. It will still be recorded as '${resolvedFaultCode}'.`,
+            });
+          }
+        }
+
+        // ── Fault-code rule: Previous = Current, usage = 0 m³ ──
+        // When a fault code is present the reading must not show consumption.
+        // Force the current reading value to equal the previous reading.
+        if (curr !== prev) {
+          localIssues.push({
+            row: i + 1, custKey: custKeyTrimmed, type: "warning",
+            message: `Fault code '${resolvedFaultCode}' detected: current reading (${curr}) overridden to previous reading (${prev}) — usage set to 0 m³.`,
+          });
+          curr = prev; // enforce Previous = Current
+        }
       }
 
       // Mark as seen so in-file duplicates are caught
@@ -375,7 +435,7 @@ export function CsvReadingUploadDialog({
         readerStaffId: currentUser.id,
         readingDate: format(parsedDate, "yyyy-MM-dd"),
         monthYear: monthYearStr,
-        readingValue: validated.METER_READING,
+        readingValue: curr,          // already overridden to prev if fault code present
         roundKey: validated.ROUND_KEY,
         walkOrder: validated.WALK_ORDER,
         instKey: validated.INST_KEY,
@@ -401,10 +461,10 @@ export function CsvReadingUploadDialog({
         estimatedReadingHigh: validated.ESTIMATED_READING_HIGH,
         estimatedReadingInd: validated.ESTIMATED_READING_IND,
         meterReaderCode: validated.METER_READER_CODE,
-        faultCode: validated.FAULT_CODE,
+        faultCode: resolvedFaultCode || undefined,
         serviceBilledUpToDate: parseDateFull(validated.SERVICE_BILLED_UP_TO_DATE),
         meterMultiplyFactor: validated.METER_MULTIPLY_FACTOR,
-        shadowUsage: curr - prev,
+        shadowUsage: curr - prev,    // 0 when fault code is present
       };
 
       const readingData = meterType === "individual"
@@ -424,6 +484,10 @@ export function CsvReadingUploadDialog({
   // ── STEP 2: Upload validated rows ─────────────────────────────────────────
   const handleUpload = async () => {
     if (validRows.length === 0) return;
+    if (!currentUser) {
+      toast({ variant: "destructive", title: "Not Authenticated", description: "You must be logged in to upload readings." });
+      return;
+    }
     setStage("uploading");
     setProgress(0);
 
@@ -442,8 +506,26 @@ export function CsvReadingUploadDialog({
           ? await addIndividualCustomerReadingsBatch(batchPayload)
           : await addBulkMeterReadingsBatch(batchPayload);
 
-        if (result.success && result.data?.count) {
-          uploaded += result.data.count;
+        if (result.success && result.data) {
+          // Use per-row results if available for granular error reporting
+          const rowResults = result.data.rowResults;
+          if (rowResults) {
+            rowResults.forEach((rr, idx) => {
+              if (rr.success) {
+                uploaded++;
+              } else {
+                const batchItem = batch[idx];
+                uploadErrors.push({
+                  row: batchItem ? batchItem.rowIndex + 1 : start + idx + 1,
+                  custKey: rr.custKey || (batchItem?.meterKey ?? ""),
+                  type: "error",
+                  message: rr.error || "Failed to save reading.",
+                });
+              }
+            });
+          } else {
+            uploaded += result.data.count ?? 0;
+          }
         } else {
           const msg = (result as any).message || "Batch failed.";
           batch.forEach(item => {
@@ -474,7 +556,7 @@ export function CsvReadingUploadDialog({
     if (uploaded > 0 && uploadErrors.length === 0) {
       toast({ title: "Upload Complete", description: `${uploaded} readings added successfully.` });
     } else if (uploaded > 0) {
-      toast({ title: "Partially Uploaded", description: `${uploaded} readings added. ${uploadErrors.length} rows failed.` });
+      toast({ title: "Partially Uploaded", description: `${uploaded} readings added. ${uploadErrors.length} rows failed — see errors below.` });
     } else {
       toast({ variant: "destructive", title: "Upload Failed", description: "No readings were saved. Check errors below." });
     }
@@ -498,7 +580,11 @@ export function CsvReadingUploadDialog({
 
   // ── Download template ─────────────────────────────────────────────────────
   const downloadTemplate = () => {
-    const csvString = readingCsvRequiredHeaders.join(",") + "\n";
+    // Include a sample data row so users see the correct format immediately
+    const today = format(new Date(), "dd/MM/yyyy");
+    const templateHeaders = [...readingCsvRequiredHeaders, ...readingCsvOptionalHeaders];
+    const sampleRow = `CUST001,1200,1250,${today},`;
+    const csvString = templateHeaders.join(",") + "\n" + sampleRow + "\n";
     const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -522,19 +608,41 @@ export function CsvReadingUploadDialog({
             Upload {typeLabel} Readings
           </UIDialogTitle>
           <UIDialogDescription>
-            Upload a CSV file. Required columns: <span className="font-semibold text-foreground">{readingCsvRequiredHeaders.join(", ")}</span>.
+            Upload a CSV file. Required: <span className="font-semibold text-foreground">{readingCsvRequiredHeaders.join(", ")}</span>.
+            Optional: <span className="font-semibold text-foreground">{readingCsvOptionalHeaders.join(", ")}</span>.
             Date formats accepted: <span className="font-semibold text-foreground">dd/MM/yyyy</span> or <span className="font-semibold text-foreground">yyyy-MM-dd</span>.
           </UIDialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-4 py-2 pr-1">
 
-          {/* Required columns info */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-            <span className="font-semibold text-slate-700">Required columns: </span>
-            {readingCsvRequiredHeaders.map(h => (
-              <span key={h} className="mr-1 inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">{h}</span>
-            ))}
+          {/* Columns info */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm space-y-2.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold text-slate-700 text-xs">Required columns:</span>
+              {readingCsvRequiredHeaders.map(h => (
+                <span key={h} className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">{h}</span>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold text-slate-700 text-xs">Optional columns:</span>
+              {readingCsvOptionalHeaders.map(h => (
+                <span key={h} className="inline-flex items-center rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-700">{h} (Code identifier e.g. A, B, C, P)</span>
+              ))}
+            </div>
+            {liveFaultCodes.length > 0 && (
+              <div className="text-xs text-muted-foreground pt-1.5 border-t border-slate-200/70 flex flex-wrap gap-x-2.5 gap-y-1 items-center">
+                <span className="font-medium text-slate-600">Registered Fault Codes:</span>
+                {liveFaultCodes.map(fc => (
+                  <span key={fc.id || fc.code} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[11px]">
+                    <span className="font-bold font-mono text-slate-800">{fc.code}</span>
+                    {fc.description && fc.description !== fc.code && (
+                      <span className="text-slate-500 font-normal">({fc.description})</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* File picker */}
@@ -563,7 +671,9 @@ export function CsvReadingUploadDialog({
                 className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white"
               >
                 <UploadCloud className="mr-2 h-4 w-4" />
-                Upload {validRows.length} rows
+                {errors.length > 0
+                  ? `Upload ${validRows.length} rows (${errors.length} skipped)`
+                  : `Upload ${validRows.length} rows`}
               </Button>
             )}
             {stage === "uploading" && (

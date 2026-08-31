@@ -39,7 +39,11 @@ const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
       readingDate: reading.readingDate,
       monthYear: reading.monthYear,
       notes: reading.notes || undefined,
-      // readerName and branchName aren't in DisplayReading but are optional in ReadingData
+      faultCode: reading.faultCode || undefined,
+      branchName: reading.branchName || undefined,
+      readerName: reading.readerName || "System/Admin",
+      readerPhone: reading.readerPhone || undefined,
+      hasPhoto: reading.hasPhoto,
     };
     setSelectedReading(mappedData);
     setIsDetailsOpen(true);

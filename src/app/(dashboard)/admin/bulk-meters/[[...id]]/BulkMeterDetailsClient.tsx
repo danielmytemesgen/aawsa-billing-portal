@@ -1435,7 +1435,7 @@ export default function BulkMeterDetailsPage() {
                 <div className="p-4 border-b border-border bg-amber-50/20 dark:bg-amber-950/10">
                   <EditReadingsRecalculateSection
                     bulkMeter={currentBulkMeter}
-                    latestBill={billingHistory[0] || null}
+                    latestBill={billingHistory.find(b => b.status !== 'Reversed') || billingHistory[0] || null}
                     onClose={() => setIsEditReadingsOpen(false)}
                     onSaveSuccess={() => {
                       initializeBulkMeters(true);

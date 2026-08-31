@@ -341,6 +341,10 @@ export interface DisplayReading {
   monthYear: string;
   notes?: string | null;
   faultCode?: string | null;
+  branchName?: string | null;
+  readerName?: string | null;
+  readerPhone?: string | null;
+  hasPhoto?: boolean;
 }
 
 export interface DomainPayment {
@@ -2823,8 +2827,8 @@ export const addIndividualCustomerReadingsBatch = async (
   items: Array<{
     readingData: Omit<DomainIndividualCustomerReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates };
   }>
-): Promise<StoreOperationResult<{ count: number }>> => {
-  if (!items || items.length === 0) return { success: true, data: { count: 0 } };
+): Promise<StoreOperationResult<{ count: number; rowResults?: Array<{ custKey: string; success: boolean; error?: string }> }>> => {
+  if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
   const batchPayload = items.map(item => ({
     reading: mapDomainIndividualReadingToDb(item.readingData) as IndividualCustomerReadingInsert,
@@ -2833,20 +2837,20 @@ export const addIndividualCustomerReadingsBatch = async (
 
   const { success, data: result, error } = await batchCreateIndividualCustomerReadingsAction(batchPayload);
 
-  if (!success || error || !result) {
+  if (!success || !result) {
     const msg = error ? (error as any).message || "Batch insert failed." : "Batch insert failed.";
     return { success: false, message: msg, error };
   }
 
-  return { success: true, data: { count: result.count ?? 0 } };
+  return { success: true, data: { count: result.count ?? 0, rowResults: result.rowResults } };
 };
 
 export const addBulkMeterReadingsBatch = async (
   items: Array<{
     readingData: Omit<DomainBulkMeterReading, 'id' | 'createdAt' | 'updatedAt'> & { capturedCoordinates?: Coordinates };
   }>
-): Promise<StoreOperationResult<{ count: number }>> => {
-  if (!items || items.length === 0) return { success: true, data: { count: 0 } };
+): Promise<StoreOperationResult<{ count: number; rowResults?: Array<{ custKey: string; success: boolean; error?: string }> }>> => {
+  if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
   const batchPayload = items.map(item => ({
     reading: mapDomainBulkReadingToDb(item.readingData) as BulkMeterReadingInsert,
@@ -2855,12 +2859,12 @@ export const addBulkMeterReadingsBatch = async (
 
   const { success, data: result, error } = await batchCreateBulkMeterReadingsAction(batchPayload);
 
-  if (!success || error || !result) {
+  if (!success || !result) {
     const msg = error ? (error as any).message || "Batch insert failed." : "Batch insert failed.";
     return { success: false, message: msg, error };
   }
 
-  return { success: true, data: { count: result.count ?? 0 } };
+  return { success: true, data: { count: result.count ?? 0, rowResults: result.rowResults } };
 };
 
 

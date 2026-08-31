@@ -146,9 +146,15 @@ export default function StaffMeterReadingsPage() {
 
     const customerMap = new Map<string, IndividualCustomer>(customers.map(c => [c.customerKeyNumber, c]));
     const bulkMeterMap = new Map<string, BulkMeter>(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
+    const branches = getBranches();
+    const staffMembers = getStaffMembers();
+    const branchMap = new Map<string, string>(branches.map(b => [b.id, b.name]));
+    const staffMap = new Map<string, string>(staffMembers.map(s => [s.id, s.name]));
 
     const displayedIndividualReadings: DisplayReading[] = individualReadingsRaw.map(r => {
       const customer = r.individualCustomerId ? customerMap.get(r.individualCustomerId) : undefined;
+      const bName = (customer?.branchId ? branchMap.get(customer.branchId) : undefined) || (customer as any)?.branchName || (r as any).branchName;
+      const rName = (r as any).readerStaffId ? (staffMap.get((r as any).readerStaffId) || (r as any).readerStaffId) : "System/Admin";
       return {
         id: r.id,
         meterId: r.individualCustomerId,
@@ -159,12 +165,17 @@ export default function StaffMeterReadingsPage() {
         readingDate: r.readingDate,
         monthYear: r.monthYear,
         notes: r.notes,
-        faultCode: r.faultCode
+        faultCode: r.faultCode,
+        branchName: bName || undefined,
+        readerName: rName,
+        hasPhoto: (r as any).hasPhoto,
       };
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
     const displayedBulkReadings: DisplayReading[] = bulkReadingsRaw.map(r => {
       const bulkMeter = r.CUSTOMERKEY ? bulkMeterMap.get(r.CUSTOMERKEY) : undefined;
+      const bName = (bulkMeter?.branchId ? branchMap.get(bulkMeter.branchId) : undefined) || (bulkMeter as any)?.branchName || (r as any).branchName;
+      const rName = (r as any).readerStaffId ? (staffMap.get((r as any).readerStaffId) || (r as any).readerStaffId) : "System/Admin";
       return {
         id: r.id,
         meterId: r.CUSTOMERKEY,
@@ -175,7 +186,10 @@ export default function StaffMeterReadingsPage() {
         readingDate: r.readingDate,
         monthYear: r.monthYear,
         notes: r.notes,
-        faultCode: r.faultCode
+        faultCode: r.faultCode,
+        branchName: bName || undefined,
+        readerName: rName,
+        hasPhoto: (r as any).hasPhoto,
       };
     }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
 
@@ -289,35 +303,39 @@ export default function StaffMeterReadingsPage() {
       if (meterType === 'individual_customer_meter') {
         const customer = allCustomers.find(c => c.customerKeyNumber === entityId);
         const prevReading = customer?.currentReading ?? 0;
+        // Fault-code rule: if a fault code is active, force reading = previous (usage = 0 m³)
+        const finalReading = activeFaultCode ? prevReading : reading;
 
         result = await addIndividualCustomerReading({
           individualCustomerId: entityId,
           readerStaffId: readerId,
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
-          readingValue: reading,
+          readingValue: finalReading,
           previousReading: prevReading,
           capturedCoordinates: capturedCoordinates,
           faultCode: activeFaultCode,
           notes: activeFaultCode
-            ? `Fault: ${activeFaultCode}. Reader: ${currentUser?.email || readerId}`
+            ? `Fault: ${activeFaultCode}. Reading forced to previous (${prevReading}) — usage 0 m³. Reader: ${currentUser?.email || readerId}`
             : `Reading entered by ${currentUser?.email || readerId}`,
           meter_photo: meterPhoto,
         });
       } else {
         const bulkMeter = allBulkMeters.find(bm => bm.customerKeyNumber === entityId);
         const prevReading = bulkMeter?.currentReading ?? 0;
+        // Fault-code rule: if a fault code is active, force reading = previous (usage = 0 m³)
+        const finalReading = activeFaultCode ? prevReading : reading;
 
         result = await addBulkMeterReading({
           CUSTOMERKEY: entityId,
           readerStaffId: readerId,
           readingDate: format(date, "yyyy-MM-dd"),
           monthYear: format(date, "yyyy-MM"),
-          readingValue: reading,
+          readingValue: finalReading,
           previousReading: prevReading,
           faultCode: activeFaultCode,
           notes: activeFaultCode
-            ? `Fault: ${activeFaultCode}. Reader: ${currentUser?.email || readerId}`
+            ? `Fault: ${activeFaultCode}. Reading forced to previous (${prevReading}) — usage 0 m³. Reader: ${currentUser?.email || readerId}`
             : `Reading entered by ${currentUser?.email || readerId}`,
           capturedCoordinates: capturedCoordinates,
           meter_photo: meterPhoto,

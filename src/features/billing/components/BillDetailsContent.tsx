@@ -906,6 +906,12 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                         difference_usage: calcRes.data.effectiveUsage,
                         THISMONTHBILLAMT: calcRes.data.totalBill,
                         TOTALBILLAMOUNT: calcRes.data.totalBill + currentOutstanding,
+                        base_water_charge: calcRes.data.baseWaterCharge,
+                        sewerage_charge: calcRes.data.sewerageCharge,
+                        meter_rent: calcRes.data.meterRent,
+                        maintenance_fee: calcRes.data.maintenanceFee,
+                        sanitation_fee: calcRes.data.sanitationFee,
+                        vat_amount: calcRes.data.vatAmount,
                     });
                     toast({ title: "Saved", description: "Bill readings updated and recalculated successfully." });
                     await loadData();
@@ -1153,11 +1159,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                             </tbody>
                                                             <tfoot className="bg-amber-50 border-t border-amber-200">
                                                                 <tr>
-                                                                    <td colSpan={2} className="px-2 py-1.5 text-right text-amber-800 font-semibold">Total Sub-meter Usage:</td>
+                                                                    <td colSpan={3} className="px-2 py-1.5 text-right text-amber-800 font-semibold">Total Sub-meter Usage:</td>
                                                                     <td className="px-2 py-1.5 text-right font-mono font-bold text-amber-900">
                                                                         {Object.values(assignedReadingEdits).reduce((sum, r) => sum + (r.current - r.previous), 0).toFixed(2)} m³
                                                                     </td>
-                                                                    <td colSpan={2} className="px-2 py-1.5 text-left text-[10px] text-amber-700 italic">
+                                                                    <td className="px-2 py-1.5 text-left text-[10px] text-amber-700 italic">
                                                                         Bulk diff = {(editValues.current - editValues.previous - Object.values(assignedReadingEdits).reduce((s, r) => s + (r.current - r.previous), 0)).toFixed(2)} m³
                                                                     </td>
                                                                 </tr>
