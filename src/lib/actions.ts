@@ -141,6 +141,7 @@ import {
   dbGetMeterCredit,
   dbCreateCredit,
   dbVoidCredit,
+  ensureReadingPartitionExists,
   type CreditLedgerEntry,
 } from './db-queries';
 import { roundMoney, MONEY_EPSILON } from './credit-utils';
@@ -2302,7 +2303,7 @@ export async function batchCreateIndividualCustomerReadingsAction(
     return { success: false, message: 'Forbidden: Missing permission to add individual readings' };
   }
 
-  // 3. Pre-fetch all customers in a SINGLE query
+  // 3. Pre-fetch all customers in ONE query
   const custKeys = [...new Set(items.map(i => (i.reading as any).CUST_KEY || (i.reading as any).individual_customer_id).filter(Boolean))];
   const custRows: any[] = custKeys.length > 0
     ? await query(
@@ -2312,68 +2313,146 @@ export async function batchCreateIndividualCustomerReadingsAction(
     : [];
   const custMap = new Map<string, any>(custRows.map(c => [String(c.customerKeyNumber).trim(), c]));
 
-  // 4. Execute all inserts in a single transaction, collect per-row results
+  // 4. Separate rows: validate branch access and collect per-row state
   const rowResults: Array<{ custKey: string; success: boolean; error?: string }> = [];
-  let createdCount = 0;
+  const validItems: Array<{ reading: any; prevValue: number; rValue: number; monthYear: string; custKey: string }> = [];
 
-  // Track meter updates: custKey -> { previousReading, currentReading, monthYear }
-  const meterUpdates = new Map<string, { previousReading: number; currentReading: number; monthYear: string }>();
-
-  await withTransaction(async (client) => {
-    for (const item of items) {
-      const reading = item.reading as any;
-      const custKey = String(reading.CUST_KEY || reading.individual_customer_id || '').trim();
-
-      const customer = custMap.get(custKey);
-      if (!customer) {
-        rowResults.push({ custKey, success: false, error: `Customer '${custKey}' not found.` });
-        continue;
-      }
-
-      // Branch isolation
-      try {
-        verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'customer');
-      } catch (e) {
-        rowResults.push({ custKey, success: false, error: (e as Error).message });
-        continue;
-      }
-
-      try {
-        await dbCreateIndividualCustomerReading(reading, client);
-        createdCount++;
-        rowResults.push({ custKey, success: true });
-
-        // Collect meter state for batch update
-        const rDate = reading.READING_DATE || reading.reading_date || '';
-        const monthYear = rDate ? String(rDate).slice(0, 7) : format(new Date(), 'yyyy-MM');
-        const rValue = Number(reading.METER_READING ?? reading.reading_value ?? 0);
-        const prevValue = item.previousReading ?? Number(reading.PREVIOUS_READING ?? customer.currentReading ?? 0);
-        // Only keep the latest reading per meter
-        const existing = meterUpdates.get(custKey);
-        if (!existing || monthYear >= existing.monthYear) {
-          meterUpdates.set(custKey, { previousReading: prevValue, currentReading: rValue, monthYear });
-        }
-      } catch (e) {
-        rowResults.push({ custKey, success: false, error: (e as Error).message });
-      }
+  for (const item of items) {
+    const reading = item.reading as any;
+    const custKey = String(reading.CUST_KEY || reading.individual_customer_id || '').trim();
+    const customer = custMap.get(custKey);
+    if (!customer) {
+      rowResults.push({ custKey, success: false, error: `Customer '${custKey}' not found.` });
+      continue;
     }
+    try {
+      verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'customer');
+    } catch (e) {
+      rowResults.push({ custKey, success: false, error: (e as Error).message });
+      continue;
+    }
+    const rDate = reading.READING_DATE || reading.reading_date || '';
+    const monthYear = rDate ? String(rDate).slice(0, 7) : format(new Date(), 'yyyy-MM');
+    const rValue = Number(reading.METER_READING ?? reading.reading_value ?? 0);
+    const prevValue = item.previousReading ?? Number(reading.PREVIOUS_READING ?? customer.currentReading ?? 0);
+    validItems.push({ reading, prevValue, rValue, monthYear, custKey });
+  }
 
-    // 5. Batch update all meter records with a single UPDATE...CASE query
-    if (meterUpdates.size > 0) {
-      const entries = [...meterUpdates.entries()];
-      const prevCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 2}::numeric`).join(' ');
-      const currCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 3}::numeric`).join(' ');
-      const monthCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 4}::text`).join(' ');
-      const params: any[] = [];
-      entries.forEach(([key, val]) => params.push(key, val.previousReading, val.currentReading, val.monthYear));
-      const keys = entries.map((_, i) => `$${i * 4 + 1}`);
-      const batchUpdateSql = `UPDATE individual_customers SET "previousReading" = CASE ${prevCases} END, "currentReading" = CASE ${currCases} END, "month" = CASE ${monthCases} END WHERE "customerKeyNumber" IN (${keys.join(',')}) AND deleted_at IS NULL`;
-      await client.query(batchUpdateSql, params);
+  if (validItems.length === 0) {
+    return { success: true, data: { count: 0, rowResults } };
+  }
+
+  // 5. Ensure partitions exist ONCE per unique month (not per-row)
+  const uniqueMonths = [...new Set(validItems.map(i => i.monthYear))];
+  await withTransaction(async (client) => {
+    for (const month of uniqueMonths) {
+      await ensureReadingPartitionExists('individual_customer_readings', month, client);
     }
   });
 
+  // 6. Pre-fetch existing readings for ALL cust_keys + months in ONE query (duplicate detection)
+  const monthList = uniqueMonths;
+  const existingRows: any[] = custKeys.length > 0 && monthList.length > 0
+    ? await query(
+        `SELECT id, "CUST_KEY", LEFT("READING_DATE"::text, 7) as month_year FROM individual_customer_readings WHERE "CUST_KEY" = ANY($1) AND LEFT("READING_DATE"::text, 7) = ANY($2) AND deleted_at IS NULL`,
+        [custKeys, monthList]
+      )
+    : [];
+  // Map: "CUST_KEY|YYYY-MM" -> existing reading id
+  const existingMap = new Map<string, string>(
+    existingRows.map(r => [`${String(r.CUST_KEY).trim()}|${r.month_year}`, String(r.id)])
+  );
+
+  // 7. Split validItems into inserts vs updates
+  type ReadingGroup = { reading: any; custKey: string; prevValue: number; rValue: number; monthYear: string };
+  const toInsert: ReadingGroup[] = [];
+  const toUpdate: Array<ReadingGroup & { existingId: string }> = [];
+
+  for (const item of validItems) {
+    const key = `${item.custKey}|${item.monthYear}`;
+    const existingId = existingMap.get(key);
+    if (existingId) {
+      toUpdate.push({ ...item, existingId });
+    } else {
+      toInsert.push(item);
+    }
+  }
+
+  // 8. Bulk INSERT new rows — chunked at 2000 rows to stay well under Postgres param limits
+  const INSERT_CHUNK = 2000;
+  let createdCount = 0;
+
+  for (let start = 0; start < toInsert.length; start += INSERT_CHUNK) {
+    const chunk = toInsert.slice(start, start + INSERT_CHUNK);
+    if (chunk.length === 0) continue;
+
+    // Derive column list from first row (all rows have same shape)
+    const { reading_month: _ignored, ...firstSafe } = chunk[0].reading;
+    const cols = Object.keys(firstSafe);
+    const colsSql = cols.map(k => `"${k}"`).join(',');
+
+    const params: any[] = [];
+    const rowPlaceholders: string[] = [];
+    for (const item of chunk) {
+      const { reading_month: _ign2, ...safe } = item.reading;
+      const base = params.length;
+      rowPlaceholders.push(`(${cols.map((_, ci) => `$${base + ci + 1}`).join(',')})`);
+      cols.forEach(c => params.push(safe[c] ?? null));
+    }
+
+    await withTransaction(async (client) => {
+      const insertSql = `INSERT INTO individual_customer_readings (${colsSql}) VALUES ${rowPlaceholders.join(',')} ON CONFLICT DO NOTHING`;
+      await client.query(insertSql, params);
+    });
+    createdCount += chunk.length;
+    chunk.forEach(i => rowResults.push({ custKey: i.custKey, success: true }));
+  }
+
+  // 9. Update existing readings — chunked at 500 rows (each update uses SET with full row cols)
+  const UPDATE_CHUNK = 500;
+  for (let start = 0; start < toUpdate.length; start += UPDATE_CHUNK) {
+    const chunk = toUpdate.slice(start, start + UPDATE_CHUNK);
+    await withTransaction(async (client) => {
+      for (const item of chunk) {
+        const { reading_month: _ign, ...safe } = item.reading;
+        const keys = Object.keys(safe).filter(k => k !== 'id' && k !== 'created_at');
+        if (keys.length === 0) return;
+        const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+        const params = [...keys.map(k => safe[k]), item.existingId];
+        await client.query(`UPDATE individual_customer_readings SET ${setClause} WHERE id = $${keys.length + 1}`, params);
+      }
+    });
+    createdCount += chunk.length;
+    chunk.forEach(i => rowResults.push({ custKey: i.custKey, success: true }));
+  }
+
+  // 10. Batch update meter currentReading/previousReading — build CASE, chunked at 1000 to stay under param limit
+  const meterUpdates = new Map<string, { previousReading: number; currentReading: number; monthYear: string }>();
+  for (const item of validItems) {
+    const existing = meterUpdates.get(item.custKey);
+    if (!existing || item.monthYear >= existing.monthYear) {
+      meterUpdates.set(item.custKey, { previousReading: item.prevValue, currentReading: item.rValue, monthYear: item.monthYear });
+    }
+  }
+  const METER_UPDATE_CHUNK = 1000; // 4 params per row → 4000 params per chunk, well under 65535
+  const meterEntries = [...meterUpdates.entries()];
+  for (let start = 0; start < meterEntries.length; start += METER_UPDATE_CHUNK) {
+    const chunk = meterEntries.slice(start, start + METER_UPDATE_CHUNK);
+    const prevCases = chunk.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 2}::numeric`).join(' ');
+    const currCases = chunk.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 3}::numeric`).join(' ');
+    const monthCases = chunk.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 4}::text`).join(' ');
+    const chunkKeys = chunk.map((_, i) => `$${i * 4 + 1}`);
+    const params: any[] = [];
+    chunk.forEach(([key, val]) => params.push(key, val.previousReading, val.currentReading, val.monthYear));
+    await query(
+      `UPDATE individual_customers SET "previousReading" = CASE ${prevCases} END, "currentReading" = CASE ${currCases} END, "month" = CASE ${monthCases} END WHERE "customerKeyNumber" IN (${chunkKeys.join(',')}) AND deleted_at IS NULL`,
+      params
+    );
+  }
+
   return { success: true, data: { count: createdCount, rowResults } };
 }
+
 
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
@@ -2530,7 +2609,7 @@ export async function batchCreateBulkMeterReadingsAction(
     return { success: false, message: 'Forbidden: Missing permission to add bulk readings' };
   }
 
-  // 3. Pre-fetch all bulk meters in a SINGLE query
+  // 3. Pre-fetch all bulk meters in ONE query
   const custKeys = [...new Set(items.map(i => (i.reading as any).CUSTOMERKEY || (i.reading as any).CUST_KEY).filter(Boolean))];
   const meterRows: any[] = custKeys.length > 0
     ? await query(
@@ -2540,67 +2619,143 @@ export async function batchCreateBulkMeterReadingsAction(
     : [];
   const meterMap = new Map<string, any>(meterRows.map(m => [String(m.customerKeyNumber).trim(), m]));
 
-  // 4. Execute all inserts in a single transaction, collect per-row results
+  // 4. Validate branch access and collect per-row state
   const rowResults: Array<{ custKey: string; success: boolean; error?: string }> = [];
-  let createdCount = 0;
+  const validItems: Array<{ reading: any; prevValue: number; rValue: number; monthYear: string; custKey: string }> = [];
 
-  // Track meter updates: custKey -> { previousReading, currentReading, monthYear }
-  const meterUpdates = new Map<string, { previousReading: number; currentReading: number; monthYear: string }>();
-
-  await withTransaction(async (client) => {
-    for (const item of items) {
-      const reading = item.reading as any;
-      const custKey = String(reading.CUSTOMERKEY || reading.CUST_KEY || '').trim();
-
-      const meter = meterMap.get(custKey);
-      if (!meter) {
-        rowResults.push({ custKey, success: false, error: `Bulk meter '${custKey}' not found.` });
-        continue;
-      }
-
-      // Branch isolation
-      try {
-        verifyEntityBranchAccess(meter.branch_id || meter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
-      } catch (e) {
-        rowResults.push({ custKey, success: false, error: (e as Error).message });
-        continue;
-      }
-
-      try {
-        await dbCreateBulkMeterReading(reading, client);
-        createdCount++;
-        rowResults.push({ custKey, success: true });
-
-        // Collect meter state for batch update
-        const rDate = reading.READING_DATE || reading.reading_date || '';
-        const monthYear = rDate ? String(rDate).slice(0, 7) : format(new Date(), 'yyyy-MM');
-        const rValue = Number(reading.METER_READING ?? reading.reading_value ?? 0);
-        const prevValue = item.previousReading ?? Number(reading.PREVIOUS_READING ?? meter.currentReading ?? 0);
-        const existing = meterUpdates.get(custKey);
-        if (!existing || monthYear >= existing.monthYear) {
-          meterUpdates.set(custKey, { previousReading: prevValue, currentReading: rValue, monthYear });
-        }
-      } catch (e) {
-        rowResults.push({ custKey, success: false, error: (e as Error).message });
-      }
+  for (const item of items) {
+    const reading = item.reading as any;
+    const custKey = String(reading.CUSTOMERKEY || reading.CUST_KEY || '').trim();
+    const meter = meterMap.get(custKey);
+    if (!meter) {
+      rowResults.push({ custKey, success: false, error: `Bulk meter '${custKey}' not found.` });
+      continue;
     }
+    try {
+      verifyEntityBranchAccess(meter.branch_id || meter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+    } catch (e) {
+      rowResults.push({ custKey, success: false, error: (e as Error).message });
+      continue;
+    }
+    const rDate = reading.READING_DATE || reading.reading_date || '';
+    const monthYear = rDate ? String(rDate).slice(0, 7) : format(new Date(), 'yyyy-MM');
+    const rValue = Number(reading.METER_READING ?? reading.reading_value ?? 0);
+    const prevValue = item.previousReading ?? Number(reading.PREVIOUS_READING ?? meter.currentReading ?? 0);
+    validItems.push({ reading, prevValue, rValue, monthYear, custKey });
+  }
 
-    // 5. Batch update all bulk meter records with a single UPDATE...CASE query
-    if (meterUpdates.size > 0) {
-      const entries = [...meterUpdates.entries()];
-      const prevCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 2}::numeric`).join(' ');
-      const currCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 3}::numeric`).join(' ');
-      const monthCases = entries.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 4}::text`).join(' ');
-      const params: any[] = [];
-      entries.forEach(([key, val]) => params.push(key, val.previousReading, val.currentReading, val.monthYear));
-      const keys = entries.map((_, i) => `$${i * 4 + 1}`);
-      const batchUpdateSql = `UPDATE bulk_meters SET "previousReading" = CASE ${prevCases} END, "currentReading" = CASE ${currCases} END, "month" = CASE ${monthCases} END WHERE "customerKeyNumber" IN (${keys.join(',')}) AND deleted_at IS NULL`;
-      await client.query(batchUpdateSql, params);
+  if (validItems.length === 0) {
+    return { success: true, data: { count: 0, rowResults } };
+  }
+
+  // 5. Ensure partitions exist ONCE per unique month
+  const uniqueMonths = [...new Set(validItems.map(i => i.monthYear))];
+  await withTransaction(async (client) => {
+    for (const month of uniqueMonths) {
+      await ensureReadingPartitionExists('bulk_meter_readings', month, client);
     }
   });
 
+  // 6. Pre-fetch all existing readings in ONE query (duplicate detection)
+  const existingRows: any[] = custKeys.length > 0 && uniqueMonths.length > 0
+    ? await query(
+        `SELECT id, "CUST_KEY", LEFT("READING_DATE"::text, 7) as month_year FROM bulk_meter_readings WHERE "CUST_KEY" = ANY($1) AND LEFT("READING_DATE"::text, 7) = ANY($2) AND deleted_at IS NULL`,
+        [custKeys, uniqueMonths]
+      )
+    : [];
+  const existingMap = new Map<string, string>(
+    existingRows.map(r => [`${String(r.CUST_KEY).trim()}|${r.month_year}`, String(r.id)])
+  );
+
+  // 7. Split into inserts vs updates
+  type ReadingGroup = { reading: any; custKey: string; prevValue: number; rValue: number; monthYear: string };
+  const toInsert: ReadingGroup[] = [];
+  const toUpdate: Array<ReadingGroup & { existingId: string }> = [];
+
+  for (const item of validItems) {
+    const key = `${item.custKey}|${item.monthYear}`;
+    const existingId = existingMap.get(key);
+    if (existingId) {
+      toUpdate.push({ ...item, existingId });
+    } else {
+      toInsert.push(item);
+    }
+  }
+
+  // 8. Bulk INSERT new rows — chunked at 2000
+  const INSERT_CHUNK = 2000;
+  let createdCount = 0;
+
+  for (let start = 0; start < toInsert.length; start += INSERT_CHUNK) {
+    const chunk = toInsert.slice(start, start + INSERT_CHUNK);
+    if (chunk.length === 0) continue;
+
+    const { reading_month: _ignored, ...firstSafe } = chunk[0].reading;
+    const cols = Object.keys(firstSafe);
+    const colsSql = cols.map(k => `"${k}"`).join(',');
+
+    const params: any[] = [];
+    const rowPlaceholders: string[] = [];
+    for (const item of chunk) {
+      const { reading_month: _ign2, ...safe } = item.reading;
+      const base = params.length;
+      rowPlaceholders.push(`(${cols.map((_, ci) => `$${base + ci + 1}`).join(',')})`);
+      cols.forEach(c => params.push(safe[c] ?? null));
+    }
+
+    await withTransaction(async (client) => {
+      const insertSql = `INSERT INTO bulk_meter_readings (${colsSql}) VALUES ${rowPlaceholders.join(',')} ON CONFLICT DO NOTHING`;
+      await client.query(insertSql, params);
+    });
+    createdCount += chunk.length;
+    chunk.forEach(i => rowResults.push({ custKey: i.custKey, success: true }));
+  }
+
+  // 9. Update existing readings — chunked at 500
+  const UPDATE_CHUNK = 500;
+  for (let start = 0; start < toUpdate.length; start += UPDATE_CHUNK) {
+    const chunk = toUpdate.slice(start, start + UPDATE_CHUNK);
+    await withTransaction(async (client) => {
+      for (const item of chunk) {
+        const { reading_month: _ign, ...safe } = item.reading;
+        const keys = Object.keys(safe).filter(k => k !== 'id' && k !== 'created_at');
+        if (keys.length === 0) return;
+        const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+        const params = [...keys.map(k => safe[k]), item.existingId];
+        await client.query(`UPDATE bulk_meter_readings SET ${setClause} WHERE id = $${keys.length + 1}`, params);
+      }
+    });
+    createdCount += chunk.length;
+    chunk.forEach(i => rowResults.push({ custKey: i.custKey, success: true }));
+  }
+
+  // 10. Batch update bulk meter currentReading/previousReading — chunked at 1000
+  const meterUpdates = new Map<string, { previousReading: number; currentReading: number; monthYear: string }>();
+  for (const item of validItems) {
+    const existing = meterUpdates.get(item.custKey);
+    if (!existing || item.monthYear >= existing.monthYear) {
+      meterUpdates.set(item.custKey, { previousReading: item.prevValue, currentReading: item.rValue, monthYear: item.monthYear });
+    }
+  }
+  const METER_UPDATE_CHUNK = 1000;
+  const meterEntries = [...meterUpdates.entries()];
+  for (let start = 0; start < meterEntries.length; start += METER_UPDATE_CHUNK) {
+    const chunk = meterEntries.slice(start, start + METER_UPDATE_CHUNK);
+    const prevCases = chunk.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 2}::numeric`).join(' ');
+    const currCases = chunk.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 3}::numeric`).join(' ');
+    const monthCases = chunk.map((_, i) => `WHEN "customerKeyNumber" = $${i * 4 + 1} THEN $${i * 4 + 4}::text`).join(' ');
+    const chunkKeys = chunk.map((_, i) => `$${i * 4 + 1}`);
+    const params: any[] = [];
+    chunk.forEach(([key, val]) => params.push(key, val.previousReading, val.currentReading, val.monthYear));
+    await query(
+      `UPDATE bulk_meters SET "previousReading" = CASE ${prevCases} END, "currentReading" = CASE ${currCases} END, "month" = CASE ${monthCases} END WHERE "customerKeyNumber" IN (${chunkKeys.join(',')}) AND deleted_at IS NULL`,
+      params
+    );
+  }
+
   return { success: true, data: { count: createdCount, rowResults } };
 }
+
 
 export async function getPhotosByReadingIdAction(readingId: string) {
   return await wrap(async () => {

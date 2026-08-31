@@ -1337,7 +1337,7 @@ export const dbGetBillWorkflowLogs = async (billId: string) => {
     return await query('SELECT * FROM bill_workflow_logs WHERE bill_id = $1 ORDER BY created_at DESC', [billId]);
 };
 
-async function ensureReadingPartitionExists(parentTable: string, monthYear?: string | null, executor?: any) {
+export async function ensureReadingPartitionExists(parentTable: string, monthYear?: string | null, executor?: any) {
     if (!monthYear || !/^\d{4}-\d{2}$/.test(monthYear)) return;
     try {
         const partitionName = `${parentTable}_${monthYear.replace('-', '_')}`;
@@ -1353,7 +1353,7 @@ async function ensureReadingPartitionExists(parentTable: string, monthYear?: str
     }
 }
 
-export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string, limit: number = 3000) => {
+export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string, limit?: number) => {
     let sql = `
         SELECT r.*, 
         EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
@@ -1375,7 +1375,10 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
         sql += ` AND ro.reader_id = $${params.length}`;
     }
 
-    sql += ` ORDER BY r.created_at DESC LIMIT ${limit}`;
+    sql += ` ORDER BY r.created_at DESC`;
+    if (limit && limit > 0) {
+        sql += ` LIMIT ${Number(limit)}`;
+    }
 
     return await query(sql, params);
 };
@@ -1394,7 +1397,7 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
 
         // Check if a reading record already exists for this individual customer in the same billing month
         if (custKey && monthYear) {
-            const checkSql = `SELECT id FROM individual_customer_readings WHERE "CUST_KEY" = $1 AND (LEFT("READING_DATE"::text, 7) = $2 OR LEFT("reading_date"::text, 7) = $2) AND deleted_at IS NULL LIMIT 1`;
+            const checkSql = `SELECT id FROM individual_customer_readings WHERE "CUST_KEY" = $1 AND LEFT("READING_DATE"::text, 7) = $2 AND deleted_at IS NULL LIMIT 1`;
             const checkRes = await executor.query(checkSql, [custKey, monthYear]);
             const existingRow = checkRes.rows ? checkRes.rows[0] : checkRes[0];
 
@@ -1458,7 +1461,7 @@ export const dbGetIndividualCustomerReadingsByCustomer = async (customerKey: str
     );
 };
 
-export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string, limit: number = 3000) => {
+export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string, limit?: number) => {
     let sql = `
         SELECT r.*,
         EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
@@ -1479,7 +1482,10 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
         sql += ` AND ro.reader_id = $${params.length}`;
     }
 
-    sql += ` ORDER BY r.created_at DESC LIMIT ${limit}`;
+    sql += ` ORDER BY r.created_at DESC`;
+    if (limit && limit > 0) {
+        sql += ` LIMIT ${Number(limit)}`;
+    }
 
     return await query(sql, params);
 };

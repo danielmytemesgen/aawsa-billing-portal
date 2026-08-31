@@ -58,7 +58,7 @@ const readingCsvOptionalHeaders = ["FAULT_CODE"];
 
 const CSV_SPLIT_REGEX = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
 
-const BATCH_SIZE = 100; // Increased from 25 for much better speed
+const BATCH_SIZE = 1000; // Optimized for 100k+ records: ~100 fast requests instead of thousands
 
 const readingCsvRowSchema = z.object({
   READ_PROC_ID: z.string().optional(),
