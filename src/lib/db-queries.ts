@@ -5086,3 +5086,208 @@ export const dbVoidCredit = async (
     );
     return { voidedAmount, remainingBalance: newBalance };
 };
+
+export const dbPreviewShiftReadingMonth = async (
+    meterType: 'individual' | 'bulk' | 'both',
+    sourceMonth: string,
+    targetMonth: string,
+    branchId?: string
+) => {
+    let indivSourceCount = 0;
+    let indivTargetCount = 0;
+    let bulkSourceCount = 0;
+    let bulkTargetCount = 0;
+
+    if (meterType === 'individual' || meterType === 'both') {
+        const indivSourceRes: any = await query(`
+            SELECT count(*) as count 
+            FROM individual_customer_readings r
+            JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+            WHERE LEFT(r."READING_DATE"::text, 7) = $1
+              AND r.deleted_at IS NULL
+              ${branchId ? 'AND ic.branch_id = $2' : ''}
+        `, branchId ? [sourceMonth, branchId] : [sourceMonth]);
+        indivSourceCount = Number(indivSourceRes[0]?.count || 0);
+
+        const indivTargetRes: any = await query(`
+            SELECT count(*) as count 
+            FROM individual_customer_readings r
+            JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+            WHERE LEFT(r."READING_DATE"::text, 7) = $1
+              AND r.deleted_at IS NULL
+              ${branchId ? 'AND ic.branch_id = $2' : ''}
+        `, branchId ? [targetMonth, branchId] : [targetMonth]);
+        indivTargetCount = Number(indivTargetRes[0]?.count || 0);
+    }
+
+    if (meterType === 'bulk' || meterType === 'both') {
+        const bulkSourceRes: any = await query(`
+            SELECT count(*) as count 
+            FROM bulk_meter_readings r
+            JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+            WHERE LEFT(r."READING_DATE"::text, 7) = $1
+              AND r.deleted_at IS NULL
+              ${branchId ? 'AND bm.branch_id = $2' : ''}
+        `, branchId ? [sourceMonth, branchId] : [sourceMonth]);
+        bulkSourceCount = Number(bulkSourceRes[0]?.count || 0);
+
+        const bulkTargetRes: any = await query(`
+            SELECT count(*) as count 
+            FROM bulk_meter_readings r
+            JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+            WHERE LEFT(r."READING_DATE"::text, 7) = $1
+              AND r.deleted_at IS NULL
+              ${branchId ? 'AND bm.branch_id = $2' : ''}
+        `, branchId ? [targetMonth, branchId] : [targetMonth]);
+        bulkTargetCount = Number(bulkTargetRes[0]?.count || 0);
+    }
+
+    const sourceBillsRes: any = await query(`
+        SELECT count(*) as count FROM bills 
+        WHERE month_year = $1 AND deleted_at IS NULL
+    `, [sourceMonth]);
+    const sourceBillsCount = Number(sourceBillsRes[0]?.count || 0);
+
+    const targetBillsRes: any = await query(`
+        SELECT count(*) as count FROM bills 
+        WHERE month_year = $1 AND deleted_at IS NULL
+    `, [targetMonth]);
+    const targetBillsCount = Number(targetBillsRes[0]?.count || 0);
+
+    return {
+        sourceMonth,
+        targetMonth,
+        meterType,
+        totalSourceReadings: indivSourceCount + bulkSourceCount,
+        totalTargetExistingReadings: indivTargetCount + bulkTargetCount,
+        indivSourceCount,
+        indivTargetCount,
+        bulkSourceCount,
+        bulkTargetCount,
+        sourceBillsCount,
+        targetBillsCount
+    };
+};
+
+export const dbExecuteShiftReadingMonth = async (
+    meterType: 'individual' | 'bulk' | 'both',
+    sourceMonth: string,
+    targetMonth: string,
+    branchId?: string,
+    overwriteTargetExisting: boolean = true
+) => {
+    return await withTransaction(async (client) => {
+        let shiftedIndiv = 0;
+        let shiftedBulk = 0;
+
+        // ── Individual Customer Readings ──────────────────────────────────────
+        if (meterType === 'individual' || meterType === 'both') {
+            await ensureReadingPartitionExists('individual_customer_readings', targetMonth, client);
+
+            // 1. Soft-delete existing readings in target month (same customers) if overwrite
+            if (overwriteTargetExisting) {
+                await client.query(`
+                    UPDATE individual_customer_readings
+                    SET deleted_at = NOW()
+                    WHERE LEFT("READING_DATE"::text, 7) = $1
+                      AND deleted_at IS NULL
+                      AND "CUST_KEY" IN (
+                          SELECT r2."CUST_KEY"
+                          FROM individual_customer_readings r2
+                          JOIN individual_customers ic2 ON r2."CUST_KEY" = ic2."customerKeyNumber"
+                          WHERE LEFT(r2."READING_DATE"::text, 7) = $2
+                            AND r2.deleted_at IS NULL
+                            ${branchId ? 'AND ic2.branch_id = $3' : ''}
+                      )
+                `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
+            }
+
+            // 2. Direct atomic UPDATE on READING_DATE
+            const indivRes = await client.query(`
+                UPDATE individual_customer_readings
+                SET "READING_DATE" = LEAST(
+                    (TO_DATE($1 || '-01', 'YYYY-MM-DD') + (EXTRACT(DAY FROM "READING_DATE") - 1) * INTERVAL '1 day')::date,
+                    (DATE_TRUNC('month', TO_DATE($1 || '-01', 'YYYY-MM-DD')) + INTERVAL '1 month - 1 day')::date
+                )
+                WHERE LEFT("READING_DATE"::text, 7) = $2
+                  AND deleted_at IS NULL
+                  AND "CUST_KEY" IN (
+                      SELECT ic."customerKeyNumber" FROM individual_customers ic
+                      WHERE ic.deleted_at IS NULL
+                      ${branchId ? 'AND ic.branch_id = $3' : ''}
+                  )
+            `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
+
+            shiftedIndiv = indivRes.rowCount || 0;
+
+            // 3. Update customer master record month field
+            await client.query(`
+                UPDATE individual_customers
+                SET "month" = $1
+                WHERE "month" = $2
+                  AND deleted_at IS NULL
+                  ${branchId ? 'AND branch_id = $3' : ''}
+            `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
+        }
+
+        // ── Bulk Meter Readings ───────────────────────────────────────────────
+        if (meterType === 'bulk' || meterType === 'both') {
+            await ensureReadingPartitionExists('bulk_meter_readings', targetMonth, client);
+
+            // 1. Soft-delete existing readings in target month (same meters) if overwrite
+            if (overwriteTargetExisting) {
+                await client.query(`
+                    UPDATE bulk_meter_readings
+                    SET deleted_at = NOW()
+                    WHERE LEFT("READING_DATE"::text, 7) = $1
+                      AND deleted_at IS NULL
+                      AND "CUST_KEY" IN (
+                          SELECT r2."CUST_KEY"
+                          FROM bulk_meter_readings r2
+                          JOIN bulk_meters bm2 ON r2."CUST_KEY" = bm2."customerKeyNumber"
+                          WHERE LEFT(r2."READING_DATE"::text, 7) = $2
+                            AND r2.deleted_at IS NULL
+                            ${branchId ? 'AND bm2.branch_id = $3' : ''}
+                      )
+                `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
+            }
+
+            // 2. Direct atomic UPDATE on READING_DATE
+            const bulkRes = await client.query(`
+                UPDATE bulk_meter_readings
+                SET "READING_DATE" = LEAST(
+                    (TO_DATE($1 || '-01', 'YYYY-MM-DD') + (EXTRACT(DAY FROM "READING_DATE") - 1) * INTERVAL '1 day')::date,
+                    (DATE_TRUNC('month', TO_DATE($1 || '-01', 'YYYY-MM-DD')) + INTERVAL '1 month - 1 day')::date
+                )
+                WHERE LEFT("READING_DATE"::text, 7) = $2
+                  AND deleted_at IS NULL
+                  AND "CUST_KEY" IN (
+                      SELECT bm."customerKeyNumber" FROM bulk_meters bm
+                      WHERE bm.deleted_at IS NULL
+                      ${branchId ? 'AND bm.branch_id = $3' : ''}
+                  )
+            `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
+
+            shiftedBulk = bulkRes.rowCount || 0;
+
+            // 3. Update bulk meter master record month field
+            await client.query(`
+                UPDATE bulk_meters
+                SET "month" = $1
+                WHERE "month" = $2
+                  AND deleted_at IS NULL
+                  ${branchId ? 'AND branch_id = $3' : ''}
+            `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
+        }
+
+        return {
+            success: true,
+            sourceMonth,
+            targetMonth,
+            shiftedIndiv,
+            shiftedBulk,
+            totalShifted: shiftedIndiv + shiftedBulk
+        };
+    });
+};
+

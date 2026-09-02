@@ -99,7 +99,7 @@ const readingCsvRowSchema = z.object({
 type ValidationIssue = {
   row: number;
   custKey: string;
-  type: "error" | "warning";
+  type: "error" | "warning" | "info";
   message: string;
 };
 
@@ -108,6 +108,7 @@ type ValidRow = {
   meterKey: string;
   normalizedReadingDate: string;
   readingData: any;
+  isUpdate?: boolean;
 };
 
 function normalizeReadingDate(dateValue: string): string {
@@ -150,6 +151,7 @@ export function CsvReadingUploadDialog({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const [csvFile, setCsvFile] = React.useState<File | null>(null);
+  const [overwriteExisting, setOverwriteExisting] = React.useState<boolean>(true);
   const [stage, setStage] = React.useState<"idle" | "validating" | "validated" | "uploading" | "done">("idle");
   const [progress, setProgress] = React.useState(0);
   const [progressLabel, setProgressLabel] = React.useState("");
@@ -157,6 +159,8 @@ export function CsvReadingUploadDialog({
   const [validRows, setValidRows] = React.useState<ValidRow[]>([]);
   const [issues, setIssues] = React.useState<ValidationIssue[]>([]);
   const [successCount, setSuccessCount] = React.useState(0);
+  const [insertedCount, setInsertedCount] = React.useState(0);
+  const [updatedCount, setUpdatedCount] = React.useState(0);
   const [totalRows, setTotalRows] = React.useState(0);
   const [liveFaultCodes, setLiveFaultCodes] = React.useState<DomainFaultCode[]>([]);
 
@@ -169,7 +173,9 @@ export function CsvReadingUploadDialog({
   }, [open]);
 
   const errors = React.useMemo(() => issues.filter(i => i.type === "error"), [issues]);
-  const warnings = React.useMemo(() => issues.filter(i => i.type === "warning"), [issues]);
+  const warnings = React.useMemo(() => issues.filter(i => i.type === "warning" || i.type === "info"), [issues]);
+  const newRowsCount = React.useMemo(() => validRows.filter(r => !r.isUpdate).length, [validRows]);
+  const updateRowsCount = React.useMemo(() => validRows.filter(r => r.isUpdate).length, [validRows]);
 
   const resetState = () => {
     setCsvFile(null);
@@ -179,6 +185,8 @@ export function CsvReadingUploadDialog({
     setValidRows([]);
     setIssues([]);
     setSuccessCount(0);
+    setInsertedCount(0);
+    setUpdatedCount(0);
     setTotalRows(0);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -198,6 +206,8 @@ export function CsvReadingUploadDialog({
       setIssues([]);
       setValidRows([]);
       setSuccessCount(0);
+      setInsertedCount(0);
+      setUpdatedCount(0);
     } else {
       toast({ variant: "destructive", title: "Invalid File", description: "Please upload a .csv or .dat file." });
       resetState();
@@ -246,10 +256,10 @@ export function CsvReadingUploadDialog({
       return;
     }
 
-    // Build duplicate-detection sets from existing DB readings
+    // Build existing database reading lookups
     const existingReadings = meterType === "individual" ? getIndividualCustomerReadings() : getBulkMeterReadings();
-    const seenDateKeys = new Set<string>();
-    const seenMonthKeys = new Set<string>();
+    const dbSeenDateKeys = new Set<string>();
+    const dbSeenMonthKeys = new Set<string>();
 
     for (const r of existingReadings) {
       const shared = r as any;
@@ -258,8 +268,8 @@ export function CsvReadingUploadDialog({
         : (shared.CUSTOMERKEY || shared.custKey || "");
       const date = normalizeReadingDate(shared.readingDate || "");
       if (key && date) {
-        seenDateKeys.add(`${String(key).trim()}|${date}`);
-        seenMonthKeys.add(`${String(key).trim()}|${date.slice(0, 7)}`);
+        dbSeenDateKeys.add(`${String(key).trim()}|${date}`);
+        dbSeenMonthKeys.add(`${String(key).trim()}|${date.slice(0, 7)}`);
       }
     }
 
@@ -284,11 +294,12 @@ export function CsvReadingUploadDialog({
 
     const localIssues: ValidationIssue[] = [];
     const localValid: ValidRow[] = [];
+    const seenInFileDateKeys = new Set<string>();
+    const seenInFileMonthKeys = new Set<string>();
 
     // Process validation in async chunks to avoid blocking the UI
     const CHUNK = 50;
     for (let i = 0; i < dataRows.length; i++) {
-      // Yield control to browser every CHUNK rows so progress bar stays live
       if (i > 0 && i % CHUNK === 0) {
         const pct = 20 + Math.round((i / dataRows.length) * 75);
         setProgress(pct);
@@ -341,24 +352,44 @@ export function CsvReadingUploadDialog({
       }
 
       const rowMeterKey = String(meter.customerKeyNumber ?? meter.meterNumber ?? "").trim();
-
-      // Duplicate checks against DB
       const dateKey = `${rowMeterKey}|${normDate}`;
       const monthKey = `${rowMeterKey}|${normDate.slice(0, 7)}`;
+      const isExistingInDb = dbSeenDateKeys.has(dateKey) || dbSeenMonthKeys.has(monthKey);
+      const isDuplicateInFile = seenInFileDateKeys.has(dateKey) || seenInFileMonthKeys.has(monthKey);
+      let isUpdate = false;
 
-      if (seenDateKeys.has(dateKey)) {
-        localIssues.push({
-          row: i + 1, custKey: custKeyTrimmed, type: "error",
-          message: `Duplicate: a reading already exists for '${rowMeterKey}' on ${normDate}.`,
-        });
-        continue;
+      // In-file duplicate check
+      if (isDuplicateInFile) {
+        if (!overwriteExisting) {
+          localIssues.push({
+            row: i + 1, custKey: custKeyTrimmed, type: "error",
+            message: `Duplicate in CSV: another row in this file already has a reading for '${rowMeterKey}' in ${normDate.slice(0, 7)}.`,
+          });
+          continue;
+        } else {
+          localIssues.push({
+            row: i + 1, custKey: custKeyTrimmed, type: "warning",
+            message: `Duplicate in CSV: overwriting earlier row in this file for '${rowMeterKey}' in ${normDate.slice(0, 7)}.`,
+          });
+          isUpdate = true;
+        }
       }
-      if (seenMonthKeys.has(monthKey)) {
-        localIssues.push({
-          row: i + 1, custKey: custKeyTrimmed, type: "error",
-          message: `Duplicate: a reading already exists for '${rowMeterKey}' in ${normDate.slice(0, 7)}.`,
-        });
-        continue;
+
+      // Database duplicate check
+      if (isExistingInDb) {
+        if (!overwriteExisting) {
+          localIssues.push({
+            row: i + 1, custKey: custKeyTrimmed, type: "error",
+            message: `Duplicate: a reading already exists for '${rowMeterKey}' in ${normDate.slice(0, 7)}. Check "Overwrite / Update existing readings" to override.`,
+          });
+          continue;
+        } else {
+          localIssues.push({
+            row: i + 1, custKey: custKeyTrimmed, type: "info",
+            message: `Existing reading for '${rowMeterKey}' in ${normDate.slice(0, 7)} will be updated/overridden with reading: ${validated.METER_READING}.`,
+          });
+          isUpdate = true;
+        }
       }
 
       // Negative consumption warning
@@ -380,7 +411,7 @@ export function CsvReadingUploadDialog({
         });
       }
 
-      // Fault code validation / check (supports code identifiers like A, B, C, P, etc.)
+      // Fault code validation / check
       let resolvedFaultCode: string | undefined = undefined;
       const rawFaultCode = validated.FAULT_CODE?.trim();
       if (rawFaultCode) {
@@ -389,7 +420,6 @@ export function CsvReadingUploadDialog({
         if (matched) {
           resolvedFaultCode = matched.code;
         } else {
-          // Standardize code identifiers (e.g. single letters 'a' -> 'A', 'p' -> 'P', or preserve code string)
           resolvedFaultCode = rawFaultCode.length <= 4 ? rawFaultCode.toUpperCase() : rawFaultCode;
           const knownList = liveFaultCodes.length > 0 ? liveFaultCodes : getFaultCodes();
           if (knownList.length > 0) {
@@ -400,21 +430,18 @@ export function CsvReadingUploadDialog({
           }
         }
 
-        // ── Fault-code rule: Previous = Current, usage = 0 m³ ──
-        // When a fault code is present the reading must not show consumption.
-        // Force the current reading value to equal the previous reading.
+        // Fault-code rule: Previous = Current, usage = 0 m³
         if (curr !== prev) {
           localIssues.push({
             row: i + 1, custKey: custKeyTrimmed, type: "warning",
             message: `Fault code '${resolvedFaultCode}' detected: current reading (${curr}) overridden to previous reading (${prev}) — usage set to 0 m³.`,
           });
-          curr = prev; // enforce Previous = Current
+          curr = prev;
         }
       }
 
-      // Mark as seen so in-file duplicates are caught
-      seenDateKeys.add(dateKey);
-      seenMonthKeys.add(monthKey);
+      seenInFileDateKeys.add(dateKey);
+      seenInFileMonthKeys.add(monthKey);
 
       // Build payload
       let parsedDate: Date;
@@ -435,7 +462,7 @@ export function CsvReadingUploadDialog({
         readerStaffId: currentUser.id,
         readingDate: format(parsedDate, "yyyy-MM-dd"),
         monthYear: monthYearStr,
-        readingValue: curr,          // already overridden to prev if fault code present
+        readingValue: curr,
         roundKey: validated.ROUND_KEY,
         walkOrder: validated.WALK_ORDER,
         instKey: validated.INST_KEY,
@@ -464,14 +491,14 @@ export function CsvReadingUploadDialog({
         faultCode: resolvedFaultCode || undefined,
         serviceBilledUpToDate: parseDateFull(validated.SERVICE_BILLED_UP_TO_DATE),
         meterMultiplyFactor: validated.METER_MULTIPLY_FACTOR,
-        shadowUsage: curr - prev,    // 0 when fault code is present
+        shadowUsage: curr - prev,
       };
 
       const readingData = meterType === "individual"
         ? { individualCustomerId: meter.customerKeyNumber, custKey: validated.CUST_KEY, ...commonPayload }
         : { CUSTOMERKEY: meter.customerKeyNumber, custKey: validated.CUST_KEY, ...commonPayload };
 
-      localValid.push({ rowIndex: i, meterKey: rowMeterKey, normalizedReadingDate: normDate, readingData });
+      localValid.push({ rowIndex: i, meterKey: rowMeterKey, normalizedReadingDate: normDate, readingData, isUpdate });
     }
 
     setIssues(localIssues);
@@ -492,6 +519,8 @@ export function CsvReadingUploadDialog({
     setProgress(0);
 
     let uploaded = 0;
+    let insertedTotal = 0;
+    let updatedTotal = 0;
     const uploadErrors: ValidationIssue[] = [];
     const total = validRows.length;
 
@@ -507,7 +536,6 @@ export function CsvReadingUploadDialog({
           : await addBulkMeterReadingsBatch(batchPayload);
 
         if (result.success && result.data) {
-          // Use per-row results if available for granular error reporting
           const rowResults = result.data.rowResults;
           if (rowResults) {
             rowResults.forEach((rr, idx) => {
@@ -526,6 +554,8 @@ export function CsvReadingUploadDialog({
           } else {
             uploaded += result.data.count ?? 0;
           }
+          insertedTotal += result.data.insertedCount ?? (result.data.count ?? 0);
+          updatedTotal += result.data.updatedCount ?? 0;
         } else {
           const msg = (result as any).message || "Batch failed.";
           batch.forEach(item => {
@@ -547,16 +577,40 @@ export function CsvReadingUploadDialog({
       setProgress(Math.round(((start + batch.length) / total) * 100));
     }
 
+    // Refresh store
+    if (meterType === "individual") {
+      await initializeCustomers(true);
+      await initializeIndividualCustomerReadings(true);
+    } else {
+      await initializeBulkMeters(true);
+      await initializeBulkMeterReadings(true);
+    }
+
     setSuccessCount(uploaded);
-    setIssues(prev => [...prev.filter(i => i.type === "warning"), ...uploadErrors]);
+    setInsertedCount(insertedTotal);
+    setUpdatedCount(updatedTotal);
+    setIssues(prev => [...prev.filter(i => i.type === "warning" || i.type === "info"), ...uploadErrors]);
     setStage("done");
     setProgress(100);
     setProgressLabel("Upload complete");
 
     if (uploaded > 0 && uploadErrors.length === 0) {
-      toast({ title: "Upload Complete", description: `${uploaded} readings added successfully.` });
+      if (updatedTotal > 0) {
+        toast({
+          title: "Upload & Overwrite Complete",
+          description: `${uploaded} readings processed (${insertedTotal} new, ${updatedTotal} updated/overridden).`
+        });
+      } else {
+        toast({
+          title: "Upload Complete",
+          description: `${uploaded} readings added successfully.`
+        });
+      }
     } else if (uploaded > 0) {
-      toast({ title: "Partially Uploaded", description: `${uploaded} readings added. ${uploadErrors.length} rows failed — see errors below.` });
+      toast({
+        title: "Partially Uploaded",
+        description: `${uploaded} readings processed (${insertedTotal} new, ${updatedTotal} updated). ${uploadErrors.length} rows failed — see errors below.`
+      });
     } else {
       toast({ variant: "destructive", title: "Upload Failed", description: "No readings were saved. Check errors below." });
     }
@@ -580,7 +634,6 @@ export function CsvReadingUploadDialog({
 
   // ── Download template ─────────────────────────────────────────────────────
   const downloadTemplate = () => {
-    // Include a sample data row so users see the correct format immediately
     const today = format(new Date(), "dd/MM/yyyy");
     const templateHeaders = [...readingCsvRequiredHeaders, ...readingCsvOptionalHeaders];
     const sampleRow = `CUST001,1200,1250,${today},`;
@@ -645,6 +698,22 @@ export function CsvReadingUploadDialog({
             )}
           </div>
 
+          {/* Overwrite mode toggle */}
+          <div className="flex items-start sm:items-center space-x-3 bg-blue-50/70 border border-blue-200/80 rounded-xl px-4 py-3 transition-colors">
+            <input
+              type="checkbox"
+              id="overwrite-readings-toggle"
+              checked={overwriteExisting}
+              onChange={(e) => setOverwriteExisting(e.target.checked)}
+              className="mt-0.5 sm:mt-0 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              disabled={isProcessing}
+            />
+            <label htmlFor="overwrite-readings-toggle" className="text-xs sm:text-sm text-slate-700 cursor-pointer select-none leading-snug">
+              <span className="font-semibold text-blue-900 block sm:inline">Overwrite / Update existing readings: </span>
+              If a reading is already recorded for this customer in the same month/cycle, replace it with the new CSV value.
+            </label>
+          </div>
+
           {/* File picker */}
           <div className="flex flex-col sm:flex-row gap-2">
             <Input
@@ -694,9 +763,10 @@ export function CsvReadingUploadDialog({
 
           {/* Stats row after validation */}
           {(stage === "validated" || stage === "done") && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
               <StatCard label="Total Rows" value={totalRows} color="slate" />
-              <StatCard label="Valid Rows" value={validRows.length} color="emerald" />
+              <StatCard label="New Readings" value={newRowsCount} color="emerald" />
+              <StatCard label="Updates / Overrides" value={updateRowsCount} color="blue" />
               <StatCard label="Errors" value={errors.length} color="rose" />
               <StatCard label="Warnings" value={warnings.length} color="amber" />
             </div>
@@ -706,27 +776,28 @@ export function CsvReadingUploadDialog({
           {stage === "done" && successCount > 0 && (
             <Alert className="bg-emerald-50 border-emerald-300">
               <CheckCircle className="h-5 w-5 text-emerald-600" />
-              <AlertTitle className="text-emerald-700">Upload Complete</AlertTitle>
+              <AlertTitle className="text-emerald-700 font-semibold">Upload Complete</AlertTitle>
               <UIAlertDescription className="text-emerald-600">
-                {successCount} readings saved successfully out of {validRows.length} valid rows.
+                {successCount} readings processed successfully ({insertedCount} new, {updatedCount} updated/overridden) out of {validRows.length} valid rows.
               </UIAlertDescription>
             </Alert>
           )}
 
-          {/* Warnings */}
+          {/* Warnings and Info messages */}
           {warnings.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-amber-200">
-                <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm">
-                  <AlertTriangle className="h-4 w-4" />
-                  {warnings.length} Warning{warnings.length > 1 ? "s" : ""} (rows will still upload)
+                <div className="flex items-center gap-2 text-amber-900 font-semibold text-sm">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                  {warnings.length} Notice{warnings.length > 1 ? "s" : ""} / Warning{warnings.length > 1 ? "s" : ""} (rows will still be processed)
                 </div>
               </div>
               <ScrollArea className="h-[120px]">
-                <ul className="px-4 py-2 space-y-1 text-xs text-amber-800">
+                <ul className="px-4 py-2 space-y-1.5 text-xs text-amber-900">
                   {warnings.map((w, i) => (
                     <li key={i} className="flex gap-2">
-                      <span className="font-mono text-amber-500 shrink-0">Row {w.row}</span>
+                      <span className="font-mono text-amber-600 shrink-0">Row {w.row}</span>
+                      {w.custKey && <span className="font-semibold text-slate-700 shrink-0">[{w.custKey}]</span>}
                       <span>{w.message}</span>
                     </li>
                   ))}
@@ -780,17 +851,18 @@ export function CsvReadingUploadDialog({
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: "slate" | "emerald" | "rose" | "amber" }) {
+function StatCard({ label, value, color }: { label: string; value: number; color: "slate" | "emerald" | "rose" | "amber" | "blue" }) {
   const colorMap = {
     slate: "bg-slate-50 border-slate-200 text-slate-700",
     emerald: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    blue: "bg-blue-50 border-blue-200 text-blue-700",
     rose: "bg-rose-50 border-rose-200 text-rose-700",
     amber: "bg-amber-50 border-amber-200 text-amber-700",
   };
   return (
-    <div className={`rounded-xl border px-4 py-3 text-center ${colorMap[color]}`}>
-      <div className="text-2xl font-black">{value}</div>
-      <div className="text-xs font-medium mt-0.5 opacity-80">{label}</div>
+    <div className={`rounded-xl border px-3 py-2.5 text-center ${colorMap[color]}`}>
+      <div className="text-xl sm:text-2xl font-black">{value}</div>
+      <div className="text-[11px] sm:text-xs font-medium mt-0.5 opacity-80">{label}</div>
     </div>
   );
 }

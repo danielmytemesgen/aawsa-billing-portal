@@ -15,7 +15,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { PERMISSIONS } from "@/lib/constants/auth";
 import {
   getBulkMeters, getCustomers, updateBulkMeter as updateBulkMeterInStore, deleteBulkMeter as deleteBulkMeterFromStore,
-  updateCustomer as updateCustomerInStore, deleteCustomer as deleteCustomerFromStore, subscribeToBulkMeters, subscribeToCustomers,
+  addCustomer as addCustomerToStore, updateCustomer as updateCustomerInStore, deleteCustomer as deleteCustomerFromStore, subscribeToBulkMeters, subscribeToCustomers,
   initializeBulkMeters, initializeCustomers, getBranches, initializeBranches, subscribeToBranches,
   getBulkMeterReadings, initializeBulkMeterReadings, subscribeToBulkMeterReadings,
   addBill, addBulkMeterReading, removeBill, getBulkMeterByCustomerKey, updateExistingBill,
@@ -30,6 +30,7 @@ import { type CustomerType, type SewerageConnection, type PaymentStatus, type Bi
 import { calculateBillAction, closeBillingCycleAction, getMeterCreditAction } from "@/lib/actions";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "../bulk-meter-form-dialog";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "../../individual-customers/individual-customer-form-dialog";
+import { IndividualCustomerDetailsSheet } from "@/components/customers/IndividualCustomerDetailsSheet";
 import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
 import { ManageAssignedCustomersDialog } from "@/components/billing/ManageAssignedCustomersDialog";
 import { EditReadingsRecalculateSection } from "@/components/billing/EditReadingsRecalculateSection";
@@ -126,6 +127,8 @@ export default function BulkMeterDetailsPage() {
   const [selectedCustomer, setSelectedCustomer] = React.useState<IndividualCustomer | null>(null);
   const [customerToDelete, setCustomerToDelete] = React.useState<IndividualCustomer | null>(null);
   const [isCustomerDeleteDialogOpen, setIsCustomerDeleteDialogOpen] = React.useState(false);
+  const [selectedCustomerForDetails, setSelectedCustomerForDetails] = React.useState<IndividualCustomer | null>(null);
+  const [isCustomerDetailsOpen, setIsCustomerDetailsOpen] = React.useState(false);
   const [isAddReadingOpen, setIsAddReadingOpen] = React.useState(false);
 
   const [isBillDeleteDialogOpen, setIsBillDeleteDialogOpen] = React.useState(false);
@@ -819,8 +822,23 @@ export default function BulkMeterDetailsPage() {
     downloadFile(xlsxBlob, fileName);
   };
 
+  const handleAddCustomerToBulkMeter = () => {
+    setSelectedCustomer({
+      assignedBulkMeterId: bulkMeter?.customerKeyNumber,
+      branchId: bulkMeter?.branchId,
+      subCity: bulkMeter?.subCity,
+      woreda: bulkMeter?.woreda,
+    } as any);
+    setIsCustomerFormOpen(true);
+  };
+
+  const handleViewCustomerDetails = (customer: IndividualCustomer) => {
+    setSelectedCustomerForDetails(customer);
+    setIsCustomerDetailsOpen(true);
+  };
+
   const handleSubmitCustomerForm = async (data: IndividualCustomerFormValues) => {
-    if (selectedCustomer) {
+    if (selectedCustomer && selectedCustomer.customerKeyNumber) {
       const updatedCustomerData: Partial<Omit<IndividualCustomer, 'customerKeyNumber'>> = {
         ...data, ordinal: Number(data.ordinal), meterSize: Number(data.meterSize),
         previousReading: Number(data.previousReading), currentReading: Number(data.currentReading),
@@ -830,6 +848,13 @@ export default function BulkMeterDetailsPage() {
       };
       await updateCustomerInStore(selectedCustomer.customerKeyNumber, updatedCustomerData);
       toast({ title: "Customer Updated", description: `${data.name} has been updated.` });
+    } else {
+      const result = await addCustomerToStore(data);
+      if (result.success) {
+        toast({ title: "Customer Added", description: `${data.name} has been added to this bulk meter.` });
+      } else {
+        toast({ variant: "destructive", title: "Add Failed", description: result.message || "Could not add customer." });
+      }
     }
     setIsCustomerFormOpen(false); setSelectedCustomer(null);
   };
@@ -1654,17 +1679,29 @@ export default function BulkMeterDetailsPage() {
                   List of individual customers connected to this bulk meter ({associatedCustomers.length} found).
                 </CardDescription>
               </div>
-              {associatedCustomers.length > 0 && (
-                <Button
-                  onClick={handleExportToXlsx}
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center gap-2 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/20"
-                >
-                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-                  <span>Export to XLSX</span>
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                {canManageCustomers && (
+                  <Button
+                    onClick={handleAddCustomerToBulkMeter}
+                    size="sm"
+                    className="flex items-center gap-1.5 shadow-sm"
+                  >
+                    <PlusCircleIcon className="h-4 w-4" />
+                    <span>Add Customer</span>
+                  </Button>
+                )}
+                {associatedCustomers.length > 0 && (
+                  <Button
+                    onClick={handleExportToXlsx}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/20"
+                  >
+                    <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                    <span>Export to XLSX</span>
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {associatedCustomers.length === 0 ? (
@@ -1721,6 +1758,7 @@ export default function BulkMeterDetailsPage() {
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
                                     <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                    <DropdownMenuItem onClick={() => handleViewCustomerDetails(customer)}><Eye className="mr-2 h-4 w-4" />View Details</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleEditCustomer(customer)}><FileEdit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleDeleteCustomer(customer)}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
                                   </DropdownMenuContent>
@@ -1749,6 +1787,7 @@ export default function BulkMeterDetailsPage() {
                                     <Button variant="ghost" className="h-7 w-7 p-0"><Menu className="h-4 w-4" /></Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => handleViewCustomerDetails(customer)}><Eye className="mr-2 h-4 w-4" />View Details</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleEditCustomer(customer)}><FileEdit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleDeleteCustomer(customer)}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
                                   </DropdownMenuContent>
@@ -1790,6 +1829,18 @@ export default function BulkMeterDetailsPage() {
           </Card>
         </>
       )}
+
+      {/* Customer Details Sheet */}
+      <IndividualCustomerDetailsSheet
+        customer={selectedCustomerForDetails}
+        open={isCustomerDetailsOpen}
+        onOpenChange={setIsCustomerDetailsOpen}
+        onEdit={handleEditCustomer}
+        branches={branches}
+        bulkMetersList={bulkMeter ? [{ customerKeyNumber: bulkMeter.customerKeyNumber, name: bulkMeter.name }] : []}
+        isAdmin={true}
+        canEdit={hasPermission(PERMISSIONS.CUSTOMERS_UPDATE)}
+      />
 
       {currentBulkMeter && (<BulkMeterFormDialog open={isBulkMeterFormOpen} onOpenChange={setIsBulkMeterFormOpen} onSubmit={handleSubmitBulkMeterForm} defaultValues={currentBulkMeter} />)}
       {currentBulkMeter && (<AddReadingDialog open={isAddReadingOpen} onOpenChange={setIsAddReadingOpen} onSubmit={handleAddNewReading} meter={currentBulkMeter} />)}

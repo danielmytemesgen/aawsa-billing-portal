@@ -1,37 +1,39 @@
-
-
 "use client";
 
 import * as React from "react";
-import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, X } from "lucide-react";
+import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, Download, ChevronDown, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { individualCustomerStatuses, type IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
+import { individualCustomerStatuses, type IndividualCustomer, type IndividualCustomerStatus } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { IndividualCustomerTable } from "@/app/(dashboard)/admin/individual-customers/individual-customer-table";
+import { IndividualCustomerDetailsSheet } from "@/components/customers/IndividualCustomerDetailsSheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   getCustomers,
   addCustomer as addCustomerToStore,
   updateCustomer as updateCustomerInStore,
   deleteCustomer as deleteCustomerFromStore,
-  subscribeToCustomers,
-  initializeCustomers,
+  fetchCustomersPaginated,
+  fetchCustomersSummary,
+  approveCustomer as approveCustomerInStore,
+  rejectCustomer as rejectCustomerInStore,
   getBulkMeters,
   subscribeToBulkMeters,
   initializeBulkMeters,
   getBranches,
   initializeBranches,
-  subscribeToBranches
+  subscribeToBranches,
+  initializeTariffs
 } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { TablePagination } from "@/components/ui/table-pagination";
-import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { usePermissions } from "@/hooks/use-permissions";
 
@@ -40,132 +42,111 @@ export default function StaffIndividualCustomersPage() {
   const { toast } = useToast();
   const { currentUser, branchId, branchName, isStaffManagement } = useCurrentUser();
 
-  const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
-  const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
-  const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
+  const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
+  const [bulkMetersList, setBulkMetersList] = React.useState<{ customerKeyNumber: string, name: string }[]>([]);
+  const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
-
   const [searchTerm, setSearchTerm] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<string>('All');
   const [isFormOpen, setIsFormOpen] = React.useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [selectedCustomer, setSelectedCustomer] = React.useState<IndividualCustomer | null>(null);
   const [customerToDelete, setCustomerToDelete] = React.useState<IndividualCustomer | null>(null);
 
+  // Details sheet
+  const [selectedCustomerForDetails, setSelectedCustomerForDetails] = React.useState<IndividualCustomer | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
+
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [totalCount, setTotalCount] = React.useState(0);
+  const [summary, setSummary] = React.useState({ total: 0, active: 0, inactive: 0 });
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<IndividualCustomerStatus | 'All'>('All');
+  const [isExporting, setIsExporting] = React.useState(false);
 
-  // currentUser provided by useCurrentUser
+  const isGlobal = hasPermission('customers_view_all') && !isStaffManagement;
+  const effectiveBranchId = isGlobal ? undefined : branchId;
+
+  const fetchSummaryStats = React.useCallback(async () => {
+    const { data } = await fetchCustomersSummary();
+    if (data) setSummary(data);
+  }, []);
+
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {
+    setIsLoading(true);
+    const { customers: paginatedCustomers, totalCount: count, error } = await fetchCustomersPaginated(
+      rpp,
+      p * rpp,
+      search,
+      effectiveBranchId,
+      status && status !== 'All' ? status : undefined,
+    );
+    if (!error) {
+      setCustomers(paginatedCustomers);
+      setTotalCount(count);
+    } else {
+      toast({
+        title: "Error",
+        description: "Failed to fetch customers from server.",
+        variant: "destructive",
+      });
+    }
+    setIsLoading(false);
+  }, [effectiveBranchId, toast]);
+
+  // Debounce search
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(0);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   React.useEffect(() => {
-    if (!branchId) {
-      setIsLoading(false);
-      return;
-    }
+    fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+    fetchSummaryStats();
+  }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData, fetchSummaryStats]);
 
-    let isMounted = true;
-    setIsLoading(true);
+  React.useEffect(() => {
+    Promise.all([
+      initializeBulkMeters(),
+      initializeBranches(),
+      initializeTariffs()
+    ]).then(() => {
+      const allBMs = getBulkMeters();
+      const scopedBMs = effectiveBranchId ? allBMs.filter(bm => bm.branchId === effectiveBranchId) : allBMs;
+      setBulkMetersList(scopedBMs.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBranches(getBranches());
+    });
 
-    const initializeData = async () => {
-      try {
-        await Promise.all([initializeBranches(), initializeBulkMeters(), initializeCustomers()]);
-        if (isMounted) {
-          setAllBranches(getBranches());
-          setAllBulkMeters(getBulkMeters());
-          setAllCustomers(getCustomers());
-        }
-      } catch (err) {
-        console.error("Failed to initialize data:", err);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    };
-
-    initializeData();
-
-    const unSubBranches = subscribeToBranches((data) => isMounted && setAllBranches(data));
-    const unSubBulkMeters = subscribeToBulkMeters((data) => isMounted && setAllBulkMeters(data));
-    const unSubCustomers = subscribeToCustomers((data) => isMounted && setAllCustomers(data));
+    const unsubscribeBulkMeters = subscribeToBulkMeters((updatedBulkMeters) => {
+      const scopedBMs = effectiveBranchId ? updatedBulkMeters.filter(bm => bm.branchId === effectiveBranchId) : updatedBulkMeters;
+      setBulkMetersList(scopedBMs.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+    });
+    const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
+      setBranches(updatedBranches);
+    });
 
     return () => {
-      isMounted = false;
-      unSubBranches();
-      unSubBulkMeters();
-      unSubCustomers();
+      unsubscribeBulkMeters();
+      unsubscribeBranches();
     };
-  }, [currentUser]);
-
-  // Declarative filtering with useMemo
-  const branchFilteredData = React.useMemo(() => {
-    // Staff Management role must only see its own branch
-    if (isStaffManagement && branchId) {
-      const branchBMs = allBulkMeters.filter(bm => bm.branchId === branchId);
-      const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
-      const branchCustomers = allCustomers.filter(customer =>
-        customer.branchId === branchId ||
-        (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
-      );
-      return { customers: branchCustomers, bulkMeters: branchBMs.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })) };
-    }
-
-    // Users with global view permission see everything (unless staff management handled above)
-    if (hasPermission('customers_view_all')) {
-      return { customers: allCustomers, bulkMeters: allBulkMeters.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })) };
-    }
-
-    // Branch-scoped view for users who have that permission
-    if (hasPermission('customers_view_branch') && branchId) {
-      const branchBMs = allBulkMeters.filter(bm => bm.branchId === branchId);
-      const branchBMKeys = new Set(branchBMs.map(bm => bm.customerKeyNumber));
-      const branchCustomers = allCustomers.filter(customer =>
-        customer.branchId === branchId ||
-        (customer.assignedBulkMeterId && branchBMKeys.has(customer.assignedBulkMeterId))
-      );
-      return { customers: branchCustomers, bulkMeters: branchBMs.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })) };
-    }
-
-    return { customers: [], bulkMeters: [] };
-  }, [isStaffManagement, branchId, hasPermission, allCustomers, allBulkMeters]);
-
-  const filteredCustomers = React.useMemo(() => {
-    return branchFilteredData.customers.filter(customer => {
-      const matchesStatus = statusFilter === 'All' || customer.status === statusFilter;
-      return matchesStatus;
-    });
-  }, [branchFilteredData.customers, statusFilter]);
-
-  const searchedCustomers = React.useMemo(() => {
-    if (!searchTerm) {
-      return filteredCustomers;
-    }
-    return filteredCustomers.filter(customer =>
-      customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.subCity.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.woreda.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (customer.assignedBulkMeterId && allBulkMeters.find(bm => bm.customerKeyNumber === customer.assignedBulkMeterId)?.name.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-  }, [searchTerm, filteredCustomers, allBulkMeters]);
-
-  const summary = React.useMemo(() => {
-    const total = branchFilteredData.customers.length;
-    const active = branchFilteredData.customers.filter(c => c.status === 'Active').length;
-    return { total, active, inactive: total - active };
-  }, [branchFilteredData.customers]);
-
-  const paginatedCustomers = searchedCustomers.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
+  }, [effectiveBranchId]);
 
   const handleAddCustomer = () => {
-    setSelectedCustomer(null);
+    setSelectedCustomer(effectiveBranchId ? { branchId: effectiveBranchId } as any : null);
     setIsFormOpen(true);
   };
 
   const handleEditCustomer = (customer: IndividualCustomer) => {
     setSelectedCustomer(customer);
     setIsFormOpen(true);
+  };
+
+  const handleViewCustomerDetails = (customer: IndividualCustomer) => {
+    setSelectedCustomerForDetails(customer);
+    setIsDetailsOpen(true);
   };
 
   const handleDeleteCustomer = (customer: IndividualCustomer) => {
@@ -178,12 +159,52 @@ export default function StaffIndividualCustomersPage() {
       const result = await deleteCustomerFromStore(customerToDelete.customerKeyNumber);
       if (result.success) {
         toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been removed.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
       } else {
         toast({ variant: "destructive", title: "Delete Failed", description: result.message || "Could not delete customer." });
       }
       setCustomerToDelete(null);
     }
     setIsDeleteDialogOpen(false);
+  };
+
+  const handleApproveCustomer = async (customer: IndividualCustomer) => {
+    if (!currentUser) return;
+    try {
+      const result = await approveCustomerInStore(customer.customerKeyNumber, currentUser.id || 'system');
+      if (result.success) {
+        toast({ title: "Customer Approved", description: `${customer.name} is now Active.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
+        if (selectedCustomerForDetails?.customerKeyNumber === customer.customerKeyNumber) {
+          setSelectedCustomerForDetails(prev => prev ? { ...prev, status: 'Active' } : null);
+        }
+      } else {
+        toast({ variant: "destructive", title: "Approval Failed", description: result.message || "Could not approve customer." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
+  };
+
+  const handleRejectCustomer = async (customer: IndividualCustomer) => {
+    if (!currentUser) return;
+    try {
+      const result = await rejectCustomerInStore(customer.customerKeyNumber, currentUser.id || 'system');
+      if (result.success) {
+        toast({ title: "Customer Rejected", description: `${customer.name} has been marked as Rejected.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
+        if (selectedCustomerForDetails?.customerKeyNumber === customer.customerKeyNumber) {
+          setSelectedCustomerForDetails(prev => prev ? { ...prev, status: 'Rejected' } : null);
+        }
+      } else {
+        toast({ variant: "destructive", title: "Rejection Failed", description: result.message || "Could not reject customer." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
   };
 
   const handleSubmitCustomer = async (data: IndividualCustomerFormValues) => {
@@ -193,16 +214,22 @@ export default function StaffIndividualCustomersPage() {
     }
 
     if (selectedCustomer) {
+      if (!hasPermission('customers_update')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to update customers.' }); return; }
       const result = await updateCustomerInStore(selectedCustomer.customerKeyNumber, data);
       if (result.success) {
         toast({ title: "Customer Updated", description: `${data.name} has been updated.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
       } else {
         toast({ variant: "destructive", title: "Update Failed", description: result.message || "Could not update customer." });
       }
     } else {
+      if (!hasPermission('customers_create')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create customers.' }); return; }
       const result = await addCustomerToStore(data);
       if (result.success && result.data) {
         toast({ title: "Customer Added", description: `${result.data.name} has been added.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
       } else {
         toast({ variant: "destructive", title: "Add Failed", description: result.message || "Could not add customer." });
       }
@@ -211,66 +238,84 @@ export default function StaffIndividualCustomersPage() {
     setSelectedCustomer(null);
   };
 
-  const renderContent = () => {
-    if (isLoading) {
-      return (
-        <div className="p-4 overflow-x-auto min-w-[1000px]">
-          <TableSkeleton columns={7} rows={10} />
-        </div>
-      );
+  const getBranchNameFromList = (branchId?: string, fallbackLocation?: string) => {
+    if (branchId) {
+      const branch = branches.find(b => b.id === branchId);
+      if (branch) return branch.name;
     }
-    if (!branchId && !hasPermission('customers_view_all')) {
-      return (
-        <EmptyState 
-          icon={UserMinus} 
-          title="Profile Not Configured" 
-          description="Your user profile is not configured for a staff role or branch. Please contact an administrator." 
-        />
+    return fallbackLocation || "";
+  };
+
+  const handleExport = async (format: 'csv' | 'xlsx') => {
+    setIsExporting(true);
+    toast({ title: "Preparing Export", description: "Fetching branch customer records..." });
+    try {
+      const { customers: allCustomers } = await fetchCustomersPaginated(
+        10000, 0, debouncedSearch,
+        effectiveBranchId,
+        statusFilter !== 'All' ? statusFilter : undefined,
       );
+
+      if (!allCustomers || allCustomers.length === 0) {
+        toast({ title: "No Data", description: "No customers match the current filters.", variant: "destructive" });
+        return;
+      }
+
+      const rows = allCustomers.map(c => ({
+        'Customer Key': c.customerKeyNumber || '',
+        'Name': c.name || '',
+        'Status': c.status || '',
+        'Branch': getBranchNameFromList(c.branchId, '') || '',
+        'Route Key': c.routeKey || '',
+        'Meter Number': c.meterNumber || '',
+        'Contract No': c.contractNumber || '',
+        'Phone': c.phoneNumber || '',
+        'Woreda': c.woreda || '',
+        'Location': c.specificArea || '',
+        'Current Reading': c.currentReading ?? '',
+        'Previous Reading': c.previousReading ?? '',
+        'Calculated Bill': c.calculatedBill ?? '',
+        'Payment Status': c.paymentStatus || '',
+      }));
+
+      if (format === 'csv') {
+        const headers = Object.keys(rows[0]).join(',');
+        const lines = rows.map(r => Object.values(r).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        const csvContent = [headers, ...lines].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `individual_customers_${branchName || 'branch'}_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click(); URL.revokeObjectURL(url);
+      } else {
+        const XLSX = await import('xlsx');
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Customers');
+        XLSX.writeFile(wb, `individual_customers_${branchName || 'branch'}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }
+
+      toast({ title: "Export Complete", description: `${allCustomers.length} records exported to ${format.toUpperCase()}.` });
+    } catch (err) {
+      console.error('Export error:', err);
+      toast({ title: "Export Failed", description: "Could not generate file.", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
     }
-    if (branchFilteredData.customers.length === 0 && !searchTerm) {
-      return (
-        <EmptyState 
-          icon={FileText} 
-          title="No Customers Found" 
-          description="No abstract or individual customers are registered for your branch." 
-          action={
-            hasPermission('customers_create') ? (
-              <Button onClick={handleAddCustomer} variant="outline" className="mt-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50">
-                <PlusCircle className="mr-2 h-4 w-4" /> Add First Customer
-              </Button>
-            ) : undefined
-          }
-        />
-      );
-    }
-    return (
-      <div className="overflow-x-auto min-h-[400px]">
-        <div className="min-w-[1000px]">
-          <IndividualCustomerTable
-            data={paginatedCustomers}
-            onEdit={handleEditCustomer}
-            onDelete={handleDeleteCustomer}
-            bulkMetersList={allBulkMeters.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))}
-            branches={allBranches}
-            canEdit={hasPermission('customers_update')}
-            canDelete={hasPermission('customers_delete')}
-          />
-        </div>
-      </div>
-    );
   };
 
   return (
     <div className="space-y-8 pb-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Individual Customers {branchName ? `(${branchName})` : ''}</h1>
-          <p className="text-muted-foreground mt-1 text-base">Direct consumers attached to primary or bulk meters in your branch.</p>
+          <h1 className="text-3xl font-bold tracking-tight">Individual Customers Management</h1>
+          <p className="text-muted-foreground mt-1 text-base">
+            {branchName ? `Branch: ${branchName} • ` : ''}Direct consumers attached to primary or bulk meters.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
           {hasPermission('customers_create') && (
-            <Button onClick={handleAddCustomer} disabled={!branchId} className="flex-shrink-0 shadow-sm">
+            <Button onClick={handleAddCustomer} className="flex-shrink-0 shadow-sm">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Customer
             </Button>
           )}
@@ -283,7 +328,7 @@ export default function StaffIndividualCustomersPage() {
             <Users className="h-48 w-48 text-emerald-900" />
           </div>
           <CardHeader className="flex flex-row items-center justify-between pb-1 pt-6 px-6 relative z-10">
-            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Individual Customers</CardTitle>
+            <CardTitle className="text-sm font-bold uppercase text-slate-600 tracking-wider">Total Customers</CardTitle>
             <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
               <Users className="h-4 w-4" />
             </div>
@@ -293,7 +338,7 @@ export default function StaffIndividualCustomersPage() {
               <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{summary.total}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total active individual accounts</span>
+               <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total individual accounts</span>
             </div>
           </CardContent>
         </Card>
@@ -313,7 +358,7 @@ export default function StaffIndividualCustomersPage() {
               <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">{summary.active}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Currently receiving services</span>
+               <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Active services</span>
             </div>
           </CardContent>
         </Card>
@@ -340,32 +385,66 @@ export default function StaffIndividualCustomersPage() {
       </div>
 
       <Card className="shadow-md border-slate-200/60 overflow-hidden">
-        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col gap-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <CardHeader className="bg-slate-50/50 border-b pb-4 flex flex-col gap-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
                 <UserCog className="h-4 w-4" />
               </div>
               <div>
-                <CardTitle className="text-lg">Customer Database</CardTitle>
-                <CardDescription>Manage individual consumer registry for {branchName || "your area"}.</CardDescription>
+                <CardTitle className="text-lg">Branch Customer Registry</CardTitle>
+                <CardDescription>Directory of consumer accounts registered under your branch.</CardDescription>
               </div>
             </div>
-            <div className="relative w-full md:w-72">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <Input
-                type="search"
-                placeholder="Search by key, name..."
-                className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                disabled={!branchId}
-              />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-grow md:w-64">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <Input
+                  type="search"
+                  placeholder="Search by key, name..."
+                  className="pl-9 bg-white border-slate-200 focus-visible:ring-indigo-500 rounded-xl"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+
+              {/* Branch locked badge */}
+              <div className="w-full sm:w-48 flex-shrink-0">
+                <div className="h-10 px-3 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+                  <Building2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                  <span className="text-sm font-medium text-slate-700 truncate">
+                    {branchName || 'Your Branch'}
+                  </span>
+                  <span className="ml-auto text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">Branch</span>
+                </div>
+              </div>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-10 px-4 flex-shrink-0 gap-2 border-slate-200 shadow-sm rounded-xl font-medium hover:bg-slate-50"
+                    disabled={isExporting}
+                  >
+                    <Download className="h-4 w-4 text-slate-500" />
+                    {isExporting ? 'Exporting...' : 'Export'}
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem onClick={() => handleExport('csv')} className="gap-2 cursor-pointer">
+                    <Download className="h-4 w-4" /> Export CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExport('xlsx')} className="gap-2 cursor-pointer">
+                    <Download className="h-4 w-4" /> Export Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
-          {/* Status filter pills & active tags */}
-          <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-100">
+          {/* Status filter pills */}
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold text-slate-500 mr-1">Filter:</span>
             {(['All', ...individualCustomerStatuses] as const).map((status) => {
               const active = statusFilter === status;
@@ -400,19 +479,55 @@ export default function StaffIndividualCustomersPage() {
                 </button>
               );
             })}
+
             {statusFilter !== 'All' && (
               <span className="ml-1 text-xs text-slate-400 italic">
-                Showing {searchedCustomers.length} {statusFilter} customer{searchedCustomers.length !== 1 ? 's' : ''}
+                Showing {totalCount} {statusFilter} customer{totalCount !== 1 ? 's' : ''}
               </span>
             )}
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          {renderContent()}
+        <CardContent className="p-0 overflow-x-auto">
+          <div className="min-w-[1000px]">
+            {isLoading ? (
+              <div className="p-4">
+                <TableSkeleton columns={7} rows={10} />
+              </div>
+            ) : customers.length === 0 ? (
+              <EmptyState 
+                icon={FileText} 
+                title={searchTerm ? "No Results Found" : "No Customers Found"} 
+                description={searchTerm ? "Try adjusting your search criteria." : "There are no individual customers registered for your branch."} 
+                className="m-4"
+                action={
+                  (!searchTerm && hasPermission('customers_create')) ? (
+                    <Button onClick={handleAddCustomer} variant="outline" className="border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+                      <PlusCircle className="mr-2 h-4 w-4" /> Add First Customer
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <IndividualCustomerTable
+                data={customers}
+                onEdit={handleEditCustomer}
+                onDelete={handleDeleteCustomer}
+                onViewDetails={handleViewCustomerDetails}
+                onApprove={handleApproveCustomer}
+                onReject={handleRejectCustomer}
+                bulkMetersList={bulkMetersList}
+                branches={branches}
+                canEdit={hasPermission('customers_update')}
+                canDelete={hasPermission('customers_delete')}
+                canApprove={hasPermission('customers_approve')}
+                isAdmin={false}
+              />
+            )}
+          </div>
         </CardContent>
-        {searchedCustomers.length > 0 && branchId && (
+        {totalCount > 0 && (
           <TablePagination
-            count={searchedCustomers.length}
+            count={totalCount}
             page={page}
             rowsPerPage={rowsPerPage}
             onPageChange={setPage}
@@ -425,14 +540,28 @@ export default function StaffIndividualCustomersPage() {
         )}
       </Card>
 
+      {/* Slide-over Customer Details Sheet */}
+      <IndividualCustomerDetailsSheet
+        customer={selectedCustomerForDetails}
+        open={isDetailsOpen}
+        onOpenChange={setIsDetailsOpen}
+        onEdit={handleEditCustomer}
+        onApprove={handleApproveCustomer}
+        onReject={handleRejectCustomer}
+        branches={branches}
+        bulkMetersList={bulkMetersList}
+        isAdmin={false}
+        canEdit={hasPermission('customers_update')}
+        canApprove={hasPermission('customers_approve')}
+      />
+
       {(hasPermission('customers_create') || hasPermission('customers_update')) && (
         <IndividualCustomerFormDialog
           open={isFormOpen}
           onOpenChange={setIsFormOpen}
           onSubmit={handleSubmitCustomer}
           defaultValues={selectedCustomer}
-          bulkMeters={branchFilteredData.bulkMeters}
-          staffBranchName={currentUser?.branchName || undefined}
+          bulkMeters={bulkMetersList}
         />
       )}
 

@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -9,7 +8,25 @@ import {
   CardTitle,
   CardDescription
 } from "@/components/ui/card";
-import { MoreHorizontal, Edit, Trash2, Gauge, Eye, Check, User, MapPin, Hash, CreditCard, Activity, Globe } from "lucide-react";
+import {
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  Gauge,
+  Eye,
+  Check,
+  User,
+  MapPin,
+  Hash,
+  CreditCard,
+  Activity,
+  Globe,
+  CheckCircle2,
+  XCircle,
+  Key,
+  Phone,
+  Clock
+} from "lucide-react";
 import Link from "next/link";
 import {
   Table,
@@ -20,14 +37,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
@@ -37,18 +46,35 @@ interface BulkMeterTableProps {
   data: BulkMeter[];
   onEdit: (bulkMeter: BulkMeter) => void;
   onDelete: (bulkMeter: BulkMeter) => void;
+  onApprove?: (bulkMeter: BulkMeter) => void;
+  onReject?: (bulkMeter: BulkMeter) => void;
   branches: Branch[];
   canEdit: boolean;
   canDelete: boolean;
+  canApprove?: boolean;
   selectedMeters?: Set<string>;
   onSelectionChange?: (selected: Set<string>) => void;
 }
 
-export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canDelete, selectedMeters, onSelectionChange }: BulkMeterTableProps) {
+export function BulkMeterTable({
+  data,
+  onEdit,
+  onDelete,
+  onApprove,
+  onReject,
+  branches,
+  canEdit,
+  canDelete,
+  canApprove = false,
+  selectedMeters,
+  onSelectionChange,
+}: BulkMeterTableProps) {
   if (data.length === 0) {
     return (
-      <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
-        No bulk meters match your search criteria. <Gauge className="inline-block ml-2 h-5 w-5" />
+      <div className="mt-4 p-6 border border-dashed rounded-xl bg-slate-50/50 text-center text-slate-500">
+        <Gauge className="mx-auto h-8 w-8 text-slate-400 mb-2" />
+        <p className="font-semibold text-slate-700">No bulk meters match your filters.</p>
+        <p className="text-xs text-slate-400 mt-1">Try adjusting your search criteria or resetting filters.</p>
       </div>
     );
   }
@@ -61,7 +87,6 @@ export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canD
     return fallbackLocation || "-";
   };
 
-  const showActions = canEdit || canDelete;
   const showSelection = selectedMeters !== undefined && onSelectionChange !== undefined;
 
   const handleSelectAll = (checked: boolean) => {
@@ -107,35 +132,52 @@ export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canD
               )}
               <TableHead className="py-5 font-bold text-slate-800">
                 <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-slate-400" />
+                  <User className="h-4 w-4 text-blue-500" />
                   Account Name
                 </div>
               </TableHead>
               <TableHead className="font-bold text-slate-800">
                 <div className="flex items-center gap-2">
-                  <Globe className="h-4 w-4 text-slate-400" />
+                  <Key className="h-4 w-4 text-indigo-500" />
+                  Customer Key
+                </div>
+              </TableHead>
+              <TableHead className="font-bold text-slate-800">
+                <div className="flex items-center gap-2">
+                  <Phone className="h-4 w-4 text-emerald-500" />
+                  Phone Number
+                </div>
+              </TableHead>
+              <TableHead className="font-bold text-slate-800">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-sky-500" />
                   Branch
                 </div>
               </TableHead>
               <TableHead className="font-bold text-slate-800">
                 <div className="flex items-center gap-2">
-                  <Hash className="h-4 w-4 text-slate-400" />
+                  <Hash className="h-4 w-4 text-amber-500" />
                   Meter Number
                 </div>
               </TableHead>
               <TableHead className="font-bold text-slate-800">
                 <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-slate-400" />
+                  <Activity className="h-4 w-4 text-purple-500" />
                   INST_KEY
                 </div>
               </TableHead>
               <TableHead className="font-bold text-slate-800">
                 <div className="flex items-center gap-2">
-                  <CreditCard className="h-4 w-4 text-slate-400" />
+                  <CreditCard className="h-4 w-4 text-rose-500" />
                   Contract
                 </div>
               </TableHead>
-              <TableHead className="font-bold text-slate-800">Status</TableHead>
+              <TableHead className="font-bold text-slate-800">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-teal-500" />
+                  Status
+                </div>
+              </TableHead>
               <TableHead className="text-right pr-6 font-bold text-slate-800">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -143,7 +185,7 @@ export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canD
             {data.map((bulkMeter) => (
               <TableRow 
                 key={bulkMeter.customerKeyNumber} 
-                className={`group transition-colors border-b last:border-0 hover:bg-slate-50/50 ${selectedMeters?.has(bulkMeter.customerKeyNumber) ? "bg-blue-50/40" : ""}`}
+                className={`group transition-colors border-b last:border-0 hover:bg-slate-50/70 ${selectedMeters?.has(bulkMeter.customerKeyNumber) ? "bg-blue-50/40" : ""}`}
               >
                 {showSelection && (
                   <TableCell className="pl-6 py-5">
@@ -156,56 +198,98 @@ export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canD
                   </TableCell>
                 )}
                 <TableCell className="py-5">
-                  <div className="font-bold text-slate-900 text-base group-hover:text-blue-700 transition-colors">
+                  <div className="font-bold text-slate-900 text-base group-hover:text-blue-600 transition-colors">
                     {bulkMeter.name}
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-mono mt-0.5 tracking-tight uppercase">
-                    KEY: {bulkMeter.customerKeyNumber}
                   </div>
                 </TableCell>
                 <TableCell className="py-5">
-                  <div className="flex items-center gap-1.5 font-medium text-slate-600">
-                    <MapPin className="h-3 w-3 text-slate-400" />
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/80 shadow-sm">
+                    <Key className="h-3 w-3 text-indigo-500" />
+                    {bulkMeter.customerKeyNumber}
+                  </span>
+                </TableCell>
+                <TableCell className="py-5">
+                  {bulkMeter.phoneNumber ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-sm">
+                      <Phone className="h-3 w-3 text-emerald-500" />
+                      {bulkMeter.phoneNumber}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 text-xs italic">-</span>
+                  )}
+                </TableCell>
+                <TableCell className="py-5">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium text-xs bg-sky-50 text-sky-800 border border-sky-200/80">
+                    <MapPin className="h-3 w-3 text-sky-500" />
                     {getBranchName(bulkMeter.branchId, bulkMeter.subCity)}
                   </div>
                 </TableCell>
                 <TableCell className="py-5">
-                  <Badge variant="outline" className="font-mono text-xs px-2 py-0.5 bg-slate-50 text-slate-700 border-slate-200">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg font-mono text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200/80 shadow-sm">
                     {bulkMeter.meterNumber}
-                  </Badge>
+                  </span>
                 </TableCell>
-                <TableCell className="py-5 text-slate-600 font-medium font-mono text-xs">
-                  {bulkMeter.instKey}
+                <TableCell className="py-5 font-mono text-xs">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md font-semibold text-purple-700 bg-purple-50 border border-purple-200/70">
+                    {bulkMeter.instKey || "-"}
+                  </span>
                 </TableCell>
-                <TableCell className="py-5 text-slate-600 font-bold">
-                  {bulkMeter.contractNumber}
+                <TableCell className="py-5 font-semibold text-slate-700 text-xs">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md font-medium text-slate-700 bg-slate-100 border border-slate-200">
+                    {bulkMeter.contractNumber || "-"}
+                  </span>
                 </TableCell>
                 <TableCell className="py-5">
-                  <Badge
-                    variant={bulkMeter.status === 'Active' ? 'default' : 'secondary'}
-                    className={`px-3 py-1 font-bold text-[10px] uppercase tracking-wider ${
-                      bulkMeter.status === 'Active' 
-                        ? 'bg-emerald-500 hover:bg-emerald-600 shadow-sm shadow-emerald-100' 
-                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                    }`}
-                  >
-                    {bulkMeter.status}
-                  </Badge>
+                  {bulkMeter.status === 'Active' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500 text-white shadow-sm shadow-emerald-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                      Active
+                    </span>
+                  )}
+                  {bulkMeter.status === 'Maintenance' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-sm shadow-amber-200">
+                      Maintenance
+                    </span>
+                  )}
+                  {bulkMeter.status === 'Pending Approval' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500 text-white shadow-sm shadow-blue-200">
+                      <Clock className="h-3 w-3" />
+                      Pending
+                    </span>
+                  )}
+                  {bulkMeter.status === 'Rejected' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500 text-white shadow-sm shadow-rose-200">
+                      Rejected
+                    </span>
+                  )}
+                  {!['Active', 'Maintenance', 'Pending Approval', 'Rejected'].includes(bulkMeter.status) && (
+                    <Badge variant="outline" className="text-xs">{bulkMeter.status}</Badge>
+                  )}
                 </TableCell>
                 <TableCell className="text-right pr-6 py-5">
-                  <div className="flex justify-end gap-1 px-1">
-                    <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all rounded-lg">
+                  <div className="flex justify-end gap-1.5 px-1">
+                    <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-blue-600 bg-blue-50/80 hover:bg-blue-600 hover:text-white border border-blue-200/80 transition-all rounded-lg shadow-sm" title="View Details">
                       <Link href={`/staff/bulk-meters/${bulkMeter.customerKeyNumber}`}>
                         <Eye className="h-4 w-4" />
                       </Link>
                     </Button>
+                    {bulkMeter.status === 'Pending Approval' && canApprove && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-600 bg-emerald-50/80 hover:bg-emerald-600 hover:text-white border border-emerald-200/80 transition-all rounded-lg shadow-sm" onClick={() => onApprove?.(bulkMeter)} title="Approve">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-600 bg-rose-50/80 hover:bg-rose-600 hover:text-white border border-rose-200/80 transition-all rounded-lg shadow-sm" onClick={() => onReject?.(bulkMeter)} title="Reject">
+                          <XCircle className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
                     {canEdit && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all rounded-lg" onClick={() => onEdit(bulkMeter)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-600 bg-amber-50/80 hover:bg-amber-500 hover:text-white border border-amber-200/80 transition-all rounded-lg shadow-sm" onClick={() => onEdit(bulkMeter)} title="Edit">
                         <Edit className="h-4 w-4" />
                       </Button>
                     )}
                     {canDelete && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all rounded-lg" onClick={() => onDelete(bulkMeter)}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-600 bg-rose-50/80 hover:bg-rose-600 hover:text-white border border-rose-200/80 transition-all rounded-lg shadow-sm" onClick={() => onDelete(bulkMeter)} title="Delete">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
@@ -239,23 +323,25 @@ export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canD
             </CardHeader>
             <CardContent className="p-4 space-y-3">
               <div className="grid grid-cols-2 gap-2 text-xs">
+                <div><span className="text-muted-foreground uppercase font-semibold">Key:</span> {bulkMeter.customerKeyNumber}</div>
+                <div><span className="text-muted-foreground uppercase font-semibold">Phone:</span> {bulkMeter.phoneNumber || "-"}</div>
                 <div><span className="text-muted-foreground uppercase font-semibold">Meter:</span> {bulkMeter.meterNumber}</div>
                 <div><span className="text-muted-foreground uppercase font-semibold">Contract:</span> {bulkMeter.contractNumber}</div>
                 <div className="col-span-2"><span className="text-muted-foreground uppercase font-semibold">Branch:</span> {getBranchName(bulkMeter.branchId, bulkMeter.subCity)}</div>
               </div>
               <div className="flex gap-2 pt-2 border-t overflow-x-auto">
-                <Button asChild variant="outline" size="sm" className="h-8 text-xs flex-1">
+                <Button asChild variant="outline" size="sm" className="h-8 text-xs flex-1 text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-600 hover:text-white font-semibold">
                   <Link href={`/staff/bulk-meters/${bulkMeter.customerKeyNumber}`}>
                     <Eye className="mr-1.5 h-3 w-3" /> View
                   </Link>
                 </Button>
                 {canEdit && (
-                  <Button variant="outline" size="sm" className="h-8 text-xs flex-1" onClick={() => onEdit(bulkMeter)}>
+                  <Button variant="outline" size="sm" className="h-8 text-xs flex-1 text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-500 hover:text-white font-semibold" onClick={() => onEdit(bulkMeter)}>
                     <Edit className="mr-1.5 h-3 w-3" /> Edit
                   </Button>
                 )}
                 {canDelete && (
-                  <Button variant="ghost" size="sm" className="h-8 text-xs text-destructive hover:text-white hover:bg-destructive" onClick={() => onDelete(bulkMeter)}>
+                  <Button variant="outline" size="sm" className="h-8 text-xs text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-600 hover:text-white font-semibold" onClick={() => onDelete(bulkMeter)}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 )}
@@ -267,5 +353,3 @@ export function BulkMeterTable({ data, onEdit, onDelete, branches, canEdit, canD
     </div>
   );
 }
-
-

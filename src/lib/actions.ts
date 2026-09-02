@@ -142,6 +142,8 @@ import {
   dbCreateCredit,
   dbVoidCredit,
   ensureReadingPartitionExists,
+  dbPreviewShiftReadingMonth,
+  dbExecuteShiftReadingMonth,
   type CreditLedgerEntry,
 } from './db-queries';
 import { roundMoney, MONEY_EPSILON } from './credit-utils';
@@ -2286,7 +2288,7 @@ export async function createIndividualCustomerReadingAction(
 
 export async function batchCreateIndividualCustomerReadingsAction(
   items: Array<{ reading: IndividualCustomerReadingInsert; previousReading?: number }>
-): Promise<{ success: boolean; data?: { count: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
+): Promise<{ success: boolean; data?: { count: number; insertedCount?: number; updatedCount?: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
   if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
   // 1. Check reading period status ONCE
@@ -2450,7 +2452,7 @@ export async function batchCreateIndividualCustomerReadingsAction(
     );
   }
 
-  return { success: true, data: { count: createdCount, rowResults } };
+  return { success: true, data: { count: createdCount, insertedCount: toInsert.length, updatedCount: toUpdate.length, rowResults } };
 }
 
 
@@ -2592,7 +2594,7 @@ export async function createBulkMeterReadingAction(
 
 export async function batchCreateBulkMeterReadingsAction(
   items: Array<{ reading: BulkMeterReadingInsert; previousReading?: number }>
-): Promise<{ success: boolean; data?: { count: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
+): Promise<{ success: boolean; data?: { count: number; insertedCount?: number; updatedCount?: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
   if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
   // 1. Check reading period status ONCE
@@ -2753,7 +2755,74 @@ export async function batchCreateBulkMeterReadingsAction(
     );
   }
 
-  return { success: true, data: { count: createdCount, rowResults } };
+  return { success: true, data: { count: createdCount, insertedCount: toInsert.length, updatedCount: toUpdate.length, rowResults } };
+}
+
+export async function previewShiftReadingMonthAction(params: {
+  meterType: 'individual' | 'bulk' | 'both';
+  sourceMonth: string;
+  targetMonth: string;
+  branchId?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canManage = perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL);
+    if (!canManage) throw new Error('Forbidden: Missing permission to manage meter readings');
+
+    const effectiveBranchId = getEffectiveBranchId(session, params.branchId, PERMISSIONS.METER_READINGS_VIEW_ALL);
+    return await dbPreviewShiftReadingMonth(params.meterType, params.sourceMonth, params.targetMonth, effectiveBranchId);
+  });
+}
+
+export async function executeShiftReadingMonthAction(params: {
+  meterType: 'individual' | 'bulk' | 'both';
+  sourceMonth: string;
+  targetMonth: string;
+  branchId?: string;
+  overwriteTargetExisting?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const perms = session.permissions || [];
+    const canManage = perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE);
+    if (!canManage) throw new Error('Forbidden: Missing permission to update meter readings');
+
+    if (!/^\d{4}-\d{2}$/.test(params.sourceMonth) || !/^\d{4}-\d{2}$/.test(params.targetMonth)) {
+      throw new Error('Invalid month format. Expected YYYY-MM.');
+    }
+    if (params.sourceMonth === params.targetMonth) {
+      throw new Error('Source month and target month cannot be identical.');
+    }
+
+    const effectiveBranchId = getEffectiveBranchId(session, params.branchId, PERMISSIONS.METER_READINGS_VIEW_ALL);
+    const result = await dbExecuteShiftReadingMonth(
+      params.meterType,
+      params.sourceMonth,
+      params.targetMonth,
+      effectiveBranchId,
+      params.overwriteTargetExisting ?? true
+    );
+
+    await logSecurityEventAction({
+      event: 'Shift Reading Month',
+      severity: 'warning',
+      details: {
+        meterType: params.meterType,
+        sourceMonth: params.sourceMonth,
+        targetMonth: params.targetMonth,
+        branchId: effectiveBranchId,
+        result
+      }
+    });
+
+    return result;
+  });
 }
 
 

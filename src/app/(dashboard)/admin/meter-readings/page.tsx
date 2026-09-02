@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar, CalendarSync } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
@@ -46,6 +46,7 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import type { Route } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { format } from "date-fns";
 import { CsvReadingUploadDialog } from "@/features/export/components/csv-reading-upload-dialog";
+import { ShiftReadingMonthDialog } from "@/components/admin/shift-reading-month-dialog";
 import { ReaderReport } from "@/app/(dashboard)/staff/dashboard/reader-report";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TablePagination } from "@/components/ui/table-pagination";
@@ -69,6 +70,7 @@ export default function AdminMeterReadingsPage() {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isIndividualCsvModalOpen, setIsIndividualCsvModalOpen] = React.useState(false);
   const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = React.useState(false);
+  const [isShiftMonthModalOpen, setIsShiftMonthModalOpen] = React.useState(false);
   const [isDatExportModalOpen, setIsDatExportModalOpen] = React.useState(false);
   const [exportType, setExportType] = React.useState<'individual' | 'bulk'>('individual');
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
@@ -492,6 +494,15 @@ export default function AdminMeterReadingsPage() {
                     <span>Upload Bulk (CSV)</span>
                   </DropdownMenuItem>
                 )}
+                {(hasPermission(PERMISSIONS.METER_READINGS_UPDATE) || hasPermission(PERMISSIONS.METER_READINGS_CREATE)) && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => setIsShiftMonthModalOpen(true)}>
+                      <CalendarSync className="mr-2 h-4 w-4 text-indigo-600" />
+                      <span>Shift / Reassign Reading Month</span>
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -809,6 +820,17 @@ export default function AdminMeterReadingsPage() {
             meterType="bulk"
             meters={allBulkMeters}
             currentUser={currentUser}
+          />
+
+          <ShiftReadingMonthDialog
+            open={isShiftMonthModalOpen}
+            onOpenChange={setIsShiftMonthModalOpen}
+            onSuccess={() => {
+              Promise.all([
+                initializeIndividualCustomerReadings(true),
+                initializeBulkMeterReadings(true),
+              ]).then(() => combineAndSortReadings());
+            }}
           />
 
           <DatReadingExportDialog

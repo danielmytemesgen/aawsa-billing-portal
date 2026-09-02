@@ -1,157 +1,122 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Gauge, Search, RefreshCcw, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, X } from "lucide-react";
+import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Download, ChevronDown, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { bulkMeterStatuses, type BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
+import { bulkMeterStatuses, type BulkMeter, type BulkMeterStatus } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
 import { BulkMeterTable } from "./bulk-meter-table";
 import { BatchInvoiceDialog } from "@/app/(dashboard)/admin/bulk-meters/batch-invoice-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { BulkMeterMap } from "@/components/maps/BulkMeterMap";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   getBulkMeters,
   addBulkMeter as addBulkMeterToStore,
   updateBulkMeter as updateBulkMeterInStore,
   deleteBulkMeter as deleteBulkMeterFromStore,
-  subscribeToBulkMeters,
-  initializeBulkMeters,
+  fetchBulkMetersPaginated,
+  fetchBulkMetersSummary,
+  approveBulkMeter as approveBulkMeterInStore,
+  rejectBulkMeter as rejectBulkMeterInStore,
   getBranches,
   initializeBranches,
   subscribeToBranches,
-  getBills,
-  addBill,
-  updateExistingBill,
-  getCustomers
 } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useCurrentUser } from '@/hooks/use-current-user';
-import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
-import { format, parseISO, lastDayOfMonth } from "date-fns";
-import { calculateBillAction } from "@/lib/actions";
-import { type CustomerType, type SewerageConnection, type PaymentStatus, type BillCalculationResult } from "@/lib/billing-calculations";
-import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
 
 export default function StaffBulkMetersPage() {
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
-  const [authStatus, setAuthStatus] = React.useState<'loading' | 'unauthorized' | 'authorized'>('loading');
-  const { currentUser, isStaff, isStaffManagement, branchId, branchName } = useCurrentUser();
+  const { currentUser, isStaffManagement, branchId, branchName } = useCurrentUser();
 
-  const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
-  const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
+  const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
+  const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
-
   const [searchTerm, setSearchTerm] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<string>('All');
   const [isFormOpen, setIsFormOpen] = React.useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [selectedBulkMeter, setSelectedBulkMeter] = React.useState<BulkMeter | null>(null);
   const [bulkMeterToDelete, setBulkMeterToDelete] = React.useState<BulkMeter | null>(null);
+  const [viewMode, setViewMode] = React.useState<'table' | 'map'>('table');
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [totalCount, setTotalCount] = React.useState(0);
+  const [summary, setSummary] = React.useState({ total: 0, active: 0, inactive: 0 });
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [selectedMeters, setSelectedMeters] = React.useState<Set<string>>(new Set());
   const [isBatchInvoiceDialogOpen, setIsBatchInvoiceDialogOpen] = React.useState(false);
-  const [viewMode, setViewMode] = React.useState<'table' | 'map'>('table');
+  const [statusFilter, setStatusFilter] = React.useState<BulkMeterStatus | 'All'>('All');
+  const [isExporting, setIsExporting] = React.useState(false);
 
-  // Determine auth status based on current user
-  React.useEffect(() => {
-    if (!currentUser) {
-      setAuthStatus('unauthorized');
-      return;
-    }
-    // Allow any user with a session; permissions will handle specific actions
-    setAuthStatus('authorized');
-  }, [currentUser]);
+  // Effective branch: if user is branch-scoped (e.g. branchId is set and no global view), lock to branchId
+  const isGlobal = hasPermission('bulk_meters_view_all') && !isStaffManagement;
+  const effectiveBranchId = isGlobal ? undefined : branchId;
 
-  // Second useEffect for data loading, dependent on auth status
-  React.useEffect(() => {
-    if (authStatus !== 'authorized') {
-      if (authStatus !== 'loading') setIsLoading(false);
-      return;
-    }
-
-    let isMounted = true;
+  const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {
     setIsLoading(true);
+    const { bulkMeters: paginatedBMs, totalCount: count, error } = await fetchBulkMetersPaginated(
+      rpp,
+      p * rpp,
+      search,
+      effectiveBranchId,
+      status && status !== 'All' ? status : undefined,
+    );
+    if (!error) {
+      setBulkMeters(paginatedBMs);
+      setTotalCount(count);
+    } else {
+      toast({ title: "Error", description: "Failed to fetch bulk meters.", variant: "destructive" });
+    }
+    setIsLoading(false);
+  }, [effectiveBranchId, toast]);
 
-    const initializeAndSubscribe = async () => {
-      try {
-        await Promise.all([initializeBranches(), initializeBulkMeters()]);
-        if (isMounted) {
-          setAllBranches(getBranches());
-          setAllBulkMeters(getBulkMeters());
-        }
-      } catch (err) {
-        console.error("Failed to initialize data:", err);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    };
+  const fetchSummaryStats = React.useCallback(async () => {
+    const { data } = await fetchBulkMetersSummary();
+    if (data) setSummary(data);
+  }, []);
 
-    initializeAndSubscribe();
+  // Debounce search
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(0);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
-    const unSubBranches = subscribeToBranches((data) => isMounted && setAllBranches(data));
-    const unSubBulkMeters = subscribeToBulkMeters((data) => isMounted && setAllBulkMeters(data));
+  React.useEffect(() => {
+    fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+  }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData]);
+
+  React.useEffect(() => {
+    fetchSummaryStats();
+    initializeBranches().then(() => {
+      setBranches(getBranches());
+    });
+
+    const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
+      setBranches(updatedBranches);
+    });
 
     return () => {
-      isMounted = false;
-      unSubBranches();
-      unSubBulkMeters();
+      unsubscribeBranches();
     };
-  }, [authStatus]);
-
-
-  // Declarative filtering with useMemo
-  const branchFilteredBulkMeters = React.useMemo(() => {
-    if (authStatus !== 'authorized') return [];
-
-    // If the user is Staff Management enforce branch-only view regardless of permissions
-    if (isStaffManagement && branchId) {
-      return allBulkMeters.filter(bm => bm.branchId === branchId);
-    }
-
-    // Otherwise respect granular permissions
-    if (hasPermission('bulk_meters_view_all')) return allBulkMeters;
-    if (hasPermission('bulk_meters_view_branch') && branchId) {
-      return allBulkMeters.filter(bm => bm.branchId === branchId);
-    }
-    return [];
-  }, [authStatus, isStaffManagement, branchId, hasPermission, allBulkMeters]);
-
-
-  const filteredBulkMeters = React.useMemo(() => {
-    return branchFilteredBulkMeters.filter(bm => {
-      const matchesStatus = statusFilter === 'All' || bm.status === statusFilter;
-      return matchesStatus;
-    });
-  }, [branchFilteredBulkMeters, statusFilter]);
-
-  const searchedBulkMeters = React.useMemo(() => {
-    if (!searchTerm) {
-      return filteredBulkMeters;
-    }
-    return filteredBulkMeters.filter(bm =>
-      bm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      bm.meterNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (bm.subCity && bm.subCity.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (bm.woreda && bm.woreda.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-  }, [searchTerm, filteredBulkMeters]);
-
-  const paginatedBulkMeters = searchedBulkMeters.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
+  }, [fetchSummaryStats]);
 
   const handleAddBulkMeter = () => {
-    setSelectedBulkMeter(null);
+    setSelectedBulkMeter(effectiveBranchId ? { branchId: effectiveBranchId } as any : null);
     setIsFormOpen(true);
   };
 
@@ -167,11 +132,49 @@ export default function StaffBulkMetersPage() {
 
   const confirmDelete = async () => {
     if (bulkMeterToDelete) {
-      await deleteBulkMeterFromStore(bulkMeterToDelete.customerKeyNumber);
-      toast({ title: "Bulk Meter Deleted", description: `${bulkMeterToDelete.name} has been removed.` });
+      const result = await deleteBulkMeterFromStore(bulkMeterToDelete.customerKeyNumber);
+      if (result.success) {
+        toast({ title: "Bulk Meter Deleted", description: `${bulkMeterToDelete.name} has been removed.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
+      } else {
+        toast({ variant: "destructive", title: "Delete Failed", description: result.message });
+      }
       setBulkMeterToDelete(null);
     }
     setIsDeleteDialogOpen(false);
+  };
+
+  const handleApproveMeter = async (meter: BulkMeter) => {
+    if (!currentUser) return;
+    try {
+      const result = await approveBulkMeterInStore(meter.customerKeyNumber, currentUser.id || 'system');
+      if (result.success) {
+        toast({ title: "Meter Approved", description: `${meter.name} is now Active.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
+      } else {
+        toast({ variant: "destructive", title: "Approval Failed", description: result.message || "Could not approve meter." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
+  };
+
+  const handleRejectMeter = async (meter: BulkMeter) => {
+    if (!currentUser) return;
+    try {
+      const result = await rejectBulkMeterInStore(meter.customerKeyNumber, currentUser.id || 'system');
+      if (result.success) {
+        toast({ title: "Meter Rejected", description: `${meter.name} has been marked as Rejected.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
+      } else {
+        toast({ variant: "destructive", title: "Rejection Failed", description: result.message || "Could not reject meter." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
   };
 
   const handleSubmitBulkMeter = async (data: BulkMeterFormValues) => {
@@ -181,115 +184,123 @@ export default function StaffBulkMetersPage() {
     }
 
     if (selectedBulkMeter) {
+      if (!hasPermission('bulk_meters_update')) {
+        toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to update bulk meters.' });
+        return;
+      }
       const result = await updateBulkMeterInStore(selectedBulkMeter.customerKeyNumber, data);
       if (result.success) {
         toast({ title: "Bulk Meter Updated", description: `${data.name} has been updated.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
       } else {
-        toast({ variant: "destructive", title: "Update Failed", description: result.message });
+        toast({ variant: "destructive", title: "Update Failed", description: result.message || "Could not update meter." });
       }
     } else {
+      if (!hasPermission('bulk_meters_create')) {
+        toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create bulk meters.' });
+        return;
+      }
       const result = await addBulkMeterToStore(data);
       if (result.success) {
         toast({ title: "Bulk Meter Added", description: `${data.name} has been added and is pending approval.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+        fetchSummaryStats();
       } else {
-        toast({ variant: "destructive", title: "Add Failed", description: result.message });
+        toast({ variant: "destructive", title: "Add Failed", description: result.message || "Could not add meter." });
       }
     }
     setIsFormOpen(false);
     setSelectedBulkMeter(null);
   };
 
-  const renderContent = () => {
-    if (isLoading) {
-      return (
-        <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
-          Loading...
-        </div>
+  const handleExport = async (format: 'csv' | 'xlsx') => {
+    setIsExporting(true);
+    toast({ title: "Preparing Export", description: "Fetching branch bulk meters..." });
+    try {
+      const { bulkMeters: allBMs } = await fetchBulkMetersPaginated(
+        10000, 0, debouncedSearch,
+        effectiveBranchId,
+        statusFilter !== 'All' ? statusFilter : undefined,
       );
-    }
-    if (authStatus !== 'authorized') {
-      return (
-        <div className="mt-4 p-4 border rounded-md bg-destructive/10 text-center text-destructive">
-          You are not authorized to view bulk meters.
-        </div>
-      );
-    }
 
-    if (branchFilteredBulkMeters.length === 0) {
-      return (
-        <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg mt-4">
-          <Gauge className="mx-auto h-12 w-12 text-muted-foreground/50 mb-2" />
-          <p className="font-semibold text-lg">No Bulk Meters Found</p>
-          <p className="text-sm">There are no bulk meters registered for your branch.</p>
-        </div>
-      );
-    }
+      if (!allBMs || allBMs.length === 0) {
+        toast({ title: "No Data", description: "No bulk meters match the current filters.", variant: "destructive" });
+        return;
+      }
 
-    if (searchedBulkMeters.length === 0) {
-      return (
-        <div className="text-center py-8 text-muted-foreground border rounded-lg mt-4">
-          <Search className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />
-          <p className="font-medium">No results match your search.</p>
-        </div>
-      );
-    }
+      const rows = allBMs.map(m => ({
+        'Account Name': m.name || '',
+        'Customer Key': m.customerKeyNumber || '',
+        'Phone Number': m.phoneNumber || '',
+        'Meter Number': m.meterNumber || '',
+        'INST KEY': m.instKey || '',
+        'Contract': m.contractNumber || '',
+        'Status': m.status || '',
+        'Branch': branches.find(b => b.id === m.branchId)?.name || m.branchId || '',
+        'Route Key': m.routeKey || '',
+        'Current Reading': m.currentReading ?? '',
+        'Previous Reading': m.previousReading ?? '',
+        'Outstanding Bill': m.outStandingbill ?? '',
+        'Woreda': m.woreda || '',
+        'Location': m.specificArea || '',
+      }));
 
-    return (
-      <BulkMeterTable
-        data={paginatedBulkMeters}
-        onEdit={handleEditBulkMeter}
-        onDelete={handleDeleteBulkMeter}
-        branches={allBranches}
-        canEdit={hasPermission('bulk_meters_update')}
-        canDelete={hasPermission('bulk_meters_delete')}
-        selectedMeters={selectedMeters}
-        onSelectionChange={setSelectedMeters}
-      />
-    );
+      if (format === 'csv') {
+        const headers = Object.keys(rows[0]).join(',');
+        const lines = rows.map(r => Object.values(r).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        const csvContent = [headers, ...lines].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `bulk_meters_${branchName || 'branch'}_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click(); URL.revokeObjectURL(url);
+      } else {
+        const XLSX = await import('xlsx');
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Bulk Meters');
+        XLSX.writeFile(wb, `bulk_meters_${branchName || 'branch'}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }
+
+      toast({ title: "Export Complete", description: `${allBMs.length} records exported to ${format.toUpperCase()}.` });
+    } catch (err) {
+      console.error('Export error:', err);
+      toast({ title: "Export Failed", description: "Could not generate file.", variant: "destructive" });
+    } finally {
+      setIsExporting(false);
+    }
   };
 
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="space-y-8 pb-10">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-800">Bulk Meter Management</h1>
-          <p className="text-slate-500 text-sm mt-1">Monitor, assign readings, and maintain commercial water connections.</p>
+          <h1 className="text-3xl font-bold tracking-tight">Bulk Meters Management</h1>
+          <p className="text-muted-foreground mt-1 text-base">
+            {branchName ? `Branch: ${branchName} • ` : ''}Monitor and organize high-volume water consumption points.
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
           {hasPermission('bulk_meters_create') && (
-            <Button
-              onClick={handleAddBulkMeter}
-              className="bg-primary hover:bg-primary/90 text-white shadow-sm transition-all duration-200"
-            >
-              <PlusCircle className="mr-2 h-4 w-4" />
-              Add Bulk Meter
+            <Button onClick={handleAddBulkMeter} className="flex-shrink-0 shadow-sm order-1 md:order-2">
+              <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
             </Button>
           )}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <Button
-              variant={viewMode === 'table' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setViewMode('table')}
-              className={viewMode === 'table' ? 'bg-white text-slate-800 shadow-sm font-semibold' : 'text-slate-600'}
-            >
-              Table View
-            </Button>
-            <Button
-              variant={viewMode === 'map' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setViewMode('map')}
-              className={viewMode === 'map' ? 'bg-white text-slate-800 shadow-sm font-semibold' : 'text-slate-600'}
-            >
-              <MapIcon className="mr-1.5 h-3.5 w-3.5" />
-              Map View
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            onClick={() => setViewMode(viewMode === 'table' ? 'map' : 'table')}
+            className="flex-shrink-0 shadow-sm border-slate-200 order-2 md:order-1"
+          >
+            <MapIcon className="mr-2 h-4 w-4" />
+            {viewMode === 'table' ? 'View on Map' : 'Back to Table'}
+          </Button>
         </div>
       </div>
 
+      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#fcfaff' }}>
+        <Card className="group shadow-sm hover:shadow-xl border border-purple-100 rounded-3xl relative overflow-hidden transition-all duration-500 hover:-translate-y-1" style={{ backgroundColor: '#faf5ff' }}>
           <div className="absolute right-0 bottom-0 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-700 pointer-events-none -mb-6 -mr-6 group-hover:scale-110">
             <Gauge className="h-48 w-48 text-purple-900" />
           </div>
@@ -301,7 +312,7 @@ export default function StaffBulkMetersPage() {
           </CardHeader>
           <CardContent className="px-6 pb-6 relative z-10">
             <div className="flex items-end gap-2 mb-1 mt-2">
-              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-purple-900 transition-colors">{branchFilteredBulkMeters.length}</div>
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-purple-900 transition-colors">{summary.total}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1"><Activity className="h-3 w-3 text-emerald-500" /> All established accounts</span>
@@ -321,13 +332,13 @@ export default function StaffBulkMetersPage() {
           </CardHeader>
           <CardContent className="px-6 pb-6 relative z-10">
             <div className="flex items-end gap-2 mb-1 mt-2">
-              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{branchFilteredBulkMeters.filter(m => m.status === 'Active').length}</div>
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{summary.active}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1 font-bold text-emerald-600 whitespace-nowrap">
-                {Math.round((branchFilteredBulkMeters.filter(m => m.status === 'Active').length / (branchFilteredBulkMeters.length || 1)) * 100)}% 
+                {Math.round((summary.active / (summary.total || 1)) * 100)}% 
               </span>
-              <span className="ml-1 italic whitespace-nowrap">of total meters functional</span>
+              <span className="ml-1 italic whitespace-nowrap">functional accounts</span>
             </div>
           </CardContent>
         </Card>
@@ -344,30 +355,66 @@ export default function StaffBulkMetersPage() {
           </CardHeader>
           <CardContent className="px-6 pb-6 relative z-10">
             <div className="flex items-end gap-2 mb-1 mt-2">
-              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">{branchFilteredBulkMeters.filter(m => m.status !== 'Active').length}</div>
+              <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">{summary.inactive}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
               <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Action required</span>
-              <span className="ml-1 text-slate-400 whitespace-nowrap">for {branchFilteredBulkMeters.filter(m => m.status !== 'Active').length} accounts</span>
+              <span className="ml-1 text-slate-400 whitespace-nowrap">for {summary.inactive} accounts</span>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      <div className="mt-6 flex flex-col gap-4">
-        <div className="relative flex-grow w-full">
-          <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
-          <Input
-            type="search"
-            placeholder="Search by name, meter #, contract, or branch..."
-            className="pl-12 h-14 w-full shadow-sm border-slate-200 focus-visible:ring-primary/20 text-lg font-medium placeholder:text-slate-400 rounded-xl"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            disabled={authStatus !== 'authorized'}
-          />
+      {/* ─── Search + Branch Tag + Status Filter + Export ─── */}
+      <div className="mt-6 flex flex-col gap-3">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
+          <div className="relative flex-grow w-full">
+            <Search className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-400" />
+            <Input
+              type="search"
+              placeholder="Search by name, meter #, contract..."
+              className="pl-12 h-14 w-full shadow-sm border-slate-200 focus-visible:ring-primary/20 text-lg font-medium placeholder:text-slate-400 rounded-xl"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          {/* Branch indicator */}
+          <div className="w-full md:w-64 flex-shrink-0">
+            <div className="h-14 px-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+              <Building2 className="h-5 w-5 text-blue-600 flex-shrink-0" />
+              <span className="text-base font-medium text-slate-700 truncate">
+                {branchName || 'Your Branch'}
+              </span>
+              <span className="ml-auto text-xs text-slate-400 font-medium bg-slate-100 px-2 py-0.5 rounded-full">Branch</span>
+            </div>
+          </div>
+
+          {/* Export button */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                className="h-14 px-5 flex-shrink-0 gap-2 border-slate-200 shadow-sm rounded-xl text-base font-medium hover:bg-slate-50"
+                disabled={isExporting}
+              >
+                <Download className="h-5 w-5 text-slate-500" />
+                {isExporting ? 'Exporting...' : 'Export'}
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onClick={() => handleExport('csv')} className="gap-2 cursor-pointer">
+                <Download className="h-4 w-4" /> Export CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport('xlsx')} className="gap-2 cursor-pointer">
+                <Download className="h-4 w-4" /> Export Excel
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
-        {/* Status filter pills & active tags */}
+        {/* Status filter pills */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-500 mr-1">Filter:</span>
           {(['All', ...bulkMeterStatuses] as const).map((status) => {
@@ -401,9 +448,10 @@ export default function StaffBulkMetersPage() {
               </button>
             );
           })}
+
           {statusFilter !== 'All' && (
             <span className="ml-1 text-xs text-slate-400 italic">
-              Showing {searchedBulkMeters.length} {statusFilter} meter{searchedBulkMeters.length !== 1 ? 's' : ''}
+              Showing {totalCount} {statusFilter} meter{totalCount !== 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -439,7 +487,7 @@ export default function StaffBulkMetersPage() {
 
       {viewMode === 'map' && (
         <div className="min-h-[600px] border rounded-lg overflow-hidden">
-          <BulkMeterMap bulkMeters={branchFilteredBulkMeters.map(m => ({ ...m }))} branches={allBranches} />
+          <BulkMeterMap bulkMeters={bulkMeters.map(m => ({ ...m }))} branches={branches} />
         </div>
       )}
 
@@ -450,23 +498,57 @@ export default function StaffBulkMetersPage() {
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <Activity className="h-5 w-5 text-primary animate-pulse" />
-                  <CardTitle className="text-xl font-bold text-slate-800">Bulk Meter Database</CardTitle>
+                  <CardTitle className="text-xl font-bold text-slate-800">Branch Bulk Meter Database</CardTitle>
                 </div>
                 <CardDescription className="text-slate-500 font-medium italic">Directory of registered high-capacity consumption endpoints.</CardDescription>
               </div>
               <div className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
                 <ListFilter className="h-4 w-4 text-slate-400" />
-                <span className="text-sm font-bold text-slate-600">{searchedBulkMeters.length} <span className="text-slate-400 font-normal">Found</span></span>
+                <span className="text-sm font-bold text-slate-600">{totalCount} <span className="text-slate-400 font-normal">Found</span></span>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="p-0">
-            {renderContent()}
+          <CardContent className="p-0 overflow-x-auto">
+            <div className="min-w-[1000px]">
+              {isLoading ? (
+                <div className="p-4">
+                  <TableSkeleton columns={10} rows={10} />
+                </div>
+              ) : bulkMeters.length === 0 ? (
+                <EmptyState 
+                  icon={Gauge} 
+                  title={searchTerm ? "No Results Found" : "No Bulk Meters Found"} 
+                  description={searchTerm ? "Try adjusting your search criteria." : "Click 'Add New Meter' to register a bulk meter for your branch."} 
+                  className="m-4"
+                  action={
+                    (!searchTerm && hasPermission('bulk_meters_create')) ? (
+                      <Button onClick={handleAddBulkMeter} variant="outline">
+                        <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <BulkMeterTable
+                  data={bulkMeters}
+                  onEdit={handleEditBulkMeter}
+                  onDelete={handleDeleteBulkMeter}
+                  onApprove={handleApproveMeter}
+                  onReject={handleRejectMeter}
+                  branches={branches}
+                  canEdit={hasPermission('bulk_meters_update')}
+                  canDelete={hasPermission('bulk_meters_delete')}
+                  canApprove={hasPermission('bulk_meters_approve')}
+                  selectedMeters={selectedMeters}
+                  onSelectionChange={setSelectedMeters}
+                />
+              )}
+            </div>
           </CardContent>
           <div className="bg-slate-50/50 border-t py-4 px-6">
-            {searchedBulkMeters.length > 0 && authStatus === 'authorized' && (
+            {totalCount > 0 && (
               <TablePagination
-                count={searchedBulkMeters.length}
+                count={totalCount}
                 page={page}
                 rowsPerPage={rowsPerPage}
                 onPageChange={setPage}
@@ -487,7 +569,6 @@ export default function StaffBulkMetersPage() {
           onOpenChange={setIsFormOpen}
           onSubmit={handleSubmitBulkMeter}
           defaultValues={selectedBulkMeter}
-          staffBranchName={currentUser?.branchName || undefined}
         />
       )}
 

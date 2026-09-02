@@ -1,8 +1,7 @@
-
 "use client";
 
 import * as React from "react";
-import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, Download, ChevronDown, X, Building2 } from "lucide-react";
+import { PlusCircle, User, Search, Users, Activity, UserMinus, UserCog, FileText, Download, ChevronDown, X, Building2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { IndividualCustomer } from "./individual-customer-types";
 import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "./individual-customer-form-dialog";
 import { IndividualCustomerTable } from "./individual-customer-table";
+import { IndividualCustomerDetailsSheet } from "@/components/customers/IndividualCustomerDetailsSheet";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -23,6 +23,8 @@ import {
   updateCustomer as updateCustomerInStore,
   deleteCustomer as deleteCustomerFromStore,
   fetchCustomersPaginated,
+  approveCustomer as approveCustomerInStore,
+  rejectCustomer as rejectCustomerInStore,
   getBulkMeters,
   subscribeToBulkMeters,
   initializeBulkMeters,
@@ -50,6 +52,10 @@ export default function IndividualCustomersPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [selectedCustomer, setSelectedCustomer] = React.useState<IndividualCustomer | null>(null);
   const [customerToDelete, setCustomerToDelete] = React.useState<IndividualCustomer | null>(null);
+
+  // Details sheet state
+  const [selectedCustomerForDetails, setSelectedCustomerForDetails] = React.useState<IndividualCustomer | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -101,11 +107,9 @@ export default function IndividualCustomersPage() {
     fetchSummaryStats();
   }, [page, rowsPerPage, debouncedSearch, statusFilter, branchFilter, fetchData, fetchSummaryStats]);
 
-
   React.useEffect(() => {
     // Initialize secondary data (use cache when available)
     Promise.all([
-
       initializeBulkMeters(),
       initializeBranches(),
       initializeTariffs()
@@ -155,6 +159,11 @@ export default function IndividualCustomersPage() {
     setIsFormOpen(true);
   };
 
+  const handleViewCustomerDetails = (customer: IndividualCustomer) => {
+    setSelectedCustomerForDetails(customer);
+    setIsDetailsOpen(true);
+  };
+
   const handleDeleteCustomer = (customer: IndividualCustomer) => {
     setCustomerToDelete(customer);
     setIsDeleteDialogOpen(true);
@@ -165,7 +174,7 @@ export default function IndividualCustomersPage() {
       const result = await deleteCustomerFromStore(customerToDelete.customerKeyNumber);
       if (result.success) {
         toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been removed.` });
-        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
         fetchSummaryStats();
       } else {
         toast({ variant: "destructive", title: "Delete Failed", description: result.message || "Could not delete customer." });
@@ -173,6 +182,44 @@ export default function IndividualCustomersPage() {
       setCustomerToDelete(null);
     }
     setIsDeleteDialogOpen(false);
+  };
+
+  const handleApproveCustomer = async (customer: IndividualCustomer) => {
+    if (!currentUser) return;
+    try {
+      const result = await approveCustomerInStore(customer.customerKeyNumber, currentUser.id);
+      if (result.success) {
+        toast({ title: "Customer Approved", description: `${customer.name} is now Active.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
+        fetchSummaryStats();
+        if (selectedCustomerForDetails?.customerKeyNumber === customer.customerKeyNumber) {
+          setSelectedCustomerForDetails(prev => prev ? { ...prev, status: 'Active' } : null);
+        }
+      } else {
+        toast({ variant: "destructive", title: "Approval Failed", description: result.message || "Could not approve customer." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
+  };
+
+  const handleRejectCustomer = async (customer: IndividualCustomer) => {
+    if (!currentUser) return;
+    try {
+      const result = await rejectCustomerInStore(customer.customerKeyNumber, currentUser.id);
+      if (result.success) {
+        toast({ title: "Customer Rejected", description: `${customer.name} has been marked as Rejected.` });
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
+        fetchSummaryStats();
+        if (selectedCustomerForDetails?.customerKeyNumber === customer.customerKeyNumber) {
+          setSelectedCustomerForDetails(prev => prev ? { ...prev, status: 'Rejected' } : null);
+        }
+      } else {
+        toast({ variant: "destructive", title: "Rejection Failed", description: result.message || "Could not reject customer." });
+      }
+    } catch (err) {
+      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+    }
   };
 
   const handleSubmitCustomer = async (data: IndividualCustomerFormValues) => {
@@ -186,7 +233,7 @@ export default function IndividualCustomersPage() {
       const result = await updateCustomerInStore(selectedCustomer.customerKeyNumber, data);
       if (result.success) {
         toast({ title: "Customer Updated", description: `${data.name} has been updated.` });
-        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
         fetchSummaryStats();
       } else {
         toast({
@@ -200,7 +247,7 @@ export default function IndividualCustomersPage() {
       const result = await addCustomerToStore(data);
       if (result.success && result.data) {
         toast({ title: "Customer Added", description: `${result.data.name} has been added.` });
-        fetchData(page, rowsPerPage, debouncedSearch);
+        fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
         fetchSummaryStats();
       } else {
         toast({ variant: "destructive", title: "Add Failed", description: result.message || "Could not add customer." });
@@ -243,7 +290,7 @@ export default function IndividualCustomersPage() {
         'Contract No': c.contractNumber || '',
         'Phone': c.phoneNumber || '',
         'Woreda': c.woreda || '',
-        'Location': c.location || '',
+        'Location': c.specificArea || '',
         'Current Reading': c.currentReading ?? '',
         'Previous Reading': c.previousReading ?? '',
         'Calculated Bill': c.calculatedBill ?? '',
@@ -531,10 +578,15 @@ export default function IndividualCustomersPage() {
                 data={customers}
                 onEdit={handleEditCustomer}
                 onDelete={handleDeleteCustomer}
+                onViewDetails={handleViewCustomerDetails}
+                onApprove={handleApproveCustomer}
+                onReject={handleRejectCustomer}
                 bulkMetersList={bulkMetersList}
                 branches={branches}
                 canEdit={hasPermission('customers_update')}
                 canDelete={hasPermission('customers_delete')}
+                canApprove={hasPermission('customers_approve')}
+                isAdmin={true}
               />
             )}
           </div>
@@ -553,6 +605,21 @@ export default function IndividualCustomersPage() {
           />
         )}
       </Card>
+
+      {/* Slide-over Customer Details Sheet */}
+      <IndividualCustomerDetailsSheet
+        customer={selectedCustomerForDetails}
+        open={isDetailsOpen}
+        onOpenChange={setIsDetailsOpen}
+        onEdit={handleEditCustomer}
+        onApprove={handleApproveCustomer}
+        onReject={handleRejectCustomer}
+        branches={branches}
+        bulkMetersList={bulkMetersList}
+        isAdmin={true}
+        canEdit={hasPermission('customers_update')}
+        canApprove={hasPermission('customers_approve')}
+      />
 
       {(hasPermission('customers_create') || hasPermission('customers_update')) && (
         <IndividualCustomerFormDialog
