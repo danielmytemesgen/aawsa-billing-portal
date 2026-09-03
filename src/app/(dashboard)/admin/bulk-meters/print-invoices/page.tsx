@@ -120,17 +120,28 @@ export default function PrintInvoicesPage() {
 
               <div className="print-section">
                 <div className="print-banner">READING INFORMATION</div>
-                <table className="print-table">
-                  <tbody>
-                    <tr><td>Bulk Meter Category:</td><td>{meter.chargeGroup}</td></tr>
-                    <tr><td>Sewerage Connection:</td><td>{meter.sewerageConnection}</td></tr>
-                    <tr><td>Bill Month:</td><td>{bill.monthYear}</td></tr>
-                    <tr><td>Previous and Current Reading:</td><td>{Number(bill.PREVREAD).toFixed(2)} / {Number(bill.CURRREAD).toFixed(2)} m³</td></tr>
-                    <tr><td>Bulk Usage:</td><td>{Number(bill.CONS ?? 0).toFixed(2)} m³</td></tr>
-                    <tr><td>Total Individual Usage:</td><td>{(Number(bill.snapshot_data?.totalIndividualUsage ?? (Number(bill.CONS ?? 0) - Number(bill.differenceUsage ?? 0)))).toFixed(2)} m³</td></tr>
-                    <tr><td>Difference Usage:</td><td>{Number(bill.differenceUsage ?? 0).toFixed(2)} m³</td></tr>
-                  </tbody>
-                </table>
+                {(() => {
+                  const bulkUsageVal = Number(bill.CONS ?? (Number(bill.CURRREAD ?? 0) - Number(bill.PREVREAD ?? 0)));
+                  const diffUsageVal = Number(bill.differenceUsage ?? bill.difference_usage ?? 0);
+                  const totalIndivUsageVal = Number(
+                    bill.snapshot_data?.totalIndividualUsage ??
+                    bill.snapshot_data?.total_individual_usage ??
+                    Math.max(0, bulkUsageVal - diffUsageVal)
+                  );
+                  return (
+                    <table className="print-table">
+                      <tbody>
+                        <tr><td>Bulk Meter Category:</td><td>{meter.chargeGroup}</td></tr>
+                        <tr><td>Sewerage Connection:</td><td>{meter.sewerageConnection}</td></tr>
+                        <tr><td>Bill Month:</td><td>{bill.monthYear}</td></tr>
+                        <tr><td>Previous and current reading:</td><td>{Number(bill.PREVREAD ?? 0).toFixed(2)} / {Number(bill.CURRREAD ?? 0).toFixed(2)} m³</td></tr>
+                        <tr><td>Bulk usage:</td><td>{bulkUsageVal.toFixed(2)} m³</td></tr>
+                        <tr><td>Total Individual Usage:</td><td>{totalIndivUsageVal.toFixed(2)} m³</td></tr>
+                        <tr><td>Difference usage:</td><td>{diffUsageVal.toFixed(2)} m³</td></tr>
+                      </tbody>
+                    </table>
+                  );
+                })()}
               </div>
 
               <div className="print-section">

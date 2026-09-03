@@ -89,6 +89,8 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
                 CURRREAD: Number(row.CURRREAD ?? 0),
                 CONS: Number(row.CONS ?? 0),
                 differenceUsage: Number(row.difference_usage ?? 0),
+                difference_usage: Number(row.difference_usage ?? 0),
+                snapshot_data: row.snapshot_data,
                 baseWaterCharge: Number(row.base_water_charge ?? 0),
                 maintenanceFee: Number(row.maintenance_fee ?? 0),
                 sanitationFee: Number(row.sanitation_fee ?? 0),

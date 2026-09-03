@@ -914,6 +914,22 @@ export default function StaffBulkMeterDetailsPage() {
   const handleDownloadXlsx = () => {
     if (!bulkMeter || !billCardDetails) return;
 
+    const printBulkUsage = billForPrintView
+      ? Number(billForPrintView.CONS ?? (Number(billForPrintView.CURRREAD ?? 0) - Number(billForPrintView.PREVREAD ?? 0)))
+      : Number(billCardDetails.usage ?? 0);
+
+    const printDiffUsage = billForPrintView
+      ? Number(billForPrintView.differenceUsage ?? (billForPrintView as any).difference_usage ?? 0)
+      : Number(billCardDetails.differenceUsage ?? 0);
+
+    const printTotalIndivUsage = billForPrintView
+      ? Number(
+          billForPrintView.snapshot_data?.totalIndividualUsage ??
+          (billForPrintView.snapshot_data as any)?.total_individual_usage ??
+          Math.max(0, printBulkUsage - printDiffUsage)
+        )
+      : Number(totalIndividualUsage ?? 0);
+
     const headers = ['Description', 'Value'];
     const data = [
       { 'Description': 'Bulk meter name', 'Value': bulkMeter.name },
@@ -925,15 +941,15 @@ export default function StaffBulkMeterDetailsPage() {
       { 'Description': 'Sewerage Connection', 'Value': bulkMeter.sewerageConnection },
       { 'Description': 'Number of Assigned Individual Customers', 'Value': associatedCustomers.length },
       { 'Description': 'Previous and current reading', 'Value': `${billCardDetails.prevReading.toFixed(2)} / ${billCardDetails.currReading.toFixed(2)} m³` },
-      { 'Description': 'Bulk usage', 'Value': `${billCardDetails.usage.toFixed(2)} m³` },
-      { 'Description': 'Total Individual Usage', 'Value': `${totalIndividualUsage.toFixed(2)} m³` },
+      { 'Description': 'Bulk usage', 'Value': `${printBulkUsage.toFixed(2)} m³` },
+      { 'Description': 'Total Individual Usage', 'Value': `${printTotalIndivUsage.toFixed(2)} m³` },
       { 'Description': 'Base Water Charge', 'Value': `ETB ${billCardDetails.baseWaterCharge.toFixed(2)}` },
       { 'Description': 'Maintenance Fee', 'Value': `ETB ${billCardDetails.maintenanceFee.toFixed(2)}` },
       { 'Description': 'Sanitation Fee', 'Value': `ETB ${billCardDetails.sanitationFee.toFixed(2)}` },
       { 'Description': 'Sewerage Fee', 'Value': `ETB ${billCardDetails.sewerageCharge.toFixed(2)}` },
       { 'Description': 'Meter Rent', 'Value': `ETB ${billCardDetails.meterRent.toFixed(2)}` },
       { 'Description': 'VAT (15%)', 'Value': `ETB ${billCardDetails.vatAmount.toFixed(2)}` },
-      { 'Description': 'Difference usage', 'Value': `${billCardDetails.differenceUsage.toFixed(2)} m³` },
+      { 'Description': 'Difference usage', 'Value': `${printDiffUsage.toFixed(2)} m³` },
       { 'Description': 'Total Difference bill', 'Value': `ETB ${billCardDetails.totalDifferenceBill.toFixed(2)}` },
       { 'Description': 'Outstanding Bill (Previous Balance)', 'Value': `ETB ${billCardDetails.outstandingBill.toFixed(2)}` },
       { 'Description': 'Total Amount Payable', 'Value': `ETB ${billCardDetails.totalPayable.toFixed(2)}` },
@@ -1057,15 +1073,32 @@ export default function StaffBulkMeterDetailsPage() {
                       <tr><td>Meter Category</td><td>{billForPrintView?.snapshot_data?.chargeGroup || bulkMeter.chargeGroup}</td></tr>
                       <tr><td>Sewerage Connection</td><td>{billForPrintView?.snapshot_data?.sewerageConnection || bulkMeter.sewerageConnection}</td></tr>
                       <tr><td>Assigned Customers</td><td>{billForPrintView?.snapshot_data?.individualCustomerCount ?? associatedCustomers.length}</td></tr>
-                      <tr><td>Reading Range</td><td>{(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} - {(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
-                      <tr><td>Main Meter Usage</td><td>{(billForPrintView?.CONS ?? billCardDetails.usage).toFixed(2)} m³</td></tr>
-                      <tr><td>Sub-Meter Total Usage</td><td>{(
-                        billForPrintView?.snapshot_data?.totalIndividualUsage ??
-                        (billForPrintView
-                          ? (billForPrintView.snapshot_data?.totalIndividualUsage ?? ((billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0)))
-                          : totalIndividualUsage)
-                      ).toFixed(2)} m³</td></tr>
-                      <tr className="font-bold"><td>Billable Difference</td><td>{(billForPrintView?.differenceUsage ?? billCardDetails.differenceUsage).toFixed(2)} m³</td></tr>
+                      {(() => {
+                        const printBulkUsage = billForPrintView
+                          ? Number(billForPrintView.CONS ?? (Number(billForPrintView.CURRREAD ?? 0) - Number(billForPrintView.PREVREAD ?? 0)))
+                          : Number(billCardDetails.usage ?? 0);
+
+                        const printDiffUsage = billForPrintView
+                          ? Number(billForPrintView.differenceUsage ?? (billForPrintView as any).difference_usage ?? 0)
+                          : Number(billCardDetails.differenceUsage ?? 0);
+
+                        const printTotalIndivUsage = billForPrintView
+                          ? Number(
+                              billForPrintView.snapshot_data?.totalIndividualUsage ??
+                              (billForPrintView.snapshot_data as any)?.total_individual_usage ??
+                              Math.max(0, printBulkUsage - printDiffUsage)
+                            )
+                          : Number(totalIndividualUsage ?? 0);
+
+                        return (
+                          <>
+                            <tr><td>Previous and current reading:</td><td>{Number(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} / {Number(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
+                            <tr><td>Bulk usage:</td><td>{printBulkUsage.toFixed(2)} m³</td></tr>
+                            <tr><td>Total Individual Usage:</td><td>{printTotalIndivUsage.toFixed(2)} m³</td></tr>
+                            <tr><td>Difference usage:</td><td>{printDiffUsage.toFixed(2)} m³</td></tr>
+                          </>
+                        );
+                      })()}
                     </tbody>
                   </table>
                 </div>

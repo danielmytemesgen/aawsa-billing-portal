@@ -176,14 +176,34 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
 
                     <div className="print-section">
                         <div className="print-banner">READING INFORMATION</div>
-                        <table className="print-table">
-                            <tbody>
-                                <tr><td>Category:</td><td>{relatedData?.chargeGroup || relatedData?.customerType || 'Domestic'}</td></tr>
-                                <tr><td>Sewerage Connection:</td><td>{relatedData?.sewerageConnection || 'No'}</td></tr>
-                                <tr><td>Previous and current reading:</td><td>{Number(bill.PREVREAD).toFixed(2)} / {Number(bill.CURRREAD).toFixed(2)} m³</td></tr>
-                                <tr><td>Consumption usage:</td><td>{Number(bill.CONS).toFixed(2)} m³</td></tr>
-                            </tbody>
-                        </table>
+                        {(() => {
+                            const isBulkMeter = Boolean(bill.CUSTOMERKEY);
+                            const bulkUsageVal = Number(bill.CONS ?? (Number(bill.CURRREAD || 0) - Number(bill.PREVREAD || 0)));
+                            const diffUsageVal = Number(bill.difference_usage ?? bill.differenceUsage ?? 0);
+                            const totalIndivUsageVal = Number(
+                                bill.snapshot_data?.totalIndividualUsage ??
+                                bill.snapshot_data?.total_individual_usage ??
+                                Math.max(0, bulkUsageVal - diffUsageVal)
+                            );
+                            return (
+                                <table className="print-table">
+                                    <tbody>
+                                        <tr><td>Category:</td><td>{relatedData?.chargeGroup || relatedData?.customerType || 'Domestic'}</td></tr>
+                                        <tr><td>Sewerage Connection:</td><td>{relatedData?.sewerageConnection || 'No'}</td></tr>
+                                        <tr><td>Previous and current reading:</td><td>{Number(bill.PREVREAD || 0).toFixed(2)} / {Number(bill.CURRREAD || 0).toFixed(2)} m³</td></tr>
+                                        {isBulkMeter ? (
+                                            <>
+                                                <tr><td>Bulk usage:</td><td>{bulkUsageVal.toFixed(2)} m³</td></tr>
+                                                <tr><td>Total Individual Usage:</td><td>{totalIndivUsageVal.toFixed(2)} m³</td></tr>
+                                                <tr><td>Difference usage:</td><td>{diffUsageVal.toFixed(2)} m³</td></tr>
+                                            </>
+                                        ) : (
+                                            <tr><td>Consumption usage:</td><td>{Number(bill.CONS || 0).toFixed(2)} m³</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            );
+                        })()}
                     </div>
 
                     <div className="print-section">
@@ -196,9 +216,6 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
                                 <tr><td>Meter Rent:</td><td>ETB {Number(bill.meter_rent || 0).toFixed(2)}</td></tr>
                                 <tr><td>Sewerage Fee:</td><td>ETB {Number(bill.sewerage_charge || 0).toFixed(2)}</td></tr>
                                 <tr><td>VAT (15%):</td><td>ETB {Number(bill.vat_amount || 0).toFixed(2)}</td></tr>
-                                {Number(bill.difference_usage || 0) > 0 && (
-                                    <tr><td className="font-semibold italic">Difference usage:</td><td>{Number(bill.difference_usage || 0).toFixed(2)} m³</td></tr>
-                                )}
                             </tbody>
                         </table>
                     </div>

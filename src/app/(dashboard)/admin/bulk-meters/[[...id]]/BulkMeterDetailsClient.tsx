@@ -1082,15 +1082,32 @@ export default function BulkMeterDetailsPage() {
                       <tr><td>Bulk Meter Category:</td><td>{snapshot_data?.chargeGroup || currentBulkMeter.chargeGroup}</td></tr>
                       <tr><td>Sewerage Connection:</td><td>{snapshot_data?.sewerageConnection || currentBulkMeter.sewerageConnection}</td></tr>
                       <tr><td>Number of Assigned Individual Customers:</td><td>{snapshot_data?.individualCustomerCount ?? associatedCustomers.length}</td></tr>
-                      <tr><td>Previous and current reading:</td><td>{(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} / {(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
-                      <tr><td>Bulk usage:</td><td>{(billForPrintView?.CONS ?? billCardDetails.usage).toFixed(2)} m³</td></tr>
-                      <tr><td>Total Individual Usage:</td><td>{(
-                        snapshot_data?.totalIndividualUsage ??
-                        (billForPrintView
-                          ? (billForPrintView.snapshot_data?.totalIndividualUsage ?? ((billForPrintView.CONS ?? 0) - (billForPrintView.differenceUsage ?? 0)))
-                          : totalIndividualUsage)
-                      ).toFixed(2)} m³</td></tr>
-                      <tr><td>Difference usage:</td><td>{(billForPrintView?.differenceUsage ?? billCardDetails.differenceUsage).toFixed(2)} m³</td></tr>
+                      {(() => {
+                        const printBulkUsage = billForPrintView
+                          ? Number(billForPrintView.CONS ?? (Number(billForPrintView.CURRREAD ?? 0) - Number(billForPrintView.PREVREAD ?? 0)))
+                          : Number(billCardDetails.usage ?? 0);
+
+                        const printDiffUsage = billForPrintView
+                          ? Number(billForPrintView.differenceUsage ?? (billForPrintView as any).difference_usage ?? 0)
+                          : Number(billCardDetails.differenceUsage ?? 0);
+
+                        const printTotalIndivUsage = billForPrintView
+                          ? Number(
+                              billForPrintView.snapshot_data?.totalIndividualUsage ??
+                              (billForPrintView.snapshot_data as any)?.total_individual_usage ??
+                              Math.max(0, printBulkUsage - printDiffUsage)
+                            )
+                          : Number(snapshot_data?.totalIndividualUsage ?? totalIndividualUsage ?? 0);
+
+                        return (
+                          <>
+                            <tr><td>Previous and current reading:</td><td>{Number(billForPrintView?.PREVREAD ?? billCardDetails.prevReading).toFixed(2)} / {Number(billForPrintView?.CURRREAD ?? billCardDetails.currReading).toFixed(2)} m³</td></tr>
+                            <tr><td>Bulk usage:</td><td>{printBulkUsage.toFixed(2)} m³</td></tr>
+                            <tr><td>Total Individual Usage:</td><td>{printTotalIndivUsage.toFixed(2)} m³</td></tr>
+                            <tr><td>Difference usage:</td><td>{printDiffUsage.toFixed(2)} m³</td></tr>
+                          </>
+                        );
+                      })()}
                     </tbody>
                   </table>
                 </div>

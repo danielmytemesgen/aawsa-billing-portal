@@ -85,11 +85,19 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   yOffset = drawRow("Bulk Meter Category:", bill.charge_group || "N/A", yOffset);
   yOffset = drawRow("Sewerage Connection:", bill.sewerage_connection || "N/A", yOffset);
   yOffset = drawRow("Number of Assigned Individual Customers:", String(bill.assigned_customers_count || 0), yOffset);
-  yOffset = drawRow("Previous and current reading:", `${bill.PREVREAD} / ${bill.CURRREAD} m3`, yOffset);
-  yOffset = drawRow("Bulk usage:", `${bill.CONS} m3`, yOffset);
-  yOffset = drawRow("Total Individual Usage:", `${bill.snapshot_data?.total_individual_usage || 0} m3`, yOffset);
+  const bulkUsageVal = Number(bill.CONS ?? (Number(bill.CURRREAD || 0) - Number(bill.PREVREAD || 0)));
+  const diffUsageVal = Number(bill.difference_usage ?? bill.differenceUsage ?? 0);
+  const totalIndivUsageVal = Number(
+    bill.snapshot_data?.totalIndividualUsage ??
+    bill.snapshot_data?.total_individual_usage ??
+    Math.max(0, bulkUsageVal - diffUsageVal)
+  );
+
+  yOffset = drawRow("Previous and current reading:", `${Number(bill.PREVREAD || 0).toFixed(2)} / ${Number(bill.CURRREAD || 0).toFixed(2)} m³`, yOffset);
+  yOffset = drawRow("Bulk usage:", `${bulkUsageVal.toFixed(2)} m³`, yOffset);
+  yOffset = drawRow("Total Individual Usage:", `${totalIndivUsageVal.toFixed(2)} m³`, yOffset);
   setFontStyle("bold");
-  yOffset = drawRow("Difference usage:", `${bill.difference_usage || 0} m3`, yOffset);
+  yOffset = drawRow("Difference usage:", `${diffUsageVal.toFixed(2)} m³`, yOffset);
   setFontStyle("normal");
 
   // --- Section: CHARGES BREAKDOWN ---

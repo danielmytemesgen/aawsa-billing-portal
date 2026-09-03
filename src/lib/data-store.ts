@@ -170,6 +170,7 @@ export interface DomainBill {
   CURRREAD: number;
   CONS?: number | null;
   differenceUsage?: number | null;
+  difference_usage?: number | null;
   baseWaterCharge: number;
   sewerageCharge?: number | null;
   maintenanceFee?: number | null;
@@ -896,7 +897,9 @@ const mapDbBillToDomain = (dbBill: Bill): DomainBill => ({
   PREVREAD: Number(dbBill.PREVREAD),
   CURRREAD: Number(dbBill.CURRREAD),
   CONS: dbBill.CONS ? Number(dbBill.CONS) : null,
-  differenceUsage: dbBill.difference_usage ? Number(dbBill.difference_usage) : null,
+  differenceUsage: dbBill.difference_usage !== null && dbBill.difference_usage !== undefined ? Number(dbBill.difference_usage) : null,
+  difference_usage: dbBill.difference_usage !== null && dbBill.difference_usage !== undefined ? Number(dbBill.difference_usage) : null,
+  snapshot_data: dbBill.snapshot_data,
   baseWaterCharge: Number(dbBill.base_water_charge),
   sewerageCharge: dbBill.sewerage_charge ? Number(dbBill.sewerage_charge) : null,
   maintenanceFee: dbBill.maintenance_fee ? Number(dbBill.maintenance_fee) : null,
