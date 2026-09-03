@@ -15,12 +15,14 @@ import {
     Lock,
     ArrowRight,
     GitBranch,
+    RotateCcw,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
 interface TaskBill {
     id: string;
     bill_number?: string;
+    notes?: string;
     individual_customer_id?: string;
     CUSTOMERKEY?: string;
     TOTALBILLAMOUNT: number;
@@ -392,6 +394,14 @@ function TaskCard({ bill, type, basePath }: { bill: TaskBill, type: 'draft' | 'r
                 <div className="flex items-center gap-1 mb-1.5">
                     <GitBranch className="h-2.5 w-2.5 text-gray-400" />
                     <span className="text-[10px] text-gray-500 font-medium truncate">{bill.branch_name}</span>
+                </div>
+            )}
+
+            {/* Correction Draft badge */}
+            {(bill.bill_number?.startsWith('CORR-') || (typeof bill.notes === 'string' && bill.notes.includes('Correction of'))) && (
+                <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded bg-orange-50 text-orange-800 border border-orange-200 text-[10px] font-bold">
+                    <RotateCcw className="h-3 w-3 text-orange-600" />
+                    <span>Correction Draft</span>
                 </div>
             )}
 

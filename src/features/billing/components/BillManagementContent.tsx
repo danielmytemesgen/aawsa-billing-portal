@@ -32,7 +32,8 @@ import {
     getBranchesLookupAction,
     submitBillsBulkAction,
     approveBillsBulkAction,
-    postBillsBulkAction
+    postBillsBulkAction,
+    getAgingSummaryAction,
 } from '@/lib/actions';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -131,6 +132,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [outstandingLoading, setOutstandingLoading] = useState(false);
     const [paidLoading, setPaidLoading] = useState(false);
 
+    // Server-side aging summary — aggregated across ALL months, not just selected month.
+    // This is the source of truth for the Overdue Aging widget.
+    const [agingSummary, setAgingSummary] = useState({ zeroToThirty: 0, thirtyToSixty: 0, sixtyPlus: 0 });
+
 
     // Bulk Action Confirmation states
     const [pendingBulkAction, setPendingBulkAction] = useState<{
@@ -213,6 +218,20 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 }
             })();
             if (branchRes.data) setBranches(branchRes.data);
+
+            // Fetch server-side aging summary (across ALL months — not filtered by selected month)
+            try {
+                const agingRes = await getAgingSummaryAction(effectiveBranch === 'all' ? undefined : effectiveBranch);
+                if (agingRes?.data) {
+                    setAgingSummary({
+                        zeroToThirty:  agingRes.data.zeroToThirty,
+                        thirtyToSixty: agingRes.data.thirtyToSixty,
+                        sixtyPlus:     agingRes.data.sixtyPlus,
+                    });
+                }
+            } catch (e) {
+                console.warn('Failed to load aging summary', e);
+            }
         } catch (error) {
             console.error(error);
         } finally {
@@ -252,10 +271,18 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     };
 
     // Filtered data for stats & dashboard (respects Search, Branch, Month)
+    // NOTE: search matches the same fields as the server-side getUnsettledBillsAction query
+    // (CUSTOMERKEY, individual_customer_id, bill_number, BILLKEY, CUSTOMERNAME, id, notes)
     const filteredForStats = bills.filter(b => {
-        const matchesSearch = (b.CUSTOMERKEY || '').toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-            (b.individual_customer_id || '').toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-            b.id.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
+        const q = debouncedSearchQuery.toLowerCase();
+        const matchesSearch = !q ||
+            (b.CUSTOMERKEY || '').toLowerCase().includes(q) ||
+            (b.individual_customer_id || '').toLowerCase().includes(q) ||
+            (b.bill_number || '').toLowerCase().includes(q) ||
+            (b.BILLKEY || '').toLowerCase().includes(q) ||
+            (b.CUSTOMERNAME || '').toLowerCase().includes(q) ||
+            (b.notes || '').toLowerCase().includes(q) ||
+            b.id.toLowerCase().includes(q);
         const matchesBranch = branchFilter === 'all' || b.branch_id === branchFilter;
         const matchesMonth = monthFilter === 'all' || b.month_year === monthFilter;
         return matchesSearch && matchesBranch && matchesMonth;
@@ -686,23 +713,11 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const reworkItemsCount = filteredForStats.filter(b => b.status === 'Rework').length;
     const pendingApprovalsCount = filteredForStats.filter(b => b.status === 'Pending').length;
 
-    const aging = unpaidUniqueCustomers.reduce((acc: any, b: any) => {
-        const recon = reconstructedHistoryMap.get(b.id);
-        if (recon) {
-            acc.zeroToThirty += Number(recon.d30 || 0);
-            acc.thirtyToSixty += Number(recon.d30_60 || 0);
-            acc.sixtyPlus += Number(recon.d60 || 0);
-        } else {
-            const d30 = Number(b.debit30 || b.debit_30 || 0);
-            const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
-            const d60 = Number(b.debit60 || b.debit_60 || 0);
-            acc.zeroToThirty += d30;
-            acc.thirtyToSixty += d30_60;
-            acc.sixtyPlus += d60;
-        }
-        return acc;
-    }, { zeroToThirty: 0, thirtyToSixty: 0, sixtyPlus: 0 });
-
+    // ── Overdue Aging ────────────────────────────────────────────────────────────
+    // Use the server-side aging summary (fetched in loadData) which aggregates
+    // across ALL months. Overdue debt is in prior months so a single-month view
+    // always shows ETB 0 for current-month bills.
+    const aging = agingSummary;
     const totalAgingDebt = aging.zeroToThirty + aging.thirtyToSixty + aging.sixtyPlus;
 
 
@@ -1204,9 +1219,14 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             return (
                                 <TableRow key={bill.id}>
                                     <TableCell className="font-medium text-xs">
-                                        <Link href={`${basePath}/${bill.id}`} className="text-blue-600 hover:underline">
+                                        <Link href={`${basePath}/${bill.id}`} className="text-blue-600 hover:underline font-semibold">
                                             {bill.CUSTOMERKEY || bill.individual_customer_id}
                                         </Link>
+                                        {bill.bill_number && (
+                                            <div className="text-[10px] text-gray-400 font-mono">
+                                                {bill.bill_number}
+                                            </div>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-xs">{bill.month_year}</TableCell>
                                     <TableCell className="text-xs whitespace-nowrap">
@@ -1231,16 +1251,28 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                         {totalPayable.toFixed(2)}
                                     </TableCell>
                                     <TableCell className="text-center">
-                                        <Badge
-                                            variant={bill.payment_status === 'Paid' ? 'default' : isOverdue ? 'destructive' : 'outline'}
-                                            className={cn(
-                                                "text-[10px] px-2 py-0 h-5",
-                                                bill.payment_status === 'Paid' ? "bg-blue-500 hover:bg-blue-600" :
-                                                    !isOverdue && "bg-amber-100 text-amber-800 border-amber-200"
+                                        <div className="flex flex-col items-center gap-1">
+                                            <Badge
+                                                variant={bill.payment_status === 'Paid' ? 'default' : isOverdue ? 'destructive' : 'outline'}
+                                                className={cn(
+                                                    "text-[10px] px-2 py-0 h-5",
+                                                    bill.payment_status === 'Paid' ? "bg-blue-500 hover:bg-blue-600" :
+                                                        !isOverdue && "bg-amber-100 text-amber-800 border-amber-200"
+                                                )}
+                                            >
+                                                {bill.payment_status === 'Paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Unpaid'}
+                                            </Badge>
+                                            {bill.status === 'Reversed' && (
+                                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
+                                                    Reversed
+                                                </span>
                                             )}
-                                        >
-                                            {bill.payment_status === 'Paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Unpaid'}
-                                        </Badge>
+                                            {(bill.bill_number?.startsWith('CORR-') || (typeof bill.notes === 'string' && bill.notes.includes('Correction of'))) && (
+                                                <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 border border-orange-200" title="Audited correction bill">
+                                                    <RotateCcw className="h-2.5 w-2.5 text-orange-600" /> Correction
+                                                </span>
+                                            )}
+                                        </div>
                                     </TableCell>
                                     <TableCell className="text-right">
                                         <DropdownMenu>
@@ -1249,10 +1281,15 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                                     <MoreVertical className="h-4 w-4" />
                                                 </Button>
                                             </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end" className="w-40">
+                                            <DropdownMenuContent align="end" className="w-44">
                                                 <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
                                                     <Eye className="mr-2 h-4 w-4" /> View Details
                                                 </DropdownMenuItem>
+                                                {(bill.bill_number?.startsWith('CORR-') || (typeof bill.notes === 'string' && bill.notes.includes('Correction of')) || bill.status === 'Reversed') && (
+                                                    <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)} className="text-orange-700 font-semibold focus:text-orange-800">
+                                                        <RotateCcw className="mr-2 h-4 w-4 text-orange-600" /> Check Correction
+                                                    </DropdownMenuItem>
+                                                )}
                                                 <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                                                     <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
                                                 </DropdownMenuItem>

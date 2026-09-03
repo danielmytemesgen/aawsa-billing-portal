@@ -20,8 +20,10 @@ import {
     updateBillAction,
     getBranchByIdAction,
     correctBillAction,
+    getBillCorrectionDetailsAction,
     getBillsByCustomerKeyAction,
     getAssignedCustomerReadingsAction,
+    getExactPeriodReadingsAction,
     updateBulkAndAssignedReadingsAction,
     recalculateBulkBillAction,
     getAssignedCustomersForBulkMeterAction,
@@ -37,7 +39,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search, ChevronLeft, ChevronRight, ArrowRightLeft, ExternalLink, ShieldCheck, Scale, Info, Check, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { TablePagination } from '@/components/ui/table-pagination';
@@ -283,6 +285,8 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
         current: number;
         billId?: string | null;
         billStatus?: string | null;
+        hasExactRecord?: boolean;
+        readingDate?: string | null;
     };
     const [assignedReadings, setAssignedReadings] = useState<AssignedReadingRow[]>([]);
     const [assignedReadingEdits, setAssignedReadingEdits] = useState<Record<string, { previous: number; current: number }>>({});
@@ -291,6 +295,12 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     // Reject / Correct reason dialog state
     const [rejectDialog, setRejectDialog] = useState<{ open: boolean; action: 'reject' | 'correct' }>({ open: false, action: 'reject' });
     const [rejectReason, setRejectReason] = useState('');
+
+    // Correction details and verification state
+    const [correctionDetails, setCorrectionDetails] = useState<any | null>(null);
+    const [isCheckingIntegrity, setIsCheckingIntegrity] = useState(false);
+    const [integrityCheckResult, setIntegrityCheckResult] = useState<{ checked: boolean; isMatch?: boolean; message?: string } | null>(null);
+    const [showCorrectionBreakdown, setShowCorrectionBreakdown] = useState(true);
 
     // Manage Assigned Customers dialog state
     const [manageCustomersOpen, setManageCustomersOpen] = useState(false);
@@ -463,6 +473,17 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
                 const logsRes = await getBillWorkflowLogsAction(id);
                 if (logsRes.data) setLogs(logsRes.data);
+
+                try {
+                    const corrRes = await getBillCorrectionDetailsAction(id);
+                    if (corrRes?.data?.isCorrection) {
+                        setCorrectionDetails(corrRes.data);
+                    } else {
+                        setCorrectionDetails(null);
+                    }
+                } catch (e) {
+                    console.warn("Failed to load bill correction details", e);
+                }
 
                 // Reconstruct Aging
                 const customerKey = b.CUSTOMERKEY || b.individual_customer_id;
@@ -810,12 +831,183 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     initEdits[row.customerKeyNumber] = { previous: row.previous, current: row.current };
                 }
                 setAssignedReadingEdits(initEdits);
+
+                // If exact bulk reading was recorded for this period, sync it into editValues
+                const br = (res.data as any).bulkReading;
+                if (br && typeof br.current === 'number' && typeof br.previous === 'number') {
+                    setEditValues({
+                        current: br.current,
+                        previous: br.previous
+                    });
+                }
             }
         }).catch(console.error).finally(() => {
             if (!cancelled) setIsLoadingAssigned(false);
         });
         return () => { cancelled = true; };
     }, [isEditing, bill?.id]);
+
+    // For standalone individual bills, fetch exact reading recorded for that period
+    useEffect(() => {
+        if (!isEditing || !bill || !bill.individual_customer_id) return;
+        let cancelled = false;
+        getExactPeriodReadingsAction({
+            customerKey: bill.individual_customer_id,
+            isBulk: false,
+            monthYear: bill.month_year
+        }).then(res => {
+            if (cancelled) return;
+            const ir = res.data?.individualReading;
+            if (ir && typeof ir.currentReading === 'number' && typeof ir.previousReading === 'number') {
+                setEditValues({
+                    current: ir.currentReading,
+                    previous: ir.previousReading
+                });
+            }
+        }).catch(console.error);
+        return () => { cancelled = true; };
+    }, [isEditing, bill?.id]);
+
+    // Auto-open edit mode when landing on a correction draft
+    useEffect(() => {
+        if (!bill) return;
+        const isCorr = typeof bill.notes === 'string' && bill.notes.includes('Correction of');
+        if (isCorr && (bill.status === 'Draft' || bill.status === 'Rework') && !isEditing) {
+            setIsEditing(true);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [bill?.id]);
+
+    const [isFetchingPeriodReadings, setIsFetchingPeriodReadings] = useState(false);
+
+    const handleFetchExactPeriodReadings = async () => {
+        if (!bill) return;
+        setIsFetchingPeriodReadings(true);
+        try {
+            const isBulk = !!bill.CUSTOMERKEY;
+            const key = bill.CUSTOMERKEY || bill.individual_customer_id;
+            if (!key) return;
+
+            const res = await getExactPeriodReadingsAction({
+                customerKey: key,
+                isBulk,
+                monthYear: bill.month_year
+            });
+
+            if (res.error) {
+                toast({ title: "Fetch Failed", description: res.error.message || "Could not retrieve period readings.", variant: "destructive" });
+                return;
+            }
+
+            if (isBulk && res.data) {
+                const br = res.data.bulkReading;
+                if (br) {
+                    setEditValues({
+                        current: br.currentReading,
+                        previous: br.previousReading
+                    });
+                }
+                if (res.data.assignedCustomers && res.data.assignedCustomers.length > 0) {
+                    setAssignedReadings(res.data.assignedCustomers);
+                    const initEdits: Record<string, { previous: number; current: number }> = {};
+                    for (const row of res.data.assignedCustomers as any[]) {
+                        initEdits[row.customerKeyNumber] = { previous: row.previous, current: row.current };
+                    }
+                    setAssignedReadingEdits(initEdits);
+                }
+                toast({
+                    title: "Exact Readings Loaded",
+                    description: `Loaded exact meter readings for period ${bill.month_year} (Bulk: ${br?.previousReading} -> ${br?.currentReading}, plus ${res.data.assignedCustomers?.length || 0} sub-meters).`
+                });
+            } else if (!isBulk && res.data?.individualReading) {
+                const ir = res.data.individualReading;
+                setEditValues({
+                    current: ir.currentReading,
+                    previous: ir.previousReading
+                });
+                toast({
+                    title: "Exact Reading Loaded",
+                    description: `Loaded exact meter reading for period ${bill.month_year}: Prev = ${ir.previousReading} m³, Curr = ${ir.currentReading} m³.`
+                });
+            }
+        } catch (err: any) {
+            console.error("Fetch period readings error", err);
+            toast({ title: "Error", description: err.message || "Failed to load period readings.", variant: "destructive" });
+        } finally {
+            setIsFetchingPeriodReadings(false);
+        }
+    };
+
+    const handleCheckReadingsIntegrity = async () => {
+        if (!bill) return;
+        setIsCheckingIntegrity(true);
+        try {
+            const isBulk = !!bill.CUSTOMERKEY;
+            const key = bill.CUSTOMERKEY || bill.individual_customer_id;
+            if (!key) return;
+
+            const res = await getExactPeriodReadingsAction({
+                customerKey: key,
+                isBulk,
+                monthYear: bill.month_year
+            });
+
+            if (res.error) {
+                setIntegrityCheckResult({
+                    checked: true,
+                    isMatch: false,
+                    message: res.error.message || "Failed to query meter readings database."
+                });
+                return;
+            }
+
+            if (isBulk && res.data) {
+                const br = res.data.bulkReading;
+                const targetCurr = isEditing ? editValues.current : Number(bill.CURRREAD || 0);
+                const targetPrev = isEditing ? editValues.previous : Number(bill.PREVREAD || 0);
+                const recordedCurr = Number(br?.currentReading ?? 0);
+                const recordedPrev = Number(br?.previousReading ?? 0);
+
+                const isMatch = (Math.abs(targetCurr - recordedCurr) < 0.01) && (Math.abs(targetPrev - recordedPrev) < 0.01);
+                setIntegrityCheckResult({
+                    checked: true,
+                    isMatch,
+                    message: isMatch
+                        ? `Physical readings match: Prev: ${recordedPrev.toFixed(2)} m³, Curr: ${recordedCurr.toFixed(2)} m³ (${res.data.assignedCustomers?.length || 0} sub-meters registered).`
+                        : `Discrepancy detected: Database has Prev: ${recordedPrev.toFixed(2)} m³, Curr: ${recordedCurr.toFixed(2)} m³; Bill has Prev: ${targetPrev.toFixed(2)} m³, Curr: ${targetCurr.toFixed(2)} m³.`
+                });
+            } else if (!isBulk && res.data?.individualReading) {
+                const ir = res.data.individualReading;
+                const targetCurr = isEditing ? editValues.current : Number(bill.CURRREAD || 0);
+                const targetPrev = isEditing ? editValues.previous : Number(bill.PREVREAD || 0);
+                const recordedCurr = Number(ir.currentReading ?? 0);
+                const recordedPrev = Number(ir.previousReading ?? 0);
+
+                const isMatch = (Math.abs(targetCurr - recordedCurr) < 0.01) && (Math.abs(targetPrev - recordedPrev) < 0.01);
+                setIntegrityCheckResult({
+                    checked: true,
+                    isMatch,
+                    message: isMatch
+                        ? `Meter dial record matches bill: Prev: ${recordedPrev.toFixed(2)} m³, Curr: ${recordedCurr.toFixed(2)} m³.`
+                        : `Discrepancy detected: Database dial is Prev: ${recordedPrev.toFixed(2)} m³, Curr: ${recordedCurr.toFixed(2)} m³; Bill has Prev: ${targetPrev.toFixed(2)} m³, Curr: ${targetCurr.toFixed(2)} m³.`
+                });
+            } else {
+                setIntegrityCheckResult({
+                    checked: true,
+                    isMatch: true,
+                    message: `Verified: No conflicting meter reading records found for period ${bill.month_year}.`
+                });
+            }
+        } catch (err: any) {
+            setIntegrityCheckResult({
+                checked: true,
+                isMatch: false,
+                message: err.message || "Error running readings integrity check."
+            });
+        } finally {
+            setIsCheckingIntegrity(false);
+        }
+    };
 
     const handleRecalculate = async () => {
         if (!bill) return;
@@ -862,6 +1054,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     const handleSave = async () => {
         if (!bill) return;
         setLoading(true);
+        const isCorrectionDraft = typeof bill.notes === 'string' && bill.notes.includes('Correction of');
         try {
             const isBulk = !!(bill.CUSTOMERKEY);
             const usage = editValues.current - editValues.previous;
@@ -881,7 +1074,12 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 if (res?.error) {
                     toast({ title: "Save Failed", description: res.error.message || "An error occurred.", variant: "destructive" });
                 } else {
-                    toast({ title: "Saved", description: "Bulk meter readings updated and rebilled successfully." });
+                    toast({
+                        title: isCorrectionDraft ? "Correction Rebilled" : "Saved",
+                        description: isCorrectionDraft
+                            ? "Bill recalculated with corrected readings and marked Unpaid."
+                            : "Bulk meter readings updated and rebilled successfully.",
+                    });
                     await loadData();
                     setIsEditing(false);
                     setCalculatedPreview(null);
@@ -912,8 +1110,15 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                         maintenance_fee: calcRes.data.maintenanceFee,
                         sanitation_fee: calcRes.data.sanitationFee,
                         vat_amount: calcRes.data.vatAmount,
+                        // Always mark Unpaid after rebilling so the corrected amount is collectable
+                        payment_status: 'Unpaid',
                     });
-                    toast({ title: "Saved", description: "Bill readings updated and recalculated successfully." });
+                    toast({
+                        title: isCorrectionDraft ? "Correction Rebilled" : "Saved",
+                        description: isCorrectionDraft
+                            ? "Bill recalculated with corrected readings and marked Unpaid."
+                            : "Bill readings updated and recalculated successfully.",
+                    });
                     await loadData();
                     setIsEditing(false);
                     setCalculatedPreview(null);
@@ -926,6 +1131,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
             setLoading(false);
         }
     };
+
 
     const handleAction = async (action: 'submit' | 'approve' | 'reject' | 'post' | 'correct') => {
         if (!bill) return;
@@ -1008,6 +1214,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
        hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
        hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE));
 
+    // Phase 4: Detect correction draft — notes is set by correctBillAction
+    const isCorrectionDraft = typeof bill.notes === 'string' && bill.notes.includes('Correction of');
+    // Extract the original bill number from notes like "Correction of BILL-123. Reason: …"
+    const originalBillRef = isCorrectionDraft
+        ? (bill.notes?.match(/Correction of ([^.]+)/)?.[1] ?? null)
+        : null;
+
     return (
         <div className="p-6 space-y-6 container mx-auto max-w-6xl no-print">
             <div className="flex justify-between items-center">
@@ -1042,24 +1255,357 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 </CardContent>
             </Card>
 
+            {/* Detailed Bill Correction Inspection & Audit Section */}
+            {correctionDetails && correctionDetails.isCorrection && (
+                <Card className="border-2 border-orange-200 shadow-sm overflow-hidden bg-white">
+                    <CardHeader className="bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 border-b border-orange-200/80 pb-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 rounded-xl bg-orange-100 text-orange-700 border border-orange-200 shadow-sm">
+                                    <RotateCcw className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <CardTitle className="text-lg font-bold text-orange-950">
+                                            Bill Correction Audit & Inspection
+                                        </CardTitle>
+                                        <Badge variant="outline" className={cn(
+                                            "text-xs font-semibold px-2.5 py-0.5",
+                                            correctionDetails.role === 'original'
+                                                ? "bg-red-50 text-red-700 border-red-200"
+                                                : "bg-orange-50 text-orange-700 border-orange-200"
+                                        )}>
+                                            {correctionDetails.role === 'original' ? 'Original Bill (Reversed)' : 'Replacement Draft / Bill'}
+                                        </Badge>
+                                    </div>
+                                    <p className="text-xs text-orange-800/80 mt-0.5">
+                                        Audited amendment record linking finalized posted invoice to replacement bill.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleCheckReadingsIntegrity}
+                                    disabled={isCheckingIntegrity}
+                                    className="h-8 text-xs bg-white border-orange-300 text-orange-900 hover:bg-orange-50 shadow-sm"
+                                >
+                                    {isCheckingIntegrity ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5 text-orange-700" />}
+                                    Verify Dial Integrity
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setShowCorrectionBreakdown(v => !v)}
+                                    className="h-8 text-xs text-orange-800 hover:text-orange-950 hover:bg-orange-100/50"
+                                >
+                                    {showCorrectionBreakdown ? 'Hide Details' : 'Show Details'}
+                                </Button>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="p-6 space-y-6">
+                        {/* Bilateral Link & Reason Notice */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="p-4 rounded-xl bg-orange-50/60 border border-orange-200/70 space-y-2">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-orange-800 flex items-center gap-1.5">
+                                    <ArrowRightLeft className="h-3.5 w-3.5 text-orange-600" />
+                                    Paired Bill Connection
+                                </div>
+                                {correctionDetails.role === 'replacement' ? (
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                                        <div>
+                                            <p className="text-xs text-gray-600">Reversed Original Bill:</p>
+                                            <p className="text-sm font-bold text-gray-900">
+                                                {correctionDetails.originalBill?.bill_number || originalBillRef || 'Previous Posted Bill'}
+                                            </p>
+                                        </div>
+                                        {correctionDetails.originalBill?.id && (
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="h-8 text-xs bg-white border-orange-300 text-orange-900 hover:bg-orange-100 font-semibold shrink-0"
+                                                onClick={() => router.push(`${basePath}/${correctionDetails.originalBill.id}`)}
+                                            >
+                                                <ExternalLink className="mr-1.5 h-3.5 w-3.5 text-orange-700" />
+                                                View Reversed Bill
+                                            </Button>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                                        <div>
+                                            <p className="text-xs text-gray-600">Replacement Correction Bill:</p>
+                                            <p className="text-sm font-bold text-gray-900">
+                                                {correctionDetails.replacementBill?.bill_number || 'CORR Draft'}
+                                            </p>
+                                        </div>
+                                        {correctionDetails.replacementBill?.id && (
+                                            <Button
+                                                size="sm"
+                                                variant="default"
+                                                className="h-8 text-xs bg-orange-600 hover:bg-orange-700 text-white font-semibold shrink-0"
+                                                onClick={() => router.push(`${basePath}/${correctionDetails.replacementBill.id}`)}
+                                            >
+                                                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                                                View Replacement Bill
+                                            </Button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-4 rounded-xl bg-gray-50 border border-gray-200/80 space-y-2">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
+                                    <Info className="h-3.5 w-3.5 text-gray-400" />
+                                    Reason & Audit Trail
+                                </div>
+                                <div className="pt-1">
+                                    <p className="text-xs text-gray-800 italic font-medium">
+                                        &quot;{correctionDetails.reason}&quot;
+                                    </p>
+                                    <p className="text-[11px] text-gray-400 mt-2">
+                                        Logged by <span className="font-semibold text-gray-600">{correctionDetails.operator}</span>
+                                        {correctionDetails.timestamp && ` • ${format(new Date(correctionDetails.timestamp), 'PPp')}`}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Integrity Check Result Banner */}
+                        {integrityCheckResult && (
+                            <div className={cn(
+                                "p-3.5 rounded-xl border text-xs font-medium flex items-start gap-2.5 animate-in fade-in duration-300",
+                                integrityCheckResult.isMatch
+                                    ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                                    : "bg-red-50 border-red-200 text-red-900"
+                            )}>
+                                {integrityCheckResult.isMatch ? (
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                                ) : (
+                                    <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                                )}
+                                <div className="flex-1">
+                                    <span className="font-bold">{integrityCheckResult.isMatch ? 'Meter Reading Verification Passed: ' : 'Meter Reading Alert: '}</span>
+                                    <span>{integrityCheckResult.message}</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Side-by-Side Comparison Matrix */}
+                        {showCorrectionBreakdown && correctionDetails.readingsDelta && (
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                                        <Scale className="h-4 w-4 text-orange-600" />
+                                        Side-by-Side Comparative Audit Matrix
+                                    </h4>
+                                    <span className="text-xs text-gray-400">Values in m³ and ETB</span>
+                                </div>
+
+                                <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                                    <table className="w-full text-xs">
+                                        <thead className="bg-gray-50 border-b border-gray-200 text-gray-700">
+                                            <tr>
+                                                <th className="py-2.5 px-3 text-left font-semibold">Audit Parameter</th>
+                                                <th className="py-2.5 px-3 text-right font-semibold">Original Bill ({correctionDetails.originalBill?.bill_number || 'Pre-correction'})</th>
+                                                <th className="py-2.5 px-3 text-right font-semibold">Corrected Bill ({correctionDetails.replacementBill?.bill_number || 'Post-correction'})</th>
+                                                <th className="py-2.5 px-3 text-right font-semibold">Variance (Δ)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 bg-white">
+                                            <tr className="bg-gray-50/40">
+                                                <td colSpan={4} className="py-1.5 px-3 font-bold text-[10px] uppercase tracking-wider text-gray-500">
+                                                    Meter Reading Comparison
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-2 px-3 text-gray-700 font-medium">Previous Reading</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-600">{correctionDetails.readingsDelta.prevRead.original.toFixed(2)} m³</td>
+                                                <td className="py-2 px-3 text-right font-mono font-semibold text-gray-900">{correctionDetails.readingsDelta.prevRead.corrected.toFixed(2)} m³</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-500">{correctionDetails.readingsDelta.prevRead.delta === 0 ? '—' : `${correctionDetails.readingsDelta.prevRead.delta > 0 ? '+' : ''}${correctionDetails.readingsDelta.prevRead.delta.toFixed(2)} m³`}</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-2 px-3 text-gray-700 font-medium">Current Reading</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-600">{correctionDetails.readingsDelta.currRead.original.toFixed(2)} m³</td>
+                                                <td className="py-2 px-3 text-right font-mono font-semibold text-gray-900">{correctionDetails.readingsDelta.currRead.corrected.toFixed(2)} m³</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-500">{correctionDetails.readingsDelta.currRead.delta === 0 ? '—' : `${correctionDetails.readingsDelta.currRead.delta > 0 ? '+' : ''}${correctionDetails.readingsDelta.currRead.delta.toFixed(2)} m³`}</td>
+                                            </tr>
+                                            <tr className="bg-amber-50/30 font-semibold">
+                                                <td className="py-2 px-3 text-amber-950">Billed Usage / Consumption</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-700">{correctionDetails.readingsDelta.usage.original.toFixed(2)} m³</td>
+                                                <td className="py-2 px-3 text-right font-mono text-amber-900">{correctionDetails.readingsDelta.usage.corrected.toFixed(2)} m³</td>
+                                                <td className={cn(
+                                                    "py-2 px-3 text-right font-mono",
+                                                    correctionDetails.readingsDelta.usage.delta < 0 ? "text-emerald-600" :
+                                                    correctionDetails.readingsDelta.usage.delta > 0 ? "text-red-600" : "text-gray-500"
+                                                )}>
+                                                    {correctionDetails.readingsDelta.usage.delta === 0 ? '0.00 m³' : `${correctionDetails.readingsDelta.usage.delta > 0 ? '+' : ''}${correctionDetails.readingsDelta.usage.delta.toFixed(2)} m³`}
+                                                </td>
+                                            </tr>
+
+                                            <tr className="bg-gray-50/40">
+                                                <td colSpan={4} className="py-1.5 px-3 font-bold text-[10px] uppercase tracking-wider text-gray-500">
+                                                    Financial Charges Comparison
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-2 px-3 text-gray-700">Base Water Charge</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-600">ETB {correctionDetails.financialsDelta.baseWaterCharge.original.toFixed(2)}</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-900">ETB {correctionDetails.financialsDelta.baseWaterCharge.corrected.toFixed(2)}</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-500">
+                                                    {correctionDetails.financialsDelta.baseWaterCharge.delta === 0 ? '—' : `${correctionDetails.financialsDelta.baseWaterCharge.delta > 0 ? '+' : ''}${correctionDetails.financialsDelta.baseWaterCharge.delta.toFixed(2)}`}
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-2 px-3 text-gray-700">Sewerage Charge</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-600">ETB {correctionDetails.financialsDelta.sewerageCharge.original.toFixed(2)}</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-900">ETB {correctionDetails.financialsDelta.sewerageCharge.corrected.toFixed(2)}</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-500">
+                                                    {correctionDetails.financialsDelta.sewerageCharge.delta === 0 ? '—' : `${correctionDetails.financialsDelta.sewerageCharge.delta > 0 ? '+' : ''}${correctionDetails.financialsDelta.sewerageCharge.delta.toFixed(2)}`}
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-2 px-3 text-gray-700">Service / Maintenance / Meter Fees</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-600">
+                                                    ETB {(correctionDetails.financialsDelta.meterRent.original + correctionDetails.financialsDelta.maintenanceFee.original + correctionDetails.financialsDelta.sanitationFee.original).toFixed(2)}
+                                                </td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-900">
+                                                    ETB {(correctionDetails.financialsDelta.meterRent.corrected + correctionDetails.financialsDelta.maintenanceFee.corrected + correctionDetails.financialsDelta.sanitationFee.corrected).toFixed(2)}
+                                                </td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-500">—</td>
+                                            </tr>
+                                            <tr>
+                                                <td className="py-2 px-3 text-gray-700">VAT Amount</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-600">ETB {correctionDetails.financialsDelta.vatAmount.original.toFixed(2)}</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-900">ETB {correctionDetails.financialsDelta.vatAmount.corrected.toFixed(2)}</td>
+                                                <td className="py-2 px-3 text-right font-mono text-gray-500">
+                                                    {correctionDetails.financialsDelta.vatAmount.delta === 0 ? '—' : `${correctionDetails.financialsDelta.vatAmount.delta > 0 ? '+' : ''}${correctionDetails.financialsDelta.vatAmount.delta.toFixed(2)}`}
+                                                </td>
+                                            </tr>
+                                            <tr className="bg-blue-50/40 font-bold">
+                                                <td className="py-2.5 px-3 text-blue-950">Current Monthly Bill Amount</td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-blue-900">ETB {correctionDetails.financialsDelta.thisMonthBillAmt.original.toFixed(2)}</td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-blue-900">ETB {correctionDetails.financialsDelta.thisMonthBillAmt.corrected.toFixed(2)}</td>
+                                                <td className={cn(
+                                                    "py-2.5 px-3 text-right font-mono",
+                                                    correctionDetails.financialsDelta.thisMonthBillAmt.delta < 0 ? "text-emerald-700" :
+                                                    correctionDetails.financialsDelta.thisMonthBillAmt.delta > 0 ? "text-amber-700" : "text-gray-500"
+                                                )}>
+                                                    {correctionDetails.financialsDelta.thisMonthBillAmt.delta === 0 ? 'ETB 0.00' : `${correctionDetails.financialsDelta.thisMonthBillAmt.delta > 0 ? '+' : ''}ETB ${correctionDetails.financialsDelta.thisMonthBillAmt.delta.toFixed(2)}`}
+                                                </td>
+                                            </tr>
+                                            <tr className="font-bold border-t border-gray-200 bg-gray-50/60">
+                                                <td className="py-2.5 px-3 text-gray-950">Total Payable (with Outstanding)</td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-gray-700">ETB {correctionDetails.financialsDelta.totalBillAmount.original.toFixed(2)}</td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-gray-900">ETB {correctionDetails.financialsDelta.totalBillAmount.corrected.toFixed(2)}</td>
+                                                <td className={cn(
+                                                    "py-2.5 px-3 text-right font-mono",
+                                                    correctionDetails.financialsDelta.totalBillAmount.delta < 0 ? "text-emerald-700" :
+                                                    correctionDetails.financialsDelta.totalBillAmount.delta > 0 ? "text-red-700" : "text-gray-500"
+                                                )}>
+                                                    {correctionDetails.financialsDelta.totalBillAmount.delta === 0 ? 'ETB 0.00' : `${correctionDetails.financialsDelta.totalBillAmount.delta > 0 ? '+' : ''}ETB ${correctionDetails.financialsDelta.totalBillAmount.delta.toFixed(2)}`}
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Financial Impact Banner */}
+                                {correctionDetails.financialImpact && (
+                                    <div className={cn(
+                                        "p-4 rounded-xl border flex items-start gap-3",
+                                        correctionDetails.financialImpact.impactType === 'credit'
+                                            ? "bg-emerald-50 border-emerald-200 text-emerald-950"
+                                            : correctionDetails.financialImpact.impactType === 'debit'
+                                                ? "bg-amber-50 border-amber-200 text-amber-950"
+                                                : "bg-blue-50 border-blue-200 text-blue-950"
+                                    )}>
+                                        <div className={cn(
+                                            "p-2 rounded-lg text-white shrink-0 mt-0.5",
+                                            correctionDetails.financialImpact.impactType === 'credit' ? "bg-emerald-600" :
+                                            correctionDetails.financialImpact.impactType === 'debit' ? "bg-amber-600" : "bg-blue-600"
+                                        )}>
+                                            {correctionDetails.financialImpact.impactType === 'credit' ? (
+                                                <TrendingDown className="h-4 w-4" />
+                                            ) : (
+                                                <TrendingUp className="h-4 w-4" />
+                                            )}
+                                        </div>
+                                        <div>
+                                            <h5 className="font-bold text-sm">
+                                                Financial Impact: {correctionDetails.financialImpact.summary}
+                                            </h5>
+                                            <p className="text-xs opacity-90 mt-0.5">
+                                                {correctionDetails.financialImpact.impactType === 'credit'
+                                                    ? 'The original invoice was overbilled. The customer balance has been automatically credited and reconciled in aging calculation.'
+                                                    : correctionDetails.financialImpact.impactType === 'debit'
+                                                        ? 'The corrected readings produce a higher charge. The customer will be billed for the difference upon posting.'
+                                                        : 'Meter readings were corrected without altering the total charge.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Action Required Banner for Correction Draft in Edit Mode */}
+            {isCorrectionDraft && canEdit && isEditing && (
+                <div className="flex items-start gap-4 rounded-xl border-2 border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 p-5 shadow-sm">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 ring-2 ring-orange-200">
+                        <RotateCcw className="h-5 w-5 text-orange-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-orange-900 text-base">Correction Draft — Readings Edit Mode</h3>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700 border border-orange-200">
+                                Unpaid
+                            </span>
+                        </div>
+                        <p className="mt-1.5 text-sm text-orange-700 leading-relaxed">
+                            Adjust the meter readings below and click{' '}
+                            <strong className="font-semibold">&quot;Save &amp; Rebill&quot;</strong>{' '}
+                            to recalculate with the corrected values and mark this bill as{' '}
+                            <span className="font-semibold">Unpaid</span>.
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Main Bill Information */}
                     <Card>
                         <CardHeader className="flex flex-row justify-between items-center bg-gray-50/50">
                             <CardTitle className="text-lg">Billing Details</CardTitle>
-                            {canEdit && !isEditing && (
+                            {/* Phase 6: Hide manual Edit button for correction drafts (auto-opened) */}
+                            {canEdit && !isEditing && !isCorrectionDraft && (
                                 <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
                                     <Edit2 className="mr-2 h-3 w-3" /> Edit Readings
                                 </Button>
+                            )}
+                            {/* Correction draft badge in card header */}
+                            {isCorrectionDraft && isEditing && (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-orange-100 text-orange-700 border border-orange-200">
+                                    <RotateCcw className="h-3 w-3" /> Correction Mode
+                                </span>
                             )}
                         </CardHeader>
                         <CardContent className="pt-6">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
                                 <DetailItem label="Customer Key / Meter" value={bill.CUSTOMERKEY || bill.individual_customer_id} />
                                 <DetailItem label="Status" value={
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${bill.status === 'Posted' ? 'bg-green-100 text-green-800' :
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                        bill.status === 'Posted' ? 'bg-green-100 text-green-800' :
                                         bill.status === 'Approved' ? 'bg-blue-100 text-blue-800' :
+                                        bill.status === 'Reversed' ? 'bg-red-100 text-red-800 border border-red-200 font-semibold' :
+                                        bill.status === 'Rework' ? 'bg-orange-100 text-orange-800' :
                                             'bg-gray-100 text-gray-800'
                                         }`}>
                                         {bill.status}
@@ -1068,9 +1614,23 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
                                 {isEditing ? (
                                     <div className="col-span-2 bg-amber-50 p-4 rounded-lg border border-amber-100 space-y-4">
-                                        <h4 className="font-semibold text-amber-900 flex items-center gap-2">
-                                            <Edit2 className="h-4 w-4" /> Edit Readings & Recalculate
-                                        </h4>
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                            <h4 className="font-semibold text-amber-900 flex items-center gap-2">
+                                                <Edit2 className="h-4 w-4" /> Edit Readings & Recalculate
+                                            </h4>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={handleFetchExactPeriodReadings}
+                                                disabled={isFetchingPeriodReadings}
+                                                className="h-8 text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100 shadow-sm"
+                                                title={`Fetch exact meter readings recorded for period ${bill.month_year}`}
+                                            >
+                                                {isFetchingPeriodReadings ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5 text-amber-700" />}
+                                                Get Exact Period Readings ({bill.month_year})
+                                            </Button>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-1">
                                                 <label className="text-xs font-medium text-gray-600">Previous Reading</label>
@@ -1119,7 +1679,14 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                                     return (
                                                                         <tr key={row.customerKeyNumber} className="hover:bg-amber-50">
                                                                             <td className="px-2 py-1.5">
-                                                                                <div className="font-medium text-gray-800">{row.name}</div>
+                                                                                <div className="font-medium text-gray-800 flex items-center gap-1">
+                                                                                    {row.name}
+                                                                                    {row.hasExactRecord && (
+                                                                                        <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.2 rounded" title="Exact reading recorded for this period">
+                                                                                            Exact
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
                                                                                 <div className="text-gray-400 text-[10px]">{row.customerKeyNumber}</div>
                                                                             </td>
                                                                             <td className="px-2 py-1.5 text-right">
@@ -1205,8 +1772,20 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 <Button size="sm" variant="secondary" onClick={handleRecalculate} disabled={isCalculating}>
                                                     {isCalculating ? "Calculating..." : "Check Preview"}
                                                 </Button>
-                                                <Button size="sm" onClick={handleSave} disabled={loading}>
-                                                    <Save className="mr-2 h-4 w-4" /> Save Changes
+                                                {/* Phase 7: Amber 'Save & Rebill' for correction drafts */}
+                                                <Button
+                                                    size="sm"
+                                                    onClick={handleSave}
+                                                    disabled={loading}
+                                                    className={isCorrectionDraft
+                                                        ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500 shadow-sm"
+                                                        : ""}
+                                                    title={isCorrectionDraft
+                                                        ? "Saves corrected readings, recalculates the bill amount, and marks status as Unpaid."
+                                                        : "Save reading changes"}
+                                                >
+                                                    <Save className="mr-2 h-4 w-4" />
+                                                    {isCorrectionDraft ? "Save & Rebill" : "Save Changes"}
                                                 </Button>
                                             </div>
                                         </div>
@@ -1402,6 +1981,32 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                         )}
                                         <Button variant="outline" className="w-full" onClick={() => router.push(`/staff/bill-management/${bill.id}?print=true`)}>
                                             <Printer className="mr-2 h-4 w-4" /> Print Copy
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {bill.status === 'Reversed' && (
+                                    <div className="space-y-3">
+                                        <div className="flex items-start gap-2 text-red-700 bg-red-50 p-3.5 rounded-lg border border-red-200 text-xs font-medium">
+                                            <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                                            <div>
+                                                <div className="font-bold text-sm text-red-800">Bill Reversed (Voided)</div>
+                                                <div className="text-red-700 mt-1 leading-relaxed">
+                                                    This bill was reversed during a formal bill correction. Aging balances have been adjusted and this invoice is superseded.
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {correctionDetails?.replacementBill?.id && (
+                                            <Button
+                                                variant="default"
+                                                className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold shadow-sm"
+                                                onClick={() => router.push(`${basePath}/${correctionDetails.replacementBill.id}`)}
+                                            >
+                                                <RotateCcw className="mr-2 h-4 w-4" /> Go to Replacement Bill ({correctionDetails.replacementBill.bill_number || 'CORR'})
+                                            </Button>
+                                        )}
+                                        <Button variant="outline" className="w-full" onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
+                                            <Printer className="mr-2 h-4 w-4" /> Print Voided Copy
                                         </Button>
                                     </div>
                                 )}

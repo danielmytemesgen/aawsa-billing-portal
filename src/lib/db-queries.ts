@@ -1104,12 +1104,23 @@ export const dbCreateBill = async (bill: any, client?: any) => {
         }
     }
 
+    const isJsonbKey = (k: string) => k === 'snapshot_data' || k === 'additional_fees_breakdown';
+
     const keys = Object.keys(bill);
-    const placeholders = keys.map((k, i) =>
-        k === 'payment_status' ? `$${i + 1}::payment_status` : `$${i + 1}`
-    ).join(',');
+    const placeholders = keys.map((k, i) => {
+        if (k === 'payment_status') return `$${i + 1}::payment_status`;
+        if (isJsonbKey(k)) return `$${i + 1}::jsonb`;
+        return `$${i + 1}`;
+    }).join(',');
     const sql = `INSERT INTO bills (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const params = keys.map(k => bill[k]);
+    const params = keys.map(k => {
+        const val = bill[k];
+        if (isJsonbKey(k)) {
+            if (val === null || val === undefined) return null;
+            return typeof val === 'string' ? val : JSON.stringify(val);
+        }
+        return val;
+    });
 
     if (client) {
         const res = await client.query(sql, params);
@@ -1125,15 +1136,28 @@ export const dbUpdateBill = async (id: string, bill: any, client?: any, monthYea
     const { month_year: _ignored, ...safeFields } = bill;
     const keys = Object.keys(safeFields);
     if (keys.length === 0) return null;
-    const setClause = keys.map((k, i) =>
-        k === 'payment_status' ? `"${k}" = $${i + 1}::payment_status` : `"${k}" = $${i + 1}`
-    ).join(',');
+
+    const isJsonbKey = (k: string) => k === 'snapshot_data' || k === 'additional_fees_breakdown';
+
+    const setClause = keys.map((k, i) => {
+        if (k === 'payment_status') return `"${k}" = $${i + 1}::payment_status`;
+        if (isJsonbKey(k)) return `"${k}" = $${i + 1}::jsonb`;
+        return `"${k}" = $${i + 1}`;
+    }).join(',');
 
     const monthYearClause = monthYear ? ` AND month_year = $${keys.length + 2}` : '';
     const sql = `UPDATE bills SET ${setClause} WHERE id = $${keys.length + 1}${monthYearClause} RETURNING *`;
+    const safeParams = keys.map(k => {
+        const val = safeFields[k];
+        if (isJsonbKey(k)) {
+            if (val === null || val === undefined) return null;
+            return typeof val === 'string' ? val : JSON.stringify(val);
+        }
+        return val;
+    });
     const params = monthYear
-        ? [...keys.map(k => safeFields[k]), id, monthYear]
-        : [...keys.map(k => safeFields[k]), id];
+        ? [...safeParams, id, monthYear]
+        : [...safeParams, id];
 
     if (client) {
         const res = await client.query(sql, params);
@@ -3246,7 +3270,7 @@ export const dbGetUnsettledBillsPaginated = async (params: {
     }
 
     if (params.searchTerm) {
-        sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex})`;
+        sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex} OR b.bill_number ILIKE $${paramIndex} OR b.notes ILIKE $${paramIndex})`;
         queryParams.push(`%${params.searchTerm}%`);
         paramIndex++;
     }
@@ -3288,7 +3312,7 @@ export const dbGetUnsettledBillsCount = async (params: {
     }
 
     if (params.searchTerm) {
-        sql += ` AND ("BILLKEY" ILIKE $${paramIndex} OR "CUSTOMERNAME" ILIKE $${paramIndex} OR "CUSTOMERKEY" ILIKE $${paramIndex} OR individual_customer_id ILIKE $${paramIndex})`;
+        sql += ` AND ("BILLKEY" ILIKE $${paramIndex} OR "CUSTOMERNAME" ILIKE $${paramIndex} OR "CUSTOMERKEY" ILIKE $${paramIndex} OR individual_customer_id ILIKE $${paramIndex} OR bill_number ILIKE $${paramIndex} OR notes ILIKE $${paramIndex})`;
         queryParams.push(`%${params.searchTerm}%`);
     }
 
@@ -4627,7 +4651,10 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     };
 
     for (const bill of bills) {
-        const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed' || bill.status === 'Draft' || bill.status === 'Rework' || bill.status === 'Pending' || bill.status === 'Pending_Approval';
+        // A correction draft bill (notes contain 'Correction of') is a live,
+        // collectable draft that has been rebilled — treat it as active, NOT voided.
+        const isCorrectionDraft = typeof bill.notes === 'string' && bill.notes.includes('Correction of');
+        const isVoided = !isCorrectionDraft && (bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed' || bill.status === 'Draft' || bill.status === 'Rework' || bill.status === 'Pending' || bill.status === 'Pending_Approval');
         const billMonth = bill.month_year || (bill.created_at ? (bill.created_at instanceof Date ? bill.created_at.toISOString().slice(0,7) : String(bill.created_at).slice(0,7)) : '');
         
         const activeTariff = findActiveTariff(billMonth);
@@ -4744,7 +4771,9 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         const billPaymentStatus = billUnpaid <= 0.01 ? 'Paid' : 'Unpaid';
 
         // Preserve any bills already manually marked as 'Paid'.
-        // If a bill's current payment_status is 'Paid', keep it as 'Paid'; otherwise set to computed status.
+        // Exception: correction draft bills must always be forced to 'Unpaid' after rebilling
+        // so the new amount is collectable. The prior bill was 'Paid' when posted, but the
+        // replacement draft starts fresh.
         // Include month_year in the WHERE clause so PostgreSQL can route the UPDATE
         // directly to the correct partition without crossing the BEFORE ROW trigger boundary.
         await qFunc(
@@ -4756,7 +4785,11 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "OUTSTANDINGAMT" = $5, 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
-                 payment_status = CASE WHEN payment_status = 'Paid' THEN 'Paid'::payment_status ELSE $8::payment_status END
+                 payment_status = CASE 
+                     WHEN (notes LIKE '%Correction of%') THEN 'Unpaid'::payment_status
+                     WHEN payment_status = 'Paid' THEN 'Paid'::payment_status 
+                     ELSE $8::payment_status 
+                 END
              WHERE id = $9 AND month_year = $10`,
             [
                 d30_rounded,

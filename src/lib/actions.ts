@@ -2072,7 +2072,20 @@ export async function correctBillAction(id: string, reason: string) {
       delete billData.updated_at;
       delete billData.BILLKEY;
       delete billData.amount_paid;
+      delete billData.approval_date;
+      delete billData.approved_by;
+      delete billData.last_payment_date;
+      delete billData.receipt_number;
+      delete billData.payment_channel;
+      delete billData.bank_ref;
+      delete billData.deleted_at;
+      delete billData.deleted_by;
+
       billData.status = 'Draft';
+      // Correction drafts always start Unpaid with zero paid amount so the
+      // rebilling step (Save & Rebill) produces a clean, collectable bill.
+      billData.payment_status = 'Unpaid';
+      billData.amount_paid = 0;
       billData.bill_number = `CORR-${originalBill.bill_number || Date.now()}`;
       billData.notes = `Correction of ${originalBill.bill_number}. Reason: ${reason}`;
 
@@ -2124,6 +2137,199 @@ export async function getBillWorkflowLogsAction(billId: string) {
       perms.some((p: string) => p.startsWith('bill:'));
     if (!hasPerm) throw new Error('Forbidden: Missing billing permissions');
     return await dbGetBillWorkflowLogsQuery(billId);
+  });
+}
+
+export async function getBillCorrectionDetailsAction(billId: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
+      perms.some((p: string) => p.startsWith('bill:'));
+    if (!hasPerm) throw new Error('Forbidden: Missing billing permissions');
+
+    const currentBill = await dbGetBillByIdQuery(billId);
+    if (!currentBill) throw new Error('Bill not found');
+
+    const isReversed = currentBill.status === 'Reversed';
+    const isCorrectionDraft = typeof currentBill.notes === 'string' && currentBill.notes.includes('Correction of');
+    const hasCorrPrefix = typeof currentBill.bill_number === 'string' && currentBill.bill_number.startsWith('CORR-');
+    
+    // Check workflow logs for correction indications
+    const currentLogs = await dbGetBillWorkflowLogsQuery(billId);
+    const hasCorrectionLog = currentLogs.some(l => 
+      l.reason?.toLowerCase().includes('correction') || 
+      l.to_status === 'Reversed' || 
+      l.from_status === 'Posted'
+    );
+
+    if (!isReversed && !isCorrectionDraft && !hasCorrPrefix && !hasCorrectionLog) {
+      return { isCorrection: false };
+    }
+
+    let originalBill: any = null;
+    let replacementBill: any = null;
+    let role: 'original' | 'replacement' = 'replacement';
+
+    if (isReversed) {
+      role = 'original';
+      originalBill = currentBill;
+      // Find replacement draft or replacement bill
+      const searchNumber = `CORR-${originalBill.bill_number || ''}`;
+      const res: any = await query(
+        `SELECT * FROM bills 
+         WHERE (bill_number = $1 OR notes LIKE $2 OR notes LIKE $3)
+           AND deleted_at IS NULL
+         ORDER BY created_at DESC LIMIT 1`,
+        [searchNumber, `%Correction of ${originalBill.bill_number}%`, `%${originalBill.id}%`]
+      );
+      if (res && res[0]) {
+        replacementBill = res[0];
+      }
+    } else {
+      role = 'replacement';
+      replacementBill = currentBill;
+      // Extract original bill identifier
+      const refMatch = currentBill.notes?.match(/Correction of ([^.\s,]+)/);
+      const originalRef = refMatch ? refMatch[1] : (hasCorrPrefix ? currentBill.bill_number.replace(/^CORR-/, '') : null);
+
+      if (originalRef) {
+        const res: any = await query(
+          `SELECT * FROM bills 
+           WHERE (bill_number = $1 OR id = $1)
+             AND deleted_at IS NULL
+           ORDER BY created_at DESC LIMIT 1`,
+          [originalRef]
+        );
+        if (res && res[0]) {
+          originalBill = res[0];
+        }
+      }
+      
+      // Fallback: If not found by bill_number, check if there is a reversed bill for the same customer and month
+      if (!originalBill) {
+        const custKey = currentBill.CUSTOMERKEY || currentBill.individual_customer_id;
+        if (custKey && currentBill.month_year) {
+          const res: any = await query(
+            `SELECT * FROM bills 
+             WHERE ("CUSTOMERKEY" = $1 OR individual_customer_id = $1)
+               AND month_year = $2
+               AND status = 'Reversed'
+               AND id != $3
+               AND deleted_at IS NULL
+             ORDER BY created_at DESC LIMIT 1`,
+            [custKey, currentBill.month_year, currentBill.id]
+          );
+          if (res && res[0]) {
+            originalBill = res[0];
+          }
+        }
+      }
+    }
+
+    // Workflow logs for both
+    const origLogs = originalBill ? await dbGetBillWorkflowLogsQuery(originalBill.id) : [];
+    const replLogs = replacementBill ? await dbGetBillWorkflowLogsQuery(replacementBill.id) : [];
+
+    // Extract reason and actor
+    const correctionEvent = origLogs.find(l => l.to_status === 'Reversed' || l.reason?.toLowerCase().includes('correction'))
+      || replLogs.find(l => l.reason?.toLowerCase().includes('correction'));
+
+    const reason = correctionEvent?.reason || (replacementBill?.notes?.match(/Reason:\s*(.+)$/)?.[1] ?? 'Formal correction initiated');
+    const operator = correctionEvent?.changed_by || 'Staff';
+    const timestamp = correctionEvent?.created_at || replacementBill?.created_at || originalBill?.created_at;
+
+    // Calculate comparative deltas if both bills exist
+    const origPrev = Number(originalBill?.PREVREAD ?? 0);
+    const origCurr = Number(originalBill?.CURRREAD ?? 0);
+    const origCons = Number(originalBill?.CONS ?? 0);
+    const origDiffUsage = Number(originalBill?.difference_usage ?? origCons);
+
+    const replPrev = Number(replacementBill?.PREVREAD ?? 0);
+    const replCurr = Number(replacementBill?.CURRREAD ?? 0);
+    const replCons = Number(replacementBill?.CONS ?? 0);
+    const replDiffUsage = Number(replacementBill?.difference_usage ?? replCons);
+
+    const origMonthly = Number(originalBill?.THISMONTHBILLAMT ?? 0);
+    const replMonthly = Number(replacementBill?.THISMONTHBILLAMT ?? 0);
+
+    const origOutstanding = Number(originalBill?.OUTSTANDINGAMT ?? 0);
+    const replOutstanding = Number(replacementBill?.OUTSTANDINGAMT ?? 0);
+
+    const origTotal = Number(originalBill?.TOTALBILLAMOUNT ?? (origMonthly + origOutstanding));
+    const replTotal = Number(replacementBill?.TOTALBILLAMOUNT ?? (replMonthly + replOutstanding));
+
+    const readingsDelta = {
+      prevRead: { original: origPrev, corrected: replPrev, delta: replPrev - origPrev },
+      currRead: { original: origCurr, corrected: replCurr, delta: replCurr - origCurr },
+      usage: { original: origCons, corrected: replCons, delta: replCons - origCons },
+      diffUsage: { original: origDiffUsage, corrected: replDiffUsage, delta: replDiffUsage - origDiffUsage },
+    };
+
+    const financialsDelta = {
+      baseWaterCharge: {
+        original: Number(originalBill?.base_water_charge ?? 0),
+        corrected: Number(replacementBill?.base_water_charge ?? 0),
+        delta: Number(replacementBill?.base_water_charge ?? 0) - Number(originalBill?.base_water_charge ?? 0),
+      },
+      sewerageCharge: {
+        original: Number(originalBill?.sewerage_charge ?? 0),
+        corrected: Number(replacementBill?.sewerage_charge ?? 0),
+        delta: Number(replacementBill?.sewerage_charge ?? 0) - Number(originalBill?.sewerage_charge ?? 0),
+      },
+      meterRent: {
+        original: Number(originalBill?.meter_rent ?? 0),
+        corrected: Number(replacementBill?.meter_rent ?? 0),
+        delta: Number(replacementBill?.meter_rent ?? 0) - Number(originalBill?.meter_rent ?? 0),
+      },
+      maintenanceFee: {
+        original: Number(originalBill?.maintenance_fee ?? 0),
+        corrected: Number(replacementBill?.maintenance_fee ?? 0),
+        delta: Number(replacementBill?.maintenance_fee ?? 0) - Number(originalBill?.maintenance_fee ?? 0),
+      },
+      sanitationFee: {
+        original: Number(originalBill?.sanitation_fee ?? 0),
+        corrected: Number(replacementBill?.sanitation_fee ?? 0),
+        delta: Number(replacementBill?.sanitation_fee ?? 0) - Number(originalBill?.sanitation_fee ?? 0),
+      },
+      vatAmount: {
+        original: Number(originalBill?.vat_amount ?? 0),
+        corrected: Number(replacementBill?.vat_amount ?? 0),
+        delta: Number(replacementBill?.vat_amount ?? 0) - Number(originalBill?.vat_amount ?? 0),
+      },
+      thisMonthBillAmt: { original: origMonthly, corrected: replMonthly, delta: replMonthly - origMonthly },
+      outstandingAmt: { original: origOutstanding, corrected: replOutstanding, delta: replOutstanding - origOutstanding },
+      totalBillAmount: { original: origTotal, corrected: replTotal, delta: replTotal - origTotal },
+    };
+
+    const netVariance = replMonthly - origMonthly;
+    const financialImpact = {
+      netMonthlyVariance: netVariance,
+      netTotalVariance: replTotal - origTotal,
+      impactType: netVariance < -0.01 ? 'credit' : netVariance > 0.01 ? 'debit' : 'neutral',
+      summary: netVariance < -0.01 
+        ? `Customer credited by ETB ${Math.abs(netVariance).toFixed(2)}`
+        : netVariance > 0.01
+          ? `Customer rebilled an additional ETB ${netVariance.toFixed(2)}`
+          : 'No net financial variance',
+    };
+
+    const allLogs = [...origLogs, ...replLogs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return {
+      isCorrection: true,
+      role,
+      originalBill,
+      replacementBill,
+      reason,
+      operator,
+      timestamp,
+      readingsDelta,
+      financialsDelta,
+      financialImpact,
+      logs: allLogs,
+    };
   });
 }
 
@@ -2941,21 +3147,32 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
     let bulkData: any = null;
     if (bulkRows.length > 0) {
       const bRow = bulkRows[0];
-      let curr = Number(bRow.billCurrRead ?? bRow.rCurrReading ?? bRow.bmCurrReading ?? 0);
+      const exactCurr = bRow.rCurrReading != null ? Number(bRow.rCurrReading) : null;
+      const exactPrev = bRow.rPrevReading != null ? Number(bRow.rPrevReading) : null;
+
+      let curr: number;
       let prev: number;
 
-      if (bRow.billPrevRead != null) {
-        prev = Number(bRow.billPrevRead);
-      } else if (bRow.rPrevReading != null && Number(bRow.rPrevReading) !== Number(bRow.rCurrReading) && Number(bRow.rPrevReading) > 0) {
-        prev = Number(bRow.rPrevReading);
-      } else if (bRow.priorReading != null) {
-        prev = Number(bRow.priorReading);
-      } else if (bRow.lastBillCurr != null) {
-        prev = Number(bRow.lastBillCurr);
-      } else if (Number(bRow.bmPrevReading ?? 0) !== Number(bRow.bmCurrReading ?? 0)) {
-        prev = Number(bRow.bmPrevReading);
+      // Exact reading from bulk_meter_readings for that bill period takes highest priority
+      if (exactCurr !== null) {
+        curr = exactCurr;
+        if (exactPrev !== null) {
+          prev = exactPrev;
+        } else if (bRow.priorReading != null) {
+          prev = Number(bRow.priorReading);
+        } else if (bRow.billPrevRead != null) {
+          prev = Number(bRow.billPrevRead);
+        } else if (bRow.lastBillCurr != null) {
+          prev = Number(bRow.lastBillCurr);
+        } else {
+          prev = Number(bRow.bmPrevReading ?? curr);
+        }
+      } else if (bRow.billCurrRead != null) {
+        curr = Number(bRow.billCurrRead);
+        prev = Number(bRow.billPrevRead ?? bRow.priorReading ?? bRow.bmPrevReading ?? curr);
       } else {
-        prev = curr;
+        curr = Number(bRow.bmCurrReading ?? 0);
+        prev = Number(bRow.bmPrevReading ?? curr);
       }
 
       bulkData = {
@@ -2967,6 +3184,8 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
         sewerageConnection: bRow.sewerage_connection || 'No',
         previousReading: prev,
         currentReading: curr,
+        readingDate: bRow.readingDate || null,
+        hasExactRecord: exactCurr !== null,
         billId: bRow.billId,
         billStatus: bRow.billStatus,
         billAmount: bRow.billAmount ? Number(bRow.billAmount) : null,
@@ -2985,6 +3204,8 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
         sewerageConnection: bm.sewerage_connection || 'No',
         previousReading: Number(bm.previousReading || 0),
         currentReading: Number(bm.currentReading || 0),
+        readingDate: null,
+        hasExactRecord: false,
         billId: null,
         billStatus: null,
         billAmount: null,
@@ -3053,21 +3274,33 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
     const subRows: any[] = await query(subSql, [startDate, endDate, monthYear, resolvedKey]);
 
     const assignedCustomers = subRows.map((row: any) => {
-      let curr = Number(row.billCurrRead ?? row.rCurrReading ?? row.icCurrReading ?? 0);
+      let curr: number;
       let prev: number;
 
-      if (row.billPrevRead != null) {
-        prev = Number(row.billPrevRead);
-      } else if (row.rPrevReading != null && Number(row.rPrevReading) !== Number(row.rCurrReading) && Number(row.rPrevReading) > 0) {
-        prev = Number(row.rPrevReading);
-      } else if (row.priorReading != null) {
-        prev = Number(row.priorReading);
-      } else if (row.lastMonthCurr != null) {
-        prev = Number(row.lastMonthCurr);
-      } else if (Number(row.icPrevReading ?? 0) !== Number(row.icCurrReading ?? 0)) {
-        prev = Number(row.icPrevReading);
+      // Exact reading from individual_customer_readings for that period takes highest priority
+      if (row.rCurrReading != null) {
+        curr = Number(row.rCurrReading);
+        prev = row.rPrevReading != null
+          ? Number(row.rPrevReading)
+          : (row.priorReading != null
+              ? Number(row.priorReading)
+              : (row.billPrevRead != null
+                  ? Number(row.billPrevRead)
+                  : (row.lastMonthCurr != null
+                      ? Number(row.lastMonthCurr)
+                      : Number(row.icPrevReading ?? curr))));
+      } else if (row.billCurrRead != null) {
+        curr = Number(row.billCurrRead);
+        prev = row.billPrevRead != null
+          ? Number(row.billPrevRead)
+          : (row.priorReading != null
+              ? Number(row.priorReading)
+              : (row.lastMonthCurr != null
+                  ? Number(row.lastMonthCurr)
+                  : Number(row.icPrevReading ?? curr)));
       } else {
-        prev = curr;
+        curr = Number(row.icCurrReading ?? 0);
+        prev = Number(row.icPrevReading ?? curr);
       }
 
       return {
@@ -3078,6 +3311,8 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
         sewerageConnection: row.sewerageConnection || 'No',
         previous: prev,
         current: curr,
+        hasExactRecord: row.rCurrReading != null,
+        readingDate: row.readingDate || null,
         billId: row.billId,
         billStatus: row.billStatus,
         billAmount: row.billAmount ? Number(row.billAmount) : null
@@ -3094,7 +3329,126 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
 export async function getAssignedCustomerReadingsAction(bulkMeterId: string, monthYear: string) {
   return await wrap(async () => {
     const res = await getBulkAndSubmeterPeriodReadingsAction(bulkMeterId, monthYear);
-    return res.assignedCustomers || [];
+    const list: any = [...(res.assignedCustomers || [])];
+    list.bulkReading = res.bulkMeter ? {
+      previous: res.bulkMeter.previousReading,
+      current: res.bulkMeter.currentReading,
+      readingDate: res.bulkMeter.readingDate || null,
+      hasExactRecord: res.bulkMeter.hasExactRecord ?? false,
+    } : null;
+    return list;
+  });
+}
+
+export async function getExactPeriodReadingsAction(params: {
+  customerKey: string;
+  isBulk: boolean;
+  monthYear: string;
+}) {
+  return await wrap(async () => {
+    const { customerKey, isBulk, monthYear } = params;
+    if (isBulk) {
+      const res = await getBulkAndSubmeterPeriodReadingsAction(customerKey, monthYear);
+      return {
+        isBulk: true,
+        monthYear,
+        bulkReading: res.bulkMeter ? {
+          previousReading: res.bulkMeter.previousReading,
+          currentReading: res.bulkMeter.currentReading,
+          hasExactRecord: res.bulkMeter.hasExactRecord ?? false,
+          readingDate: res.bulkMeter.readingDate || null,
+        } : null,
+        assignedCustomers: res.assignedCustomers || [],
+      };
+    } else {
+      const [year, month] = monthYear.split('-').map(Number);
+      const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+      const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
+
+      const rows: any[] = await query(`
+        SELECT 
+          r."PREVIOUS_READING" as "rPrevReading",
+          r."METER_READING" as "rCurrReading",
+          r."READING_DATE" as "readingDate",
+          prev_r."METER_READING" as "priorReading",
+          b."PREVREAD" as "billPrevRead",
+          b."CURRREAD" as "billCurrRead",
+          ic."previousReading" as "icPrevReading",
+          ic."currentReading" as "icCurrReading"
+        FROM individual_customers ic
+        LEFT JOIN LATERAL (
+          SELECT "PREVIOUS_READING", "METER_READING", "READING_DATE"
+          FROM individual_customer_readings
+          WHERE "CUST_KEY" = ic."customerKeyNumber"
+            AND deleted_at IS NULL
+            AND (
+              ("READING_DATE" >= $1 AND "READING_DATE" < $2)
+              OR (TO_CHAR("READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') = $3)
+            )
+          ORDER BY "READING_DATE" DESC LIMIT 1
+        ) r ON true
+        LEFT JOIN LATERAL (
+          SELECT "METER_READING"
+          FROM individual_customer_readings
+          WHERE "CUST_KEY" = ic."customerKeyNumber"
+            AND deleted_at IS NULL
+            AND "READING_DATE" < COALESCE(r."READING_DATE", $1::timestamptz)
+          ORDER BY "READING_DATE" DESC LIMIT 1
+        ) prev_r ON true
+        LEFT JOIN bills b ON ic."customerKeyNumber" = b.individual_customer_id
+          AND b.month_year = $3
+          AND b.status != 'Reversed'
+        WHERE LOWER(TRIM(ic."customerKeyNumber")) = LOWER(TRIM($4))
+          AND ic.deleted_at IS NULL
+        LIMIT 1
+      `, [startDate, endDate, monthYear, customerKey]);
+
+      if (rows.length > 0) {
+        const row = rows[0];
+        let curr: number;
+        let prev: number;
+
+        if (row.rCurrReading != null) {
+          curr = Number(row.rCurrReading);
+          prev = row.rPrevReading != null
+            ? Number(row.rPrevReading)
+            : (row.priorReading != null
+                ? Number(row.priorReading)
+                : (row.billPrevRead != null
+                    ? Number(row.billPrevRead)
+                    : Number(row.icPrevReading ?? curr)));
+        } else if (row.billCurrRead != null) {
+          curr = Number(row.billCurrRead);
+          prev = row.billPrevRead != null
+            ? Number(row.billPrevRead)
+            : (row.priorReading != null
+                ? Number(row.priorReading)
+                : Number(row.icPrevReading ?? curr));
+        } else {
+          curr = Number(row.icCurrReading ?? 0);
+          prev = Number(row.icPrevReading ?? curr);
+        }
+
+        return {
+          isBulk: false,
+          monthYear,
+          individualReading: {
+            currentReading: curr,
+            previousReading: prev,
+            hasExactRecord: row.rCurrReading != null,
+            readingDate: row.readingDate || null,
+          },
+          assignedCustomers: [],
+        };
+      }
+
+      return {
+        isBulk: false,
+        monthYear,
+        individualReading: null,
+        assignedCustomers: [],
+      };
+    }
   });
 }
 
@@ -3461,6 +3815,9 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
         );
         const existingSnapshot = existingSnapshotRes.rows[0]?.snapshot_data || {};
 
+        // Detect whether this is a correction draft (notes contain "Correction of")
+        const isCorrectionDraft = typeof currentBillRecord?.notes === 'string' && currentBillRecord.notes.includes('Correction of');
+
         await dbUpdateBill(targetBillId, {
           CURRREAD: payload.bulkCurrRead,
           PREVREAD: payload.bulkPrevRead,
@@ -3474,6 +3831,9 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
           maintenance_fee: bulkCalc.maintenanceFee,
           sanitation_fee: bulkCalc.sanitationFee,
           vat_amount: bulkCalc.vatAmount,
+          // Correction drafts must always be Unpaid after rebilling so the new
+          // amount is collectable. Regular drafts also default to Unpaid.
+          ...(isCorrectionDraft ? { payment_status: 'Unpaid', amount_paid: 0 } : { payment_status: 'Unpaid' }),
           snapshot_data: {
             ...existingSnapshot,
             totalIndividualUsage: totalIndivUsage,
@@ -3485,11 +3845,63 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
           from_status: currentBillRecord?.status || 'Draft',
           to_status: currentBillRecord?.status || 'Draft',
           changed_by: session.id,
-          reason: `Meter readings updated. Bulk reading: ${currentBillRecord?.PREVREAD}/${currentBillRecord?.CURRREAD} -> ${payload.bulkPrevRead}/${payload.bulkCurrRead}`
+          reason: `Meter readings updated${isCorrectionDraft ? ' (correction rebill)' : ''}. Bulk reading: ${currentBillRecord?.PREVREAD}/${currentBillRecord?.CURRREAD} -> ${payload.bulkPrevRead}/${payload.bulkCurrRead}`
         }, client);
+
+        await dbSyncAgingForCustomer(bulkMeterId, client);
+
+        // ── CRITICAL FIX ─────────────────────────────────────────────────────────
+        // dbSyncAgingForCustomer treats ALL Draft-status bills as "voided" and
+        // overwrites THISMONTHBILLAMT → 0, TOTALBILLAMOUNT → 0, and preserves any
+        // previously-Paid status via CASE WHEN payment_status = 'Paid'.
+        //
+        // For a correction draft that was just rebilled, we must re-apply the
+        // freshly-calculated amounts AFTER the aging sync so the bill displays the
+        // correct charge and is collectable by the approval workflow.
+        // Note: dbSyncAgingForCustomer now also has a CASE WHEN notes LIKE '%Correction of%'
+        // guard, but this raw UPDATE is a belt-and-suspenders guarantee.
+        // ─────────────────────────────────────────────────────────────────────────
+        if (isCorrectionDraft) {
+          await client.query(
+            `UPDATE bills
+             SET "THISMONTHBILLAMT" = $1,
+                 "TOTALBILLAMOUNT"  = $2,
+                 "CURRREAD"         = $3,
+                 "PREVREAD"         = $4,
+                 "CONS"             = $5,
+                 difference_usage   = $6,
+                 base_water_charge  = $7,
+                 sewerage_charge    = $8,
+                 meter_rent         = $9,
+                 maintenance_fee    = $10,
+                 sanitation_fee     = $11,
+                 vat_amount         = $12,
+                 payment_status     = 'Unpaid'::payment_status,
+                 amount_paid        = 0
+             WHERE id = $13 AND month_year = $14`,
+            [
+              bulkCalc.totalBill,
+              bulkCalc.totalBill + currentOutstanding,
+              payload.bulkCurrRead,
+              payload.bulkPrevRead,
+              Math.max(0, bulkUsage),
+              bulkCalc.effectiveUsage,
+              bulkCalc.baseWaterCharge,
+              bulkCalc.sewerageCharge,
+              bulkCalc.meterRent,
+              bulkCalc.maintenanceFee,
+              bulkCalc.sanitationFee,
+              bulkCalc.vatAmount,
+              targetBillId,
+              monthYear,
+            ]
+          );
+        }
+      } else {
+        // No bill found — still sync aging for customer
+        await dbSyncAgingForCustomer(bulkMeterId, client);
       }
 
-      await dbSyncAgingForCustomer(bulkMeterId, client);
       return { success: true };
     });
   });
@@ -5286,6 +5698,59 @@ export async function getUnsettledBillsAction(params: {
     return { success: true, bills, total };
   });
 }
+
+/**
+ * Returns aggregate overdue aging bucket totals across ALL months for all Posted+Unpaid bills.
+ * The aging widget must NOT be filtered by the selected month because overdue debt accumulates
+ * across prior months — a single-month view always shows ETB 0 for current-month bills.
+ */
+export async function getAgingSummaryAction(branchId?: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasGlobalAccess = perms.includes('*') || perms.includes('all') ||
+      perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') ||
+      perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') ||
+      perms.includes('bill:view_unpaid') || perms.includes('reports_view');
+
+    const effectiveBranchId = hasGlobalAccess ? branchId : (session.branchId || branchId);
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    let sql = `
+      SELECT
+        COALESCE(SUM(debit_30),     0)::numeric AS zero_to_thirty,
+        COALESCE(SUM(debit_30_60),  0)::numeric AS thirty_to_sixty,
+        COALESCE(SUM(debit_60),     0)::numeric AS sixty_plus,
+        COALESCE(SUM("OUTSTANDINGAMT"), 0)::numeric AS total_outstanding,
+        COUNT(*)::int AS bill_count
+      FROM bills
+      WHERE status = 'Posted'
+        AND (LOWER(TRIM(COALESCE(payment_status::text, ''))) != 'paid' OR payment_status IS NULL)
+        AND deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    if (normalizedBranchId) {
+      params.push(normalizedBranchId);
+      sql += ` AND branch_id = $${params.length}`;
+    }
+
+    const { query: dbQuery } = await import('./db');
+    const rows: any = await dbQuery(sql, params);
+    const row = rows[0] || {};
+
+    return {
+      zeroToThirty:  Number(row.zero_to_thirty  || 0),
+      thirtyToSixty: Number(row.thirty_to_sixty || 0),
+      sixtyPlus:     Number(row.sixty_plus      || 0),
+      totalOutstanding: Number(row.total_outstanding || 0),
+      billCount:     Number(row.bill_count || 0),
+    };
+  });
+}
+
+
 
 export async function getPaidBillsAction(params: {
   page: number;
