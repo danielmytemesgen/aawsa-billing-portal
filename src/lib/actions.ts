@@ -4222,7 +4222,8 @@ export async function createPaymentAction(payment: PaymentInsert) {
         if (bill) {
           customerKey = bill.CUSTOMERKEY || bill.individual_customer_id || null;
           const billTotal = Number(bill.TOTALBILLAMOUNT || 0);
-          const newAmountPaid = Number(payment.amount_paid || 0);
+          const existingPaid = Number(bill.amount_paid || 0);
+          const newAmountPaid = existingPaid + Number(payment.amount_paid || 0);
           const newPaymentStatus = billTotal > 0 && newAmountPaid >= billTotal - 0.01 ? 'Paid' : 'Unpaid';
           await dbUpdateBill(payment.bill_id, {
             amount_paid: newAmountPaid,

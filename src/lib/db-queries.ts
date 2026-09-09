@@ -4239,14 +4239,16 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     // replacement bill so the payment is applied to the live collectable bill — not the voided one.
     const followCorrectionChain = async (bill: any): Promise<any> => {
         if (!bill || bill.status !== 'Reversed') return bill;
-        // Search for an active replacement bill by CORR- number or notes reference
-        const searchCorrNumber = `CORR-${bill.bill_number || ''}`;
+        const bNum = bill.bill_number || bill.BILLKEY || '';
+        const searchCorrNumber = `CORR-${bNum}`;
         const replRows: any = await query(
             `SELECT * FROM bills
              WHERE (
                  bill_number = $1
+                 OR "BILLKEY" = $1
                  OR notes LIKE $2
                  OR notes LIKE $3
+                 OR notes LIKE $4
              )
                AND status != 'Reversed'
                AND deleted_at IS NULL
@@ -4254,7 +4256,8 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
              LIMIT 1`,
             [
                 searchCorrNumber,
-                `%Correction of ${bill.bill_number}%`,
+                `%Correction of ${bill.bill_number || bNum}%`,
+                `%Correction of ${bill.BILLKEY || bNum}%`,
                 `%${bill.id}%`,
             ]
         );
@@ -4610,6 +4613,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
 
             // Update targetBill in-memory state so subsequent duplicate rows in the same CSV are recognized as already updated
             targetBill.payment_status = 'Paid';
+            targetBill.amount_paid = amountPaid;
             targetBill.reconciliation_status = reconStatus;
             targetBill.bank_ref = bankRef;
             processedBillIds.add(billIdent);

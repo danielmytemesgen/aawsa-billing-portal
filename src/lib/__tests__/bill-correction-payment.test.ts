@@ -77,6 +77,14 @@ describe('followCorrectionChain (Bottleneck 2 fix)', () => {
     expect(result?.bill_number).toBe('CORR-BILL-1001');
     expect(result?.status).toBe('Posted');
   });
+  it('redirects when identified via BILLKEY', () => {
+    const result = simulateFollowCorrectionChain(
+      { status: 'Reversed', bill_number: 'BK-55997177', id: 'orig-bk' },
+      { status: 'Posted', bill_number: 'CORR-BK-55997177', id: 'corr-bk' }
+    );
+    expect(result?.bill_number).toBe('CORR-BK-55997177');
+    expect(result?.status).toBe('Posted');
+  });
   it('returns non-reversed bills unchanged', () => {
     const result = simulateFollowCorrectionChain({ status: 'Posted', bill_number: 'BILL-2001', id: 'live-id' }, null);
     expect(result?.bill_number).toBe('BILL-2001');
@@ -94,8 +102,8 @@ describe('followCorrectionChain (Bottleneck 2 fix)', () => {
 // createPaymentAction bill stamping -- unit test logic in pure JS
 // ---------------------------------------------------------------------------
 
-function simulateBillStamping(billTotal: number, paymentAmount: number) {
-  const newAmountPaid = paymentAmount;
+function simulateBillStamping(billTotal: number, paymentAmount: number, existingPaid: number = 0) {
+  const newAmountPaid = existingPaid + paymentAmount;
   const newPaymentStatus: 'Paid' | 'Unpaid' = billTotal > 0 && newAmountPaid >= billTotal - 0.01 ? 'Paid' : 'Unpaid';
   return { newAmountPaid, newPaymentStatus };
 }
@@ -106,6 +114,11 @@ describe('createPaymentAction bill stamping (Bottleneck 4 fix)', () => {
   });
   it('stamps Unpaid when payment does not cover the full bill', () => {
     expect(simulateBillStamping(1200, 800).newPaymentStatus).toBe('Unpaid');
+  });
+  it('stamps Paid when second partial payment completes the balance', () => {
+    const res = simulateBillStamping(1200, 400, 800);
+    expect(res.newAmountPaid).toBe(1200);
+    expect(res.newPaymentStatus).toBe('Paid');
   });
   it('stamps Paid within 0.01 tolerance', () => {
     expect(simulateBillStamping(1200, 1199.995).newPaymentStatus).toBe('Paid');
