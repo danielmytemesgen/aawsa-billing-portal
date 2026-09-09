@@ -16,14 +16,16 @@ export function formatDate(date: Date | string | number | null | undefined): str
   });
 }
 
-export const generateBulkMeterKeys = (existingMeters: any[]) => {
+export const generateBulkMeterKeys = (existingMeters: any[] = []) => {
   let customerKey = "";
   let instKey = "";
   let isUnique = false;
   let attempts = 0;
   while (!isUnique && attempts < 10) {
-    customerKey = `BM-${Math.floor(10000000 + Math.random() * 90000000)}`;
-    instKey = `INST-${Math.floor(100000 + Math.random() * 900000)}`;
+    const timeHex = Date.now().toString(36).slice(-4).toUpperCase();
+    const randNum = Math.floor(100000 + Math.random() * 900000);
+    customerKey = `BM-${timeHex}${randNum}`;
+    instKey = `INST-${timeHex}${Math.floor(1000 + Math.random() * 9000)}`;
     const keyExists = existingMeters.some(m => m.customerKeyNumber === customerKey);
     const instExists = existingMeters.some(m => m.instKey === instKey);
     if (!keyExists && !instExists) {
@@ -31,17 +33,24 @@ export const generateBulkMeterKeys = (existingMeters: any[]) => {
     }
     attempts++;
   }
+  if (!isUnique) {
+    const fallbackHex = Math.random().toString(36).substring(2, 8).toUpperCase();
+    customerKey = `BM-${Date.now().toString(36).toUpperCase()}-${fallbackHex}`;
+    instKey = `INST-${Date.now().toString(36).toUpperCase()}-${fallbackHex.slice(0, 4)}`;
+  }
   return { customerKey, instKey };
 };
 
-export const generateCustomerKeys = (existingCustomers: any[]) => {
+export const generateCustomerKeys = (existingCustomers: any[] = []) => {
   let customerKey = "";
   let instKey = "";
   let isUnique = false;
   let attempts = 0;
   while (!isUnique && attempts < 10) {
-    customerKey = `IND-${Math.floor(10000000 + Math.random() * 90000000)}`;
-    instKey = `INST-${Math.floor(100000 + Math.random() * 900000)}`;
+    const timeHex = Date.now().toString(36).slice(-4).toUpperCase();
+    const randNum = Math.floor(100000 + Math.random() * 900000);
+    customerKey = `IND-${timeHex}${randNum}`;
+    instKey = `INST-${timeHex}${Math.floor(1000 + Math.random() * 9000)}`;
     const keyExists = existingCustomers.some(c => c.customerKeyNumber === customerKey);
     const instExists = existingCustomers.some(c => c.instKey === instKey);
     if (!keyExists && !instExists) {
@@ -49,5 +58,11 @@ export const generateCustomerKeys = (existingCustomers: any[]) => {
     }
     attempts++;
   }
+  if (!isUnique) {
+    const fallbackHex = Math.random().toString(36).substring(2, 8).toUpperCase();
+    customerKey = `IND-${Date.now().toString(36).toUpperCase()}-${fallbackHex}`;
+    instKey = `INST-${Date.now().toString(36).toUpperCase()}-${fallbackHex.slice(0, 4)}`;
+  }
   return { customerKey, instKey };
 };
+

@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Droplets, LogOut, FileText, User, LayoutDashboard, Menu } from "lucide-react";
+import { Droplets, LogOut, FileText, User, LayoutDashboard, Menu, LifeBuoy } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 
 interface CustomerLayoutProps {
@@ -17,6 +17,8 @@ const PAGE_NAME_MAP: Record<string, string> = {
     '/customer/bills': 'Bills',
     '/customer/readings': 'Reading History',
     '/customer/account': 'Account',
+    '/customer/support': 'Customer Support',
+    '/customer/support/new': 'Submit Ticket',
 };
 
 export default function CustomerLayout({ children }: CustomerLayoutProps) {
@@ -145,6 +147,12 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
                                                         Reading History
                                                     </Button>
                                                 </Link>
+                                                <Link href="/customer/support" className="w-full">
+                                                    <Button variant="ghost" className="w-full justify-start gap-3 text-blue-700 font-semibold bg-blue-50/50">
+                                                        <LifeBuoy className="h-5 w-5" />
+                                                        Support & Help
+                                                    </Button>
+                                                </Link>
                                             </nav>
                                             <div className="mt-auto border-t pt-4">
                                                 <div className="mb-4">
@@ -223,6 +231,12 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
                             <Button variant="ghost" className="gap-2 rounded-none border-b-2 border-transparent hover:border-blue-600 hover:bg-blue-100/50">
                                 <Droplets className="h-4 w-4 text-blue-700" />
                                 <span className="text-blue-900 font-medium">Reading History</span>
+                            </Button>
+                        </Link>
+                        <Link href="/customer/support">
+                            <Button variant="ghost" className="gap-2 rounded-none border-b-2 border-transparent hover:border-blue-600 hover:bg-blue-100/50">
+                                <LifeBuoy className="h-4 w-4 text-blue-700" />
+                                <span className="text-blue-900 font-medium">Support & Complaints</span>
                             </Button>
                         </Link>
                     </div>

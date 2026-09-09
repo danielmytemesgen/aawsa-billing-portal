@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar, CalendarSync } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar, CalendarSync, WifiOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
@@ -18,12 +18,6 @@ import {
   initializeCustomers,
   getBulkMeters,
   initializeBulkMeters,
-  getIndividualCustomerReadings,
-  initializeIndividualCustomerReadings,
-  subscribeToIndividualCustomerReadings,
-  getBulkMeterReadings,
-  initializeBulkMeterReadings,
-  subscribeToBulkMeterReadings,
   subscribeToCustomers,
   subscribeToBulkMeters,
   getFaultCodes,
@@ -55,7 +49,12 @@ import { PERMISSIONS } from "@/lib/constants/auth";
 import { DatReadingExportDialog } from "@/features/export/components/dat-reading-export-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { ReadingPeriodToggle } from "@/features/admin/components/reading-period-toggle";
-import { getReadingPeriodDetailsAction, ReadingPeriodDetails } from "@/lib/actions";
+import { 
+  getReadingPeriodDetailsAction, 
+  ReadingPeriodDetails,
+  getPaginatedIndividualReadingsAction,
+  getPaginatedBulkReadingsAction
+} from "@/lib/actions";
 
 interface User {
   id?: string;
@@ -90,6 +89,10 @@ export default function AdminMeterReadingsPage() {
 
   const [individualReadings, setIndividualReadings] = React.useState<DisplayReading[]>([]);
   const [bulkReadings, setBulkReadings] = React.useState<DisplayReading[]>([]);
+  const [individualTotalCount, setIndividualTotalCount] = React.useState(0);
+  const [bulkTotalCount, setBulkTotalCount] = React.useState(0);
+  const [isTableLoading, setIsTableLoading] = React.useState(false);
+
   const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
   const [allRoutes, setAllRoutes] = React.useState<Route[]>([]);
   const [allStaff, setAllStaff] = React.useState<any[]>([]);
@@ -97,73 +100,82 @@ export default function AdminMeterReadingsPage() {
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
 
   const [individualPage, setIndividualPage] = React.useState(0);
   const [individualRowsPerPage, setIndividualRowsPerPage] = React.useState(10);
   const [bulkPage, setBulkPage] = React.useState(0);
   const [bulkRowsPerPage, setBulkRowsPerPage] = React.useState(10);
   const [activeTab, setActiveTab] = React.useState("individual");
+  const [selectedMonthYear, setSelectedMonthYear] = React.useState<string>(format(new Date(), "yyyy-MM"));
 
+  // Debounce search input
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setIndividualPage(0);
+      setBulkPage(0);
+    }, 350);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
 
-  const combineAndSortReadings = React.useCallback(() => {
-    const individualReadingsRaw = getIndividualCustomerReadings();
-    const bulkReadingsRaw = getBulkMeterReadings();
-    const customers = getCustomers();
-    const bulkMeters = getBulkMeters();
-    const branches = getBranches();
-    const staffMembers = getStaffMembers();
-
-    const customerMap = new Map<string, IndividualCustomer>(customers.map(c => [c.customerKeyNumber, c]));
-    const bulkMeterMap = new Map<string, BulkMeter>(bulkMeters.map(bm => [bm.customerKeyNumber, bm]));
-    const branchMap = new Map<string, string>(branches.map(b => [b.id, b.name]));
-    const staffMap = new Map<string, string>(staffMembers.map(s => [s.id, s.name]));
-
-    const displayedIndividualReadings: DisplayReading[] = individualReadingsRaw.map(r => {
-      const customer = r.individualCustomerId ? customerMap.get(r.individualCustomerId) : undefined;
-      const bName = (customer?.branchId ? branchMap.get(customer.branchId) : undefined) || (customer as any)?.branchName || (r as any).branchName;
-      const rName = (r as any).readerStaffId ? (staffMap.get((r as any).readerStaffId) || (r as any).readerStaffId) : "System/Admin";
-      return {
-        id: r.id,
-        meterId: r.individualCustomerId,
-        meterType: 'individual' as const,
-        meterIdentifier: customer ? `${customer.name} (M: ${customer.meterNumber})` : `Cust. ID: ${r.individualCustomerId}`,
-        readingValue: r.readingValue,
-        previousReading: r.previousReading || 0,
-        readingDate: r.readingDate,
-        monthYear: r.monthYear,
-        notes: r.notes,
-        faultCode: r.faultCode,
-        branchName: bName || undefined,
-        readerName: rName,
-        hasPhoto: (r as any).hasPhoto,
-      };
-    }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
-
-    const displayedBulkReadings: DisplayReading[] = bulkReadingsRaw.map(r => {
-      const bulkMeter = r.CUSTOMERKEY ? bulkMeterMap.get(r.CUSTOMERKEY) : undefined;
-      const bName = (bulkMeter?.branchId ? branchMap.get(bulkMeter.branchId) : undefined) || (bulkMeter as any)?.branchName || (r as any).branchName;
-      const rName = (r as any).readerStaffId ? (staffMap.get((r as any).readerStaffId) || (r as any).readerStaffId) : "System/Admin";
-      return {
-        id: r.id,
-        meterId: r.CUSTOMERKEY,
-        meterType: 'bulk' as const,
-        meterIdentifier: bulkMeter ? `${bulkMeter.name} (M: ${bulkMeter.meterNumber})` : `BM ID: ${r.CUSTOMERKEY}`,
-        readingValue: r.readingValue,
-        previousReading: r.previousReading || 0,
-        readingDate: r.readingDate,
-        monthYear: r.monthYear,
-        notes: r.notes,
-        faultCode: r.faultCode,
-        branchName: bName || undefined,
-        readerName: rName,
-        hasPhoto: (r as any).hasPhoto,
-      };
-    }).sort((a, b) => new Date(b.readingDate).getTime() - new Date(a.readingDate).getTime());
-
-    setIndividualReadings(displayedIndividualReadings);
-    setBulkReadings(displayedBulkReadings);
-    setFaultCodesForForm(getFaultCodes());
+  const fetchMonthTotals = React.useCallback(async (month: string) => {
+    try {
+      const [indiRes, bulkRes] = await Promise.all([
+        getPaginatedIndividualReadingsAction({ page: 1, pageSize: 1, monthYear: month }),
+        getPaginatedBulkReadingsAction({ page: 1, pageSize: 1, monthYear: month }),
+      ]);
+      if (indiRes?.data) setIndividualTotalCount(indiRes.data.totalCount);
+      if (bulkRes?.data) setBulkTotalCount(bulkRes.data.totalCount);
+    } catch (err) {
+      console.warn("Failed to fetch month totals", err);
+    }
   }, []);
+
+  const fetchReadings = React.useCallback(async () => {
+    setIsTableLoading(true);
+    try {
+      if (activeTab === 'individual') {
+        const res = await getPaginatedIndividualReadingsAction({
+          page: individualPage + 1,
+          pageSize: individualRowsPerPage,
+          searchTerm: debouncedSearch || undefined,
+          monthYear: selectedMonthYear || undefined,
+        });
+        if (res?.data) {
+          setIndividualReadings(res.data.rows);
+          if (debouncedSearch) {
+            setIndividualTotalCount(res.data.totalCount);
+          }
+        }
+      } else if (activeTab === 'bulk') {
+        const res = await getPaginatedBulkReadingsAction({
+          page: bulkPage + 1,
+          pageSize: bulkRowsPerPage,
+          searchTerm: debouncedSearch || undefined,
+          monthYear: selectedMonthYear || undefined,
+        });
+        if (res?.data) {
+          setBulkReadings(res.data.rows);
+          if (debouncedSearch) {
+            setBulkTotalCount(res.data.totalCount);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load paginated readings", err);
+    } finally {
+      setIsTableLoading(false);
+    }
+  }, [activeTab, individualPage, individualRowsPerPage, bulkPage, bulkRowsPerPage, debouncedSearch, selectedMonthYear]);
+
+  React.useEffect(() => {
+    fetchReadings();
+  }, [fetchReadings]);
+
+  React.useEffect(() => {
+    fetchMonthTotals(selectedMonthYear);
+  }, [selectedMonthYear, fetchMonthTotals]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -180,8 +192,6 @@ export default function AdminMeterReadingsPage() {
     Promise.all([
       initializeCustomers(true),
       initializeBulkMeters(true),
-      initializeIndividualCustomerReadings(true),
-      initializeBulkMeterReadings(true),
       initializeFaultCodes(true),
       initializeBranches(true),
       fetchRoutes(),
@@ -195,9 +205,14 @@ export default function AdminMeterReadingsPage() {
       setAllRoutes(getRoutes());
       setAllStaff(getStaffMembers());
       setAllBills(getBills());
-      combineAndSortReadings();
+      setFaultCodesForForm(getFaultCodes());
       getReadingPeriodDetailsAction().then(details => {
-        if (details && isMounted) setPeriodDetails(details);
+        if (details && isMounted) {
+          setPeriodDetails(details);
+          if (details.startDate) {
+            setSelectedMonthYear(details.startDate.slice(0, 7));
+          }
+        }
       }).catch(e => console.warn("Failed to load period details for anomalies", e));
       setIsLoading(false);
     }).catch(error => {
@@ -207,21 +222,17 @@ export default function AdminMeterReadingsPage() {
       setIsLoading(false);
     });
 
-    const unsubCust = subscribeToCustomers((updated) => { if (isMounted) { setAllCustomers(updated); combineAndSortReadings(); } });
-    const unsubBM = subscribeToBulkMeters((updated) => { if (isMounted) { setAllBulkMeters(updated); combineAndSortReadings(); } });
-    const unsubIndiReadings = subscribeToIndividualCustomerReadings(() => { if (isMounted) combineAndSortReadings(); });
-    const unsubBulkReadings = subscribeToBulkMeterReadings(() => { if (isMounted) combineAndSortReadings(); });
-    const unsubFaultCodes = subscribeToFaultCodes(() => { if (isMounted) combineAndSortReadings(); });
+    const unsubCust = subscribeToCustomers((updated) => { if (isMounted) setAllCustomers(updated); });
+    const unsubBM = subscribeToBulkMeters((updated) => { if (isMounted) setAllBulkMeters(updated); });
+    const unsubFaultCodes = subscribeToFaultCodes(() => { if (isMounted) setFaultCodesForForm(getFaultCodes()); });
 
     return () => {
       isMounted = false;
       unsubCust();
       unsubBM();
-      unsubIndiReadings();
-      unsubBulkReadings();
       unsubFaultCodes();
     };
-  }, [toast, combineAndSortReadings]);
+  }, [toast]);
 
   React.useEffect(() => {
     const nextAnomalies = [] as {
@@ -343,6 +354,8 @@ export default function AdminMeterReadingsPage() {
           description: `Reading for selected meter has been successfully recorded.`,
         });
         setIsModalOpen(false);
+        fetchReadings();
+        fetchMonthTotals(selectedMonthYear);
       } else {
         toast({
           variant: "destructive",
@@ -389,49 +402,30 @@ export default function AdminMeterReadingsPage() {
     URL.revokeObjectURL(url);
   }, []);
 
-  // Determine the most recent month present across both lists
-  const mostRecentMonthYear = React.useMemo(() => {
-    const allMonths = [
-      ...individualReadings.map(r => r.monthYear),
-      ...bulkReadings.map(r => r.monthYear),
-    ].filter(Boolean);
-    if (allMonths.length === 0) return format(new Date(), "yyyy-MM");
-    return allMonths.sort().reverse()[0];
-  }, [individualReadings, bulkReadings]);
+  const handleExportCsv = async (type: 'individual' | 'bulk') => {
+    try {
+      toast({ title: "Exporting readings...", description: "Preparing CSV export..." });
+      const action = type === 'individual' ? getPaginatedIndividualReadingsAction : getPaginatedBulkReadingsAction;
+      const res = await action({
+        page: 1,
+        pageSize: 50000,
+        monthYear: selectedMonthYear || undefined,
+        searchTerm: debouncedSearch || undefined,
+      });
+      if (res?.data?.rows && res.data.rows.length > 0) {
+        exportReadingsToCSV(res.data.rows, `${type}-readings-${selectedMonthYear}.csv`);
+        toast({ title: "Export Complete", description: `Exported ${res.data.rows.length} records.` });
+      } else {
+        toast({ title: "No Readings", description: "No records found matching the export criteria." });
+      }
+    } catch (err) {
+      console.error("Export error", err);
+      toast({ variant: "destructive", title: "Export Failed", description: "Could not export meter readings." });
+    }
+  };
 
-  const filteredIndividualReadings = individualReadings.filter(reading => {
-    if (reading.monthYear !== mostRecentMonthYear) return false;
-    if (!searchTerm) return true;
-    const lowerSearchTerm = searchTerm.toLowerCase();
-    return reading.meterIdentifier.toLowerCase().includes(lowerSearchTerm) ||
-      String(reading.readingValue).includes(lowerSearchTerm) ||
-      reading.readingDate.includes(lowerSearchTerm) ||
-      reading.monthYear.includes(lowerSearchTerm);
-  });
-
-  const paginatedIndividualReadings = filteredIndividualReadings.slice(
-    individualPage * individualRowsPerPage,
-    individualPage * individualRowsPerPage + individualRowsPerPage
-  );
-
-  const filteredBulkReadings = bulkReadings.filter(reading => {
-    if (reading.monthYear !== mostRecentMonthYear) return false;
-    if (!searchTerm) return true;
-    const lowerSearchTerm = searchTerm.toLowerCase();
-    return reading.meterIdentifier.toLowerCase().includes(lowerSearchTerm) ||
-      String(reading.readingValue).includes(lowerSearchTerm) ||
-      reading.readingDate.includes(lowerSearchTerm) ||
-      reading.monthYear.includes(lowerSearchTerm);
-  });
-
-  const paginatedBulkReadings = filteredBulkReadings.slice(
-    bulkPage * bulkRowsPerPage,
-    bulkPage * bulkRowsPerPage + bulkRowsPerPage
-  );
-
-  const currentMonthYear = format(new Date(), "yyyy-MM");
-  const recentIndividualCount = individualReadings.filter(r => r.monthYear === currentMonthYear).length;
-  const recentBulkCount = bulkReadings.filter(r => r.monthYear === currentMonthYear).length;
+  const recentIndividualCount = individualTotalCount;
+  const recentBulkCount = bulkTotalCount;
 
   return (
     <div className="space-y-6">
@@ -466,7 +460,12 @@ export default function AdminMeterReadingsPage() {
               </Link>
             </div>
           )}
-          {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
+          {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || 
+            hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) || 
+            hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) || 
+            hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || 
+            hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || 
+            hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK)) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-200" disabled={isLoading && (allCustomers.length === 0 && allBulkMeters.length === 0)}>
@@ -476,7 +475,10 @@ export default function AdminMeterReadingsPage() {
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>Add New Reading</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {(hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || hasPermission(PERMISSIONS.METER_READINGS_CREATE)) && (
+                {(hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL) || 
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL)) && (
                   <DropdownMenuItem onSelect={() => setIsModalOpen(true)}>
                     <FileText className="mr-2 h-4 w-4" />
                     <span>Manual Entry</span>
@@ -527,6 +529,12 @@ export default function AdminMeterReadingsPage() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          <Link href="/admin/offline-metrics">
+            <Button variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50 gap-1.5 shadow-xs">
+              <WifiOff className="h-4 w-4 text-slate-500" />
+              <span className="hidden sm:inline">Offline Metrics</span>
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -665,13 +673,13 @@ export default function AdminMeterReadingsPage() {
             value="individual"
             className="rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
           >
-            Individual Readings ({filteredIndividualReadings.length})
+            Individual Readings ({individualTotalCount})
           </TabsTrigger>
           <TabsTrigger 
             value="bulk"
             className="rounded-lg data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
           >
-            Bulk Meter Readings ({filteredBulkReadings.length})
+            Bulk Meter Readings ({bulkTotalCount})
           </TabsTrigger>
         </TabsList>
         <TabsContent value="individual">
@@ -690,28 +698,25 @@ export default function AdminMeterReadingsPage() {
                 variant="outline"
                 size="sm"
                 className="shrink-0 border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 gap-1.5"
-                disabled={filteredIndividualReadings.length === 0}
-                onClick={() => exportReadingsToCSV(
-                  filteredIndividualReadings,
-                  `individual-readings-${mostRecentMonthYear}.csv`
-                )}
+                disabled={individualTotalCount === 0}
+                onClick={() => handleExportCsv('individual')}
               >
                 <FileDown className="h-4 w-4" />
-                Export CSV ({filteredIndividualReadings.length})
+                Export CSV ({individualTotalCount})
               </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
-              {isLoading && paginatedIndividualReadings.length === 0 ? (
-                <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
+              {isTableLoading && individualReadings.length === 0 ? (
+                <div className="mt-4 p-8 border rounded-md bg-muted/50 text-center text-muted-foreground">
                   Loading meter readings...
                 </div>
               ) : (
-                <MeterReadingsTable data={paginatedIndividualReadings} />
+                <MeterReadingsTable data={individualReadings} />
               )}
             </CardContent>
-            {filteredIndividualReadings.length > 0 && (
+            {individualTotalCount > 0 && (
               <TablePagination
-                count={filteredIndividualReadings.length}
+                count={individualTotalCount}
                 page={individualPage}
                 rowsPerPage={individualRowsPerPage}
                 onPageChange={setIndividualPage}
@@ -739,28 +744,25 @@ export default function AdminMeterReadingsPage() {
                 variant="outline"
                 size="sm"
                 className="shrink-0 border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 gap-1.5"
-                disabled={filteredBulkReadings.length === 0}
-                onClick={() => exportReadingsToCSV(
-                  filteredBulkReadings,
-                  `bulk-readings-${mostRecentMonthYear}.csv`
-                )}
+                disabled={bulkTotalCount === 0}
+                onClick={() => handleExportCsv('bulk')}
               >
                 <FileDown className="h-4 w-4" />
-                Export CSV ({filteredBulkReadings.length})
+                Export CSV ({bulkTotalCount})
               </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
-              {isLoading && paginatedBulkReadings.length === 0 ? (
-                <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
+              {isTableLoading && bulkReadings.length === 0 ? (
+                <div className="mt-4 p-8 border rounded-md bg-muted/50 text-center text-muted-foreground">
                   Loading meter readings...
                 </div>
               ) : (
-                <MeterReadingsTable data={paginatedBulkReadings} />
+                <MeterReadingsTable data={bulkReadings} />
               )}
             </CardContent>
-            {filteredBulkReadings.length > 0 && (
+            {bulkTotalCount > 0 && (
               <TablePagination
-                count={filteredBulkReadings.length}
+                count={bulkTotalCount}
                 page={bulkPage}
                 rowsPerPage={bulkRowsPerPage}
                 onPageChange={setBulkPage}
@@ -787,7 +789,10 @@ export default function AdminMeterReadingsPage() {
         )}
       </Tabs>
 
-      {hasPermission('meter_readings_create') && (
+      {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+        hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+        hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+        hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL)) && (
         <>
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogContent className="w-[95vw] max-w-[480px] max-h-[90vh] overflow-y-auto p-4 sm:p-6 custom-scrollbar">
@@ -826,10 +831,8 @@ export default function AdminMeterReadingsPage() {
             open={isShiftMonthModalOpen}
             onOpenChange={setIsShiftMonthModalOpen}
             onSuccess={() => {
-              Promise.all([
-                initializeIndividualCustomerReadings(true),
-                initializeBulkMeterReadings(true),
-              ]).then(() => combineAndSortReadings());
+              fetchReadings();
+              fetchMonthTotals(selectedMonthYear);
             }}
           />
 

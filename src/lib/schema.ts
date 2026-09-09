@@ -332,4 +332,92 @@ export const idempotencyKeys = pgTable('idempotency_keys', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 12. Support Tickets & Customer Service Module
+export const ticketCategories = pgTable('ticket_categories', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  name: text('name').notNull().unique(),
+  description: text('description'),
+  isActive: boolean('is_active').default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+export const supportTickets = pgTable('support_tickets', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  ticketNumber: integer('ticket_number').generatedAlwaysAsIdentity(),
+  customerKey: text('customer_key').notNull(),
+  customerType: text('customer_type').default('individual'),
+  customerName: text('customer_name'),
+  customerPhone: text('customer_phone'),
+  customerEmail: text('customer_email'),
+  subject: text('subject').notNull(),
+  description: text('description').notNull(),
+  categoryId: integer('category_id').references(() => ticketCategories.id, { onDelete: 'set null' }),
+  categoryName: text('category_name'),
+  priority: text('priority').default('Medium'), // 'Low', 'Medium', 'High', 'Urgent'
+  status: text('status').default('Open'), // 'Open', 'In Progress', 'Pending Customer', 'Resolved', 'Closed'
+  assignedTo: uuid('assigned_to').references(() => staffMembers.id, { onDelete: 'set null' }),
+  assignedStaffName: text('assigned_staff_name'),
+  branchId: uuid('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+  branchName: text('branch_name'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  firstResponseAt: timestamp('first_response_at', { withTimezone: true }),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+  slaBreached: boolean('sla_breached').default(false),
+  escalationLevel: integer('escalation_level').default(0),
+}, (t) => ({
+  custIdx: index('idx_tickets_customer').on(t.customerKey, t.status),
+  assignIdx: index('idx_tickets_assigned').on(t.assignedTo, t.status),
+  branchIdx: index('idx_tickets_branch').on(t.branchId, t.status),
+  statusPriorityIdx: index('idx_tickets_status_priority').on(t.status, t.priority),
+}));
+
+export const ticketMessages = pgTable('ticket_messages', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: uuid('ticket_id').notNull().references(() => supportTickets.id, { onDelete: 'cascade' }),
+  senderType: text('sender_type').notNull(), // 'customer', 'staff', 'system'
+  senderId: text('sender_id'),
+  senderName: text('sender_name'),
+  message: text('message').notNull(),
+  isInternalNote: boolean('is_internal_note').default(false),
+  attachments: jsonb('attachments').default(sql`'[]'::jsonb`),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  ticketMsgIdx: index('idx_messages_ticket').on(t.ticketId, t.createdAt),
+}));
+
+export const ticketAttachments = pgTable('ticket_attachments', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: uuid('ticket_id').references(() => supportTickets.id, { onDelete: 'cascade' }),
+  messageId: uuid('message_id').references(() => ticketMessages.id, { onDelete: 'cascade' }),
+  fileUrl: text('file_url').notNull(),
+  fileName: text('file_name').notNull(),
+  fileType: text('file_type'),
+  fileSize: integer('file_size'),
+  uploadedByType: text('uploaded_by_type').default('customer'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const ticketFeedback = pgTable('ticket_feedback', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: uuid('ticket_id').notNull().unique().references(() => supportTickets.id, { onDelete: 'cascade' }),
+  rating: integer('rating'), // 1 - 5
+  wasResolved: boolean('was_resolved'),
+  comment: text('comment'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const supportEscalationRules = pgTable('support_escalation_rules', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  priority: text('priority').notNull().unique(),
+  firstResponseSlaHours: integer('first_response_sla_hours').notNull().default(4),
+  resolutionSlaHours: integer('resolution_sla_hours').notNull().default(24),
+  escalateToSupervisorHours: integer('escalate_to_supervisor_hours').notNull().default(24),
+  escalateToHeadofficeHours: integer('escalate_to_headoffice_hours').notNull().default(48),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+
 

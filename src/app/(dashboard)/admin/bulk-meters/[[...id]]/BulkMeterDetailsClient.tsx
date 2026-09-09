@@ -105,6 +105,12 @@ export default function BulkMeterDetailsPage() {
     hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
     hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
     hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE);
+  const canEditCustomer = hasPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+  const canDeleteCustomer = hasPermission(PERMISSIONS.CUSTOMERS_DELETE);
+  const canAddReading =
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+    hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL);
   const idRaw = params?.id;
   const bulkMeterKey = Array.isArray(idRaw) ? idRaw[0] : (idRaw as string || "");
 
@@ -741,10 +747,18 @@ export default function BulkMeterDetailsPage() {
 
 
   const handleEditCustomer = (customer: IndividualCustomer) => {
+    if (!canEditCustomer) {
+      toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to update customers.' });
+      return;
+    }
     setSelectedCustomer(customer);
     setIsCustomerFormOpen(true);
   };
   const handleDeleteCustomer = (customer: IndividualCustomer) => {
+    if (!canDeleteCustomer) {
+      toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to delete customers.' });
+      return;
+    }
     setCustomerToDelete(customer);
     setIsCustomerDeleteDialogOpen(true);
   };
@@ -1466,9 +1480,11 @@ export default function BulkMeterDetailsPage() {
                       <Edit2 className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" /> Edit Readings & Recalculate
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
-                    <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
-                  </Button>
+                  {canAddReading && (
+                    <Button variant="outline" size="sm" onClick={() => setIsAddReadingOpen(true)}>
+                      <PlusCircleIcon className="mr-2 h-4 w-4" /> Add Reading
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardHeader>
@@ -1776,8 +1792,12 @@ export default function BulkMeterDetailsPage() {
                                   <DropdownMenuContent align="end">
                                     <DropdownMenuLabel>Actions</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => handleViewCustomerDetails(customer)}><Eye className="mr-2 h-4 w-4" />View Details</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleEditCustomer(customer)}><FileEdit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleDeleteCustomer(customer)}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
+                                    {canEditCustomer && (
+                                      <DropdownMenuItem onClick={() => handleEditCustomer(customer)}><FileEdit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
+                                    )}
+                                    {canDeleteCustomer && (
+                                      <DropdownMenuItem onClick={() => handleDeleteCustomer(customer)}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </TableCell>
@@ -1805,8 +1825,12 @@ export default function BulkMeterDetailsPage() {
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
                                     <DropdownMenuItem onClick={() => handleViewCustomerDetails(customer)}><Eye className="mr-2 h-4 w-4" />View Details</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleEditCustomer(customer)}><FileEdit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleDeleteCustomer(customer)}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
+                                    {canEditCustomer && (
+                                      <DropdownMenuItem onClick={() => handleEditCustomer(customer)}><FileEdit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
+                                    )}
+                                    {canDeleteCustomer && (
+                                      <DropdownMenuItem onClick={() => handleDeleteCustomer(customer)}><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </div>

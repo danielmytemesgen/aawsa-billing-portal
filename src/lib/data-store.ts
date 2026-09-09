@@ -2607,8 +2607,8 @@ export const addIndividualCustomerReading = async (
   if (!customer) {
     return { success: false, message: "Customer not found." };
   }
-  if (readingData.readingValue < customer.currentReading) {
-    return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${customer.currentReading}).` };
+  if (readingData.readingValue < 0) {
+    return { success: false, message: "Reading must be a non-negative number." };
   }
 
   const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;
@@ -2720,8 +2720,8 @@ export const addBulkMeterReading = async (
   if (!bulkMeter) {
     return { success: false, message: "Bulk meter not found." };
   }
-  if (readingData.readingValue < bulkMeter.currentReading) {
-    return { success: false, message: `New reading (${readingData.readingValue}) cannot be lower than the current reading (${bulkMeter.currentReading}).` };
+  if (readingData.readingValue < 0) {
+    return { success: false, message: "Reading must be a non-negative number." };
   }
 
   const isOffline = typeof window !== 'undefined' && !window.navigator.onLine;

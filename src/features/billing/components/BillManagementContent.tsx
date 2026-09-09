@@ -12,6 +12,14 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter
+} from '@/components/ui/dialog';
+import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
@@ -34,7 +42,11 @@ import {
     approveBillsBulkAction,
     postBillsBulkAction,
     getAgingSummaryAction,
+    getWaterBalanceMetricsAction,
+    disputeBillAction,
 } from '@/lib/actions';
+import type { WaterBalanceMetrics } from '@/lib/db-queries';
+import { PreApprovalAuditDialog } from '@/features/billing/components/PreApprovalAuditDialog';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
@@ -61,7 +73,9 @@ import {
     Printer,
     ShieldAlert,
     X,
-    RefreshCw} from 'lucide-react';
+    RefreshCw,
+    Droplets,
+    AlertTriangle} from 'lucide-react';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -242,6 +256,15 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     useEffect(() => {
         loadData();
     }, []);
+
+    // Smart Pre-Approval Audit & Water Balance state
+    const [waterBalance, setWaterBalance] = useState<WaterBalanceMetrics | null>(null);
+    const [smartAuditOpen, setSmartAuditOpen] = useState(false);
+    const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
+    const [disputingBill, setDisputingBill] = useState<any | null>(null);
+    const [disputeReason, setDisputeReason] = useState('');
+    const [disputeAdjAmount, setDisputeAdjAmount] = useState('');
+    const [disputeSubmitting, setDisputeSubmitting] = useState(false);
 
     // Delete confirmation state
     const [billToDelete, setBillToDelete] = useState<string | null>(null);
@@ -576,18 +599,50 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
     const handleApproveAll = async () => {
         if (pendingApprovals.length === 0) return;
+        setSmartAuditOpen(true);
+    };
 
-        setPendingBulkAction({
-            type: 'approve',
-            title: 'Approve All Invoices',
-            description: `Are you sure you want to approve ${pendingApprovals.length} invoices? This action cannot be easily undone.`,
-            action: async () => {
-                const ids = pendingApprovals.map(b => b.id);
-                await approveBillsBulkAction(ids);
-                toast({ title: 'All Approved', description: `${pendingApprovals.length} invoice(s) approved.` });
-                await loadData();
-            }
-        });
+    const handleApproveCleanBills = async (cleanIds: string[]) => {
+        await approveBillsBulkAction(cleanIds);
+        toast({ title: 'Clean Invoices Approved', description: `${cleanIds.length} verified invoice(s) approved.` });
+        await loadData();
+    };
+
+    const handleApproveAllFromAudit = async () => {
+        const ids = pendingApprovals.map(b => b.id);
+        await approveBillsBulkAction(ids);
+        toast({ title: 'All Approved', description: `${ids.length} invoice(s) approved.` });
+        await loadData();
+    };
+
+    const handleFilterFlaggedFromAudit = (flaggedIds: string[]) => {
+        if (flaggedIds.length > 0) {
+            setSearchQuery(flaggedIds[0]);
+            toast({ title: 'Filtering Flagged Invoices', description: `Showing flagged invoice in table.` });
+        }
+    };
+
+    const handleDisputeClick = (bill: any) => {
+        setDisputingBill(bill);
+        setDisputeReason('');
+        setDisputeAdjAmount('');
+        setDisputeDialogOpen(true);
+    };
+
+    const handleConfirmDispute = async () => {
+        if (!disputingBill || !disputeReason.trim()) return;
+        setDisputeSubmitting(true);
+        try {
+            const adj = disputeAdjAmount ? parseFloat(disputeAdjAmount) : undefined;
+            await disputeBillAction(disputingBill.id, disputeReason.trim(), adj);
+            toast({ title: 'Bill Disputed', description: 'Invoice has been marked as Disputed.' });
+            setDisputeDialogOpen(false);
+            await loadData();
+        } catch (err: any) {
+            toast({ title: 'Dispute Failed', description: err?.message || 'Error disputing invoice', variant: 'destructive' });
+        } finally {
+            setDisputeSubmitting(false);
+        }
     };
 
     const handlePostAll = async () => {
@@ -609,6 +664,27 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const effectiveMonthYear = monthFilter === 'all' ? latestMonth : monthFilter;
     const effectiveBranchId = branchFilter === 'all' ? undefined : branchFilter;
     const normalizedSearchTerm = debouncedSearchQuery.trim() || undefined;
+
+    React.useEffect(() => {
+        if (!effectiveMonthYear || effectiveMonthYear === 'all') {
+            setWaterBalance(null);
+            return;
+        }
+        getWaterBalanceMetricsAction(effectiveMonthYear)
+            .then((res: any) => {
+                if (res && res.success && typeof res.totalBulkIntakeVolume === 'number') {
+                    setWaterBalance(res);
+                } else if (res && res.data && typeof res.data.totalBulkIntakeVolume === 'number') {
+                    setWaterBalance(res.data);
+                } else {
+                    setWaterBalance(null);
+                }
+            })
+            .catch(err => {
+                console.error('Failed to load water balance:', err);
+                setWaterBalance(null);
+            });
+    }, [effectiveMonthYear, branchFilter]);
 
     React.useEffect(() => {
         if (!canAccessPage) return;
@@ -859,6 +935,53 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 </div>
             )}
 
+            {/* Non-Revenue Water (NRW) & Water Balance Banner */}
+            {waterBalance && typeof waterBalance.totalBulkIntakeVolume === 'number' && (
+                <div className="rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50/80 via-white to-indigo-50/50 dark:from-blue-950/20 dark:via-background dark:to-indigo-950/20 p-4 shadow-sm">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                                <Droplets className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+                                        Water Balance & Network Loss Analysis
+                                    </h4>
+                                    <Badge variant={(waterBalance.lossPercentage ?? 0) > 25 ? "destructive" : "secondary"} className="text-[10px] py-0 px-2 font-semibold">
+                                        {(waterBalance.lossPercentage ?? 0) > 25 ? '⚠️ High Distribution Loss' : '✓ Normal Water Balance'}
+                                    </Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                    Cycle {effectiveMonthYear || latestMonth || 'Current'} • {waterBalance.totalActiveBulkMeters ?? 0} active bulk distribution meters monitored
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-right">
+                            <div className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-card/80 border border-gray-100 dark:border-gray-800 text-left">
+                                <div className="text-[10px] font-semibold text-muted-foreground uppercase">Bulk Inflow</div>
+                                <div className="text-sm font-bold text-foreground">{(waterBalance.totalBulkIntakeVolume ?? 0).toLocaleString()} m³</div>
+                            </div>
+                            <div className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-card/80 border border-gray-100 dark:border-gray-800 text-left">
+                                <div className="text-[10px] font-semibold text-muted-foreground uppercase">Sub-Meters Billed</div>
+                                <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{(waterBalance.totalSubMeterVolume ?? 0).toLocaleString()} m³</div>
+                            </div>
+                            <div className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-card/80 border border-gray-100 dark:border-gray-800 text-left">
+                                <div className="text-[10px] font-semibold text-muted-foreground uppercase">Difference Loss</div>
+                                <div className="text-sm font-bold text-amber-600 dark:text-amber-400">
+                                    {(waterBalance.differenceLossVolume ?? 0).toLocaleString()} m³ ({(waterBalance.lossPercentage ?? 0)}%)
+                                </div>
+                            </div>
+                            <div className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-card/80 border border-gray-100 dark:border-gray-800 text-left">
+                                <div className="text-[10px] font-semibold text-muted-foreground uppercase">Revenue Impact</div>
+                                <div className="text-sm font-bold text-foreground">ETB {(waterBalance.estimatedRevenueLossEtb ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Summary Statistics Bar */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatsCard
@@ -1031,6 +1154,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     <BillTable
                         bills={outstandingBills}
                         onDelete={handleDelete}
+                        onDispute={handleDisputeClick}
                         router={router}
                         basePath={basePath}
                         canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
@@ -1077,6 +1201,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     <BillTable
                         bills={paidBills}
                         onDelete={handleDelete}
+                        onDispute={handleDisputeClick}
                         router={router}
                         basePath={basePath}
                         canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
@@ -1165,12 +1290,83 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Smart Pre-Approval Audit Dialog */}
+            <PreApprovalAuditDialog
+                open={smartAuditOpen}
+                onOpenChange={setSmartAuditOpen}
+                monthYear={effectiveMonthYear || latestMonth}
+                onApproveClean={handleApproveCleanBills}
+                onApproveAll={handleApproveAllFromAudit}
+                onFilterFlagged={handleFilterFlaggedFromAudit}
+            />
+
+            {/* Bill Dispute Dialog */}
+            <Dialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="w-5 h-5 text-amber-600" />
+                            Dispute Invoice
+                        </DialogTitle>
+                        <DialogDescription>
+                            Flag this invoice as Disputed. Penalties will be paused while under review.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 py-2">
+                        <div>
+                            <Label className="text-xs font-semibold">Customer / Meter</Label>
+                            <div className="text-sm font-medium mt-0.5">
+                                {disputingBill?.CUSTOMERNAME || disputingBill?.name || disputingBill?.CUSTOMERKEY || disputingBill?.individual_customer_id}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                                Month: {disputingBill?.month_year} • Total: ETB {disputingBill ? getBillTotalPayable(disputingBill).toFixed(2) : '0.00'}
+                            </div>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="dispute-reason" className="text-xs font-semibold">Reason for Dispute *</Label>
+                            <textarea
+                                id="dispute-reason"
+                                className="w-full min-h-[80px] p-2 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                                placeholder="Describe the dispute (e.g. reading mismatch, leak adjustment, sub-meter malfunction)..."
+                                value={disputeReason}
+                                onChange={(e) => setDisputeReason(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="dispute-adj" className="text-xs font-semibold">Requested Adjustment Amount (ETB, Optional)</Label>
+                            <input
+                                id="dispute-adj"
+                                type="number"
+                                step="any"
+                                className="w-full h-8 px-2 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                                placeholder="e.g. 250.00"
+                                value={disputeAdjAmount}
+                                onChange={(e) => setDisputeAdjAmount(e.target.value)}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="ghost" size="sm" onClick={() => setDisputeDialogOpen(false)} disabled={disputeSubmitting}>
+                            Cancel
+                        </Button>
+                        <Button
+                            size="sm"
+                            className="bg-amber-600 hover:bg-amber-700 text-white"
+                            onClick={handleConfirmDispute}
+                            disabled={disputeSubmitting || !disputeReason.trim()}
+                        >
+                            {disputeSubmitting ? "Submitting..." : "Flag Disputed"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
 
 // Sub-components
-function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any> }) {
+function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onDispute }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onDispute?: (bill: any) => void }) {
     if (bills.length === 0) return null;
 
     return (
@@ -1293,6 +1489,11 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                                 <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                                                     <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
                                                 </DropdownMenuItem>
+                                                {onDispute && bill.status !== 'Disputed' && (
+                                                    <DropdownMenuItem onClick={() => onDispute(bill)} className="text-amber-700 font-medium focus:text-amber-800">
+                                                        <AlertTriangle className="mr-2 h-4 w-4 text-amber-600" /> Dispute Invoice
+                                                    </DropdownMenuItem>
+                                                )}
                                                 {canDelete && (
                                                     <DropdownMenuItem
                                                         className="text-red-600 focus:text-red-600"

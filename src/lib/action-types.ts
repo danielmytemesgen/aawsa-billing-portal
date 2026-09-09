@@ -127,3 +127,21 @@ export interface CustomerAuthResult {
   success: boolean;
   message: string;
 }
+
+export interface DisplayReading {
+  id: string;
+  meterId: string | null;
+  meterType: 'individual' | 'bulk';
+  meterIdentifier: string;
+  readingValue: number;
+  previousReading: number;
+  readingDate: string;
+  monthYear: string;
+  notes?: string | null;
+  faultCode?: string | null;
+  branchName?: string | null;
+  readerName?: string | null;
+  readerPhone?: string | null;
+  hasPhoto?: boolean;
+}
+

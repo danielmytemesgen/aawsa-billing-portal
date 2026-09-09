@@ -64,6 +64,8 @@ export default function BulkMetersPage() {
   // Determines if user can see all branches (Head Office / Admin)
   const userBranchIdRaw = React.useRef<string | null>(null);
 
+  const canCreateBulkMeter = hasPermission('bulk_meters_create') || hasPermission('bulk_meters_create_restricted');
+
 
   const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string, branch?: string) => {
     setIsLoading(true);
@@ -210,7 +212,7 @@ export default function BulkMetersPage() {
         toast({ variant: "destructive", title: "Update Failed", description: result.message || "Could not update meter." });
       }
     } else {
-      if (!hasPermission('bulk_meters_create')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create bulk meters.' }); return; }
+      if (!canCreateBulkMeter) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create bulk meters.' }); return; }
       const result = await addBulkMeterToStore(data);
       if (result.success) {
         toast({ title: "Bulk Meter Added", description: `${data.name} has been added and is pending approval.` });
@@ -296,7 +298,7 @@ export default function BulkMetersPage() {
           <p className="text-muted-foreground mt-1 text-base">Monitor and organize high-volume water consumption points across all branches.</p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          {hasPermission('bulk_meters_create') && (
+          {canCreateBulkMeter && (
             <Button onClick={handleAddBulkMeter} className="flex-shrink-0 shadow-sm order-1 md:order-2">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
             </Button>
@@ -583,7 +585,7 @@ export default function BulkMetersPage() {
                   description={searchTerm ? "Try adjusting your search criteria." : "Click 'Add New Meter' to register the first bulk meter."} 
                   className="m-4"
                   action={
-                    (!searchTerm && hasPermission('bulk_meters_create')) ? (
+                    (!searchTerm && canCreateBulkMeter) ? (
                       <Button onClick={handleAddBulkMeter} variant="outline">
                         <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
                       </Button>
@@ -626,7 +628,7 @@ export default function BulkMetersPage() {
       </div>
 
 
-      {(hasPermission('bulk_meters_create') || hasPermission('bulk_meters_update')) && (
+      {(canCreateBulkMeter || hasPermission('bulk_meters_update')) && (
         <BulkMeterFormDialog
           open={isFormOpen}
           onOpenChange={setIsFormOpen}

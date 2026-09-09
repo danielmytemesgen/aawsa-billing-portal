@@ -31,13 +31,16 @@ export function AuthAds() {
 
     React.useEffect(() => {
         async function loadAds() {
-            const offline = typeof navigator !== 'undefined' && !navigator.onLine;
-            const startedAt = Date.now();
-            const result = await getActivePromotionsAction();
-            if (result?.success && result.data && result.data.length > 0) {
-                setAds(result.data);
+            try {
+                const result = await getActivePromotionsAction();
+                if (result?.success && result.data && result.data.length > 0) {
+                    setAds(result.data);
+                }
+            } catch (err) {
+                console.warn('[auth-ads] Failed to load ads:', err);
+            } finally {
+                setIsLoading(false);
             }
-            setIsLoading(false);
         }
         loadAds();
     }, []);

@@ -114,7 +114,9 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
         }));
 
         sessionStorage.setItem('batchInvoiceData', JSON.stringify(printData));
-        window.open('/admin/bulk-meters/print-invoices', '_blank');
+        const isStaffRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/staff');
+        const targetUrl = isStaffRoute ? '/staff/bulk-meters/print-invoices' : '/admin/bulk-meters/print-invoices';
+        window.open(targetUrl, '_blank');
 
         toast({ title: "Opening Print View", description: `Preparing ${printData.length} invoice(s)...` });
         setIsProcessing(false);

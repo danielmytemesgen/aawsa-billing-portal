@@ -11,7 +11,8 @@ export type BranchFeatureDomain =
   | 'staff'
   | 'reports'
   | 'bills'
-  | 'routes';
+  | 'routes'
+  | 'support';
 
 /**
  * Determines the effective branch scope for data access based on the user's permissions.
@@ -46,6 +47,7 @@ export function getEffectiveBranchId(
     reports: [PERMISSIONS.REPORTS_GENERATE_ALL, 'reports_generate_all', 'reports:generate_all'],
     bills: [PERMISSIONS.BILL_VIEW_ALL, 'bill:manage_all', 'bill_manage_all', 'bill:view_all'],
     routes: [PERMISSIONS.ROUTES_VIEW_ALL, 'routes_view_all', 'routes:view_all'],
+    support: [PERMISSIONS.SUPPORT_VIEW_ALL, 'support:view_all', 'support_view_all', PERMISSIONS.SUPPORT_MANAGE],
   };
 
   const hasViewAll = viewAllPermissions[domain].some((p) => hasPermission(p));

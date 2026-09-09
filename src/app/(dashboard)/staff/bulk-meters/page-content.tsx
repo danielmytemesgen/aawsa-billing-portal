@@ -60,6 +60,8 @@ export default function StaffBulkMetersPage() {
   const [statusFilter, setStatusFilter] = React.useState<BulkMeterStatus | 'All'>('All');
   const [isExporting, setIsExporting] = React.useState(false);
 
+  const canCreateBulkMeter = hasPermission('bulk_meters_create') || hasPermission('bulk_meters_create_restricted');
+
   // Effective branch: if user is branch-scoped (e.g. branchId is set and no global view), lock to branchId
   const isGlobal = hasPermission('bulk_meters_view_all') && !isStaffManagement;
   const effectiveBranchId = isGlobal ? undefined : branchId;
@@ -197,7 +199,7 @@ export default function StaffBulkMetersPage() {
         toast({ variant: "destructive", title: "Update Failed", description: result.message || "Could not update meter." });
       }
     } else {
-      if (!hasPermission('bulk_meters_create')) {
+      if (!canCreateBulkMeter) {
         toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create bulk meters.' });
         return;
       }
@@ -282,7 +284,7 @@ export default function StaffBulkMetersPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          {hasPermission('bulk_meters_create') && (
+          {canCreateBulkMeter && (
             <Button onClick={handleAddBulkMeter} className="flex-shrink-0 shadow-sm order-1 md:order-2">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
             </Button>
@@ -521,7 +523,7 @@ export default function StaffBulkMetersPage() {
                   description={searchTerm ? "Try adjusting your search criteria." : "Click 'Add New Meter' to register a bulk meter for your branch."} 
                   className="m-4"
                   action={
-                    (!searchTerm && hasPermission('bulk_meters_create')) ? (
+                    (!searchTerm && canCreateBulkMeter) ? (
                       <Button onClick={handleAddBulkMeter} variant="outline">
                         <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
                       </Button>
@@ -563,7 +565,7 @@ export default function StaffBulkMetersPage() {
         </Card>
       </div>
 
-      {(hasPermission('bulk_meters_create') || hasPermission('bulk_meters_update')) && (
+      {(canCreateBulkMeter || hasPermission('bulk_meters_update')) && (
         <BulkMeterFormDialog
           open={isFormOpen}
           onOpenChange={setIsFormOpen}

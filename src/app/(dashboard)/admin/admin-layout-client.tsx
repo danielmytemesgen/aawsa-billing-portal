@@ -52,8 +52,21 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
 
     // 2. Field Reading & Route Operations (specifically for assigned readers)
     const canViewAssignedRoutes = hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
-    const canRecordReadings = hasAny(PERMISSIONS.METER_READINGS_CREATE, PERMISSIONS.METER_READINGS_CREATE_BULK, PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL);
-    const canViewReadings = hasAny(PERMISSIONS.METER_READINGS_VIEW_ALL, PERMISSIONS.METER_READINGS_VIEW_BRANCH);
+    const canRecordReadings = hasAny(
+        PERMISSIONS.METER_READINGS_CREATE,
+        PERMISSIONS.METER_READINGS_CREATE_BULK,
+        PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL,
+        PERMISSIONS.METER_READINGS_ADD_MANUAL,
+        PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL,
+        PERMISSIONS.METER_READINGS_UPLOAD_BULK
+    );
+    const canViewReadings = hasAny(
+        PERMISSIONS.METER_READINGS_VIEW_ALL,
+        PERMISSIONS.METER_READINGS_VIEW_BRANCH,
+        PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL,
+        PERMISSIONS.METER_READINGS_VIEW_BULK,
+        PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+    );
     const canViewProgress = hasPermission(PERMISSIONS.READER_PROGRESS_VIEW);
 
     const routeOpsItems: NavItem[] = [];
@@ -101,7 +114,25 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     if (hasPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE) || hasPermission(PERMISSIONS.KNOWLEDGE_BASE_VIEW)) {
         managementItems.push({ title: "Knowledge Base", href: isAdmin ? "/admin/knowledge-base" : "/staff/knowledge-base", iconName: "BookText" });
     }
-    if (hasPermission(PERMISSIONS.BILL_VIEW_DRAFTS) || hasPermission(PERMISSIONS.BILL_APPROVE) || hasPermission(PERMISSIONS.BILL_CREATE) || hasPermission(PERMISSIONS.BILL_VIEW_ALL) || hasPermission(PERMISSIONS.BILL_VIEW_BRANCH)) {
+    const canAccessBillManagement = hasAny(
+        PERMISSIONS.BILL_VIEW_ALL,
+        PERMISSIONS.BILL_VIEW_BRANCH,
+        PERMISSIONS.BILL_CREATE,
+        PERMISSIONS.BILL_VIEW_DRAFTS,
+        PERMISSIONS.BILL_VIEW_PENDING,
+        PERMISSIONS.BILL_VIEW_APPROVED,
+        PERMISSIONS.BILL_APPROVE,
+        PERMISSIONS.BILL_VIEW_PAID,
+        PERMISSIONS.BILL_VIEW_UNPAID,
+        PERMISSIONS.BILL_VIEW_OVERDUE,
+        PERMISSIONS.BILL_POST,
+        PERMISSIONS.BILL_SEND,
+        PERMISSIONS.BILL_REWORK,
+        PERMISSIONS.BILL_UPDATE,
+        PERMISSIONS.BILL_DELETE,
+        PERMISSIONS.BILL_CLOSE_CYCLE
+    );
+    if (canAccessBillManagement) {
         managementItems.push({ title: "Bill Management", href: isAdmin ? "/admin/bill-management" : "/staff/bill-management", iconName: "FileText" });
     }
 
@@ -116,20 +147,61 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         managementItems.push({ title: "Fault Codes", href: isAdmin ? "/admin/fault-codes" : "/staff/fault-codes", iconName: "AlertOctagon" });
     }
 
+    // Customer Service & Support Ticket Module - strictly permission-based
+    const canAccessSupport = hasAny(
+        PERMISSIONS.SUPPORT_VIEW_ALL,
+        PERMISSIONS.SUPPORT_VIEW_BRANCH,
+        PERMISSIONS.SUPPORT_CREATE,
+        PERMISSIONS.SUPPORT_ASSIGN,
+        PERMISSIONS.SUPPORT_RESOLVE,
+        PERMISSIONS.SUPPORT_MANAGE
+    );
+
+    if (canAccessSupport) {
+        managementItems.push({
+            title: "Customer Support",
+            href: hasPermission(PERMISSIONS.SUPPORT_VIEW_ALL) ? "/admin/support" : "/staff/support",
+            iconName: "LifeBuoy",
+        });
+    }
+
     if (managementItems.length > 0) {
         navItems.push({ title: "Management", items: managementItems });
     }
 
     // 4. Customer & Metering
     const customerMeteringItems: NavItem[] = [];
-    if (hasPermission(PERMISSIONS.BULK_METERS_VIEW_ALL) || hasPermission(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
+    const canAccessBulkMeters = hasAny(
+        PERMISSIONS.BULK_METERS_VIEW_ALL,
+        PERMISSIONS.BULK_METERS_VIEW_BRANCH,
+        PERMISSIONS.DATA_ENTRY_ACCESS,
+        PERMISSIONS.BULK_METERS_CREATE,
+        PERMISSIONS.BULK_METERS_CREATE_RESTRICTED,
+        PERMISSIONS.BULK_METERS_UPDATE,
+        PERMISSIONS.BULK_METERS_DELETE,
+        PERMISSIONS.BULK_METERS_APPROVE,
+        PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+        PERMISSIONS.BULK_METERS_EDIT_READINGS
+    );
+    if (canAccessBulkMeters) {
         customerMeteringItems.push({ 
             title: "Bulk Meters", 
             href: isAdmin ? "/admin/bulk-meters" : "/staff/bulk-meters", 
             iconName: "Gauge" 
         });
     }
-    if (hasPermission(PERMISSIONS.CUSTOMERS_VIEW_ALL) || hasPermission(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
+
+    const canAccessCustomers = hasAny(
+        PERMISSIONS.CUSTOMERS_VIEW_ALL,
+        PERMISSIONS.CUSTOMERS_VIEW_BRANCH,
+        PERMISSIONS.DATA_ENTRY_ACCESS,
+        PERMISSIONS.CUSTOMERS_CREATE,
+        PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED,
+        PERMISSIONS.CUSTOMERS_UPDATE,
+        PERMISSIONS.CUSTOMERS_DELETE,
+        PERMISSIONS.CUSTOMERS_APPROVE
+    );
+    if (canAccessCustomers) {
         customerMeteringItems.push({ 
             title: "Individual Customers", 
             href: isAdmin ? "/admin/individual-customers" : "/staff/individual-customers", 
@@ -190,7 +262,9 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         dataReportsItems.push({ title: "List Of Sent Bills", href: isAdmin ? "/admin/reports/sent-bills" : "/staff/reports/sent-bills", iconName: "Send" });
     }
 
-    const canViewUnsettledBillsReport = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) 
+    const canViewUnsettledBillsReport = hasPermission(PERMISSIONS.REPORT_LIST_OF_UNSETTLED_BILLS)
+        || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_UNSETTLED_BILLS)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) 
         || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
         || hasPermission(PERMISSIONS.BILL_VIEW_UNPAID)
         || hasPermission(PERMISSIONS.BILL_VIEW_OVERDUE)

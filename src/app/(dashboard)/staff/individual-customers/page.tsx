@@ -64,6 +64,8 @@ export default function StaffIndividualCustomersPage() {
   const [statusFilter, setStatusFilter] = React.useState<IndividualCustomerStatus | 'All'>('All');
   const [isExporting, setIsExporting] = React.useState(false);
 
+  const canCreateCustomer = hasPermission('customers_create') || hasPermission('customers_create_restricted');
+
   const isGlobal = hasPermission('customers_view_all') && !isStaffManagement;
   const effectiveBranchId = isGlobal ? undefined : branchId;
 
@@ -224,7 +226,7 @@ export default function StaffIndividualCustomersPage() {
         toast({ variant: "destructive", title: "Update Failed", description: result.message || "Could not update customer." });
       }
     } else {
-      if (!hasPermission('customers_create')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create customers.' }); return; }
+      if (!canCreateCustomer) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to create customers.' }); return; }
       const result = await addCustomerToStore(data);
       if (result.success && result.data) {
         toast({ title: "Customer Added", description: `${result.data.name} has been added.` });
@@ -314,7 +316,7 @@ export default function StaffIndividualCustomersPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          {hasPermission('customers_create') && (
+          {canCreateCustomer && (
             <Button onClick={handleAddCustomer} className="flex-shrink-0 shadow-sm">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Customer
             </Button>
@@ -500,7 +502,7 @@ export default function StaffIndividualCustomersPage() {
                 description={searchTerm ? "Try adjusting your search criteria." : "There are no individual customers registered for your branch."} 
                 className="m-4"
                 action={
-                  (!searchTerm && hasPermission('customers_create')) ? (
+                  (!searchTerm && canCreateCustomer) ? (
                     <Button onClick={handleAddCustomer} variant="outline" className="border-indigo-200 text-indigo-700 hover:bg-indigo-50">
                       <PlusCircle className="mr-2 h-4 w-4" /> Add First Customer
                     </Button>

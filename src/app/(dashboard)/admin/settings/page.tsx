@@ -11,12 +11,23 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { set, differenceInDays, addMonths, startOfMonth, addDays, isValid, parseISO } from "date-fns";
-import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, Calendar as CalendarIcon, LogOut, ShieldCheck } from "lucide-react";
+import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, Calendar as CalendarIcon, LogOut, ShieldCheck, MapPin, KeyRound } from "lucide-react";
+import { ChangePasswordDialog } from "@/components/auth/change-password-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { BILLING_CYCLE_MODE_KEY, BILLING_DUE_DATE_OFFSET_KEY, BILLING_CYCLE_DAY_KEY } from "@/lib/billing-config";
-import { getSystemSettingsAction, getSessionSettingsAction, updateBillingSettingsAction, getReadingPeriodDetailsAction, updateReadingPeriodStatusAction, updateReadingPeriodDetailsAction, ReadingPeriodStatus } from '@/lib/actions';
+import { 
+  getSystemSettingsAction, 
+  getSessionSettingsAction, 
+  updateBillingSettingsAction, 
+  getReadingPeriodDetailsAction, 
+  updateReadingPeriodStatusAction, 
+  updateReadingPeriodDetailsAction, 
+  getGpsProximityThresholdsAction,
+  updateGpsProximityThresholdsAction,
+  ReadingPeriodStatus 
+} from '@/lib/actions';
 import { logoutAction } from "@/lib/auth-actions";
 import { getSessionActionDescription, getSessionActionTitle } from "@/lib/session-management";
 
@@ -44,6 +55,17 @@ export default function AdminSettingsPage() {
   const [defaultCurrency, setDefaultCurrency] = React.useState("ETB");
   const [enableDarkMode, setEnableDarkMode] = React.useState(false);
   const [enableOverdueReminders, setEnableOverdueReminders] = React.useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
+  const [currentUser, setCurrentUser] = React.useState<{ name?: string; email?: string; role?: string } | null>(null);
+
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        setCurrentUser(JSON.parse(stored));
+      }
+    } catch {}
+  }, []);
 
   // Meter Reading Period settings
   const [readingPeriodStatus, setReadingPeriodStatus] = React.useState<ReadingPeriodStatus>('Open');
@@ -85,6 +107,28 @@ export default function AdminSettingsPage() {
     }
   }, []);
 
+  // GPS Proximity settings
+  const [fieldProximityThreshold, setFieldProximityThreshold] = React.useState('15');
+  const [anomalyProximityThreshold, setAnomalyProximityThreshold] = React.useState('150');
+  const [isLoadingGpsSettings, setIsLoadingGpsSettings] = React.useState(false);
+
+  const loadLiveGpsSettings = React.useCallback(async () => {
+    setIsLoadingGpsSettings(true);
+    try {
+      const res = await getGpsProximityThresholdsAction();
+      const thresholds = res as { fieldThreshold: number; anomalyThreshold: number } | null;
+      if (thresholds) {
+        setFieldProximityThreshold(String(thresholds.fieldThreshold ?? 15));
+        setAnomalyProximityThreshold(String(thresholds.anomalyThreshold ?? 150));
+        localStorage.setItem('gps_field_proximity_threshold_meters', String(thresholds.fieldThreshold ?? 15));
+      }
+    } catch (e) {
+      console.warn("Failed to load GPS settings", e);
+    } finally {
+      setIsLoadingGpsSettings(false);
+    }
+  }, []);
+
   const [isMounted, setIsMounted] = React.useState(false);
   const [isSigningOut, setIsSigningOut] = React.useState(false);
   const [isRevokingSessions, setIsRevokingSessions] = React.useState(false);
@@ -123,6 +167,9 @@ export default function AdminSettingsPage() {
     // Load live session settings from the dedicated session_settings table
     loadLiveSessionSettings();
 
+    // Load live GPS proximity settings
+    loadLiveGpsSettings();
+
     const storedNotifyNewBill = localStorage.getItem(NOTIFY_NEW_BILL_KEY);
     const storedNotifyOverdue = localStorage.getItem(NOTIFY_OVERDUE_KEY);
     const storedExportFormat = localStorage.getItem(EXPORT_FORMAT_KEY);
@@ -140,7 +187,7 @@ export default function AdminSettingsPage() {
         document.documentElement.classList.remove('dark');
       }
     }
-  }, []);
+  }, [loadLiveGpsSettings]);
 
   const handleSaveSettings = async () => {
     if (!canUpdateSettings) {
@@ -175,6 +222,18 @@ export default function AdminSettingsPage() {
       setReadingPeriodStatus(freshPeriod.status);
       setReadingStartDate(freshPeriod.startDate || '');
       setReadingEndDate(freshPeriod.endDate || '');
+    }
+
+    // GPS Proximity settings — persist to server & localStorage
+    try {
+      await updateGpsProximityThresholdsAction({
+        fieldThreshold: Number(fieldProximityThreshold),
+        anomalyThreshold: Number(anomalyProximityThreshold),
+      });
+      localStorage.setItem('gps_field_proximity_threshold_meters', fieldProximityThreshold);
+      await loadLiveGpsSettings();
+    } catch (e) {
+      console.error('Failed to update GPS proximity settings', e);
     }
 
     localStorage.setItem(NOTIFY_NEW_BILL_KEY, String(notifyOnNewBill));
@@ -466,6 +525,62 @@ export default function AdminSettingsPage() {
 
       <Card className="shadow-lg">
         <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MapPin className="h-5 w-5 text-blue-600" />
+            GPS Proximity & Anti-Fraud Settings
+          </CardTitle>
+          <CardDescription>
+            Configure distance tolerances for field meter reading verification and couch-reading anomaly detection.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border rounded-xl bg-slate-50/50 dark:bg-slate-900/20 shadow-sm">
+            <div className="space-y-2">
+              <Label htmlFor="sys-field-threshold" className="font-semibold text-sm">
+                Field Reading Proximity Threshold (meters)
+              </Label>
+              <Input
+                id="sys-field-threshold"
+                type="number"
+                min="5"
+                max="500"
+                value={fieldProximityThreshold}
+                onChange={(e) => setFieldProximityThreshold(e.target.value)}
+                disabled={!canUpdateSettings || isLoadingGpsSettings}
+                className="bg-white dark:bg-slate-800"
+              />
+              <p className="text-xs text-muted-foreground">
+                Maximum distance allowed between the meter reader and physical meter to unlock the "Save Reading" button in the field app (default: 15m).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sys-anomaly-threshold" className="font-semibold text-sm">
+                Anti-Fraud Anomaly Flagging Distance (meters)
+              </Label>
+              <Input
+                id="sys-anomaly-threshold"
+                type="number"
+                min="10"
+                max="5000"
+                value={anomalyProximityThreshold}
+                onChange={(e) => setAnomalyProximityThreshold(e.target.value)}
+                disabled={!canUpdateSettings || isLoadingGpsSettings}
+                className="bg-white dark:bg-slate-800"
+              />
+              <p className="text-xs text-muted-foreground">
+                Readings recorded beyond this distance from registered meter coordinates will be flagged with a GPS Distance Anomaly for supervisor review (default: 150m).
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400 bg-blue-50/50 dark:bg-blue-950/20 p-3 rounded-lg border border-blue-100 dark:border-blue-900">
+            📍 <strong>GPS Drift Tolerance:</strong> Urban environments with tall buildings can produce 5–10m GPS drift. The field app automatically applies an accuracy buffer based on the device's hardware signal confidence.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-lg">
+        <CardHeader>
           <CardTitle>Billing Settings</CardTitle>
           <CardDescription>Configure how billing cycles are scheduled and when bills become due.</CardDescription>
         </CardHeader>
@@ -683,6 +798,34 @@ export default function AdminSettingsPage() {
         </CardContent>
       </Card>
 
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5 text-blue-600 dark:text-blue-400" /> Account Security & Password
+          </CardTitle>
+          <CardDescription>Manage your account password and security options.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/40">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                {currentUser?.name || currentUser?.email || "Account Password"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Role: <span className="font-medium text-foreground">{currentUser?.role || "Admin"}</span> • Regularly update your password to keep your portal access protected.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="gap-2 border-blue-200 hover:border-blue-300 hover:bg-blue-50/50 dark:border-blue-900 dark:hover:bg-blue-950/40 self-start sm:self-auto"
+            >
+              <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              Change Password
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="shadow-lg">
         <CardHeader>
@@ -705,6 +848,12 @@ export default function AdminSettingsPage() {
           </Button>
         </div>
       )}
+
+      <ChangePasswordDialog
+        open={isChangePasswordOpen}
+        onOpenChange={setIsChangePasswordOpen}
+        userEmail={currentUser?.email}
+      />
     </div>
   );
 }

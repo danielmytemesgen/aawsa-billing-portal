@@ -537,7 +537,9 @@ export default function RouteDetailsClient() {
             const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
             if (periodStartDate) {
                 if (!rDateStr) {
-                    if (r.monthYear === periodStartDate.slice(0, 7)) readKeys.add(id);
+                    const startM = periodStartDate.slice(0, 7);
+                    const endM = periodEndDate ? periodEndDate.slice(0, 7) : startM;
+                    if (r.monthYear === startM || r.monthYear === endM) readKeys.add(id);
                 } else {
                     const formatted = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
                     if (periodEndDate ? (formatted >= periodStartDate && formatted <= periodEndDate) : formatted >= periodStartDate) {
@@ -559,7 +561,9 @@ export default function RouteDetailsClient() {
             const rDateStr = r.readingDate || r.READING_DATE || r.created_at || r.createdAt;
             if (periodStartDate) {
                 if (!rDateStr) {
-                    if (r.monthYear === periodStartDate.slice(0, 7)) readKeys.add(id);
+                    const startM = periodStartDate.slice(0, 7);
+                    const endM = periodEndDate ? periodEndDate.slice(0, 7) : startM;
+                    if (r.monthYear === startM || r.monthYear === endM) readKeys.add(id);
                 } else {
                     const formatted = typeof rDateStr === 'string' ? rDateStr.slice(0, 10) : format(new Date(rDateStr), 'yyyy-MM-dd');
                     if (periodEndDate ? (formatted >= periodStartDate && formatted <= periodEndDate) : formatted >= periodStartDate) {
@@ -673,10 +677,12 @@ export default function RouteDetailsClient() {
     };
 
     const handleReadClick = (meter: any, type: 'bulk' | 'individual') => {
-        if (periodStatus === 'Closed') {
+        if (periodStatus !== 'Open') {
             toast({
                 title: "Access Denied",
-                description: "Reading period is currently closed.",
+                description: periodStatus === 'Ready for New Reading'
+                    ? "Reading period is not yet open. It is currently in 'Ready for New Reading' state."
+                    : "Reading period is currently closed.",
                 variant: "destructive"
             });
             return;

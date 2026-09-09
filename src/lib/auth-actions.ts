@@ -221,3 +221,101 @@ export async function logoutAction() {
     // is responsible for calling router.push('/') after this action resolves.
     return { success: true };
 }
+
+export async function changePasswordAction(params: {
+    currentPassword?: string;
+    newPassword?: string;
+    confirmPassword?: string;
+    revokeOtherSessions?: boolean;
+}) {
+    const { currentPassword, newPassword, confirmPassword, revokeOtherSessions } = params || {};
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+        return { success: false, message: 'All fields are required.' };
+    }
+
+    if (newPassword.length < 6) {
+        return { success: false, message: 'New password must be at least 6 characters long.' };
+    }
+
+    if (newPassword !== confirmPassword) {
+        return { success: false, message: 'New password and confirmation do not match.' };
+    }
+
+    if (currentPassword === newPassword) {
+        return { success: false, message: 'New password must be different from your current password.' };
+    }
+
+    const { getSession } = await import('./auth');
+    const session = await getSession();
+
+    if (!session || !session.email) {
+        return { success: false, message: 'You must be logged in to change your password.' };
+    }
+
+    const rateLimitKey = `pwd_change:${session.email.toLowerCase()}`;
+    const { allowed, retryAfterSeconds } = checkRateLimit(rateLimitKey);
+    if (!allowed) {
+        return {
+            success: false,
+            message: `Too many password change attempts. Please try again in ${Math.ceil((retryAfterSeconds ?? 900) / 60)} minutes.`
+        };
+    }
+
+    // Verify current password with database
+    const user = await getStaffMemberForAuth(session.email, currentPassword);
+    if (!user) {
+        return { success: false, message: 'Current password is incorrect.' };
+    }
+
+    // Reset rate limit on valid verification
+    resetRateLimit(rateLimitKey);
+
+    try {
+        const { dbUpdateStaffMember, dbLogSecurityEvent, dbRevokeOtherStaffSessions, dbCreateNotification } = await import('./db-queries');
+        const updated = await dbUpdateStaffMember(session.email, { password: newPassword });
+        if (!updated) {
+            return { success: false, message: 'Failed to update password. Please try again.' };
+        }
+
+        // Revoke other active sessions if requested
+        let revokedSessionsCount = 0;
+        if (revokeOtherSessions && session.id) {
+            try {
+                const revoked = await dbRevokeOtherStaffSessions(session.id, session.sessionId);
+                revokedSessionsCount = Array.isArray(revoked) ? revoked.length : 0;
+            } catch (revokeErr) {
+                console.warn('Failed to revoke other staff sessions:', revokeErr);
+            }
+        }
+
+        const { ipAddress } = await getRequestMetadata();
+        await dbLogSecurityEvent('Staff Password Changed', session.email, (session as any).branchName || undefined, ipAddress, 'info', {
+            staffId: session.id,
+            role: session.role,
+            revokedOtherSessions: revokeOtherSessions,
+            revokedSessionsCount,
+        });
+
+        // Create in-app security notification
+        try {
+            await dbCreateNotification({
+                title: 'Password Changed Successfully',
+                message: `Your account password was updated on ${new Date().toLocaleString()}${ipAddress ? ` from IP ${ipAddress}` : ''}. If you did not make this change, please report this immediately.`,
+                sender_name: 'Security System',
+                target_branch_id: (session as any).branchId || undefined,
+            });
+        } catch (notifError) {
+            console.warn('Failed to generate password change notification:', notifError);
+        }
+
+        const successMsg = revokedSessionsCount > 0
+            ? `Password changed successfully. ${revokedSessionsCount} other active session${revokedSessionsCount === 1 ? '' : 's'} signed out.`
+            : 'Password changed successfully.';
+
+        return { success: true, message: successMsg };
+    } catch (error) {
+        console.error('Failed to change password:', error);
+        return { success: false, message: 'An unexpected error occurred while updating your password.' };
+    }
+}

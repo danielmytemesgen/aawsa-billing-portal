@@ -212,6 +212,7 @@ export default function RolesAndPermissionsPage() {
 
   const formatPermissionName = (name: string) => {
     return name
+      .replace(/:/g, ': ')
       .replace(/_/g, ' ')
       .replace(/\b\w/g, l => l.toUpperCase());
   };
@@ -223,6 +224,7 @@ export default function RolesAndPermissionsPage() {
       'Billing': 'bg-green-100 text-green-700 border-green-200',
       'Individual Customers': 'bg-amber-100 text-amber-700 border-amber-200',
       'Bulk Meters': 'bg-indigo-100 text-indigo-700 border-indigo-200',
+      'Customer Support': 'bg-teal-100 text-teal-800 border-teal-200',
       'Systems': 'bg-slate-100 text-slate-700 border-slate-200',
       'General': 'bg-gray-100 text-gray-700 border-gray-200'
     };

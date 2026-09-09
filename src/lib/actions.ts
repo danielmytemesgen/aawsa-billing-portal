@@ -37,14 +37,20 @@ import {
   dbCreateIndividualCustomerReading,
   dbDeleteIndividualCustomerReading,
   dbGetAllIndividualCustomerReadings,
+  dbGetPaginatedIndividualCustomerReadings,
   dbUpdateIndividualCustomerReading,
   dbCreateBulkMeterReading,
   dbDeleteBulkMeterReading,
   dbGetAllBulkMeterReadings,
+  dbGetPaginatedBulkMeterReadings,
+  dbGetReaderProgressMetrics,
+  dbGetReadingConsumptionAnomalies,
+  type ReadingAnomaly,
   dbUpdateBulkMeterReading,
   dbCreatePayment,
   dbDeletePayment,
   dbGetAllPayments,
+  dbGetPaymentById,
   dbUpdatePayment,
   dbCreateReportLog,
   dbDeleteReportLog,
@@ -144,10 +150,13 @@ import {
   ensureReadingPartitionExists,
   dbPreviewShiftReadingMonth,
   dbExecuteShiftReadingMonth,
+  dbGetPreApprovalAuditMetrics,
+  dbGetWaterBalanceMetrics,
   type CreditLedgerEntry,
 } from './db-queries';
 import { roundMoney, MONEY_EPSILON } from './credit-utils';
 import { withTransaction, query } from './db';
+import { calculateDistance } from './geo-utils';
 
 import { calculateBill, calculateBillFromTariff, type CustomerType, type SewerageConnection } from './billing';
 import { encrypt, getSession } from './auth';
@@ -182,10 +191,12 @@ export interface ReadingPeriodDetails {
   startDay: number;
   endDay: number;
   isRecurring: boolean;
+  mode?: 'auto' | 'manual';
 }
 
 export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDetails> {
   const rawStatus = (await dbGetSystemSetting('reading_period_status')) as ReadingPeriodStatus || null;
+  const rawMode = (await dbGetSystemSetting('reading_period_mode')) || 'auto';
   const rawStart = (await dbGetSystemSetting('reading_period_start_date')) || '';
   const rawEnd = (await dbGetSystemSetting('reading_period_end_date')) || '';
   const rawStartDay = await dbGetSystemSetting('reading_period_start_day');
@@ -253,26 +264,39 @@ export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDeta
   const startDateStr = format(effectiveStartDateObj, 'yyyy-MM-dd');
   const endDateStr = format(effectiveEndDateObj, 'yyyy-MM-dd');
 
-  // Dynamically compute reading period status from auto-recurring schedule dates:
-  // - Open: Today is between startDate and endDate (inclusive)
-  // - Ready for New Reading: Today is before startDate
-  // - Closed: Today is after endDate
-  let computedStatus: ReadingPeriodStatus;
-  if (todayStr >= startDateStr && todayStr <= endDateStr) {
-    computedStatus = 'Open';
-  } else if (todayStr < startDateStr) {
-    computedStatus = 'Ready for New Reading';
+  // Compute status based on mode & administrative override:
+  let finalStatus: ReadingPeriodStatus;
+  if (rawMode === 'manual' && rawStatus) {
+    finalStatus = rawStatus;
+  } else if (rawStatus === 'Closed') {
+    // Administrative closure lock takes precedence over calendar date
+    finalStatus = 'Closed';
   } else {
-    computedStatus = 'Closed';
+    // Dynamically compute reading period status from auto-recurring schedule dates:
+    // - Open: Today is between startDate and endDate (inclusive)
+    // - Ready for New Reading: Today is before startDate
+    // - Closed: Today is after endDate
+    if (todayStr >= startDateStr && todayStr <= endDateStr) {
+      finalStatus = rawStatus === 'Ready for New Reading' ? 'Ready for New Reading' : 'Open';
+    } else if (todayStr < startDateStr) {
+      finalStatus = 'Ready for New Reading';
+    } else {
+      finalStatus = 'Closed';
+    }
+  }
+
+  if (rawMode !== 'manual' && rawStatus !== finalStatus) {
+    dbUpdateSystemSetting('reading_period_status', finalStatus).catch(() => {});
   }
 
   return {
-    status: computedStatus,
+    status: finalStatus,
     startDate: startDateStr,
     endDate: endDateStr,
     startDay,
     endDay,
     isRecurring: true,
+    mode: rawMode as 'auto' | 'manual',
   };
 }
 
@@ -286,13 +310,18 @@ export async function updateReadingPeriodStatusAction(
   startDate?: string,
   endDate?: string,
   startDayInput?: number | string,
-  endDayInput?: number | string
+  endDayInput?: number | string,
+  modeInput?: 'auto' | 'manual'
 ) {
   const session = await getSession();
   if (!session || !session.id) {
     throw new Error("Unauthorized: Invalid session");
   }
   await dbUpdateSystemSetting('reading_period_status', status);
+
+  // If admin explicitly set Closed or Ready for New Reading, set mode to manual unless specified
+  const mode = modeInput || (status === 'Closed' || status === 'Ready for New Reading' ? 'manual' : 'auto');
+  await dbUpdateSystemSetting('reading_period_mode', mode);
 
   if (startDate !== undefined) {
     await dbUpdateSystemSetting('reading_period_start_date', startDate);
@@ -329,13 +358,15 @@ export async function updateReadingPeriodDetailsAction(payload: {
   endDate?: string;
   startDay?: number | string;
   endDay?: number | string;
+  mode?: 'auto' | 'manual';
 }) {
   return await updateReadingPeriodStatusAction(
     payload.status,
     payload.startDate,
     payload.endDate,
     payload.startDay,
-    payload.endDay
+    payload.endDay,
+    payload.mode
   );
 }
 
@@ -427,10 +458,12 @@ const wrap = async <T>(fn: () => Promise<T>) => {
       }
     }
 
-    // Write to file for immediate visibility
-    try {
-      fs.appendFileSync('server-error.log', new Date().toISOString() + ' : ' + (e instanceof Error ? e.stack : String(e)) + '\n');
-    } catch (fsErr) { }
+    // Write to file for immediate visibility (skip standard unauthenticated/forbidden checks to prevent log bloating)
+    if (!isAccessError && !errorMessage.includes('User not authenticated')) {
+      try {
+        fs.appendFileSync('server-error.log', new Date().toISOString() + ' : ' + (e instanceof Error ? e.stack : String(e)) + '\n');
+      } catch (fsErr) { }
+    }
 
     // Ensure only serializable primitives are returned (no Error objects)
     return { success: false, data: null, error: { message: errorMessage } } as any;
@@ -697,7 +730,12 @@ export async function getCustomersSummaryAction() {
 
 export async function createCustomerAction(customer: IndividualCustomerInsert) {
   return await wrap(async () => {
-    const session = await checkPermissionAny(PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
+    const session = await checkPermissionAny(
+      PERMISSIONS.CUSTOMERS_CREATE,
+      PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED,
+      PERMISSIONS.DATA_ENTRY_INDIVIDUAL_FORM,
+      PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV
+    );
     // All data entry creations default to Pending Approval
     customer.status = customer.status || 'Pending Approval';
     const perms = session.permissions || [];
@@ -888,7 +926,12 @@ export async function getBulkMeterByIdAction(customerKeyNumber: string) {
 }
 export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
   return await wrap(async () => {
-    const session = await checkPermissionAny(PERMISSIONS.BULK_METERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
+    const session = await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_CREATE,
+      PERMISSIONS.BULK_METERS_CREATE_RESTRICTED,
+      PERMISSIONS.DATA_ENTRY_BULK_FORM,
+      PERMISSIONS.DATA_ENTRY_BULK_CSV
+    );
     // All data entry creations default to Pending Approval
     bulkMeter.status = bulkMeter.status || 'Pending Approval';
     const perms = session.permissions || [];
@@ -1854,7 +1897,7 @@ export async function approveBillAction(id: string) {
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
-      const billRes = await dbGetBillByIdQuery(id);
+      const billRes = await dbGetBillByIdQuery(id, undefined, client);
       const currentStatus = billRes?.status || 'Pending';
       const monthYear = billRes?.month_year;
 
@@ -1866,6 +1909,11 @@ export async function approveBillAction(id: string) {
         to_status: 'Approved',
         changed_by: session.id
       }, client);
+
+      const customerKey = billRes?.CUSTOMERKEY || billRes?.individual_customer_id;
+      if (customerKey) {
+        await dbSyncAgingForCustomer(customerKey, client);
+      }
 
       await logSecurityEventAction({
         event: 'Approve Bill',
@@ -1882,7 +1930,7 @@ export async function rejectBillAction(id: string, reason: string) {
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
-      const billRes = await dbGetBillByIdQuery(id);
+      const billRes = await dbGetBillByIdQuery(id, undefined, client);
       const currentStatus = billRes?.status || 'Pending';
       const monthYear = billRes?.month_year;
 
@@ -1944,6 +1992,11 @@ export async function rejectBillAction(id: string, reason: string) {
         reason: reason
       }, client);
 
+      const customerKey = billRes?.CUSTOMERKEY || billRes?.individual_customer_id;
+      if (customerKey) {
+        await dbSyncAgingForCustomer(customerKey, client);
+      }
+
       await logSecurityEventAction({
         event: 'Reject Bill',
         severity: 'warning',
@@ -1966,7 +2019,7 @@ export async function postBillAction(id: string) {
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
-      const billRes = await dbGetBillByIdQuery(id);
+      const billRes = await dbGetBillByIdQuery(id, undefined, client);
       const currentStatus = billRes?.status || 'Approved';
       const monthYear = billRes?.month_year;
 
@@ -1978,11 +2031,53 @@ export async function postBillAction(id: string) {
         changed_by: session.id
       }, client);
 
+      const customerKey = billRes?.CUSTOMERKEY || billRes?.individual_customer_id;
+      if (customerKey) {
+        await dbSyncAgingForCustomer(customerKey, client);
+      }
+
       await logSecurityEventAction({
         event: 'Post Bill',
         details: { id }
       });
       return bill;
+    });
+  });
+}
+
+export async function disputeBillAction(id: string, reason: string, requestedAdjustment?: number) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    await verifyBillBranchAccess(id, session);
+
+    return await withTransaction(async (client) => {
+      const billRes = await dbGetBillByIdQuery(id, undefined, client);
+      if (!billRes) throw new Error('Bill not found');
+
+      const currentStatus = billRes.status || 'Pending';
+      const monthYear = billRes.month_year;
+
+      const updatedBill = await dbUpdateBillStatus(id, 'Disputed', null, null, client, monthYear);
+      await dbCreateBillWorkflowLog({
+        bill_id: id,
+        from_status: currentStatus,
+        to_status: 'Disputed',
+        changed_by: session.id,
+        reason: `${reason}${requestedAdjustment ? ` (Requested Adjustment: ETB ${requestedAdjustment})` : ''}`
+      }, client);
+
+      const customerKey = billRes.CUSTOMERKEY || billRes.individual_customer_id;
+      if (customerKey) {
+        await dbSyncAgingForCustomer(customerKey, client);
+      }
+
+      await logSecurityEventAction({
+        event: 'Dispute Bill',
+        severity: 'warning',
+        details: { id, reason, requestedAdjustment, from: currentStatus }
+      });
+
+      return updatedBill;
     });
   });
 }
@@ -2408,7 +2503,10 @@ export async function getAllIndividualCustomerReadingsAction() {
     const perms = session.permissions || [];
     const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
-      perms.includes(PERMISSIONS.METER_READINGS_CREATE);
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
     if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
 
     // Branch isolation
@@ -2422,13 +2520,84 @@ export async function getAllIndividualCustomerReadingsAction() {
     return await dbGetAllIndividualCustomerReadings(filterBranchId, readerId);
   });
 }
+
+export async function getPaginatedIndividualReadingsAction(options: {
+  page?: number;
+  pageSize?: number;
+  searchTerm?: string;
+  branchId?: string;
+  routeKey?: string;
+  monthYear?: string;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
+    if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
+
+    // Branch isolation
+    const filterBranchId = getEffectiveBranchId(session, options.branchId, PERMISSIONS.METER_READINGS_VIEW_ALL);
+
+    // Reader isolation:
+    const readerId = !perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetPaginatedIndividualCustomerReadings({
+      ...options,
+      branchId: filterBranchId,
+      readerId
+    });
+  });
+}
+
+export async function getReaderProgressMetricsAction(monthYear?: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.ROUTES_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW) ||
+      perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
+    if (!hasPerm) throw new Error('Forbidden: Missing route/meter reading permissions');
+
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.METER_READINGS_VIEW_ALL);
+    return await dbGetReaderProgressMetrics(filterBranchId, monthYear);
+  });
+}
+
+export async function getReadingConsumptionAnomaliesAction(monthYear?: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW) ||
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
+    if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
+
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.METER_READINGS_VIEW_ALL);
+    return await dbGetReadingConsumptionAnomalies(filterBranchId, monthYear);
+  });
+}
 export async function createIndividualCustomerReadingAction(
   reading: IndividualCustomerReadingInsert,
   spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number },
   meterPhoto?: string
 ) {
   const status = await getReadingPeriodStatusAction();
-  if (status === 'Closed') {
+  if (status !== 'Open') {
+    if (status === 'Ready for New Reading') {
+      return { success: false, message: "Reading period is not yet open. It is currently in 'Ready for New Reading' state." };
+    }
     return { success: false, message: "Reading period is currently closed globally." };
   }
   return await wrap(async () => {
@@ -2446,6 +2615,24 @@ export async function createIndividualCustomerReadingAction(
       // Branch isolation: ensure the customer belongs to the user's branch
       verifyEntityBranchAccess(customer.branch_id || customer.branchId, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'customer');
 
+      // GPS Proximity Anti-Fraud Check
+      if (spatialData && spatialData.xCoordinate !== undefined && spatialData.yCoordinate !== undefined) {
+        const custLat = customer.yCoordinate || (customer as any).y_coordinate;
+        const custLng = customer.xCoordinate || (customer as any).x_coordinate;
+        if (custLat && custLng && !isNaN(Number(custLat)) && !isNaN(Number(custLng))) {
+          const dist = calculateDistance(
+            { latitude: Number(spatialData.yCoordinate), longitude: Number(spatialData.xCoordinate) },
+            { latitude: Number(custLat), longitude: Number(custLng) }
+          );
+          const rawThresh = await dbGetSystemSetting('gps_anomaly_proximity_threshold_meters');
+          const anomalyThreshold = rawThresh && !isNaN(Number(rawThresh)) ? Math.max(10, Number(rawThresh)) : 150;
+          if (dist > anomalyThreshold) {
+            const gpsFlag = `[GPS Distance Anomaly: reading recorded ${Math.round(dist)}m from registered meter]`;
+            const currentNotes = (reading as any).notes || (reading as any).error || '';
+            (reading as any).notes = currentNotes ? `${currentNotes} ${gpsFlag}` : gpsFlag;
+          }
+        }
+      }
 
       const result = await dbCreateIndividualCustomerReading(reading, client);
       
@@ -2499,7 +2686,10 @@ export async function batchCreateIndividualCustomerReadingsAction(
 
   // 1. Check reading period status ONCE
   const periodStatus = await getReadingPeriodStatusAction();
-  if (periodStatus === 'Closed') {
+  if (periodStatus !== 'Open') {
+    if (periodStatus === 'Ready for New Reading') {
+      return { success: false, message: "Reading period is not yet open. It is currently in 'Ready for New Reading' state." };
+    }
     return { success: false, message: 'Reading period is currently closed globally.' };
   }
 
@@ -2715,7 +2905,10 @@ export async function getAllBulkMeterReadingsAction() {
     const perms = session.permissions || [];
     const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
-      perms.includes(PERMISSIONS.METER_READINGS_CREATE);
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BULK) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
     if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
 
     // Branch isolation
@@ -2729,13 +2922,51 @@ export async function getAllBulkMeterReadingsAction() {
     return await dbGetAllBulkMeterReadings(filterBranchId, readerId);
   });
 }
+
+export async function getPaginatedBulkReadingsAction(options: {
+  page?: number;
+  pageSize?: number;
+  searchTerm?: string;
+  branchId?: string;
+  routeKey?: string;
+  monthYear?: string;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BULK) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+      perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
+    if (!hasPerm) throw new Error('Forbidden: Missing meter readings permission');
+
+    // Branch isolation
+    const filterBranchId = getEffectiveBranchId(session, options.branchId, PERMISSIONS.METER_READINGS_VIEW_ALL);
+
+    // Reader isolation:
+    const readerId = !perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) && perms.includes(PERMISSIONS.ROUTES_VIEW_ASSIGNED)
+      ? session.id
+      : undefined;
+
+    return await dbGetPaginatedBulkMeterReadings({
+      ...options,
+      branchId: filterBranchId,
+      readerId
+    });
+  });
+}
 export async function createBulkMeterReadingAction(
   reading: BulkMeterReadingInsert,
   spatialData?: { xCoordinate?: number; yCoordinate?: number; zCoordinate?: number },
   meterPhoto?: string
 ) {
   const status = await getReadingPeriodStatusAction();
-  if (status === 'Closed') {
+  if (status !== 'Open') {
+    if (status === 'Ready for New Reading') {
+      return { success: false, message: "Reading period is not yet open. It is currently in 'Ready for New Reading' state." };
+    }
     return { success: false, message: "Reading period is currently closed globally." };
   }
   return await wrap(async () => {
@@ -2752,6 +2983,25 @@ export async function createBulkMeterReadingAction(
       if (!meter) throw new Error("Bulk meter not found");
       // Branch isolation: ensure the target meter belongs to the user's branch
       verifyEntityBranchAccess(meter.branch_id || meter.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
+
+      // GPS Proximity Anti-Fraud Check
+      if (spatialData && spatialData.xCoordinate !== undefined && spatialData.yCoordinate !== undefined) {
+        const meterLat = meter.yCoordinate || (meter as any).y_coordinate;
+        const meterLng = meter.xCoordinate || (meter as any).x_coordinate;
+        if (meterLat && meterLng && !isNaN(Number(meterLat)) && !isNaN(Number(meterLng))) {
+          const dist = calculateDistance(
+            { latitude: Number(spatialData.yCoordinate), longitude: Number(spatialData.xCoordinate) },
+            { latitude: Number(meterLat), longitude: Number(meterLng) }
+          );
+          const rawThresh = await dbGetSystemSetting('gps_anomaly_proximity_threshold_meters');
+          const anomalyThreshold = rawThresh && !isNaN(Number(rawThresh)) ? Math.max(10, Number(rawThresh)) : 150;
+          if (dist > anomalyThreshold) {
+            const gpsFlag = `[GPS Distance Anomaly: reading recorded ${Math.round(dist)}m from registered meter]`;
+            const currentNotes = (reading as any).notes || (reading as any).error || '';
+            (reading as any).notes = currentNotes ? `${currentNotes} ${gpsFlag}` : gpsFlag;
+          }
+        }
+      }
 
       const result = await dbCreateBulkMeterReading(reading, client);
       
@@ -2805,7 +3055,10 @@ export async function batchCreateBulkMeterReadingsAction(
 
   // 1. Check reading period status ONCE
   const periodStatus = await getReadingPeriodStatusAction();
-  if (periodStatus === 'Closed') {
+  if (periodStatus !== 'Open') {
+    if (periodStatus === 'Ready for New Reading') {
+      return { success: false, message: "Reading period is not yet open. It is currently in 'Ready for New Reading' state." };
+    }
     return { success: false, message: 'Reading period is currently closed globally.' };
   }
 
@@ -3950,21 +4203,31 @@ export async function getAllPaymentsAction() {
   });
 }
 export async function createPaymentAction(payment: PaymentInsert) {
-    return await wrap(async () => {
-      await checkPermission(PERMISSIONS.PAYMENTS_CREATE);
-      // 1. Create Payment
-      const result = await dbCreatePayment(payment);
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.PAYMENTS_CREATE);
 
-    // 2. Sync Aging Debt and Updates
-    if (payment.bill_id) {
-      const bill = await dbGetBillByIdQuery(payment.bill_id);
-      if (bill) {
-        const customerKey = bill.CUSTOMERKEY || bill.individual_customer_id;
-        if (customerKey) {
-            await dbSyncAgingForCustomer(customerKey);
+    const result = await withTransaction(async (client) => {
+      // 1. Create Payment
+      const created = await dbCreatePayment(payment, client);
+
+      // 2. Sync Aging Debt and Updates
+      let customerKey: string | null = null;
+      if (payment.bill_id) {
+        const bill = await dbGetBillByIdQuery(payment.bill_id, undefined, client);
+        if (bill) {
+          customerKey = bill.CUSTOMERKEY || bill.individual_customer_id || null;
         }
       }
-    }
+      if (!customerKey) {
+        customerKey = payment.individual_customer_id || (payment as any).bulk_meter_id || (payment as any).customer_key || null;
+      }
+
+      if (customerKey) {
+        await dbSyncAgingForCustomer(customerKey, client);
+      }
+
+      return created;
+    });
 
     await logSecurityEventAction({
       event: 'Create Payment',
@@ -3974,13 +4237,16 @@ export async function createPaymentAction(payment: PaymentInsert) {
     return result;
   });
 }
+
 export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
   return await wrap(async () => {
     await checkPermission(PERMISSIONS.PAYMENTS_CREATE); // Assume same for now
     
-    // Fetch payment to get bill_id
-    const payments = await dbGetAllPayments();
-    const existingPayment = payments.find((p: any) => p.id === id);
+    // Fetch payment directly by ID
+    const existingPayment = await dbGetPaymentById(id);
+    if (!existingPayment) {
+      throw new Error('Payment not found');
+    }
 
     const result = await dbUpdatePayment(id, payment);
 
@@ -3990,6 +4256,9 @@ export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
       if (bill) {
          customerKeyToSync = bill.CUSTOMERKEY || bill.individual_customer_id;
       }
+    }
+    if (!customerKeyToSync && existingPayment) {
+      customerKeyToSync = existingPayment.individual_customer_id || (existingPayment as any).bulk_meter_id || (existingPayment as any).customer_key || null;
     }
 
     if (customerKeyToSync) {
@@ -4003,12 +4272,15 @@ export async function updatePaymentAction(id: string, payment: PaymentUpdate) {
     return result;
   });
 }
+
 export async function deletePaymentAction(id: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.PAYMENTS_DELETE);
-    // 1. Fetch payment to find associated bill/meter
-    const payments = await dbGetAllPayments();
-    const payment = payments.find((p: any) => p.id === id);
+    // 1. Fetch payment directly by ID
+    const payment = await dbGetPaymentById(id);
+    if (!payment) {
+      throw new Error('Payment not found');
+    }
 
     let customerKeyToSync = null;
     if (payment && payment.bill_id) {
@@ -4016,6 +4288,9 @@ export async function deletePaymentAction(id: string) {
       if (bill) {
          customerKeyToSync = bill.CUSTOMERKEY || bill.individual_customer_id;
       }
+    }
+    if (!customerKeyToSync && payment) {
+      customerKeyToSync = payment.individual_customer_id || (payment as any).bulk_meter_id || (payment as any).customer_key || null;
     }
 
     // 2. Delete the payment
@@ -4031,6 +4306,7 @@ export async function deletePaymentAction(id: string) {
       severity: 'warning',
       details: { id }
     });
+    return { success: true };
   });
 }
 
@@ -5919,6 +6195,48 @@ export async function updateSessionSettingsAction(payload: { sessionDurationSeco
   });
 }
 
+export async function getGpsProximityThresholdsAction(): Promise<{ fieldThreshold: number; anomalyThreshold: number }> {
+  return await wrap(async () => {
+    await checkPermission();
+    const { dbGetSystemSetting } = await import('./db-queries');
+    const [rawField, rawAnomaly] = await Promise.all([
+      dbGetSystemSetting('gps_field_proximity_threshold_meters'),
+      dbGetSystemSetting('gps_anomaly_proximity_threshold_meters'),
+    ]);
+    const fieldThreshold = rawField && !isNaN(Number(rawField)) ? Math.max(5, Number(rawField)) : 15;
+    const anomalyThreshold = rawAnomaly && !isNaN(Number(rawAnomaly)) ? Math.max(10, Number(rawAnomaly)) : 150;
+    return { fieldThreshold, anomalyThreshold };
+  });
+}
+
+export async function updateGpsProximityThresholdsAction(payload: {
+  fieldThreshold?: number;
+  anomalyThreshold?: number;
+}) {
+  return await wrap(async () => {
+    await checkPermission(PERMISSIONS.SETTINGS_MANAGE);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const { dbUpdateSystemSetting } = await import('./db-queries');
+    if (payload.fieldThreshold !== undefined && !isNaN(payload.fieldThreshold)) {
+      const clampedField = Math.max(5, Math.min(500, Math.round(payload.fieldThreshold)));
+      await dbUpdateSystemSetting('gps_field_proximity_threshold_meters', String(clampedField));
+    }
+    if (payload.anomalyThreshold !== undefined && !isNaN(payload.anomalyThreshold)) {
+      const clampedAnomaly = Math.max(10, Math.min(5000, Math.round(payload.anomalyThreshold)));
+      await dbUpdateSystemSetting('gps_anomaly_proximity_threshold_meters', String(clampedAnomaly));
+    }
+
+    await logSecurityEventAction({
+      event: 'Updated GPS Proximity Settings',
+      details: payload,
+    });
+
+    return { success: true };
+  });
+}
+
 // Bulk bill workflow helpers & actions
 const verifyBillsBranchAccessBulk = async (billIds: string[], session: any) => {
   const perms = session.permissions || [];
@@ -6010,7 +6328,7 @@ export async function approveBillsBulkAction(ids: string[]) {
       await client.query('SAVEPOINT sp_bulk_approve');
       try {
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-        const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+        const currentBills = await client.query(`SELECT id, status, month_year, "CUSTOMERKEY", individual_customer_id FROM bills WHERE id IN (${placeholders})`, ids);
         const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Pending']));
 
         const approvalDate = new Date();
@@ -6044,6 +6362,15 @@ export async function approveBillsBulkAction(ids: string[]) {
           logValues
         );
 
+        const customerKeys = new Set<string>();
+        for (const r of currentBills.rows) {
+          const key = r.CUSTOMERKEY || r.individual_customer_id;
+          if (key) customerKeys.add(key);
+        }
+        for (const key of customerKeys) {
+          await dbSyncAgingForCustomer(key, client);
+        }
+
         await client.query('RELEASE SAVEPOINT sp_bulk_approve');
 
         await logSecurityEventAction({
@@ -6076,7 +6403,7 @@ export async function postBillsBulkAction(ids: string[]) {
       await client.query('SAVEPOINT sp_bulk_post');
       try {
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-        const currentBills = await client.query(`SELECT id, status, month_year FROM bills WHERE id IN (${placeholders})`, ids);
+        const currentBills = await client.query(`SELECT id, status, month_year, "CUSTOMERKEY", individual_customer_id FROM bills WHERE id IN (${placeholders})`, ids);
         const statusMap = new Map(currentBills.rows.map((b: any) => [b.id, b.status || 'Approved']));
 
         // Group IDs by month_year for partition pruning updates
@@ -6108,6 +6435,15 @@ export async function postBillsBulkAction(ids: string[]) {
           logValues
         );
 
+        const customerKeys = new Set<string>();
+        for (const r of currentBills.rows) {
+          const key = r.CUSTOMERKEY || r.individual_customer_id;
+          if (key) customerKeys.add(key);
+        }
+        for (const key of customerKeys) {
+          await dbSyncAgingForCustomer(key, client);
+        }
+
         await client.query('RELEASE SAVEPOINT sp_bulk_post');
 
         await logSecurityEventAction({
@@ -6121,6 +6457,26 @@ export async function postBillsBulkAction(ids: string[]) {
         throw err;
       }
     });
+  });
+}
+
+export async function getPreApprovalAuditAction(monthYear: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    if (!(perms.includes(PERMISSIONS.BILL_APPROVE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('*'))) {
+      throw new Error('Forbidden: Missing permission to audit bills');
+    }
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.BILL_VIEW_ALL);
+    return await dbGetPreApprovalAuditMetrics(monthYear, filterBranchId);
+  });
+}
+
+export async function getWaterBalanceMetricsAction(monthYear: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const filterBranchId = getEffectiveBranchId(session, undefined, PERMISSIONS.BILL_VIEW_ALL);
+    return await dbGetWaterBalanceMetrics(monthYear, filterBranchId);
   });
 }
 
@@ -6199,7 +6555,9 @@ const generateRandomDigits = (length: number): string => {
 export async function batchImportBulkMetersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    const session = await checkPermissionAny(PERMISSIONS.BULK_METERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
+    const session = await checkPermissionAny(
+      PERMISSIONS.DATA_ENTRY_BULK_CSV
+    );
     const branches = await dbGetAllBranches();
     const branchMap = new Map<string, string>();
     branches.forEach((b: any) => {
@@ -6411,7 +6769,9 @@ export async function batchImportBulkMetersAction(rows: any[]) {
 export async function batchImportIndividualCustomersAction(rows: any[]) {
   if (!rows || rows.length === 0) return { success: true, inserted: 0, errors: [] };
   return await wrap(async () => {
-    const session = await checkPermissionAny(PERMISSIONS.CUSTOMERS_CREATE, PERMISSIONS.DATA_ENTRY_ACCESS);
+    const session = await checkPermissionAny(
+      PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV
+    );
     const branches = await dbGetAllBranches();
     const branchMap = new Map<string, string>();
     branches.forEach((b: any) => {
@@ -6755,8 +7115,12 @@ export async function updatePaymentsFromCsvAction(records: Array<{
   meterKey?: string;
 }>) {
   return await wrap(async () => {
-    const session = await getSession();
-    if (!session || !session.id) throw new Error('Unauthorized');
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_POST,
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.REPORT_LIST_OF_PAID_BILLS,
+      PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS
+    );
     
     const startTime = Date.now();
     console.log(`[CSV UPLOAD] ⏱️  Started at ${new Date().toISOString()}`);

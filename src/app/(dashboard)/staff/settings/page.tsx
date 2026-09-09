@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, LogOut, ShieldCheck, Calendar as CalendarIcon } from "lucide-react";
+import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, LogOut, ShieldCheck, Calendar as CalendarIcon, KeyRound } from "lucide-react";
+import { ChangePasswordDialog } from "@/components/auth/change-password-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -41,6 +42,17 @@ export default function StaffSettingsPage() {
     const [defaultCurrency, setDefaultCurrency] = React.useState("ETB");
     const [enableDarkMode, setEnableDarkMode] = React.useState(false);
     const [enableOverdueReminders, setEnableOverdueReminders] = React.useState(false);
+    const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
+    const [currentUser, setCurrentUser] = React.useState<{ name?: string; email?: string; role?: string } | null>(null);
+
+    React.useEffect(() => {
+        try {
+            const stored = localStorage.getItem("user");
+            if (stored) {
+                setCurrentUser(JSON.parse(stored));
+            }
+        } catch {}
+    }, []);
 
     // Billing cycle settings
     const [cycleMode, setCycleMode] = React.useState<'once_per_month' | 'custom' | 'unlimited'>('once_per_month');
@@ -579,6 +591,34 @@ export default function StaffSettingsPage() {
                 </CardContent>
             </Card>
 
+            <Card className="shadow-lg">
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <KeyRound className="h-5 w-5 text-blue-600 dark:text-blue-400" /> Account Security & Password
+                    </CardTitle>
+                    <CardDescription>Manage your account password and security options.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-lg border bg-slate-50/50 dark:bg-slate-900/40">
+                        <div className="space-y-1">
+                            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                                {currentUser?.name || currentUser?.email || "Account Password"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                                Role: <span className="font-medium text-foreground">{currentUser?.role || "Staff"}</span> • Regularly update your password to keep your portal access protected.
+                            </p>
+                        </div>
+                        <Button
+                            variant="outline"
+                            onClick={() => setIsChangePasswordOpen(true)}
+                            className="gap-2 border-blue-200 hover:border-blue-300 hover:bg-blue-50/50 dark:border-blue-900 dark:hover:bg-blue-950/40 self-start sm:self-auto"
+                        >
+                            <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                            Change Password
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
 
             <Card className="shadow-lg">
                 <CardHeader>
@@ -601,6 +641,12 @@ export default function StaffSettingsPage() {
                     </Button>
                 </div>
             )}
+
+            <ChangePasswordDialog
+                open={isChangePasswordOpen}
+                onOpenChange={setIsChangePasswordOpen}
+                userEmail={currentUser?.email}
+            />
         </div>
     );
 }

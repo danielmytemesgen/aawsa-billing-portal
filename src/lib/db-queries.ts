@@ -1249,20 +1249,26 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
         return true;
     });
 };
-export const dbGetBillById = async (id: string, branchId?: string) => {
-    if (branchId) {
-        const rows: any = await query(`
+export const dbGetBillById = async (id: string, branchId?: string | any, client?: any) => {
+    let actualClient = client;
+    let actualBranchId = typeof branchId === 'string' ? branchId : undefined;
+    if (branchId && typeof branchId === 'object' && typeof branchId.query === 'function') {
+        actualClient = branchId;
+    }
+    const qFunc = actualClient ? actualClient.query.bind(actualClient) : query;
+    if (actualBranchId) {
+        const res: any = await qFunc(`
             SELECT b.* 
             FROM bills b
             LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
             LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
             WHERE b.id = $1 AND b.deleted_at IS NULL
             AND (bm.branch_id = $2 OR ic.branch_id = $2)
-        `, [id, branchId]);
-        return rows[0] ?? null;
+        `, [id, actualBranchId]);
+        return (actualClient ? res.rows : res)[0] ?? null;
     }
-    const rows: any = await query('SELECT * FROM bills WHERE id = $1 AND deleted_at IS NULL', [id]);
-    return rows[0] ?? null;
+    const res: any = await qFunc('SELECT * FROM bills WHERE id = $1 AND deleted_at IS NULL', [id]);
+    return (actualClient ? res.rows : res)[0] ?? null;
 };
 
 export const dbGetBillsByCustomerId = async (customerKeyNumber: string, branchId?: string, excludeUnfinalized?: boolean) => {
@@ -1377,6 +1383,136 @@ export async function ensureReadingPartitionExists(parentTable: string, monthYea
     }
 }
 
+export interface PaginatedReadingsOptions {
+    page?: number;
+    pageSize?: number;
+    searchTerm?: string;
+    branchId?: string;
+    readerId?: string;
+    routeKey?: string;
+    monthYear?: string;
+}
+
+export interface PaginatedReadingsResult {
+    rows: any[];
+    totalCount: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+}
+
+export const dbGetPaginatedIndividualCustomerReadings = async (options: PaginatedReadingsOptions = {}): Promise<PaginatedReadingsResult> => {
+    const page = Math.max(1, options.page || 1);
+    const pageSize = Math.max(1, Math.min(200, options.pageSize || 20));
+    const offset = (page - 1) * pageSize;
+
+    let whereClauses: string[] = ['r.deleted_at IS NULL'];
+    const params: any[] = [];
+
+    if (options.branchId) {
+        params.push(options.branchId);
+        whereClauses.push(`ic.branch_id = $${params.length}`);
+    }
+
+    if (options.readerId) {
+        params.push(options.readerId);
+        whereClauses.push(`ro.reader_id = $${params.length}`);
+    }
+
+    if (options.routeKey) {
+        params.push(options.routeKey);
+        whereClauses.push(`(ic."ROUTE_KEY" = $${params.length} OR bm."ROUTE_KEY" = $${params.length})`);
+    }
+
+    if (options.monthYear && /^\d{4}-\d{2}$/.test(options.monthYear)) {
+        const [yStr, mStr] = options.monthYear.split('-');
+        const y = parseInt(yStr, 10);
+        const m = parseInt(mStr, 10);
+        const startOfMonth = `${yStr}-${String(m).padStart(2, '0')}-01`;
+        const nextY = m === 12 ? y + 1 : y;
+        const nextM = m === 12 ? 1 : m + 1;
+        const startOfNextMonth = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
+
+        params.push(startOfMonth, startOfNextMonth);
+        whereClauses.push(`r."READING_DATE" >= $${params.length - 1}::date AND r."READING_DATE" < $${params.length}::date`);
+    }
+
+    if (options.searchTerm && options.searchTerm.trim()) {
+        params.push(`%${options.searchTerm.trim()}%`);
+        whereClauses.push(`(
+            r."CUST_KEY" ILIKE $${params.length} 
+            OR r."CUST_NAME" ILIKE $${params.length} 
+            OR r."METER_KEY" ILIKE $${params.length} 
+            OR ic."customerKeyNumber" ILIKE $${params.length}
+            OR ic.name ILIKE $${params.length}
+        )`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const countSql = `
+        SELECT COUNT(*)::int as total
+        FROM individual_customer_readings r
+        LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
+        LEFT JOIN routes ro ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = ro.route_key
+        ${whereSql}
+    `;
+
+    const countRes = await query(countSql, params);
+    const totalCount = countRes[0]?.total ?? 0;
+
+    const dataSql = `
+        SELECT r.*, 
+            EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo,
+            ic.name as "customerName",
+            ic.branch_id as "branchId",
+            br.name as "branchName",
+            ro.route_key as "routeKey",
+            sm.name as "readerName"
+        FROM individual_customer_readings r
+        LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+        LEFT JOIN branches br ON ic.branch_id = br.id
+        LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
+        LEFT JOIN routes ro ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = ro.route_key
+        LEFT JOIN staff_members sm ON ro.reader_id = sm.id
+        ${whereSql}
+        ORDER BY r."READING_DATE" DESC, r.id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+
+    const rawRows = await query(dataSql, [...params, pageSize, offset]);
+    const rows = rawRows.map((r: any) => {
+        const rDate = r.READING_DATE instanceof Date ? r.READING_DATE.toISOString().slice(0, 10) : (r.READING_DATE ? String(r.READING_DATE).slice(0, 10) : '');
+        const monthYear = rDate ? rDate.slice(0, 7) : 'Unknown';
+        const name = r.customerName || r.CUST_NAME || `Cust. ID: ${r.CUST_KEY}`;
+        const meterNum = r.METER_KEY || '';
+        const meterIdentifier = meterNum ? `${name} (M: ${meterNum})` : name;
+        return {
+            id: String(r.id),
+            meterId: r.CUST_KEY,
+            meterType: 'individual' as const,
+            meterIdentifier,
+            readingValue: Number(r.METER_READING || 0),
+            previousReading: Number(r.PREVIOUS_READING || 0),
+            readingDate: rDate,
+            monthYear,
+            notes: r.error || undefined,
+            faultCode: r.FAULT_CODE || undefined,
+            branchName: r.branchName || r.BRANCH_NAME || undefined,
+            readerName: r.readerName || 'System/Admin',
+            hasPhoto: Boolean(r.has_photo),
+        };
+    });
+
+    return {
+        rows,
+        totalCount,
+        page,
+        pageSize,
+        totalPages: Math.ceil(totalCount / pageSize) || 1,
+    };
+};
+
 export const dbGetAllIndividualCustomerReadings = async (branchId?: string, readerId?: string, limit?: number) => {
     let sql = `
         SELECT r.*, 
@@ -1420,33 +1556,37 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
         await ensureReadingPartitionExists('individual_customer_readings', monthYear, executor);
 
         // Check if a reading record already exists for this individual customer in the same billing month
-        if (custKey && monthYear) {
-            const checkSql = `SELECT id FROM individual_customer_readings WHERE "CUST_KEY" = $1 AND LEFT("READING_DATE"::text, 7) = $2 AND deleted_at IS NULL LIMIT 1`;
-            const checkRes = await executor.query(checkSql, [custKey, monthYear]);
-            const existingRow = checkRes.rows ? checkRes.rows[0] : checkRes[0];
+        if (custKey && monthYear && /^\d{4}-\d{2}$/.test(monthYear)) {
+            const [yStr, mStr] = monthYear.split('-');
+            const y = parseInt(yStr, 10);
+            const m = parseInt(mStr, 10);
+            const startOfMonth = `${yStr}-${String(m).padStart(2, '0')}-01`;
+            const nextY = m === 12 ? y + 1 : y;
+            const nextM = m === 12 ? 1 : m + 1;
+            const startOfNextMonth = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
 
-            if (existingRow && existingRow.id) {
-                // Update existing reading value instead of creating duplicate reading
-                const keys = Object.keys(safeFields).filter(k => k !== 'id' && k !== 'created_at');
-                const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-                const updateSql = `UPDATE individual_customer_readings SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`;
-                const params = [...keys.map(k => safeFields[k]), existingRow.id];
-                const updateRes = await executor.query(updateSql, params);
-                return (updateRes.rows ? updateRes.rows[0] : updateRes[0]) || existingRow;
+            const existing = await executor.query(
+                `SELECT id FROM individual_customer_readings 
+                 WHERE "CUST_KEY" = $1 
+                   AND "READING_DATE" >= $2::date AND "READING_DATE" < $3::date 
+                   AND deleted_at IS NULL 
+                 LIMIT 1`,
+                [custKey, startOfMonth, startOfNextMonth]
+            );
+            if ((existing.rows || existing).length > 0) {
+                console.warn(`[dbCreateIndividualCustomerReading] Reading already exists for customer ${custKey} in month ${monthYear}. Skipping insert.`);
+                return (existing.rows || existing)[0];
             }
         }
 
-        // Otherwise insert new reading
         const keys = Object.keys(safeFields);
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-        const params = keys.map(k => safeFields[k]);
-        
-        const res = await executor.query(sql, params);
-        return (res.rows ? res.rows[0] : res[0]) || reading;
-    } catch (error) {
-        console.error('dbCreateIndividualCustomerReading error:', error);
-        throw error;
+        const rows: any = await executor.query(sql, keys.map(k => safeFields[k]));
+        return (rows.rows || rows)[0] || safeFields;
+    } catch (err: any) {
+        console.error('dbCreateIndividualCustomerReading error:', err);
+        throw err;
     }
 };
 
@@ -1487,10 +1627,10 @@ export const dbGetIndividualCustomerReadingsByCustomer = async (customerKey: str
 
 export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: string, limit?: number) => {
     let sql = `
-        SELECT r.*,
+        SELECT r.*, 
         EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo
         FROM bulk_meter_readings r
-        JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+        LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
         LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
         WHERE r.deleted_at IS NULL
     `;
@@ -1514,6 +1654,405 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
     return await query(sql, params);
 };
 
+export const dbGetPaginatedBulkMeterReadings = async (options: PaginatedReadingsOptions = {}): Promise<PaginatedReadingsResult> => {
+    const page = Math.max(1, options.page || 1);
+    const pageSize = Math.max(1, Math.min(200, options.pageSize || 20));
+    const offset = (page - 1) * pageSize;
+
+    let whereClauses: string[] = ['r.deleted_at IS NULL'];
+    const params: any[] = [];
+
+    if (options.branchId) {
+        params.push(options.branchId);
+        whereClauses.push(`bm.branch_id = $${params.length}`);
+    }
+
+    if (options.readerId) {
+        params.push(options.readerId);
+        whereClauses.push(`ro.reader_id = $${params.length}`);
+    }
+
+    if (options.routeKey) {
+        params.push(options.routeKey);
+        whereClauses.push(`bm."ROUTE_KEY" = $${params.length}`);
+    }
+
+    if (options.monthYear && /^\d{4}-\d{2}$/.test(options.monthYear)) {
+        const [yStr, mStr] = options.monthYear.split('-');
+        const y = parseInt(yStr, 10);
+        const m = parseInt(mStr, 10);
+        const startOfMonth = `${yStr}-${String(m).padStart(2, '0')}-01`;
+        const nextY = m === 12 ? y + 1 : y;
+        const nextM = m === 12 ? 1 : m + 1;
+        const startOfNextMonth = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
+
+        params.push(startOfMonth, startOfNextMonth);
+        whereClauses.push(`r."READING_DATE" >= $${params.length - 1}::date AND r."READING_DATE" < $${params.length}::date`);
+    }
+
+    if (options.searchTerm && options.searchTerm.trim()) {
+        params.push(`%${options.searchTerm.trim()}%`);
+        whereClauses.push(`(
+            r."CUST_KEY" ILIKE $${params.length} 
+            OR r."CUST_NAME" ILIKE $${params.length} 
+            OR r."METER_KEY" ILIKE $${params.length} 
+            OR bm."customerKeyNumber" ILIKE $${params.length}
+            OR bm.name ILIKE $${params.length}
+        )`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const countSql = `
+        SELECT COUNT(*)::int as total
+        FROM bulk_meter_readings r
+        LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+        LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
+        ${whereSql}
+    `;
+
+    const countRes = await query(countSql, params);
+    const totalCount = countRes[0]?.total ?? 0;
+
+    const dataSql = `
+        SELECT r.*,
+            EXISTS(SELECT 1 FROM meter_reading_photos WHERE reading_id = r.id::text) as has_photo,
+            bm.name as "bulkMeterName",
+            bm.branch_id as "branchId",
+            br.name as "branchName",
+            ro.route_key as "routeKey",
+            sm.name as "readerName"
+        FROM bulk_meter_readings r
+        LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+        LEFT JOIN branches br ON bm.branch_id = br.id
+        LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
+        LEFT JOIN staff_members sm ON ro.reader_id = sm.id
+        ${whereSql}
+        ORDER BY r."READING_DATE" DESC, r.id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+
+    const rawRows = await query(dataSql, [...params, pageSize, offset]);
+    const rows = rawRows.map((r: any) => {
+        const rDate = r.READING_DATE instanceof Date ? r.READING_DATE.toISOString().slice(0, 10) : (r.READING_DATE ? String(r.READING_DATE).slice(0, 10) : '');
+        const monthYear = rDate ? rDate.slice(0, 7) : 'Unknown';
+        const name = r.bulkMeterName || r.CUST_NAME || `BM ID: ${r.CUST_KEY}`;
+        const meterNum = r.METER_KEY || '';
+        const meterIdentifier = meterNum ? `${name} (M: ${meterNum})` : name;
+        return {
+            id: String(r.id),
+            meterId: r.CUST_KEY,
+            meterType: 'bulk' as const,
+            meterIdentifier,
+            readingValue: Number(r.METER_READING || 0),
+            previousReading: Number(r.PREVIOUS_READING || 0),
+            readingDate: rDate,
+            monthYear,
+            notes: r.error || undefined,
+            faultCode: r.FAULT_CODE || undefined,
+            branchName: r.branchName || r.BRANCH_NAME || undefined,
+            readerName: r.readerName || 'System/Admin',
+            hasPhoto: Boolean(r.has_photo),
+        };
+    });
+
+    return {
+        rows,
+        totalCount,
+        page,
+        pageSize,
+        totalPages: Math.ceil(totalCount / pageSize) || 1,
+    };
+};
+
+export const dbGetReaderProgressMetrics = async (branchId?: string, monthYear?: string) => {
+    const now = new Date();
+    const targetMonth = monthYear || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const [yStr, mStr] = targetMonth.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const startOfMonth = `${yStr}-${String(m).padStart(2, '0')}-01`;
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+    const startOfNextMonth = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
+
+    const params: any[] = [startOfMonth, startOfNextMonth];
+    let branchFilter = '';
+    if (branchId) {
+        params.push(branchId);
+        branchFilter = `AND sm.branch_id = $${params.length}`;
+    }
+
+    const sql = `
+        WITH reader_routes AS (
+            SELECT 
+                sm.id as staff_id,
+                sm.name as staff_name,
+                sm.email as staff_email,
+                b.id as branch_id,
+                b.name as branch_name,
+                ARRAY_AGG(r.route_key) FILTER (WHERE r.route_key IS NOT NULL) as route_keys,
+                COUNT(DISTINCT r.route_key) as route_count
+            FROM staff_members sm
+            LEFT JOIN branches b ON sm.branch_id = b.id
+            JOIN routes r ON r.reader_id = sm.id AND r.deleted_at IS NULL
+            WHERE sm.status = 'Active' ${branchFilter}
+            GROUP BY sm.id, sm.name, sm.email, b.id, b.name
+        ),
+        route_meters AS (
+            SELECT 
+                rr.staff_id,
+                COUNT(DISTINCT bm."customerKeyNumber") as bulk_count,
+                COUNT(DISTINCT ic."customerKeyNumber") as ind_count
+            FROM reader_routes rr
+            LEFT JOIN bulk_meters bm ON bm."ROUTE_KEY" = ANY(rr.route_keys) AND bm.deleted_at IS NULL
+            LEFT JOIN individual_customers ic ON (
+                ic."ROUTE_KEY" = ANY(rr.route_keys) 
+                OR (ic."assignedBulkMeterId" = bm."customerKeyNumber")
+            ) AND ic.deleted_at IS NULL
+            GROUP BY rr.staff_id
+        ),
+        completed_readings AS (
+            SELECT 
+                rr.staff_id,
+                COUNT(DISTINCT bmr."CUST_KEY") as read_bulk_count,
+                COUNT(DISTINCT icr."CUST_KEY") as read_ind_count,
+                GREATEST(MAX(bmr."READING_DATE"), MAX(icr."READING_DATE")) as latest_reading_date
+            FROM reader_routes rr
+            LEFT JOIN bulk_meters bm ON bm."ROUTE_KEY" = ANY(rr.route_keys) AND bm.deleted_at IS NULL
+            LEFT JOIN bulk_meter_readings bmr ON bmr."CUST_KEY" = bm."customerKeyNumber" 
+                AND bmr."READING_DATE" >= $1::date AND bmr."READING_DATE" < $2::date AND bmr.deleted_at IS NULL
+            LEFT JOIN individual_customers ic ON (
+                ic."ROUTE_KEY" = ANY(rr.route_keys) 
+                OR (ic."assignedBulkMeterId" = bm."customerKeyNumber")
+            ) AND ic.deleted_at IS NULL
+            LEFT JOIN individual_customer_readings icr ON icr."CUST_KEY" = ic."customerKeyNumber"
+                AND icr."READING_DATE" >= $1::date AND icr."READING_DATE" < $2::date AND icr.deleted_at IS NULL
+            GROUP BY rr.staff_id
+        )
+        SELECT 
+            rr.staff_id as id,
+            rr.staff_name as name,
+            rr.staff_email as email,
+            rr.branch_id as "branchId",
+            COALESCE(rr.branch_name, 'Assigned Branch') as "branchName",
+            COALESCE(rr.route_keys, ARRAY[]::text[]) as "routeKeys",
+            rr.route_count::int as "assignedRouteCount",
+            COALESCE(rm.bulk_count, 0)::int as "bulkMeterCount",
+            COALESCE(rm.ind_count, 0)::int as "customerCount",
+            (COALESCE(rm.bulk_count, 0) + COALESCE(rm.ind_count, 0))::int as "totalAssigned",
+            (COALESCE(cr.read_bulk_count, 0) + COALESCE(cr.read_ind_count, 0))::int as "totalCompleted",
+            ((COALESCE(rm.bulk_count, 0) + COALESCE(rm.ind_count, 0)) - (COALESCE(cr.read_bulk_count, 0) + COALESCE(cr.read_ind_count, 0)))::int as "pendingCount",
+            CASE 
+                WHEN (COALESCE(rm.bulk_count, 0) + COALESCE(rm.ind_count, 0)) > 0 
+                THEN ROUND(((COALESCE(cr.read_bulk_count, 0) + COALESCE(cr.read_ind_count, 0))::numeric / (COALESCE(rm.bulk_count, 0) + COALESCE(rm.ind_count, 0))::numeric) * 100)
+                ELSE 0 
+            END::int as "completionPercentage",
+            cr.latest_reading_date as "latestActivityTimestamp",
+            CASE
+                WHEN (COALESCE(rm.bulk_count, 0) + COALESCE(rm.ind_count, 0)) > 0 AND (COALESCE(cr.read_bulk_count, 0) + COALESCE(cr.read_ind_count, 0)) >= (COALESCE(rm.bulk_count, 0) + COALESCE(rm.ind_count, 0)) THEN 'Completed'
+                WHEN (COALESCE(cr.read_bulk_count, 0) + COALESCE(cr.read_ind_count, 0)) > 0 THEN 'Active Reading'
+                ELSE 'Not Started'
+            END as status
+        FROM reader_routes rr
+        LEFT JOIN route_meters rm ON rm.staff_id = rr.staff_id
+        LEFT JOIN completed_readings cr ON cr.staff_id = rr.staff_id
+        ORDER BY "totalAssigned" DESC
+    `;
+
+    return await query(sql, params);
+};
+
+export interface ReadingAnomaly {
+    id: string;
+    key: string;
+    name: string;
+    type: 'Bulk' | 'Individual';
+    reason: string;
+    severity: 'high' | 'medium';
+    usage: number;
+    readingDate?: string;
+    faultCode?: string;
+    branchName?: string;
+}
+
+export const dbGetReadingConsumptionAnomalies = async (branchId?: string, monthYear?: string): Promise<ReadingAnomaly[]> => {
+    let targetMonth = monthYear;
+    if (!targetMonth || !/^\d{4}-\d{2}$/.test(targetMonth)) {
+        const now = new Date();
+        targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const [yStr, mStr] = targetMonth.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const startOfMonth = `${yStr}-${String(m).padStart(2, '0')}-01`;
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+    const startOfNextMonth = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
+
+    const indParams: any[] = [startOfMonth, startOfNextMonth];
+    let indBranchFilter = '';
+    if (branchId) {
+        indParams.push(branchId);
+        indBranchFilter = `AND ic.branch_id = $${indParams.length}`;
+    }
+
+    const indSql = `
+        SELECT 
+            r.id::text,
+            r."CUST_KEY" as key,
+            COALESCE(ic.name, r."CUST_NAME", r."CUST_KEY") as name,
+            'Individual' as type,
+            COALESCE(r."METER_READING", 0)::numeric as reading_val,
+            COALESCE(r."PREVIOUS_READING", 0)::numeric as prev_val,
+            (COALESCE(r."METER_READING", 0) - COALESCE(r."PREVIOUS_READING", 0))::numeric as usage,
+            r."READING_DATE" as "readingDate",
+            r.error as notes,
+            r."FAULT_CODE" as "faultCode",
+            br.name as "branchName"
+        FROM individual_customer_readings r
+        LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+        LEFT JOIN branches br ON ic.branch_id = br.id
+        WHERE r.deleted_at IS NULL
+          AND r."READING_DATE" >= $1::date AND r."READING_DATE" < $2::date
+          ${indBranchFilter}
+        ORDER BY r."READING_DATE" DESC, r.id DESC
+        LIMIT 200
+    `;
+
+    const bulkParams: any[] = [startOfMonth, startOfNextMonth];
+    let bulkBranchFilter = '';
+    if (branchId) {
+        bulkParams.push(branchId);
+        bulkBranchFilter = `AND bm.branch_id = $${bulkParams.length}`;
+    }
+
+    const bulkSql = `
+        SELECT 
+            r.id::text,
+            r."CUST_KEY" as key,
+            COALESCE(bm.name, r."CUST_NAME", r."CUST_KEY") as name,
+            'Bulk' as type,
+            COALESCE(r."METER_READING", 0)::numeric as reading_val,
+            COALESCE(r."PREVIOUS_READING", 0)::numeric as prev_val,
+            (COALESCE(r."METER_READING", 0) - COALESCE(r."PREVIOUS_READING", 0))::numeric as usage,
+            r."READING_DATE" as "readingDate",
+            r.error as notes,
+            r."FAULT_CODE" as "faultCode",
+            br.name as "branchName"
+        FROM bulk_meter_readings r
+        LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+        LEFT JOIN branches br ON bm.branch_id = br.id
+        WHERE r.deleted_at IS NULL
+          AND r."READING_DATE" >= $1::date AND r."READING_DATE" < $2::date
+          ${bulkBranchFilter}
+        ORDER BY r."READING_DATE" DESC, r.id DESC
+        LIMIT 100
+    `;
+
+    const [indRows, bulkRows] = await Promise.all([
+        query(indSql, indParams),
+        query(bulkSql, bulkParams),
+    ]);
+
+    const anomalies: ReadingAnomaly[] = [];
+
+    const processRow = (row: any, isBulk: boolean) => {
+        const usage = Number(row.usage || 0);
+        const prev = Number(row.prev_val || 0);
+        const notes = String(row.notes || '');
+        const faultCode = row.faultCode;
+
+        if (notes.includes('GPS Distance Anomaly')) {
+            const flag = notes.match(/\[GPS Distance Anomaly:[^\]]+\]/)?.[0] || 'GPS location discrepancy (>150m from meter)';
+            anomalies.push({
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                type: isBulk ? 'Bulk' : 'Individual',
+                reason: flag,
+                severity: 'high',
+                usage,
+                readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
+                faultCode,
+                branchName: row.branchName,
+            });
+        } else if (usage < 0) {
+            anomalies.push({
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                type: isBulk ? 'Bulk' : 'Individual',
+                reason: `Negative consumption (${usage} m³): meter counter rollback or rollover`,
+                severity: 'high',
+                usage,
+                readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
+                faultCode,
+                branchName: row.branchName,
+            });
+        } else if (usage === 0 && prev > 0) {
+            anomalies.push({
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                type: isBulk ? 'Bulk' : 'Individual',
+                reason: 'Zero consumption — possible stopped or broken meter',
+                severity: 'medium',
+                usage,
+                readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
+                faultCode,
+                branchName: row.branchName,
+            });
+        } else if (!isBulk && usage > 250) {
+            anomalies.push({
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                type: 'Individual',
+                reason: `Extreme consumption spike: ${usage.toFixed(0)} m³`,
+                severity: 'high',
+                usage,
+                readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
+                faultCode,
+                branchName: row.branchName,
+            });
+        } else if (isBulk && usage > 2000) {
+            anomalies.push({
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                type: 'Bulk',
+                reason: `Extreme bulk consumption spike: ${usage.toFixed(0)} m³`,
+                severity: 'high',
+                usage,
+                readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
+                faultCode,
+                branchName: row.branchName,
+            });
+        } else if (faultCode && faultCode.trim() !== '') {
+            anomalies.push({
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                type: isBulk ? 'Bulk' : 'Individual',
+                reason: `Active fault code reported: ${faultCode}`,
+                severity: 'medium',
+                usage,
+                readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
+                faultCode,
+                branchName: row.branchName,
+            });
+        }
+    };
+
+    for (const r of indRows) processRow(r, false);
+    for (const r of bulkRows) processRow(r, true);
+
+    anomalies.sort((a, b) => (a.severity === 'high' ? -1 : 1));
+    return anomalies;
+};
+
 export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
     try {
         const { reading_month: _ignored, ...safeFields } = reading;
@@ -1527,9 +2066,17 @@ export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
         await ensureReadingPartitionExists('bulk_meter_readings', monthYear, executor);
 
         // Check if a reading record already exists for this bulk meter in the same billing month
-        if (custKey && monthYear) {
-            const checkSql = `SELECT id FROM bulk_meter_readings WHERE "CUST_KEY" = $1 AND LEFT("READING_DATE"::text, 7) = $2 AND deleted_at IS NULL LIMIT 1`;
-            const checkRes = await executor.query(checkSql, [custKey, monthYear]);
+        if (custKey && monthYear && /^\d{4}-\d{2}$/.test(monthYear)) {
+            const [yStr, mStr] = monthYear.split('-');
+            const y = parseInt(yStr, 10);
+            const m = parseInt(mStr, 10);
+            const startOfMonth = `${yStr}-${String(m).padStart(2, '0')}-01`;
+            const nextY = m === 12 ? y + 1 : y;
+            const nextM = m === 12 ? 1 : m + 1;
+            const startOfNextMonth = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
+
+            const checkSql = `SELECT id FROM bulk_meter_readings WHERE "CUST_KEY" = $1 AND "READING_DATE" >= $2::date AND "READING_DATE" < $3::date AND deleted_at IS NULL LIMIT 1`;
+            const checkRes = await executor.query(checkSql, [custKey, startOfMonth, startOfNextMonth]);
             const existingRow = checkRes.rows ? checkRes.rows[0] : checkRes[0];
 
             if (existingRow && existingRow.id) {
@@ -1712,14 +2259,23 @@ const normalizePaymentMethod = (rawMethod?: string | null): string | null => {
     return 'Other';
 };
 
-export const dbCreatePayment = async (payment: any) => {
+export const dbGetPaymentById = async (id: string, client?: any) => {
+    const qFunc = client ? client.query.bind(client) : query;
+    const res: any = await qFunc('SELECT * FROM payments WHERE id = $1 AND deleted_at IS NULL', [id]);
+    const rows = client ? res.rows : res;
+    return rows[0] ?? null;
+};
+
+export const dbCreatePayment = async (payment: any, client?: any) => {
     if (payment.payment_method !== undefined) {
         payment.payment_method = normalizePaymentMethod(payment.payment_method);
     }
     const keys = Object.keys(payment);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO payments (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => payment[k]));
+    const qFunc = client ? client.query.bind(client) : query;
+    const res: any = await qFunc(sql, keys.map(k => payment[k]));
+    const rows = client ? res.rows : res;
     return rows[0] || payment;
 };
 
@@ -1728,10 +2284,12 @@ export const dbGetTotalPaymentsForBill = async (billId: string) => {
     return Number(rows[0]?.total_paid || 0);
 };
 
-export const dbUpdatePayment = async (id: string, payment: any) => {
+export const dbUpdatePayment = async (id: string, payment: any, client?: any) => {
     const keys = Object.keys(payment);
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const rows = await query(`UPDATE payments SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`, [...keys.map(k => payment[k]), id]);
+    const qFunc = client ? client.query.bind(client) : query;
+    const res: any = await qFunc(`UPDATE payments SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`, [...keys.map(k => payment[k]), id]);
+    const rows = client ? res.rows : res;
     return rows[0] ?? null;
 };
 
@@ -2335,6 +2893,28 @@ export const dbRevokeStaffSession = async (sessionId: string, reason: 'revoked' 
     `;
     const rows: any = await query(sql, [sessionId, reason]);
     return rows[0] ?? null;
+};
+
+/**
+ * Revokes all other active sessions for a staff member (e.g. on password change).
+ * Keeps current session active if currentSessionId is provided.
+ */
+export const dbRevokeOtherStaffSessions = async (staffId: string, currentSessionId?: string) => {
+    let sql = `
+        UPDATE staff_sessions
+        SET logout_time = now(),
+            duration_seconds = EXTRACT(EPOCH FROM (now() - login_time))::int,
+            session_end_reason = 'revoked'
+        WHERE staff_id = $1 AND logout_time IS NULL
+    `;
+    const params: any[] = [staffId];
+    if (currentSessionId) {
+        sql += ` AND id != $2`;
+        params.push(currentSessionId);
+    }
+    sql += ' RETURNING id';
+    const rows: any = await query(sql, params);
+    return rows ?? [];
 };
 
 /**
@@ -3689,21 +4269,13 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const existingReconStatus = String(targetBill.reconciliation_status || '').trim().toLowerCase();
             const existingBankRef = String(targetBill.bank_ref || '').trim();
             
+            // CSV is the source of truth — allow overwriting even if already paid & reconciled.
             if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled') {
-                errors.push({
-                    row: rowNum,
-                    error: `Bill "${billIdent}" is already marked as paid and reconciled. No further update was applied.`
-                });
-                continue;
-            }
-
-            // Debug logging for payment status
-            if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled' && existingBankRef && existingBankRef !== '-') {
-                console.log(`Row ${rowNum} - Bill "${billIdent}" current status:`, {
-                    payment_status: targetBill.payment_status,
-                    reconciliation_status: targetBill.reconciliation_status,
-                    bank_ref: targetBill.bank_ref,
-                    csv_bank_ref: rec.bankRef
+                console.log(`Row ${rowNum} - Overwriting already paid+reconciled bill "${billIdent}":`, {
+                    prev_payment_status: targetBill.payment_status,
+                    prev_reconciliation_status: targetBill.reconciliation_status,
+                    prev_bank_ref: targetBill.bank_ref,
+                    new_bank_ref: rec.bankRef
                 });
             }
 
@@ -3831,7 +4403,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 UPDATE bills
                 SET payment_status = 'Paid',
                     status = 'Posted',
-                    amount_paid = GREATEST(COALESCE(amount_paid, 0), $1),
+                    amount_paid = $1,
                     "OUTSTANDINGAMT" = 0.00,
                     last_payment_date = $2,
                     reconciliation_status = $3,
@@ -3863,7 +4435,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                         UPDATE bills
                         SET payment_status = 'Paid',
                             status = 'Posted',
-                            amount_paid = GREATEST(COALESCE(amount_paid, 0), $1),
+                            amount_paid = $1,
                             "OUTSTANDINGAMT" = 0.00,
                             last_payment_date = $2,
                             reconciliation_status = $3,
@@ -3928,8 +4500,13 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const bulkMeterId = targetBill.CUSTOMERKEY || null;
             if (bulkMeterId) affectedBulkKeys.add(bulkMeterId);
 
-            // Log payment into payments table
+            // Log payment into payments table.
+            // If this bill was previously paid (re-upload scenario), remove the old payment
+            // record first so we never accumulate duplicates — one record per bill per CSV update.
             try {
+                await query(`DELETE FROM payments WHERE bill_id = $1`, [targetBill.id]);
+                console.log(`[CSV] Row ${rowNum} 🗑️  Removed previous payment record(s) for bill ${targetBill.id} (if any)`);
+
                 const payRes = await query(`
                     INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, bulk_meter_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -3951,6 +4528,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 console.log(`[CSV] Row ${rowNum} ⚠️  Payment insert with method="${channel}" failed, retrying without payment_method...`);
                 // If payment_method causes constraint violation, retry without payment_method
                 try {
+                    await query(`DELETE FROM payments WHERE bill_id = $1`, [targetBill.id]);
                     const payRes2 = await query(`
                         INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, bulk_meter_id, amount_paid, transaction_reference, processed_by_staff_id, payment_date, notes)
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -5324,3 +5902,219 @@ export const dbExecuteShiftReadingMonth = async (
     });
 };
 
+export interface PreApprovalBillAudit {
+    id: string;
+    customerKey: string;
+    customerName: string;
+    meterType: 'Bulk' | 'Individual';
+    monthYear: string;
+    status: string;
+    bulkIntakeUsage: number;
+    differenceUsage: number;
+    thisMonthBillAmt: number;
+    outstandingAmt: number;
+    flags: string[];
+}
+
+export interface PreApprovalAuditResult {
+    monthYear: string;
+    totalPending: number;
+    cleanBillsCount: number;
+    flaggedBillsCount: number;
+    cleanBillIds: string[];
+    flaggedBills: PreApprovalBillAudit[];
+}
+
+export const dbGetPreApprovalAuditMetrics = async (
+    monthYear?: string,
+    branchId?: string
+): Promise<PreApprovalAuditResult> => {
+    let targetMonth = monthYear;
+    if (!targetMonth || !/^\d{4}-\d{2}$/.test(targetMonth)) {
+        const now = new Date();
+        targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const params: any[] = [targetMonth];
+    let branchClause = '';
+    if (branchId) {
+        params.push(branchId);
+        branchClause = `AND (bm.branch_id = $2 OR ic.branch_id = $2)`;
+    }
+
+    const billsSql = `
+        SELECT 
+            b.id,
+            b.month_year,
+            b.status,
+            b."CUSTOMERKEY",
+            b.individual_customer_id,
+            COALESCE(b."PREVREAD", 0)::numeric as prev_read,
+            COALESCE(b."CURRREAD", 0)::numeric as curr_read,
+            COALESCE(b."DIFFERENCEUSAGE", 0)::numeric as diff_usage,
+            COALESCE(b."THISMONTHBILLAMT", 0)::numeric as this_month_bill,
+            COALESCE(b."TOTALBILLAMOUNT", 0)::numeric as total_bill,
+            COALESCE(b."OUTSTANDINGAMT", 0)::numeric as outstanding_amt,
+            COALESCE(bm."customerName", ic.name, b."CUSTOMERKEY", b.individual_customer_id, 'Customer') as customer_name,
+            CASE WHEN b."CUSTOMERKEY" IS NOT NULL THEN 'Bulk' ELSE 'Individual' END as meter_type
+        FROM bills b
+        LEFT JOIN bulk_meters bm ON LOWER(TRIM(b."CUSTOMERKEY")) = LOWER(TRIM(bm."customerKeyNumber")) AND bm.deleted_at IS NULL
+        LEFT JOIN individual_customers ic ON LOWER(TRIM(b.individual_customer_id)) = LOWER(TRIM(ic."customerKeyNumber")) AND ic.deleted_at IS NULL
+        WHERE b.deleted_at IS NULL
+          AND b.month_year = $1
+          AND b.status IN ('Pending', 'Pending_Approval', 'Draft')
+          ${branchClause}
+        ORDER BY b.created_at ASC
+    `;
+
+    const rows: any[] = await query(billsSql, params);
+
+    const cleanBillIds: string[] = [];
+    const flaggedBills: PreApprovalBillAudit[] = [];
+
+    for (const row of rows) {
+        const flags: string[] = [];
+        const customerKey = row.CUSTOMERKEY || row.individual_customer_id || 'Unknown';
+        const intakeUsage = Math.max(0, Number(row.curr_read) - Number(row.prev_read));
+        const diffUsage = Number(row.diff_usage);
+        const thisMonthBill = Number(row.this_month_bill);
+        const outstandingAmt = Number(row.outstanding_amt);
+
+        // Rule 1: Negative difference consumption
+        if (row.meter_type === 'Bulk' && diffUsage < 0) {
+            flags.push(`Negative difference usage: sub-meters recorded ${Math.abs(diffUsage).toFixed(1)} m³ more than bulk meter`);
+        }
+
+        // Rule 2: Water loss / difference exceeds 30% of bulk intake
+        if (row.meter_type === 'Bulk' && intakeUsage > 0 && (diffUsage / intakeUsage) > 0.30) {
+            const lossPct = ((diffUsage / intakeUsage) * 100).toFixed(1);
+            flags.push(`High distribution loss: difference usage is ${lossPct}% (${diffUsage.toFixed(1)} m³) of bulk inflow`);
+        }
+
+        // Rule 3: Negative outstanding balance
+        if (outstandingAmt < -0.01) {
+            flags.push(`Negative debt balance: outstanding amount is ETB ${outstandingAmt.toFixed(2)}`);
+        }
+
+        // Rule 4: Zero consumption with high monthly charge
+        if (intakeUsage === 0 && thisMonthBill > 500) {
+            flags.push(`Zero usage with unusually high bill (ETB ${thisMonthBill.toFixed(2)})`);
+        }
+
+        // Rule 5: Reading rollback
+        if (Number(row.curr_read) < Number(row.prev_read)) {
+            flags.push(`Meter reading rollback: current (${row.curr_read}) is less than previous (${row.prev_read})`);
+        }
+
+        if (flags.length > 0) {
+            flaggedBills.push({
+                id: row.id,
+                customerKey,
+                customerName: row.customer_name,
+                meterType: row.meter_type,
+                monthYear: row.month_year,
+                status: row.status,
+                bulkIntakeUsage: intakeUsage,
+                differenceUsage: diffUsage,
+                thisMonthBillAmt: thisMonthBill,
+                outstandingAmt,
+                flags
+            });
+        } else {
+            cleanBillIds.push(row.id);
+        }
+    }
+
+    return {
+        monthYear: targetMonth,
+        totalPending: rows.length,
+        cleanBillsCount: cleanBillIds.length,
+        flaggedBillsCount: flaggedBills.length,
+        cleanBillIds,
+        flaggedBills
+    };
+};
+
+export interface WaterBalanceMetrics {
+    monthYear: string;
+    totalBulkIntakeVolume: number;
+    totalSubMeterVolume: number;
+    totalBilledVolume: number;
+    differenceLossVolume: number;
+    lossPercentage: number;
+    estimatedRevenueLossEtb: number;
+    totalActiveBulkMeters: number;
+    highLossMetersCount: number;
+}
+
+export const dbGetWaterBalanceMetrics = async (
+    monthYear?: string,
+    branchId?: string
+): Promise<WaterBalanceMetrics> => {
+    let targetMonth = monthYear;
+    if (!targetMonth || !/^\d{4}-\d{2}$/.test(targetMonth)) {
+        const now = new Date();
+        targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const params: any[] = [targetMonth];
+    let branchClause = '';
+    if (branchId) {
+        params.push(branchId);
+        branchClause = `AND (bm.branch_id = $2 OR ic.branch_id = $2)`;
+    }
+
+    const sql = `
+        SELECT 
+            b."CUSTOMERKEY",
+            COALESCE(b."PREVREAD", 0)::numeric as prev_read,
+            COALESCE(b."CURRREAD", 0)::numeric as curr_read,
+            COALESCE(b."DIFFERENCEUSAGE", 0)::numeric as diff_usage,
+            COALESCE(b."THISMONTHBILLAMT", 0)::numeric as bill_amt
+        FROM bills b
+        LEFT JOIN bulk_meters bm ON LOWER(TRIM(b."CUSTOMERKEY")) = LOWER(TRIM(bm."customerKeyNumber")) AND bm.deleted_at IS NULL
+        LEFT JOIN individual_customers ic ON LOWER(TRIM(b.individual_customer_id)) = LOWER(TRIM(ic."customerKeyNumber")) AND ic.deleted_at IS NULL
+        WHERE b.deleted_at IS NULL
+          AND b.month_year = $1
+          AND b."CUSTOMERKEY" IS NOT NULL
+          AND b.status NOT IN ('Deleted', 'Void', 'Reversed')
+          ${branchClause}
+    `;
+
+    const rows: any[] = await query(sql, params);
+
+    let totalBulkIntake = 0;
+    let totalDifference = 0;
+    let totalRevenue = 0;
+    let highLossCount = 0;
+
+    for (const r of rows) {
+        const intake = Math.max(0, Number(r.curr_read) - Number(r.prev_read));
+        const diff = Number(r.diff_usage);
+        totalBulkIntake += intake;
+        totalDifference += diff;
+        totalRevenue += Number(r.bill_amt);
+
+        if (intake > 0 && (diff / intake) > 0.25) {
+            highLossCount++;
+        }
+    }
+
+    const totalSubMeter = Math.max(0, totalBulkIntake - totalDifference);
+    const lossPercentage = totalBulkIntake > 0 ? (totalDifference / totalBulkIntake) * 100 : 0;
+    // Estimated average tariff rate per m³ from the cycle's revenue
+    const avgRatePerM3 = totalBulkIntake > 0 ? (totalRevenue / totalBulkIntake) : 35;
+    const estimatedRevenueLoss = Math.max(0, totalDifference * avgRatePerM3);
+
+    return {
+        monthYear: targetMonth,
+        totalBulkIntakeVolume: Number(totalBulkIntake.toFixed(1)),
+        totalSubMeterVolume: Number(totalSubMeter.toFixed(1)),
+        totalBilledVolume: Number(totalBulkIntake.toFixed(1)),
+        differenceLossVolume: Number(totalDifference.toFixed(1)),
+        lossPercentage: Number(lossPercentage.toFixed(1)),
+        estimatedRevenueLossEtb: Number(estimatedRevenueLoss.toFixed(2)),
+        totalActiveBulkMeters: rows.length,
+        highLossMetersCount: highLossCount
+    };
+};

@@ -12,6 +12,7 @@ import {
   WifiOff,
   CheckCircle2,
   RefreshCw,
+  KeyRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -44,6 +45,7 @@ import { SessionWarningDialog } from './session-warning-dialog';
 import { useNetworkStatus } from '@/hooks/use-network-status';
 import { logoutAction } from '@/lib/auth-actions';
 import { isReaderStaff } from '@/lib/meter-reading-permissions';
+import { ChangePasswordDialog } from '@/components/auth/change-password-dialog';
 
 interface UserProfile {
   id: string;
@@ -120,6 +122,7 @@ interface AppHeaderContentProps {
 function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: AppHeaderContentProps) {
   const { isMobile, state: sidebarState } = useSidebar();
   const { pendingCount } = useNetworkStatus();
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = React.useState(false);
 
   let dashboardHref = "/";
   if (user) {
@@ -203,7 +206,16 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
                   </DropdownMenuLabel>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive">
+                <DropdownMenuItem
+                  onSelect={() => setIsChangePasswordOpen(true)}
+                  onClick={() => setIsChangePasswordOpen(true)}
+                  className="cursor-pointer"
+                >
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  Change Password
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive cursor-pointer">
                   <LogOut className="mr-2 h-4 w-4" />
                   Logout
                 </DropdownMenuItem>
@@ -212,6 +224,13 @@ function AppHeaderContent({ user, appName = "AAWSA Billing Portal", onLogout }: 
           )}
         </div>
       </div>
+      {user && (
+        <ChangePasswordDialog
+          open={isChangePasswordOpen}
+          onOpenChange={setIsChangePasswordOpen}
+          userEmail={user.email}
+        />
+      )}
     </header>
   );
 }

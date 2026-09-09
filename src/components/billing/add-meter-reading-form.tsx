@@ -76,13 +76,29 @@ interface AddMeterReadingFormProps {
   isLoading?: boolean;
   defaultValues?: Partial<AddMeterReadingFormValues>;
   initialLocation?: Coordinates | null;
+  proximityThreshold?: number;
 }
 
-function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation }: AddMeterReadingFormProps) {
+function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLoading, defaultValues, initialLocation, proximityThreshold }: AddMeterReadingFormProps) {
   const [userLocation, setUserLocation] = React.useState<Coordinates | null>(initialLocation || null);
   const [locationError, setLocationError] = React.useState<string | null>(null);
   const [isAcquiringLocation, setIsAcquiringLocation] = React.useState(false);
   const [liveAccuracy, setLiveAccuracy] = React.useState<number | null>(null); // live GPS accuracy in meters
+  const [configuredThreshold, setConfiguredThreshold] = React.useState<number>(proximityThreshold || 15);
+
+  React.useEffect(() => {
+    if (proximityThreshold) {
+      setConfiguredThreshold(proximityThreshold);
+      return;
+    }
+    try {
+      const stored = localStorage.getItem('gps_field_proximity_threshold_meters');
+      if (stored && !isNaN(Number(stored))) {
+        setConfiguredThreshold(Number(stored));
+      }
+    } catch {}
+  }, [proximityThreshold]);
+
   const [proximityStatus, setProximityStatus] = React.useState<{ isWithinRange: boolean; distance: number; bypassed?: boolean } | null>(null);
   const [isCapturingInitialLocation, setIsCapturingInitialLocation] = React.useState(false);
   const [isCompressing, setIsCompressing] = React.useState(false);
@@ -143,34 +159,9 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     }
   }, [acquireLocation, initialLocation]);
 
-  const formSchema = React.useMemo(() => {
-    return formSchemaBase.refine(
-      (data) => {
-        let lastReading = -1;
-        if (data.meterType === 'individual_customer_meter') {
-          const customer = customers.find(c => c.customerKeyNumber === data.entityId);
-          if (customer) lastReading = customer.currentReading;
-        } else if (data.meterType === 'bulk_meter') {
-          const bulkMeter = bulkMeters.find(bm => bm.customerKeyNumber === data.entityId);
-          if (bulkMeter) lastReading = bulkMeter.currentReading;
-        }
-        if (lastReading === -1) return true;
-        return data.reading >= lastReading;
-      },
-      (data) => {
-        let lastReading = 0;
-        if (data.meterType === 'individual_customer_meter') {
-          lastReading = customers.find(c => c.customerKeyNumber === data.entityId)?.currentReading ?? 0;
-        } else {
-          lastReading = bulkMeters.find(bm => bm.customerKeyNumber === data.entityId)?.currentReading ?? 0;
-        }
-        return {
-          message: `Reading cannot be lower than the last reading (${lastReading.toFixed(2)}).`,
-          path: ["reading"],
-        };
-      }
-    );
-  }, [customers, bulkMeters]);
+  // No lower-bound validation: field readers physically read the meter dial
+  // without access to the previous reading value, so any entry must be accepted.
+  const formSchema = React.useMemo(() => formSchemaBase, []);
 
   const { hasPermission } = usePermissions();
 
@@ -282,7 +273,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       }
     }
     if (targetCoords) {
-      const status = checkProximity(userLocation, targetCoords, 15);
+      const status = checkProximity(userLocation, targetCoords, configuredThreshold);
       if (status.isWithinRange && !proximityStatus?.isWithinRange) {
         triggerProximityHaptic();
       }
@@ -292,7 +283,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
     } else {
       setProximityStatus(null);
     }
-  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form, proximityStatus?.isWithinRange, isBypassed]);
+  }, [userLocation, selectedEntityId, selectedMeterType, customers, bulkMeters, form, proximityStatus?.isWithinRange, isBypassed, configuredThreshold]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -348,8 +339,12 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
   };
 
   React.useEffect(() => {
-    if (selectedFaultCode && selectedEntityId && previousReading !== null) {
-      form.setValue("reading", previousReading);
+    if (selectedFaultCode && selectedFaultCode !== 'none') {
+      if (selectedEntityId && previousReading !== null) {
+        form.setValue("reading", previousReading, { shouldValidate: true });
+      }
+    } else if ((!selectedFaultCode || selectedFaultCode === 'none') && previousReading !== null && form.getValues("reading") === previousReading) {
+      form.resetField("reading");
     }
   }, [selectedFaultCode, selectedEntityId, previousReading, form]);
 
@@ -842,54 +837,57 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
           <FormField
             control={form.control}
             name="reading"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="flex items-center justify-between">
-                  <span>Reading Value (m³)</span>
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    inputMode="decimal"
-                    placeholder="Enter current meter reading"
-                    {...field}
-                    ref={(el) => {
-                      // Merge react-hook-form ref + our focus ref
-                      field.ref(el);
-                      (readingInputRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
-                    }}
-                    disabled={isLoading || !selectedEntityId || (!!selectedFaultCode && selectedFaultCode !== 'none')}
-                    className={cn(
-                      "h-14 text-xl font-bold tracking-wide",
-                      selectedFaultCode && selectedFaultCode !== 'none' ? "bg-slate-50 text-slate-400" : "",
-                      consumption !== null && consumption < 0 ? "border-rose-400 focus-visible:ring-rose-400" : "",
-                      consumption !== null && consumption > anomalyThreshold ? "border-amber-400 focus-visible:ring-amber-400" : "",
-                    )}
-                    onKeyDown={(e) => {
-                      // Enter key submits if form is valid
-                      if (e.key === 'Enter' && !isSubmitDisabled) {
-                        e.preventDefault();
-                        form.handleSubmit(handleSubmit)();
-                      }
-                    }}
-                  />
-                </FormControl>
-                {selectedFaultCode && selectedFaultCode !== 'none' && (
-                  <p className="text-xs text-blue-600 font-medium italic">
-                    Auto-set to previous reading due to fault code.
-                  </p>
-                )}
-                {anomalyWarning && (
-                  <Alert className="mt-2 bg-amber-50 text-amber-900 border-amber-200 py-2">
-                    <AlertCircle className="h-4 w-4 text-amber-600" />
-                    <AlertTitle className="text-amber-800 text-xs font-bold">Anomaly Detected</AlertTitle>
-                    <AlertDescription className="text-amber-700 text-xs">{anomalyWarning}</AlertDescription>
-                  </Alert>
-                )}
-                <FormMessage />
-              </FormItem>
-            )}
+            render={({ field }) => {
+              const hasFault = Boolean(selectedFaultCode && selectedFaultCode !== 'none');
+              return (
+                <FormItem>
+                  <FormLabel className="flex items-center justify-between">
+                    <span>Reading Value (m³)</span>
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      type={hasFault ? "text" : "number"}
+                      step="0.01"
+                      inputMode={hasFault ? "text" : "decimal"}
+                      placeholder={hasFault ? "Auto-recorded with fault code" : "Enter current meter reading"}
+                      {...field}
+                      value={hasFault ? "Auto-recorded (Fault applied)" : (field.value ?? "")}
+                      ref={(el) => {
+                        // Merge react-hook-form ref + our focus ref
+                        field.ref(el);
+                        (readingInputRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+                      }}
+                      disabled={isLoading || !selectedEntityId || hasFault}
+                      className={cn(
+                        "h-14 text-xl font-bold tracking-wide",
+                        hasFault ? "bg-slate-50 text-slate-500 text-sm font-medium italic" : "",
+                        consumption !== null && consumption > anomalyThreshold ? "border-amber-400 focus-visible:ring-amber-400" : "",
+                      )}
+                      onKeyDown={(e) => {
+                        // Enter key submits if form is valid
+                        if (e.key === 'Enter' && !isSubmitDisabled) {
+                          e.preventDefault();
+                          form.handleSubmit(handleSubmit)();
+                        }
+                      }}
+                    />
+                  </FormControl>
+                  {hasFault && (
+                    <p className="text-xs text-blue-600 font-medium italic">
+                      Reading is handled automatically for this fault code.
+                    </p>
+                  )}
+                  {anomalyWarning && (
+                    <Alert className="mt-2 bg-amber-50 text-amber-900 border-amber-200 py-2">
+                      <AlertCircle className="h-4 w-4 text-amber-600" />
+                      <AlertTitle className="text-amber-800 text-xs font-bold">Anomaly Detected</AlertTitle>
+                      <AlertDescription className="text-amber-700 text-xs">{anomalyWarning}</AlertDescription>
+                    </Alert>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              );
+            }}
           />
 
           {/* Date of Reading */}

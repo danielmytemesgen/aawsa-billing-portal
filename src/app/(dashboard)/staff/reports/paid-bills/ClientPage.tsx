@@ -219,6 +219,8 @@ export default function StaffPaidBillsReportPage() {
     || hasPermission(PERMISSIONS.BILL_VIEW_PAID)
     || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
+  const canUploadPaymentCsv = hasPermission(PERMISSIONS.BILL_POST) || hasPermission(PERMISSIONS.BILL_VIEW_ALL) || hasPermission('payments_create');
+
   if (!canAccess) {
     return (
       <div className="space-y-6">
@@ -238,12 +240,14 @@ export default function StaffPaidBillsReportPage() {
           <h1 className="text-2xl font-bold tracking-tight">Paid Bills</h1>
           <p className="text-muted-foreground text-sm">List of paid bill records for {currentUser?.branchName || 'your branch'}.</p>
         </div>
-        <Button
-          onClick={() => setOpenTrigger((prev) => prev + 1)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl gap-2 shadow-sm"
-        >
-          <FileSpreadsheet className="h-4 w-4" /> Upload Payment CSV
-        </Button>
+        {canUploadPaymentCsv && (
+          <Button
+            onClick={() => setOpenTrigger((prev) => prev + 1)}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl gap-2 shadow-sm"
+          >
+            <FileSpreadsheet className="h-4 w-4" /> Upload Payment CSV
+          </Button>
+        )}
       </div>
 
       <Card className="shadow-lg">

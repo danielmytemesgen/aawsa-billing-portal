@@ -67,11 +67,23 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/branches') || currentPath.startsWith('/staff/branches'),
-      requiredPermissions: [PERMISSIONS.BRANCHES_VIEW],
+      anyOf: [
+        PERMISSIONS.BRANCHES_VIEW,
+        PERMISSIONS.BRANCHES_CREATE,
+        PERMISSIONS.BRANCHES_UPDATE,
+        PERMISSIONS.BRANCHES_DELETE
+      ],
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/staff') || currentPath.startsWith('/staff/staff'),
-      requiredPermissions: [PERMISSIONS.STAFF_VIEW],
+      anyOf: [
+        PERMISSIONS.STAFF_VIEW,
+        PERMISSIONS.STAFF_VIEW_ALL,
+        PERMISSIONS.STAFF_VIEW_BRANCH,
+        PERMISSIONS.STAFF_CREATE,
+        PERMISSIONS.STAFF_UPDATE,
+        PERMISSIONS.STAFF_DELETE
+      ],
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/individual-customers') || currentPath.startsWith('/staff/individual-customers'),
@@ -79,7 +91,11 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.CUSTOMERS_VIEW_ALL,
         PERMISSIONS.CUSTOMERS_VIEW_BRANCH,
         PERMISSIONS.DATA_ENTRY_ACCESS,
-        PERMISSIONS.CUSTOMERS_CREATE
+        PERMISSIONS.CUSTOMERS_CREATE,
+        PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED,
+        PERMISSIONS.CUSTOMERS_UPDATE,
+        PERMISSIONS.CUSTOMERS_DELETE,
+        PERMISSIONS.CUSTOMERS_APPROVE
       ],
     },
     {
@@ -88,7 +104,13 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.BULK_METERS_VIEW_ALL,
         PERMISSIONS.BULK_METERS_VIEW_BRANCH,
         PERMISSIONS.DATA_ENTRY_ACCESS,
-        PERMISSIONS.BULK_METERS_CREATE
+        PERMISSIONS.BULK_METERS_CREATE,
+        PERMISSIONS.BULK_METERS_CREATE_RESTRICTED,
+        PERMISSIONS.BULK_METERS_UPDATE,
+        PERMISSIONS.BULK_METERS_DELETE,
+        PERMISSIONS.BULK_METERS_APPROVE,
+        PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+        PERMISSIONS.BULK_METERS_EDIT_READINGS
       ],
     },
     {
@@ -107,9 +129,16 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.BILL_CREATE,
         PERMISSIONS.BILL_VIEW_DRAFTS,
         PERMISSIONS.BILL_VIEW_PENDING,
+        PERMISSIONS.BILL_VIEW_APPROVED,
         PERMISSIONS.BILL_APPROVE,
         PERMISSIONS.BILL_VIEW_PAID,
         PERMISSIONS.BILL_VIEW_UNPAID,
+        PERMISSIONS.BILL_VIEW_OVERDUE,
+        PERMISSIONS.BILL_POST,
+        PERMISSIONS.BILL_SEND,
+        PERMISSIONS.BILL_REWORK,
+        PERMISSIONS.BILL_UPDATE,
+        PERMISSIONS.BILL_DELETE,
         PERMISSIONS.BILL_CLOSE_CYCLE
       ],
     },
@@ -118,8 +147,16 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       anyOf: [
         PERMISSIONS.METER_READINGS_VIEW_ALL,
         PERMISSIONS.METER_READINGS_VIEW_BRANCH,
+        PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL,
+        PERMISSIONS.METER_READINGS_VIEW_BULK,
         PERMISSIONS.METER_READINGS_CREATE,
-        PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+        PERMISSIONS.METER_READINGS_CREATE_BULK,
+        PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL,
+        PERMISSIONS.METER_READINGS_ADD_MANUAL,
+        PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL,
+        PERMISSIONS.METER_READINGS_UPLOAD_BULK,
+        PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
+        PERMISSIONS.ROUTES_VIEW_ASSIGNED,
       ],
     },
     {
@@ -154,6 +191,8 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.ROUTES_UPDATE,
         PERMISSIONS.ROUTES_DELETE,
         PERMISSIONS.METER_READINGS_CREATE,
+        PERMISSIONS.METER_READINGS_CREATE_BULK,
+        PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL,
         PERMISSIONS.READER_PROGRESS_VIEW,
         PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
       ],
@@ -166,6 +205,24 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.DASHBOARD_VIEW_ALL,
         PERMISSIONS.FAULT_CODES_VIEW,
         PERMISSIONS.FAULT_CODES_MANAGE,
+      ],
+    },
+    {
+      match: (currentPath) => currentPath.startsWith('/admin/support'),
+      anyOf: [
+        PERMISSIONS.SUPPORT_VIEW_ALL,
+        PERMISSIONS.SUPPORT_MANAGE,
+      ],
+    },
+    {
+      match: (currentPath) => currentPath.startsWith('/staff/support'),
+      anyOf: [
+        PERMISSIONS.SUPPORT_VIEW_ALL,
+        PERMISSIONS.SUPPORT_VIEW_BRANCH,
+        PERMISSIONS.SUPPORT_CREATE,
+        PERMISSIONS.SUPPORT_ASSIGN,
+        PERMISSIONS.SUPPORT_RESOLVE,
+        PERMISSIONS.SUPPORT_MANAGE,
       ],
     },
   ];

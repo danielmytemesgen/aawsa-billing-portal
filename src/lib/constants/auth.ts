@@ -63,6 +63,7 @@ export const PERMISSIONS = {
     REPORT_BILLING_SUMMARY: 'report:billing_summary',
     REPORT_LIST_OF_PAID_BILLS: 'report:list_of_paid_bills',
     REPORT_LIST_OF_SENT_BILLS: 'report:list_of_sent_bills',
+    REPORT_LIST_OF_UNSETTLED_BILLS: 'report:list_of_unsettled_bills',
     REPORT_WATER_USAGE: 'report:water_usage',
     REPORT_PAYMENT_HISTORY: 'report:payment_history',
     REPORT_METER_READING_ACCURACY: 'report:meter_reading_accuracy',
@@ -78,6 +79,7 @@ export const PERMISSIONS = {
     REPORT_BRANCH_BILLING_SUMMARY: 'report:branch_billing_summary',
     REPORT_BRANCH_LIST_OF_PAID_BILLS: 'report:branch_list_of_paid_bills',
     REPORT_BRANCH_LIST_OF_SENT_BILLS: 'report:branch_list_of_sent_bills',
+    REPORT_BRANCH_LIST_OF_UNSETTLED_BILLS: 'report:branch_list_of_unsettled_bills',
     REPORT_BRANCH_WATER_USAGE: 'report:branch_water_usage',
     REPORT_BRANCH_PAYMENT_HISTORY: 'report:branch_payment_history',
     REPORT_BRANCH_METER_READING_ACCURACY: 'report:branch_meter_reading_accuracy',
@@ -169,6 +171,14 @@ export const PERMISSIONS = {
     CREDIT_CREATE: 'credit_create',
     CREDIT_VOID: 'credit_void',
 
+    // Customer Support & Help Desk
+    SUPPORT_VIEW_ALL: 'support:view_all',
+    SUPPORT_VIEW_BRANCH: 'support:view_branch',
+    SUPPORT_CREATE: 'support:create',
+    SUPPORT_ASSIGN: 'support:assign',
+    SUPPORT_RESOLVE: 'support:resolve',
+    SUPPORT_MANAGE: 'support:manage',
+
     // Promotions
     PROMOTIONS_MANAGE: 'promotions_manage',
     PROMOTIONS_VIEW: 'promotions_view',
@@ -177,4 +187,5 @@ export const PERMISSIONS = {
 export const BRANCHES = {
     HEAD_OFFICE: 'Head Office',
 } as const;
+
 

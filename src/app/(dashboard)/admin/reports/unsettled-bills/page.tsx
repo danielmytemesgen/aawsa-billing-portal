@@ -30,7 +30,11 @@ export default function UnsettledBillsReportPage() {
   const { hasPermission } = usePermissions();
   const canViewAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission('reports_generate_all') || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
-  const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+  const canAccess = hasPermission(PERMISSIONS.REPORT_LIST_OF_UNSETTLED_BILLS)
+    || hasPermission('report:list_of_unsettled_bills')
+    || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_UNSETTLED_BILLS)
+    || hasPermission('report:branch_list_of_unsettled_bills')
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
     || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
     || hasPermission(PERMISSIONS.BILL_VIEW_UNPAID)
     || hasPermission(PERMISSIONS.BILL_VIEW_OVERDUE)

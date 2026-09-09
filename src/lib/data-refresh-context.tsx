@@ -65,6 +65,14 @@ export function useDataRefresh() {
 // so every subscribed component updates automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 async function refreshAllEntities(): Promise<void> {
+  const isAuth = typeof window !== "undefined" && Boolean(localStorage.getItem('user'));
+  if (!isAuth) {
+    // Only refresh public entities like branches when not authenticated
+    await Promise.allSettled([
+      initializeBranches(true),
+    ]);
+    return;
+  }
   await Promise.allSettled([
     initializeBranches(true),
     initializeNotifications(true),

@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { decrypt } from '@/lib/session';
+import { jwtVerify } from 'jose';
 import { PERMISSIONS } from '@/lib/constants/auth';
+
+// Inline decrypt to avoid importing @/lib/session → @/lib/env → zod,
+// which causes the Edge-runtime compiler to hang on startup.
+async function decrypt(token: string): Promise<any> {
+  const secret = process.env.SESSION_SECRET ||
+    'a9f3c2e1b8d74f6a0e5c9b2d1f4a7e3c8b5d2f9a6e1c4b7d0f3a8e5c2b9d6f1';
+  const key = new TextEncoder().encode(secret);
+  const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
+  return payload;
+}
 
 const protectedRoutes = ['/admin', '/staff'];
 const adminRoutes = ['/admin'];
@@ -16,34 +26,43 @@ const hasAny = (permissions: string[], ...perms: string[]) => perms.some(p => ha
 const LIVE_PERM_CACHE_TTL_MS = 30_000;
 const livePermCache = new Map<string, { perms: string[]; ts: number }>();
 
+function getInternalOrigin(request: NextRequest): string {
+  let origin = request.nextUrl.origin;
+  if (origin.includes('0.0.0.0') || origin.includes('localhost')) {
+    origin = origin.replace('0.0.0.0', '127.0.0.1').replace('localhost', '127.0.0.1');
+  }
+  return origin;
+}
+
 async function getLivePermissions(session: any, request: NextRequest): Promise<string[] | null> {
-  const sessionId = session?.sessionId;
   const staffId = session?.id;
-  if (!sessionId || !staffId) return null;
+  if (!staffId) return null;
+  const cacheKey = String(staffId);
 
   const now = Date.now();
-  const cached = livePermCache.get(sessionId);
+  const cached = livePermCache.get(cacheKey);
   if (cached && now - cached.ts < LIVE_PERM_CACHE_TTL_MS) {
     return cached.perms;
   }
 
   try {
+    const origin = getInternalOrigin(request);
     const res = await fetch(
-      `${request.nextUrl.origin}/api/permissions/live?staffId=${encodeURIComponent(staffId)}`,
+      `${origin}/api/permissions/live?staffId=${encodeURIComponent(staffId)}`,
       {
         headers: {
           Accept: 'application/json',
           'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
         },
+        signal: AbortSignal.timeout(1500),
       }
     );
     if (!res.ok) return null; // fail-open: fall back to JWT permissions
     const data = await res.json();
     const perms: string[] = Array.isArray(data.permissions) ? data.permissions : [];
-    livePermCache.set(sessionId, { perms, ts: now });
+    livePermCache.set(cacheKey, { perms, ts: now });
     return perms;
   } catch (e) {
-    console.warn('Live permission fetch failed (fail-open):', e);
     return null; // fail-open
   }
 }
@@ -64,13 +83,15 @@ async function isSessionRevoked(session: any, request: NextRequest): Promise<boo
     return false;
   }
   try {
+    const origin = getInternalOrigin(request);
     const res = await fetch(
-      `${request.nextUrl.origin}/api/session/revocation-status?sessionId=${encodeURIComponent(sessionId)}`,
+      `${origin}/api/session/revocation-status?sessionId=${encodeURIComponent(sessionId)}`,
       {
         headers: {
           Accept: 'application/json',
           'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
         },
+        signal: AbortSignal.timeout(1500),
       }
     );
     if (!res.ok) return false; // fail-open
@@ -82,7 +103,6 @@ async function isSessionRevoked(session: any, request: NextRequest): Promise<boo
     revocationCache.set(sessionId, now);
     return false;
   } catch (e) {
-    console.warn('Revocation check failed (fail-open):', e);
     return false;
   }
 }
@@ -96,7 +116,7 @@ function setSecurityHeaders(res: NextResponse) {
       : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.org https://veiethiopia.com https://www.shutterstock.com https://lh3.googleusercontent.com https://picsum.photos https://*.picsum.photos https://*.freepik.com https://img.freepik.com https://*.unsplash.com https://images.unsplash.com",
-    "connect-src 'self' http://127.0.0.1:* http://localhost:* https: wss: blob:",
+    "connect-src 'self' http://127.0.0.1:* http://localhost:* https: ws: wss: blob:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "object-src 'none'",
     "media-src 'self' blob:",
@@ -167,6 +187,9 @@ function getRoleDashboardFallback(permissions: string[], role: string, request: 
   }
   if (hasAny(permissions, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.BILL_VIEW_BRANCH, PERMISSIONS.BILL_VIEW_DRAFTS, PERMISSIONS.BILL_VIEW_PENDING)) {
     return new URL('/admin/bill-management', request.url);
+  }
+  if (hasAny(permissions, PERMISSIONS.SUPPORT_VIEW_ALL, PERMISSIONS.SUPPORT_VIEW_BRANCH, PERMISSIONS.SUPPORT_MANAGE, 'support:view_all', 'support:view_branch', 'support:manage')) {
+    return new URL(isGlobalAdmin ? '/admin/support' : '/staff/support', request.url);
   }
   return new URL(isGlobalAdmin ? '/admin/dashboard' : '/staff/dashboard', request.url);
 }
@@ -277,6 +300,8 @@ export async function middleware(request: NextRequest) {
       PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS,
       PERMISSIONS.REPORT_LIST_OF_SENT_BILLS,
       PERMISSIONS.REPORT_BRANCH_LIST_OF_SENT_BILLS,
+      PERMISSIONS.REPORT_LIST_OF_UNSETTLED_BILLS,
+      PERMISSIONS.REPORT_BRANCH_LIST_OF_UNSETTLED_BILLS,
       PERMISSIONS.BILL_VIEW_PAID,
       PERMISSIONS.BILL_SEND,
       PERMISSIONS.BILL_POST,
@@ -289,25 +314,57 @@ export async function middleware(request: NextRequest) {
   }
 
   if ((path.startsWith('/admin/branches') || path.startsWith('/staff/branches')) &&
-    !hasPerm(permissions, PERMISSIONS.BRANCHES_VIEW)) {
+    !hasAny(permissions,
+      PERMISSIONS.BRANCHES_VIEW,
+      PERMISSIONS.BRANCHES_CREATE,
+      PERMISSIONS.BRANCHES_UPDATE,
+      PERMISSIONS.BRANCHES_DELETE
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/staff') || path.startsWith('/staff/staff')) &&
-    !hasPerm(permissions, PERMISSIONS.STAFF_VIEW)) {
+    !hasAny(permissions,
+      PERMISSIONS.STAFF_VIEW,
+      PERMISSIONS.STAFF_VIEW_ALL,
+      PERMISSIONS.STAFF_VIEW_BRANCH,
+      PERMISSIONS.STAFF_CREATE,
+      PERMISSIONS.STAFF_UPDATE,
+      PERMISSIONS.STAFF_DELETE
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/individual-customers') || path.startsWith('/staff/individual-customers')) &&
-    !hasAny(permissions, PERMISSIONS.CUSTOMERS_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_BRANCH, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.CUSTOMERS_CREATE)) {
+    !hasAny(permissions,
+      PERMISSIONS.CUSTOMERS_VIEW_ALL,
+      PERMISSIONS.CUSTOMERS_VIEW_BRANCH,
+      PERMISSIONS.DATA_ENTRY_ACCESS,
+      PERMISSIONS.CUSTOMERS_CREATE,
+      PERMISSIONS.CUSTOMERS_CREATE_RESTRICTED,
+      PERMISSIONS.CUSTOMERS_UPDATE,
+      PERMISSIONS.CUSTOMERS_DELETE,
+      PERMISSIONS.CUSTOMERS_APPROVE
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
 
   if ((path.startsWith('/admin/bulk-meters') || path.startsWith('/staff/bulk-meters')) &&
-    !hasAny(permissions, PERMISSIONS.BULK_METERS_VIEW_ALL, PERMISSIONS.BULK_METERS_VIEW_BRANCH, PERMISSIONS.DATA_ENTRY_ACCESS, PERMISSIONS.BULK_METERS_CREATE)) {
+    !hasAny(permissions,
+      PERMISSIONS.BULK_METERS_VIEW_ALL,
+      PERMISSIONS.BULK_METERS_VIEW_BRANCH,
+      PERMISSIONS.DATA_ENTRY_ACCESS,
+      PERMISSIONS.BULK_METERS_CREATE,
+      PERMISSIONS.BULK_METERS_CREATE_RESTRICTED,
+      PERMISSIONS.BULK_METERS_UPDATE,
+      PERMISSIONS.BULK_METERS_DELETE,
+      PERMISSIONS.BULK_METERS_APPROVE,
+      PERMISSIONS.BULK_METERS_MANAGE_CUSTOMERS,
+      PERMISSIONS.BULK_METERS_EDIT_READINGS
+    )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
   }
@@ -325,9 +382,16 @@ export async function middleware(request: NextRequest) {
       PERMISSIONS.BILL_CREATE,
       PERMISSIONS.BILL_VIEW_DRAFTS,
       PERMISSIONS.BILL_VIEW_PENDING,
+      PERMISSIONS.BILL_VIEW_APPROVED,
       PERMISSIONS.BILL_APPROVE,
       PERMISSIONS.BILL_VIEW_PAID,
       PERMISSIONS.BILL_VIEW_UNPAID,
+      PERMISSIONS.BILL_VIEW_OVERDUE,
+      PERMISSIONS.BILL_POST,
+      PERMISSIONS.BILL_SEND,
+      PERMISSIONS.BILL_REWORK,
+      PERMISSIONS.BILL_UPDATE,
+      PERMISSIONS.BILL_DELETE,
       PERMISSIONS.BILL_CLOSE_CYCLE
     )) {
     const redirect = NextResponse.redirect(dashboardFallback);
@@ -338,8 +402,16 @@ export async function middleware(request: NextRequest) {
     !hasAny(permissions,
       PERMISSIONS.METER_READINGS_VIEW_ALL,
       PERMISSIONS.METER_READINGS_VIEW_BRANCH,
+      PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL,
+      PERMISSIONS.METER_READINGS_VIEW_BULK,
       PERMISSIONS.METER_READINGS_CREATE,
-      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW
+      PERMISSIONS.METER_READINGS_CREATE_BULK,
+      PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL,
+      PERMISSIONS.METER_READINGS_ADD_MANUAL,
+      PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL,
+      PERMISSIONS.METER_READINGS_UPLOAD_BULK,
+      PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
+      'routes_view_assigned'
     )) {
     const redirect = NextResponse.redirect(dashboardFallback);
     return setSecurityHeaders(redirect);
@@ -382,6 +454,8 @@ export async function middleware(request: NextRequest) {
       PERMISSIONS.ROUTES_UPDATE,
       PERMISSIONS.ROUTES_DELETE,
       PERMISSIONS.METER_READINGS_CREATE,
+      PERMISSIONS.METER_READINGS_CREATE_BULK,
+      PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL,
       PERMISSIONS.READER_PROGRESS_VIEW,
       PERMISSIONS.METER_READINGS_ANALYTICS_VIEW,
     )) {
@@ -403,10 +477,52 @@ export async function middleware(request: NextRequest) {
     return setSecurityHeaders(redirect);
   }
 
+  if (path.startsWith('/admin/support') &&
+    !hasAny(permissions,
+      PERMISSIONS.SUPPORT_VIEW_ALL,
+      PERMISSIONS.SUPPORT_MANAGE,
+      'support:view_all',
+      'support:manage',
+      PERMISSIONS.DASHBOARD_VIEW_ALL
+    )) {
+    const redirect = NextResponse.redirect(dashboardFallback);
+    return setSecurityHeaders(redirect);
+  }
+
+  if (path.startsWith('/staff/support') &&
+    !hasAny(permissions,
+      PERMISSIONS.SUPPORT_VIEW_ALL,
+      PERMISSIONS.SUPPORT_VIEW_BRANCH,
+      PERMISSIONS.SUPPORT_CREATE,
+      PERMISSIONS.SUPPORT_ASSIGN,
+      PERMISSIONS.SUPPORT_RESOLVE,
+      PERMISSIONS.SUPPORT_MANAGE,
+      'support:view_all',
+      'support:view_branch',
+      'support:create',
+      'support:assign',
+      'support:resolve',
+      'support:manage',
+      PERMISSIONS.DASHBOARD_VIEW_ALL
+    )) {
+    const redirect = NextResponse.redirect(dashboardFallback);
+    return setSecurityHeaders(redirect);
+  }
+
   const res = NextResponse.next();
   return setSecurityHeaders(res);
 }
 
 export const config = {
-  matcher: '/:path*',
+  matcher: [
+    /*
+     * Match all request paths except for:
+     * - api (API routes - prevents self-fetch deadlocks)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico, manifest.json, sw.js
+     * - image assets (.svg, .png, .jpg, .jpeg, .gif, .webp)
+     */
+    '/((?!api|_next/static|_next/image|favicon.ico|manifest.json|sw.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 };

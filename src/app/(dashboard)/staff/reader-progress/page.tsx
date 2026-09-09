@@ -2,27 +2,6 @@
 
 import * as React from "react";
 import { usePermissions } from "@/hooks/use-permissions";
-import { getEffectiveBranchId } from "@/lib/branch-permissions";
-import { 
-  getStaffMembers, 
-  getRoutes, 
-  getBulkMeters, 
-  getCustomers, 
-  getBulkMeterReadings, 
-  getIndividualCustomerReadings,
-  initializeStaffMembers,
-  fetchRoutes,
-  initializeBulkMeters,
-  initializeCustomers,
-  initializeBulkMeterReadings,
-  initializeIndividualCustomerReadings,
-  subscribeToIndividualCustomerReadings,
-  subscribeToBulkMeterReadings,
-  subscribeToCustomers,
-  subscribeToBulkMeters,
-  subscribeToStaffMembers,
-  subscribeToRoutes,
-} from "@/lib/data-store";
 import { useDataRefresh } from "@/lib/data-refresh-context";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -48,155 +27,43 @@ import Link from "next/link";
 import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { format } from "date-fns";
+import { getReaderProgressMetricsAction } from "@/lib/actions";
 
 export default function ReaderSupervisorMonitoringPage() {
   const { hasPermission } = usePermissions();
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
-
-  const [staffList, setStaffList] = React.useState<any[]>([]);
-  const [routesList, setRoutesList] = React.useState<any[]>([]);
-  const [bulkMetersList, setBulkMetersList] = React.useState<any[]>([]);
-  const [customersList, setCustomersList] = React.useState<any[]>([]);
-  const [bulkReadings, setBulkReadings] = React.useState<any[]>([]);
-  const [indReadings, setIndReadings] = React.useState<any[]>([]);
-  const [staffBranchId, setStaffBranchId] = React.useState<string | null>(null);
+  const [readerProgressData, setReaderProgressData] = React.useState<any[]>([]);
   const { isRefreshing, refresh: triggerRefresh } = useDataRefresh();
   const [localLastUpdated, setLocalLastUpdated] = React.useState<string>('');
+  const [currentMonthYear, setCurrentMonthYear] = React.useState<string>(format(new Date(), 'yyyy-MM'));
 
-  React.useEffect(() => {
-    const userStr = localStorage.getItem("user");
-    if (userStr) {
-      try {
-        const parsed = JSON.parse(userStr);
-        setStaffBranchId(parsed.branchId || null);
-      } catch (e) {
-        console.error("Failed to parse user", e);
-      }
-    }
-  }, []);
-
-  const effectiveBranchId = getEffectiveBranchId(hasPermission, 'staff', staffBranchId);
-
-  React.useEffect(() => {
-    const loadData = async () => {
-      setIsLoading(true);
-      await Promise.all([
-        initializeStaffMembers(),
-        fetchRoutes(),
-        initializeBulkMeters(),
-        initializeCustomers(),
-        initializeBulkMeterReadings(),
-        initializeIndividualCustomerReadings()
-      ]);
-      setStaffList(getStaffMembers());
-      setRoutesList(getRoutes());
-      setBulkMetersList(getBulkMeters());
-      setCustomersList(getCustomers());
-      setBulkReadings(getBulkMeterReadings());
-      setIndReadings(getIndividualCustomerReadings());
+  const loadData = React.useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res: any = await getReaderProgressMetricsAction(currentMonthYear);
+      const data = res?.data || (Array.isArray(res) ? res : []);
+      setReaderProgressData(data);
+      setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (e) {
+      console.error("Failed to load reader progress metrics:", e);
+    } finally {
       setIsLoading(false);
-    };
-      loadData();
-
-      // ── Real-time updates & listener ───────────────────────────────────────
-      const handleDataRefreshed = () => {
-        const currentOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-        if (currentOnline) {
-          Promise.all([
-            initializeBulkMeterReadings(true),
-            initializeIndividualCustomerReadings(true)
-          ]).then(() => {
-            setBulkReadings(getBulkMeterReadings());
-            setIndReadings(getIndividualCustomerReadings());
-          }).catch(() => {});
-        } else {
-          setBulkReadings(getBulkMeterReadings());
-          setIndReadings(getIndividualCustomerReadings());
-        }
-        setLocalLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-      };
-      window.addEventListener('data-refreshed', handleDataRefreshed);
-
-      const unsubInd = subscribeToIndividualCustomerReadings(() => setIndReadings(getIndividualCustomerReadings()));
-      const unsubBulk = subscribeToBulkMeterReadings(() => setBulkReadings(getBulkMeterReadings()));
-      const unsubCust = subscribeToCustomers((updated) => setCustomersList(updated));
-      const unsubBM = subscribeToBulkMeters((updated) => setBulkMetersList(updated));
-      const unsubStaff = subscribeToStaffMembers((updated) => setStaffList(updated));
-      const unsubRoutes = subscribeToRoutes((updated) => setRoutesList(updated));
-
-      return () => {
-        window.removeEventListener('data-refreshed', handleDataRefreshed);
-        unsubInd();
-        unsubBulk();
-        unsubCust();
-        unsubBM();
-        unsubStaff();
-        unsubRoutes();
-      };
-  }, []);
-
-  const currentMonthYear = format(new Date(), 'yyyy-MM');
-
-  // Compute reader progress records
-  const readerProgressData = React.useMemo(() => {
-    // Filter staff members based on effective branch permission
-    let relevantStaff = staffList;
-    if (effectiveBranchId) {
-      relevantStaff = relevantStaff.filter(s => s.branchId === effectiveBranchId);
     }
+  }, [currentMonthYear]);
 
-    // Filter staff members who have reading tasks assigned or are Readers
-    return relevantStaff.map(staff => {
-      const staffIdRaw = (staff.id || staff.email || '').toLowerCase();
-      const assignedRoutes = routesList.filter(r => r.readerId?.toLowerCase() === staffIdRaw);
-      const routeKeys = new Set(assignedRoutes.map(r => r.routeKey));
+  React.useEffect(() => {
+    loadData();
 
-      const assignedBulkMeters = bulkMetersList.filter(bm => bm.routeKey && routeKeys.has(bm.routeKey));
-      const bulkKeys = new Set(assignedBulkMeters.map(bm => bm.customerKeyNumber));
-      const assignedCustomers = customersList.filter(c => c.assignedBulkMeterId && bulkKeys.has(c.assignedBulkMeterId));
+    const handleDataRefreshed = () => {
+      loadData();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
 
-      const staffBulkReadings = bulkReadings.filter(r => r.CUSTOMERKEY && bulkKeys.has(r.CUSTOMERKEY) && r.monthYear === currentMonthYear);
-      const indKeys = new Set(assignedCustomers.map(c => c.customerKeyNumber));
-      const staffIndReadings = indReadings.filter(r => r.individualCustomerId && indKeys.has(r.individualCustomerId) && r.monthYear === currentMonthYear);
-
-      const totalAssigned = assignedBulkMeters.length + assignedCustomers.length;
-      const totalCompleted = staffBulkReadings.length + staffIndReadings.length;
-      const completionPercentage = totalAssigned > 0 ? Math.round((totalCompleted / totalAssigned) * 100) : 0;
-
-      // Determine latest activity timestamp
-      const allTimestamps = [
-        ...staffBulkReadings.map(r => new Date(r.READING_DATE || r.date || 0).getTime()),
-        ...staffIndReadings.map(r => new Date(r.READING_DATE || r.date || 0).getTime())
-      ].filter(t => t > 0);
-
-      const latestActivityTimestamp = allTimestamps.length > 0 ? Math.max(...allTimestamps) : null;
-
-      let status: 'Completed' | 'Active Reading' | 'Not Started' = 'Not Started';
-      if (totalAssigned > 0 && completionPercentage === 100) {
-        status = 'Completed';
-      } else if (totalCompleted > 0) {
-        status = 'Active Reading';
-      }
-
-      return {
-        id: staff.id,
-        name: staff.name || staff.email || 'Field Reader',
-        email: staff.email,
-        branchName: staff.branchName || 'Assigned Branch',
-        assignedRouteCount: assignedRoutes.length,
-        routeKeys: Array.from(routeKeys),
-        bulkMeterCount: assignedBulkMeters.length,
-        customerCount: assignedCustomers.length,
-        totalAssigned,
-        totalCompleted,
-        pendingCount: totalAssigned - totalCompleted,
-        completionPercentage,
-        latestActivityTimestamp,
-        status
-      };
-    }).filter(r => r.totalAssigned > 0 || r.assignedRouteCount > 0);
-  }, [staffList, routesList, bulkMetersList, customersList, bulkReadings, indReadings, effectiveBranchId, currentMonthYear]);
+    return () => {
+      window.removeEventListener('data-refreshed', handleDataRefreshed);
+    };
+  }, [loadData]);
 
   const filteredReaders = React.useMemo(() => {
     if (!searchTerm.trim()) return readerProgressData;
@@ -204,7 +71,7 @@ export default function ReaderSupervisorMonitoringPage() {
     return readerProgressData.filter(r => 
       r.name.toLowerCase().includes(term) || 
       r.email.toLowerCase().includes(term) ||
-      r.routeKeys.some(rk => rk.toLowerCase().includes(term))
+      r.routeKeys.some((rk: string) => rk.toLowerCase().includes(term))
     );
   }, [readerProgressData, searchTerm]);
 
@@ -391,7 +258,7 @@ export default function ReaderSupervisorMonitoringPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {reader.routeKeys.map(rk => (
+                        {reader.routeKeys.map((rk: string) => (
                           <Badge key={rk} variant="outline" className="font-mono text-[10px] bg-white text-blue-700 border-blue-200">
                             {rk}
                           </Badge>

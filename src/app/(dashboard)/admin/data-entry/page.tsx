@@ -22,7 +22,7 @@ import {
 import { addBulkMeter, addCustomer, initializeBulkMeters, initializeCustomers, getBulkMeters, getCustomers, getBranches, initializeBranches, subscribeToBranches } from "@/lib/data-store";
 import type { Branch } from "../branches/branch-types";
 import { batchImportBulkMetersAction, batchImportIndividualCustomersAction } from "@/lib/actions";
-import { generateBulkMeterKeys, generateCustomerKeys } from "@/lib/utils";
+import { cn, generateBulkMeterKeys, generateCustomerKeys } from "@/lib/utils";
 import type { BulkMeter, BulkMeterStatus } from "../bulk-meters/bulk-meter-types";
 import type { IndividualCustomer, IndividualCustomerStatus } from "../individual-customers/individual-customer-types";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -233,10 +233,12 @@ export default function AdminDataEntryPage() {
     setTemplateDialogOpen(false);
   };
 
-  const canIndividualManual = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('data_entry_individual_form');
-  const canBulkManual = hasPermission('data_entry_access') || hasPermission('bulk_meters_create') || hasPermission('data_entry_bulk_form');
-  const canCsvUpload = hasPermission('data_entry_access') || hasPermission('customers_create') || hasPermission('bulk_meters_create') || hasPermission('data_entry_bulk_csv') || hasPermission('data_entry_individual_csv');
-  const canAccessDataEntry = canIndividualManual || canBulkManual || canCsvUpload;
+  const canIndividualManual = hasPermission('data_entry_individual_form');
+  const canBulkManual = hasPermission('data_entry_bulk_form');
+  const canBulkCsv = hasPermission('data_entry_bulk_csv');
+  const canIndividualCsv = hasPermission('data_entry_individual_csv');
+  const canCsvUpload = canBulkCsv || canIndividualCsv;
+  const canAccessDataEntry = hasPermission('data_entry_access') || canIndividualManual || canBulkManual || canCsvUpload;
 
   if (!canAccessDataEntry) {
     return (
@@ -252,6 +254,7 @@ export default function AdminDataEntryPage() {
   }
 
   const defaultTab = canIndividualManual ? "manual-individual" : (canBulkManual ? "manual-bulk" : "csv-upload");
+  const activeTabsCount = (canIndividualManual ? 1 : 0) + (canBulkManual ? 1 : 0) + (canCsvUpload ? 1 : 0);
 
   return (
     <div className="space-y-6 relative min-h-[calc(100vh-100px)]">
@@ -269,7 +272,10 @@ export default function AdminDataEntryPage() {
       </div>
 
       <Tabs defaultValue={defaultTab} className="w-full relative z-10">
-        <TabsList className="grid w-full max-w-xl grid-cols-3 p-1.5 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-200/50 dark:border-slate-800/50 h-auto">
+        <TabsList className={cn(
+          "grid w-full p-1.5 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-200/50 dark:border-slate-800/50 h-auto",
+          activeTabsCount === 1 ? "max-w-xs grid-cols-1" : activeTabsCount === 2 ? "max-w-md grid-cols-2" : "max-w-xl grid-cols-3"
+        )}>
           {canIndividualManual && (
             <TabsTrigger 
               value="manual-individual" 
@@ -342,31 +348,35 @@ export default function AdminDataEntryPage() {
         </TabsContent>
 
         <TabsContent value="csv-upload" className="mt-6 focus-visible:outline-none focus-visible:ring-0">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <Card className="form-card-premium rounded-3xl">
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-primary/10 rounded-xl">
-                      <UploadCloud className="h-6 w-6 text-primary" />
+          <div className={cn(
+            "grid gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700",
+            canBulkCsv && canIndividualCsv ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 max-w-2xl mx-auto"
+          )}>
+            {canBulkCsv && (
+              <Card className="form-card-premium rounded-3xl">
+                <CardHeader>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-primary/10 rounded-xl">
+                        <UploadCloud className="h-6 w-6 text-primary" />
+                      </div>
+                      <CardTitle className="text-xl">Bulk Meter CSV Upload</CardTitle>
                     </div>
-                    <CardTitle className="text-xl">Bulk Meter CSV Upload</CardTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
+                      onClick={() => openTemplateDialog(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
+                    >
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                      Template
+                    </Button>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
-                    onClick={() => openTemplateDialog(bulkMeterCsvHeaders, 'bulk_meter_template.csv')}
-                  >
-                    <FileSpreadsheet className="mr-2 h-4 w-4" />
-                    Template
-                  </Button>
-                </div>
-                <CardDescription className="pt-4 font-medium leading-relaxed">
-                  Upload multiple bulk meters at once. Ensure the CSV file structure, headers, and column order match the template exactly.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
+                  <CardDescription className="pt-4 font-medium leading-relaxed">
+                    Upload multiple bulk meters at once. Ensure the CSV file structure, headers, and column order match the template exactly.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
                   <CsvUploadSection 
                     entryType="bulk"
                     schema={bulkMeterCsvSchema}
@@ -374,42 +384,45 @@ export default function AdminDataEntryPage() {
                     expectedHeaders={bulkMeterCsvHeaders}
                     batchUploadFunction={batchImportBulkMetersAction}
                   />
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
-            <Card className="form-card-premium rounded-3xl">
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-primary/10 rounded-xl">
-                      <UploadCloud className="h-6 w-6 text-primary" />
+            {canIndividualCsv && (
+              <Card className="form-card-premium rounded-3xl">
+                <CardHeader>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-primary/10 rounded-xl">
+                        <UploadCloud className="h-6 w-6 text-primary" />
+                      </div>
+                      <CardTitle className="text-xl">Individual Customer CSV Upload</CardTitle>
                     </div>
-                    <CardTitle className="text-xl">Individual Customer CSV Upload</CardTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
+                      onClick={() => openTemplateDialog(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
+                    >
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                      Template
+                    </Button>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-xl border-primary/20 hover:border-primary transition-all duration-300"
-                    onClick={() => openTemplateDialog(individualCustomerCsvHeaders, 'individual_customer_template.csv')}
-                  >
-                    <FileSpreadsheet className="mr-2 h-4 w-4" />
-                    Template
-                  </Button>
-                </div>
-                <CardDescription className="pt-4 font-medium leading-relaxed">
-                  Upload multiple individual customers. Ensure the <code className="bg-primary/5 px-1 rounded text-primary text-xs">customerKeyNumber</code> is unique and <code className="bg-primary/5 px-1 rounded text-primary text-xs">assignedBulkMeterId</code> exists.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <CsvUploadSection
-                  entryType="individual"
-                  schema={individualCustomerCsvSchema}
-                  addRecordFunction={handleIndividualCustomerCsvUpload}
-                  expectedHeaders={individualCustomerCsvHeaders}
-                  batchUploadFunction={batchImportIndividualCustomersAction}
-                />
-              </CardContent>
-            </Card>
+                  <CardDescription className="pt-4 font-medium leading-relaxed">
+                    Upload multiple individual customers. Ensure the <code className="bg-primary/5 px-1 rounded text-primary text-xs">customerKeyNumber</code> is unique and <code className="bg-primary/5 px-1 rounded text-primary text-xs">assignedBulkMeterId</code> exists.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <CsvUploadSection
+                    entryType="individual"
+                    schema={individualCustomerCsvSchema}
+                    addRecordFunction={handleIndividualCustomerCsvUpload}
+                    expectedHeaders={individualCustomerCsvHeaders}
+                    batchUploadFunction={batchImportIndividualCustomersAction}
+                  />
+                </CardContent>
+              </Card>
+            )}
           </div>
         </TabsContent>
       </Tabs>
