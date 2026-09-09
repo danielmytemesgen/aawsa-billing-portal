@@ -4176,6 +4176,11 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                        REPLACE(REPLACE(TRIM("BILLKEY"), 'BBPT-', ''), '-', '') ILIKE $2
                        OR REPLACE(REPLACE(TRIM(bill_number), 'BBPT-', ''), '-', '') ILIKE $2
                    ))
+                ORDER BY
+                    CASE WHEN status = 'Reversed' THEN 2 WHEN status = 'Deleted' THEN 3
+                         WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0
+                         ELSE 1 END,
+                    created_at DESC
                 LIMIT 1
             `, [rawBillKey, cBillKey ? `%${cBillKey}%` : '']);
             if (rows && rows[0]) return rows[0];
@@ -4184,12 +4189,19 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
         if (rawCustKey) {
             const rows: any = await query(`
                 SELECT * FROM bills 
-                WHERE (individual_customer_id ILIKE TRIM($1) OR "CUSTOMERKEY" ILIKE TRIM($1))
-                   OR ($2 <> '' AND (
-                       REPLACE(REPLACE(TRIM(individual_customer_id), 'BM-', ''), '-', '') ILIKE $2
-                       OR REPLACE(REPLACE(TRIM("CUSTOMERKEY"), 'BM-', ''), '-', '') ILIKE $2
-                   ))
-                ORDER BY CASE WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, created_at DESC 
+                WHERE deleted_at IS NULL
+                  AND (
+                      (individual_customer_id ILIKE TRIM($1) OR "CUSTOMERKEY" ILIKE TRIM($1))
+                      OR ($2 <> '' AND (
+                          REPLACE(REPLACE(TRIM(individual_customer_id), 'BM-', ''), '-', '') ILIKE $2
+                          OR REPLACE(REPLACE(TRIM("CUSTOMERKEY"), 'BM-', ''), '-', '') ILIKE $2
+                      ))
+                  )
+                ORDER BY
+                    CASE WHEN status = 'Reversed' THEN 2 WHEN status = 'Deleted' THEN 3
+                         WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0
+                         ELSE 1 END,
+                    created_at DESC
                 LIMIT 1
             `, [rawCustKey, cCustKey ? `%${cCustKey}%` : '']);
             if (rows && rows[0]) return rows[0];
@@ -4200,18 +4212,60 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 SELECT b.* FROM bills b
                 LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
                 LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
-                WHERE TRIM(c."METER_KEY") ILIKE TRIM($1) OR TRIM(bm."METER_KEY") ILIKE TRIM($1) OR TRIM(b.meter_key) ILIKE TRIM($1)
-                   OR ($2 <> '' AND (
-                       REPLACE(REPLACE(TRIM(c."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
-                       OR REPLACE(REPLACE(TRIM(bm."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
-                   ))
-                ORDER BY CASE WHEN LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END, b.created_at DESC 
+                WHERE b.deleted_at IS NULL
+                  AND (
+                      TRIM(c."METER_KEY") ILIKE TRIM($1) OR TRIM(bm."METER_KEY") ILIKE TRIM($1) OR TRIM(b.meter_key) ILIKE TRIM($1)
+                      OR ($2 <> '' AND (
+                          REPLACE(REPLACE(TRIM(c."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
+                          OR REPLACE(REPLACE(TRIM(bm."METER_KEY"), 'METER-', ''), '-', '') ILIKE $2
+                      ))
+                  )
+                ORDER BY
+                    CASE WHEN b.status = 'Reversed' THEN 2 WHEN b.status = 'Deleted' THEN 3
+                         WHEN LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' THEN 0
+                         ELSE 1 END,
+                    b.created_at DESC
                 LIMIT 1
             `, [rawMeterKey, cMeterKey ? `%${cMeterKey}%` : '']);
             if (rows && rows[0]) return rows[0];
         }
 
         return null;
+    };
+
+    // FIX (Bottleneck 2): Correction chain resolution.
+    // Banks and customers often reference the original bill key/number, not the CORR- replacement.
+    // When findTargetBill resolves to a Reversed bill, follow the correction link to the active
+    // replacement bill so the payment is applied to the live collectable bill — not the voided one.
+    const followCorrectionChain = async (bill: any): Promise<any> => {
+        if (!bill || bill.status !== 'Reversed') return bill;
+        // Search for an active replacement bill by CORR- number or notes reference
+        const searchCorrNumber = `CORR-${bill.bill_number || ''}`;
+        const replRows: any = await query(
+            `SELECT * FROM bills
+             WHERE (
+                 bill_number = $1
+                 OR notes LIKE $2
+                 OR notes LIKE $3
+             )
+               AND status != 'Reversed'
+               AND deleted_at IS NULL
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [
+                searchCorrNumber,
+                `%Correction of ${bill.bill_number}%`,
+                `%${bill.id}%`,
+            ]
+        );
+        const replacement = replRows && replRows[0];
+        if (replacement) {
+            console.log(`[CSV] Correction chain: redirected from reversed bill "${bill.bill_number || bill.BILLKEY}" to replacement bill "${replacement.bill_number || replacement.BILLKEY}"`);
+            return replacement;
+        }
+        // No replacement found — return the reversed bill as-is so the existing
+        // error handling below gives the operator a clear message.
+        return bill;
     };
 
     const processedBillIds = new Set<string>();
@@ -4245,7 +4299,10 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 continue;
             }
 
-            const targetBill = await findTargetBill(rawBillKey, rawCustKey, rawMeterKey, cBillKey, cCustKey, cMeterKey);
+            const rawTargetBill = await findTargetBill(rawBillKey, rawCustKey, rawMeterKey, cBillKey, cCustKey, cMeterKey);
+            // FIX (Bottleneck 2): If the resolved bill is Reversed, follow the correction chain
+            // to the active replacement bill before applying any payment or validation logic.
+            const targetBill = await followCorrectionChain(rawTargetBill);
 
             if (!targetBill) {
                 errors.push({
@@ -5349,9 +5406,16 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         const billPaymentStatus = billUnpaid <= 0.01 ? 'Paid' : 'Unpaid';
 
         // Preserve any bills already manually marked as 'Paid'.
-        // Exception: correction draft bills must always be forced to 'Unpaid' after rebilling
-        // so the new amount is collectable. The prior bill was 'Paid' when posted, but the
-        // replacement draft starts fresh.
+        //
+        // FIX (Bottleneck 1): The prior CASE unconditionally set 'Unpaid' for any bill whose
+        // notes contain 'Correction of', which wiped out the 'Paid' status even after a
+        // successful CSV payment. The corrected CASE logic is:
+        //   1. If the bill has already been fully paid (amount_paid >= TOTALBILLAMOUNT), keep 'Paid'.
+        //   2. If it is a correction bill that is still a Draft or has zero paid amount, force 'Unpaid'
+        //      so the new amount is collectable (the replacement draft starts fresh).
+        //   3. If the bill was already 'Paid' via manual update (not a correction draft scenario), keep 'Paid'.
+        //   4. Otherwise default to the aging-computed $8::payment_status.
+        //
         // Include month_year in the WHERE clause so PostgreSQL can route the UPDATE
         // directly to the correct partition without crossing the BEFORE ROW trigger boundary.
         await qFunc(
@@ -5363,10 +5427,21 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "OUTSTANDINGAMT" = $5, 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
-                 payment_status = CASE 
-                     WHEN (notes LIKE '%Correction of%') THEN 'Unpaid'::payment_status
-                     WHEN payment_status = 'Paid' THEN 'Paid'::payment_status 
-                     ELSE $8::payment_status 
+                 payment_status = CASE
+                     -- 1. Bill is fully paid (amount_paid >= bill total): always Paid regardless of notes.
+                     WHEN COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01
+                          AND COALESCE(amount_paid, 0) > 0
+                         THEN 'Paid'::payment_status
+                     -- 2. Correction draft still unpaid (Draft status or zero amount_paid): force Unpaid
+                     --    so the corrected amount is collectable before the bill is posted and paid.
+                     WHEN (notes LIKE '%Correction of%')
+                          AND (status = 'Draft' OR COALESCE(amount_paid, 0) <= 0)
+                         THEN 'Unpaid'::payment_status
+                     -- 3. Preserve manually-set 'Paid' on non-draft bills (e.g. posted bills paid via UI).
+                     WHEN payment_status = 'Paid'
+                         THEN 'Paid'::payment_status
+                     -- 4. Use aging-engine computed status.
+                     ELSE $8::payment_status
                  END
              WHERE id = $9 AND month_year = $10`,
             [

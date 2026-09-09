@@ -4207,21 +4207,34 @@ export async function createPaymentAction(payment: PaymentInsert) {
     await checkPermission(PERMISSIONS.PAYMENTS_CREATE);
 
     const result = await withTransaction(async (client) => {
-      // 1. Create Payment
+      // 1. Create Payment record
       const created = await dbCreatePayment(payment, client);
 
-      // 2. Sync Aging Debt and Updates
+      // FIX (Bottleneck 4): Stamp amount_paid + payment_status on the bill immediately
+      // so that when dbSyncAgingForCustomer runs next, it reads the correct amount_paid
+      // from the bills row (not stale zero). Without this, the aging engine would compute
+      // billPaymentStatus='Unpaid' because bills.amount_paid hasn't been updated yet
+      // (only the payments table has the new row).
+      let bill: any = null;
       let customerKey: string | null = null;
       if (payment.bill_id) {
-        const bill = await dbGetBillByIdQuery(payment.bill_id, undefined, client);
+        bill = await dbGetBillByIdQuery(payment.bill_id, undefined, client);
         if (bill) {
           customerKey = bill.CUSTOMERKEY || bill.individual_customer_id || null;
+          const billTotal = Number(bill.TOTALBILLAMOUNT || 0);
+          const newAmountPaid = Number(payment.amount_paid || 0);
+          const newPaymentStatus = billTotal > 0 && newAmountPaid >= billTotal - 0.01 ? 'Paid' : 'Unpaid';
+          await dbUpdateBill(payment.bill_id, {
+            amount_paid: newAmountPaid,
+            payment_status: newPaymentStatus,
+          }, client, bill.month_year);
         }
       }
       if (!customerKey) {
         customerKey = payment.individual_customer_id || (payment as any).bulk_meter_id || (payment as any).customer_key || null;
       }
 
+      // 2. Sync Aging Debt and Updates
       if (customerKey) {
         await dbSyncAgingForCustomer(customerKey, client);
       }
