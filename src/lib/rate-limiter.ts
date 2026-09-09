@@ -55,6 +55,46 @@ export function resetRateLimit(key: string): void {
     store.delete(key);
 }
 
+/**
+ * Configurable rate limiter for sensitive actions (e.g. CSV batch upload, meter reading imports).
+ * Default: 10 calls per minute.
+ */
+export function checkActionRateLimit(
+    key: string,
+    maxAttempts: number = 10,
+    windowMs: number = 60 * 1000
+): { allowed: boolean; retryAfterSeconds?: number } {
+    const now = Date.now();
+    const record = store.get(key);
+
+    if (record) {
+        if (record.lockedUntil && now < record.lockedUntil) {
+            const retryAfterSeconds = Math.ceil((record.lockedUntil - now) / 1000);
+            return { allowed: false, retryAfterSeconds };
+        }
+
+        if (now - record.firstAttemptAt > windowMs) {
+            store.set(key, { count: 1, firstAttemptAt: now });
+            return { allowed: true };
+        }
+
+        record.count += 1;
+
+        if (record.count > maxAttempts) {
+            record.lockedUntil = now + windowMs;
+            store.set(key, record);
+            const retryAfterSeconds = Math.ceil(windowMs / 1000);
+            return { allowed: false, retryAfterSeconds };
+        }
+
+        store.set(key, record);
+        return { allowed: true };
+    }
+
+    store.set(key, { count: 1, firstAttemptAt: now });
+    return { allowed: true };
+}
+
 // Periodically clean up expired entries to prevent memory leaks
 setInterval(() => {
     const now = Date.now();

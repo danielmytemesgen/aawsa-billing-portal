@@ -1,5 +1,6 @@
 'use server'
 import { PERMISSIONS } from '@/lib/constants/auth';
+import { checkActionRateLimit } from '@/lib/rate-limiter';
 import { canCreateMeterReadingForType } from '@/lib/meter-reading-permissions';
 import { format } from 'date-fns';
 import fs from 'fs';
@@ -7135,6 +7136,12 @@ export async function updatePaymentsFromCsvAction(records: Array<{
       PERMISSIONS.REPORT_LIST_OF_PAID_BILLS,
       PERMISSIONS.REPORT_BRANCH_LIST_OF_PAID_BILLS
     );
+
+    // Rate limiting: allow max 15 batch CSV uploads per minute per staff account
+    const rateCheck = checkActionRateLimit(`payment-csv-upload:${session.id}`, 15, 60 * 1000);
+    if (!rateCheck.allowed) {
+      throw new Error(`Rate limit exceeded for CSV upload. Please wait ${rateCheck.retryAfterSeconds} seconds before trying again.`);
+    }
     
     const startTime = Date.now();
     console.log(`[CSV UPLOAD] ⏱️  Started at ${new Date().toISOString()}`);
