@@ -1275,7 +1275,7 @@ const availableReports: ReportType[] = [
     category: 'Finance',
     requiredPermission: PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE,
     headers: [
-      "COUNT", "BRANCH", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"
+      "COUNT", "BRANCH", "CHARGE_GROUP", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -1362,10 +1362,11 @@ const availableReports: ReportType[] = [
         return clean.length >= 2 ? clean.substring(0, 2) : 'AD';
       };
 
-      // Aggregate: key = PERIOD + '|' + BRANCH_CODE + '|' + GL_CODE
+      // Aggregate: key = PERIOD + '|' + BRANCH_CODE + '|' + CHARGE_GROUP + '|' + GL_CODE
       const grouped: Record<string, {
         count: number;
         branch: string;
+        chargeGroup: string;
         glCode: string;
         totalAmount: number;
         vatAmount: number;
@@ -1403,13 +1404,17 @@ const availableReports: ReportType[] = [
           baseWater = Number(b.THISMONTHBILLAMT);
         }
 
+        // Normalise charge group to a short readable label
+        const chargeGroupLabel = (cGroup || 'Unknown').trim();
+
         const addItem = (glCode: string, amount: number, vatAmt: number = 0) => {
           if (amount <= 0 && vatAmt <= 0) return;
-          const key = `${periodStr}|${branchCode}|${glCode}`;
+          const key = `${periodStr}|${branchCode}|${chargeGroupLabel}|${glCode}`;
           if (!grouped[key]) {
             grouped[key] = {
               count: 0,
               branch: branchCode,
+              chargeGroup: chargeGroupLabel,
               glCode,
               totalAmount: 0,
               vatAmount: 0,
@@ -1431,11 +1436,12 @@ const availableReports: ReportType[] = [
         addItem('FIREGL', additional, 0);
       }
 
-      // Convert to flat rows and sort by PERIOD desc, then BRANCH, then GL_CODE
+      // Convert to flat rows and sort by PERIOD desc, then BRANCH, then CHARGE_GROUP, then GL_CODE
       return Object.values(grouped)
         .map(row => ({
           "COUNT":        row.count,
           "BRANCH":       row.branch,
+          "CHARGE_GROUP": row.chargeGroup,
           "GL_CODE":      row.glCode,
           "TOTAL_AMOUNT": parseFloat(row.totalAmount.toFixed(2)),
           "VAT_AMOUNT":   parseFloat(row.vatAmount.toFixed(2)),
@@ -1447,6 +1453,8 @@ const availableReports: ReportType[] = [
           if (pd !== 0) return pd;
           const bd = (a.BRANCH || '').localeCompare(b.BRANCH || '');
           if (bd !== 0) return bd;
+          const cg = (a.CHARGE_GROUP || '').localeCompare(b.CHARGE_GROUP || '');
+          if (cg !== 0) return cg;
           return (a.GL_CODE || '').localeCompare(b.GL_CODE || '');
         });
     },
