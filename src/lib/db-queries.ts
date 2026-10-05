@@ -1450,8 +1450,7 @@ export const dbBulkDeleteBillsForPeriod = async (params: {
         }
 
         // Restore assigned individual sub-meter readings to their pre-billing state.
-        // assignedBulkMeterId stores the bulk meter's UUID (id), not customerKeyNumber,
-        // so we join through bulk_meters to find the matching sub-meter customers.
+        // assignedBulkMeterId references bulk_meters.customerKeyNumber directly (it is the PK).
         if (bulkKeysToRestore.length > 0 && params.monthYear && params.monthYear.includes('-')) {
             const [year, month] = params.monthYear.split('-').map(Number);
             const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
@@ -1461,8 +1460,7 @@ export const dbBulkDeleteBillsForPeriod = async (params: {
                 `SELECT icr."CUST_KEY", icr."PREVIOUS_READING"
                  FROM individual_customer_readings icr
                  JOIN individual_customers ic ON ic."customerKeyNumber" = icr."CUST_KEY"
-                 JOIN bulk_meters bm ON bm.id = ic."assignedBulkMeterId"
-                 WHERE bm."customerKeyNumber" = ANY($1)
+                 WHERE ic."assignedBulkMeterId" = ANY($1)
                    AND icr.deleted_at IS NULL
                    AND ic.deleted_at IS NULL
                    AND icr."READING_DATE" >= $2 AND icr."READING_DATE" < $3`,
