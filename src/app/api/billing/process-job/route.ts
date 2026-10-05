@@ -296,8 +296,8 @@ export async function POST(request: Request) {
           vat_amount: billBreakdown.vatAmount,
           additional_fees_breakdown: billBreakdown.additionalFeesBreakdown,
           balance_carried_forward: outstandingAmt,
-          amount_paid: carryBalance ? 0 : totalPayable,
-          payment_status: carryBalance ? 'Unpaid' : 'Paid',
+          amount_paid: 0,
+          payment_status: 'Unpaid',
           debit_30: debit30,
           debit_30_60: debit30_60,
           debit_60: debit60,
@@ -338,8 +338,8 @@ export async function POST(request: Request) {
             .filter(b => b.CUSTOMERKEY)
             .map(b => [
               b.CUSTOMERKEY,
-              String(currentJob.carry_balance ? b.TOTALBILLAMOUNT : 0),
-              currentJob.carry_balance ? 'Unpaid' : 'Paid'
+              String(b.TOTALBILLAMOUNT),
+              'Unpaid'
             ]);
 
           if (bulkMetersToUpdate.length > 0) {
@@ -360,8 +360,8 @@ export async function POST(request: Request) {
             .filter(b => b.individual_customer_id)
             .map(b => [
               b.individual_customer_id,
-              String(currentJob.carry_balance ? b.TOTALBILLAMOUNT : 0),
-              currentJob.carry_balance ? 'Unpaid' : 'Paid'
+              String(b.TOTALBILLAMOUNT),
+              'Unpaid'
             ]);
 
           if (individualCustomersToUpdate.length > 0) {

@@ -97,6 +97,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { BillingCycleDialog } from '@/features/billing/components/billing-cycle-dialog';
+import { BulkDeleteBillsDialog } from '@/features/billing/components/bulk-delete-bills-dialog';
 import { TablePagination } from '@/components/ui/table-pagination';
 import { DatePicker } from '@/components/ui/date-picker';
 import { parse } from 'date-fns';
@@ -114,6 +115,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [bills, setBills] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
+    const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
     const [branches, setBranches] = useState<any[]>([]);
     const [dismissedAnomalies, setDismissedAnomalies] = useState<Set<string>>(new Set());
 
@@ -992,6 +994,16 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                             </Badge>
                         )}
                     </Button>
+                    {(hasPermission('bill:delete') || hasPermission('bill:manage_all')) && (
+                        <Button 
+                            variant="outline" 
+                            className="h-10 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 shadow-sm gap-1.5"
+                            onClick={() => setIsBulkDeleteDialogOpen(true)}
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            Reset / Delete Batch
+                        </Button>
+                    )}
                     {hasPermission('billing:close_cycle') && (
                         <Button className="h-10 bg-blue-600 hover:bg-blue-700 shadow-sm" onClick={() => setIsCycleDialogOpen(true)}>
                             Start New Billing Cycle
@@ -1350,6 +1362,21 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 onComplete={() => {
                     setMonthFilter('all');
                     loadData({ monthFilter: 'all' });
+                }}
+            />
+
+            <BulkDeleteBillsDialog
+                open={isBulkDeleteDialogOpen}
+                onOpenChange={setIsBulkDeleteDialogOpen}
+                initialMonthYear={monthFilter !== 'all' ? monthFilter : undefined}
+                initialBranchId={branchFilter !== 'all' ? branchFilter : undefined}
+                branches={branches}
+                onSuccess={() => {
+                    loadData();
+                }}
+                onTriggerRebill={() => {
+                    loadData();
+                    setIsCycleDialogOpen(true);
                 }}
             />
 

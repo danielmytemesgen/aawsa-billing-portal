@@ -77,10 +77,27 @@ export function normalizeTariff(tariffRow: any): TariffInfo {
  * billing-history tables all compute the same value.
  *
  * Priority:
- *   1. Use THISMONTHBILLAMT if it is explicitly stored.
- *   2. Reconstruct as TOTALBILLAMOUNT − OUTSTANDINGAMT − PENALTYAMT.
+ *   1. Use THISMONTHBILLAMT if it is explicitly stored and > 0.
+ *   2. Reconstruct from itemized components (water + sewerage + maintenance +
+ *      sanitation + meter_rent + vat + additional_fees_charge) when available.
+ *   3. Fallback: TOTALBILLAMOUNT − OUTSTANDINGAMT − PENALTYAMT.
  */
 export function getMonthlyBillAmt(bill: any): number {
+    if (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined && Number(bill.THISMONTHBILLAMT) > 0) {
+        return Number(bill.THISMONTHBILLAMT);
+    }
+    // Reconstruct from itemized components if available
+    const water = Number(bill.base_water_charge || 0);
+    const sewer = Number(bill.sewerage_charge || 0);
+    const maint = Number(bill.maintenance_fee || 0);
+    const sanit = Number(bill.sanitation_fee || 0);
+    const rent = Number(bill.meter_rent || 0);
+    const vat = Number(bill.vat_amount || 0);
+    const addFee = Number(bill.additional_fees_charge || 0);
+    const sum = water + sewer + maint + sanit + rent + vat + addFee;
+    if (sum > 0) {
+        return Number(sum.toFixed(2));
+    }
     if (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined) {
         return Number(bill.THISMONTHBILLAMT);
     }

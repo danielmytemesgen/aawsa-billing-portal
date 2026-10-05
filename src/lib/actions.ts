@@ -36,6 +36,8 @@ import {
   getStaffMemberForAuth as dbGetStaffMemberForAuth,
   dbCreateBill,
   dbDeleteBill,
+  dbPreviewBillsForPeriodAndBranch,
+  dbBulkDeleteBillsForPeriod,
   dbGetAllBills,
   dbUpdateBill,
   dbCreateIndividualCustomerReading,
@@ -126,7 +128,9 @@ import {
   dbGetMostRecentBillsForBulkMeters,
   dbGetRecycleBinItems,
   dbRestoreFromRecycleBin,
+  dbRestoreFromRecycleBinBulk,
   dbPermanentlyDeleteFromRecycleBin,
+  dbPermanentlyDeleteFromRecycleBinBulk,
   dbGetUnsettledBillsPaginated,
   dbGetBillsByCustomerKey,
   dbGetBillsPaginated,
@@ -1657,13 +1661,9 @@ export async function runBillingCycleAction(payload: {
       debit_30_60: debit30_60,
       debit_60: debit60,
       due_date: dueDate.toISOString(),
-      // When carryBalance is false the bill is settled now: the deposit covers the
-      // first part (dueAfterCredit is the net cash owed), so a fully-covered bill is
-      // created 'Paid' with amount_paid 0 and the engine records the applied credit.
-      payment_status: payload.carryBalance ? (dueAfterCredit > MONEY_EPSILON ? 'Unpaid' : 'Paid') : 'Paid',
-      // Record the net cash portion as paid so dbSyncAgingForCustomer recalculates
-      // consistently and never reverts payment_status back to 'Unpaid'.
-      amount_paid: payload.carryBalance ? 0 : dueAfterCredit,
+      // Newly run billing cycles always generate Unpaid bills that must be collected/paid
+      payment_status: 'Unpaid',
+      amount_paid: 0,
       status: 'Draft', // New cycles start as drafts
       bill_number: `BILL-${Date.now()}`,
       snapshot_data: {
@@ -1688,13 +1688,13 @@ export async function runBillingCycleAction(payload: {
       });
     }
 
-    // 6. Update Bulk Meter — carry forward the net (post-credit) amount as the outstanding balance
-    const newOutstandingBalance = payload.carryBalance ? dueAfterCredit : 0;
+    // 6. Update Bulk Meter — balance reflects total bill amount, status is Unpaid
+    const newOutstandingBalance = billingResult.totalBill + (payload.carryBalance ? Number(bulkMeter.outStandingbill || 0) : 0);
     const newPreviousReading = bulkMeter.currentReading ?? bulkMeter.previousReading ?? 0;
     const meterUpdate: BulkMeterUpdate = {
       previousReading: newPreviousReading,
       outStandingbill: newOutstandingBalance as any,
-      paymentStatus: payload.carryBalance ? (dueAfterCredit > MONEY_EPSILON ? 'Unpaid' as any : 'Paid' as any) : 'Paid' as any,
+      paymentStatus: 'Unpaid' as any,
     };
 
     await dbUpdateBulkMeter(payload.bulkMeterId, meterUpdate);
@@ -2099,6 +2099,80 @@ export async function deleteBillAction(id: string) {
       severity: 'warning',
       details: { id }
     });
+  });
+}
+
+export async function previewBillsForPeriodAndBranchAction(payload: { monthYear: string; branchId?: string }) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_DELETE,
+      PERMISSIONS.BILL_CLOSE_CYCLE,
+      'billing:close_cycle',
+      'bill:close_cycle',
+      'bill:manage_all',
+      'bill:delete'
+    );
+    const effectiveBranchId = getEffectiveBranchId(session, payload.branchId, PERMISSIONS.BILL_VIEW_ALL);
+    return await dbPreviewBillsForPeriodAndBranch({
+      monthYear: payload.monthYear,
+      branchId: effectiveBranchId,
+    });
+  });
+}
+
+export async function bulkDeleteBillsForPeriodAndBranchAction(payload: {
+  monthYear: string;
+  branchId?: string;
+  excludePaid?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_DELETE,
+      'bill:delete',
+      'bill:manage_all'
+    );
+
+    const effectiveBranchId = getEffectiveBranchId(session, payload.branchId, PERMISSIONS.BILL_DELETE);
+
+    // Block deletion if ANY billing job is currently active for this month & branch
+    // (both bulk_meters and individual_customers jobs must be checked)
+    const [activeJobsBulk, activeJobsIndiv] = await Promise.all([
+      dbGetActiveBillingJobs(payload.monthYear, 'bulk_meters', effectiveBranchId),
+      dbGetActiveBillingJobs(payload.monthYear, 'individual_customers', effectiveBranchId),
+    ]);
+    if ((activeJobsBulk && activeJobsBulk.length > 0) || (activeJobsIndiv && activeJobsIndiv.length > 0)) {
+      throw new Error(`A billing job for period ${payload.monthYear} is currently in progress. Please wait for it to complete or reset it before deleting bills.`);
+    }
+
+    const result = await dbBulkDeleteBillsForPeriod({
+      monthYear: payload.monthYear,
+      branchId: effectiveBranchId,
+      deletedBy: session.id,
+      excludePaid: payload.excludePaid !== false,
+    });
+
+    await logSecurityEventAction({
+      event: 'Bulk Delete Bills',
+      severity: 'warning',
+      details: {
+        monthYear: payload.monthYear,
+        branchId: effectiveBranchId || 'all',
+        deletedCount: result.deletedCount,
+        skippedPaidCount: result.skippedPaidCount,
+        totalAmountReversed: result.totalAmountReversed,
+      }
+    });
+
+    const { revalidatePath } = await import('next/cache');
+    try {
+      revalidatePath('/admin/billing');
+      revalidatePath('/staff/billing');
+      revalidatePath('/admin/reports');
+    } catch (e) {
+      // Ignore if called outside request lifecycle
+    }
+
+    return result;
   });
 }
 export async function getBillByIdAction(id: string) {
@@ -5715,6 +5789,33 @@ export async function permanentlyDeleteFromRecycleBinAction(recycleBinId: string
   });
 }
 
+export async function restoreFromRecycleBinBulkAction(recycleBinIds: string[]) {
+  return await wrap(async () => {
+    await checkPermission('settings_manage');
+    const result = await dbRestoreFromRecycleBinBulk(recycleBinIds);
+    await logSecurityEventAction({
+      event: 'Bulk Restore from Recycle Bin',
+      details: { count: result.restoredCount, idsCount: recycleBinIds.length }
+    });
+    revalidatePath('/admin/recycle-bin');
+    return result;
+  });
+}
+
+export async function permanentlyDeleteFromRecycleBinBulkAction(recycleBinIds: string[]) {
+  return await wrap(async () => {
+    await checkPermission('settings_manage');
+    const result = await dbPermanentlyDeleteFromRecycleBinBulk(recycleBinIds);
+    await logSecurityEventAction({
+      event: 'Bulk Permanently Delete from Recycle Bin',
+      severity: 'critical',
+      details: { count: result.deletedCount, idsCount: recycleBinIds.length }
+    });
+    revalidatePath('/admin/recycle-bin');
+    return result;
+  });
+}
+
 // =====================================================
 
 export async function getDashboardMetricsAction() {
@@ -6174,8 +6275,8 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
           vat_amount: billBreakdown.vatAmount,
           additional_fees_breakdown: billBreakdown.additionalFeesBreakdown,
           balance_carried_forward: outstandingAmt,
-          amount_paid: carryBalance ? 0 : totalPayable,
-          payment_status: carryBalance ? 'Unpaid' : 'Paid',
+          amount_paid: 0,
+          payment_status: 'Unpaid',
           debit_30: debit30,
           debit_30_60: debit30_60,
           debit_60: debit60,
@@ -6209,8 +6310,8 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
             .filter(b => b.CUSTOMERKEY)
             .map(b => [
               b.CUSTOMERKEY,
-              String((job as any).carry_balance ? b.TOTALBILLAMOUNT : 0),
-              (job as any).carry_balance ? 'Unpaid' : 'Paid'
+              String(b.TOTALBILLAMOUNT),
+              'Unpaid'
             ]);
 
           if (bulkMetersToUpdate.length > 0) {
@@ -6231,8 +6332,8 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
             .filter(b => b.individual_customer_id)
             .map(b => [
               b.individual_customer_id,
-              String((job as any).carry_balance ? b.TOTALBILLAMOUNT : 0),
-              (job as any).carry_balance ? 'Unpaid' : 'Paid'
+              String(b.TOTALBILLAMOUNT),
+              'Unpaid'
             ]);
 
           if (individualCustomersToUpdate.length > 0) {

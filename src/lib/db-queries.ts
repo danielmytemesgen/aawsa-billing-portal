@@ -1297,6 +1297,234 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
         return true;
     });
 };
+
+export const dbPreviewBillsForPeriodAndBranch = async (params: { monthYear: string; branchId?: string }) => {
+    let sql = `
+        SELECT 
+            COUNT(*)::int as total_count,
+            COALESCE(SUM("TOTALBILLAMOUNT"), 0)::numeric as total_amount,
+            COUNT(*) FILTER (WHERE status = 'Draft')::int as draft_count,
+            COUNT(*) FILTER (WHERE status = 'Pending' OR status = 'Pending Approval')::int as pending_count,
+            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status != 'Paid')::int as approved_unpaid_count,
+            COUNT(*) FILTER (WHERE payment_status = 'Paid' OR status = 'Paid')::int as paid_count,
+            COALESCE(SUM(CASE WHEN payment_status = 'Paid' OR status = 'Paid' THEN "TOTALBILLAMOUNT" ELSE 0 END), 0)::numeric as paid_amount,
+            COALESCE(SUM(CASE WHEN (payment_status IS NULL OR payment_status != 'Paid') AND status != 'Paid' THEN ("TOTALBILLAMOUNT" - COALESCE(amount_paid, 0)) ELSE 0 END), 0)::numeric as unpaid_amount,
+            COUNT(*) FILTER (WHERE (payment_status IS NULL OR payment_status != 'Paid') AND status != 'Paid')::int as eligible_delete_count
+        FROM bills
+        WHERE month_year = $1 AND deleted_at IS NULL
+    `;
+    const queryParams: any[] = [params.monthYear];
+    if (params.branchId && params.branchId !== 'all') {
+        sql += ` AND branch_id = $2`;
+        queryParams.push(params.branchId);
+    }
+    const res: any = await query(sql, queryParams);
+    const row = res[0] || {};
+    return {
+        total_count: Number(row.total_count || 0),
+        total_amount: Number(row.total_amount || 0),
+        draft_count: Number(row.draft_count || 0),
+        pending_count: Number(row.pending_count || 0),
+        approved_unpaid_count: Number(row.approved_unpaid_count || 0),
+        paid_count: Number(row.paid_count || 0),
+        paid_amount: Number(row.paid_amount || 0),
+        unpaid_amount: Number(row.unpaid_amount || 0),
+        eligible_delete_count: Number(row.eligible_delete_count || 0),
+    };
+};
+
+export const dbBulkDeleteBillsForPeriod = async (params: {
+    monthYear: string;
+    branchId?: string;
+    deletedBy?: string;
+    excludePaid?: boolean;
+}) => {
+    return await withTransaction(async (client) => {
+        let fetchSql = `
+            SELECT id, "BILLKEY", "CUSTOMERKEY", individual_customer_id, "TOTALBILLAMOUNT", amount_paid, status, payment_status, "PREVREAD", "CURRREAD", month_year, branch_id, bill_number
+            FROM bills
+            WHERE month_year = $1 AND deleted_at IS NULL
+        `;
+        const fetchParams: any[] = [params.monthYear];
+        let pIdx = 2;
+        if (params.branchId && params.branchId !== 'all') {
+            fetchSql += ` AND branch_id = $${pIdx++}`;
+            fetchParams.push(params.branchId);
+        }
+
+        // Exclude paid bills by default
+        if (params.excludePaid !== false) {
+            fetchSql += ` AND (payment_status IS NULL OR payment_status != 'Paid') AND status != 'Paid'`;
+        }
+
+        const billsRes = await client.query(fetchSql, fetchParams);
+        const bills = billsRes.rows;
+
+        if (bills.length === 0) {
+            return {
+                success: true,
+                deletedCount: 0,
+                skippedPaidCount: 0,
+                totalAmountReversed: 0
+            };
+        }
+
+        // Count skipped paid bills if any
+        let skippedPaidCount = 0;
+        if (params.excludePaid !== false) {
+            let paidCountSql = `SELECT COUNT(*)::int as count FROM bills WHERE month_year = $1 AND deleted_at IS NULL AND (payment_status = 'Paid' OR status = 'Paid')`;
+            const paidCountParams: any[] = [params.monthYear];
+            if (params.branchId && params.branchId !== 'all') {
+                paidCountSql += ` AND branch_id = $2`;
+                paidCountParams.push(params.branchId);
+            }
+            const paidRes = await client.query(paidCountSql, paidCountParams);
+            skippedPaidCount = Number(paidRes.rows[0]?.count || 0);
+        }
+
+        // 1. Calculate unpaid amounts grouped by bulk meter and individual customer
+        const bulkMeterUnpaid = new Map<string, number>();
+        const indivCustomerUnpaid = new Map<string, number>();
+        let totalAmountReversed = 0;
+
+        for (const bill of bills) {
+            const totalAmt = Number(bill.TOTALBILLAMOUNT || 0);
+            const paidAmt = Number(bill.amount_paid || 0);
+            const unpaid = Number((totalAmt - paidAmt).toFixed(2));
+            if (unpaid > 0) {
+                totalAmountReversed += unpaid;
+                if (bill.CUSTOMERKEY) {
+                    bulkMeterUnpaid.set(bill.CUSTOMERKEY, (bulkMeterUnpaid.get(bill.CUSTOMERKEY) || 0) + unpaid);
+                } else if (bill.individual_customer_id) {
+                    indivCustomerUnpaid.set(bill.individual_customer_id, (indivCustomerUnpaid.get(bill.individual_customer_id) || 0) + unpaid);
+                }
+            }
+        }
+
+        // Reconcile bulk meter balances
+        for (const [custKey, unpaid] of bulkMeterUnpaid.entries()) {
+            await client.query(
+                `UPDATE bulk_meters 
+                 SET "outStandingbill" = GREATEST(0, COALESCE("outStandingbill", 0) - $1) 
+                 WHERE "customerKeyNumber" = $2`,
+                [unpaid, custKey]
+            );
+        }
+
+        // Reconcile individual customer balances
+        for (const [custKey, unpaid] of indivCustomerUnpaid.entries()) {
+            await client.query(
+                `UPDATE individual_customers 
+                 SET "outStandingbill" = GREATEST(0, COALESCE("outStandingbill", 0) - $1) 
+                 WHERE "customerKeyNumber" = $2`,
+                [unpaid, custKey]
+            );
+        }
+
+        // 2. Restore meter readings to PRE-BILLING state.
+        // We set BOTH previousReading AND currentReading back to PREVREAD so the meter
+        // is at the reading it had before the billing cycle ran.  This lets staff enter
+        // a fresh current reading and re-bill without getting zero consumption.
+        const bulkKeysToRestore: string[] = [];
+        for (const bill of bills) {
+            if (bill.CUSTOMERKEY && bill.PREVREAD != null) {
+                bulkKeysToRestore.push(bill.CUSTOMERKEY);
+                await client.query(
+                    `UPDATE bulk_meters 
+                     SET "previousReading" = $1,
+                         "currentReading"  = $1,
+                         month             = $2 
+                     WHERE "customerKeyNumber" = $3`,
+                    [bill.PREVREAD, bill.month_year, bill.CUSTOMERKEY]
+                );
+            } else if (bill.individual_customer_id && bill.PREVREAD != null) {
+                await client.query(
+                    `UPDATE individual_customers 
+                     SET "previousReading" = $1,
+                         "currentReading"  = $1,
+                         month             = $2 
+                     WHERE "customerKeyNumber" = $3`,
+                    [bill.PREVREAD, bill.month_year, bill.individual_customer_id]
+                );
+            }
+        }
+
+        // Restore assigned individual sub-meter readings to their pre-billing state.
+        // assignedBulkMeterId stores the bulk meter's UUID (id), not customerKeyNumber,
+        // so we join through bulk_meters to find the matching sub-meter customers.
+        if (bulkKeysToRestore.length > 0 && params.monthYear && params.monthYear.includes('-')) {
+            const [year, month] = params.monthYear.split('-').map(Number);
+            const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+            const endDate = new Date(Date.UTC(year, month, 1)).toISOString();
+
+            const readingsRes = await client.query(
+                `SELECT icr."CUST_KEY", icr."PREVIOUS_READING"
+                 FROM individual_customer_readings icr
+                 JOIN individual_customers ic ON ic."customerKeyNumber" = icr."CUST_KEY"
+                 JOIN bulk_meters bm ON bm.id = ic."assignedBulkMeterId"
+                 WHERE bm."customerKeyNumber" = ANY($1)
+                   AND icr.deleted_at IS NULL
+                   AND ic.deleted_at IS NULL
+                   AND icr."READING_DATE" >= $2 AND icr."READING_DATE" < $3`,
+                [bulkKeysToRestore, startDate, endDate]
+            );
+
+            for (const r of readingsRes.rows) {
+                // Reset both previousReading and currentReading to the pre-billing reading
+                // so sub-meters are ready for fresh re-reading before re-billing
+                await client.query(
+                    `UPDATE individual_customers 
+                     SET "previousReading" = $1,
+                         "currentReading"  = $1,
+                         month             = $2 
+                     WHERE "customerKeyNumber" = $3`,
+                    [r.PREVIOUS_READING, params.monthYear, r.CUST_KEY]
+                );
+            }
+        }
+
+        // 3. Soft-delete the bills
+        const billIds = bills.map((b: any) => b.id);
+        const deletedByUuid = params.deletedBy || '00000000-0000-0000-0000-000000000000';
+
+        await client.query(
+            `UPDATE bills 
+             SET deleted_at = NOW(), 
+                 deleted_by = $1, 
+                 status = 'Deleted' 
+             WHERE id = ANY($2) AND month_year = $3`,
+            [deletedByUuid, billIds, params.monthYear]
+        );
+
+        // 4. Archive to recycle_bin in bulk
+        await client.query(
+            `INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data)
+             SELECT 'bill', b.id, COALESCE(b.bill_number, 'Bill ' || b.id::text), $1, to_jsonb(b)
+             FROM bills b
+             WHERE b.id = ANY($2) AND b.month_year = $3`,
+            [deletedByUuid, billIds, params.monthYear]
+        );
+
+        // 5. Re-sync debt aging for affected customer keys
+        const affectedCustomerKeys: string[] = Array.from(new Set(
+            bills.map((b: any) => (b.CUSTOMERKEY || b.individual_customer_id) as string).filter(Boolean)
+        ));
+        for (const custKey of affectedCustomerKeys) {
+            try {
+                await dbSyncAgingForCustomer(custKey, client);
+            } catch (err) {
+                console.error(`Aging sync error for ${custKey} after bulk delete:`, err);
+            }
+        }
+
+        return {
+            success: true,
+            deletedCount: bills.length,
+            skippedPaidCount,
+            totalAmountReversed: Number(totalAmountReversed.toFixed(2))
+        };
+    });
+};
 export const dbGetBillById = async (id: string, branchId?: string | any, client?: any) => {
     let actualClient = client;
     let actualBranchId = typeof branchId === 'string' ? branchId : undefined;
@@ -3635,6 +3863,148 @@ export const dbPermanentlyDeleteFromRecycleBin = async (recycleBinId: string) =>
     });
 };
 
+export const dbPermanentlyDeleteFromRecycleBinBulk = async (recycleBinIds: string[]) => {
+    if (!recycleBinIds || recycleBinIds.length === 0) return { success: true, deletedCount: 0 };
+
+    return await withTransaction(async (client) => {
+        const rbRes = await client.query('SELECT * FROM recycle_bin WHERE id = ANY($1)', [recycleBinIds]);
+        const rbRows = rbRes.rows;
+        if (rbRows.length === 0) return { success: true, deletedCount: 0 };
+
+        const idsByType: Record<string, string[]> = {};
+        for (const rb of rbRows) {
+            if (!idsByType[rb.entity_type]) idsByType[rb.entity_type] = [];
+            idsByType[rb.entity_type].push(rb.entity_id);
+        }
+
+        for (const [entityType, entityIds] of Object.entries(idsByType)) {
+            switch (entityType) {
+                case 'staff':
+                    await client.query('DELETE FROM staff_members WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'branch':
+                    await client.query('DELETE FROM branches WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'customer':
+                    await client.query('DELETE FROM individual_customers WHERE "customerKeyNumber" = ANY($1)', [entityIds]);
+                    break;
+                case 'bulk_meter':
+                    await client.query('DELETE FROM bulk_meters WHERE "customerKeyNumber" = ANY($1)', [entityIds]);
+                    break;
+                case 'route':
+                    await client.query('DELETE FROM routes WHERE route_key = ANY($1)', [entityIds]);
+                    break;
+                case 'bill':
+                    await client.query('DELETE FROM bill_workflow_logs WHERE bill_id = ANY($1)', [entityIds]);
+                    await client.query('DELETE FROM payments WHERE bill_id = ANY($1)', [entityIds]);
+                    await client.query('DELETE FROM bills WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'reading_individual':
+                    await client.query('DELETE FROM individual_customer_readings WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'reading_bulk':
+                    await client.query('DELETE FROM bulk_meter_readings WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'payment':
+                    await client.query('DELETE FROM payments WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'report':
+                    await client.query('DELETE FROM reports WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'notification':
+                    await client.query('DELETE FROM notifications WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'knowledge_base':
+                    await client.query('DELETE FROM knowledge_base_articles WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'fault_code':
+                    await client.query('DELETE FROM fault_codes WHERE id = ANY($1)', [entityIds]);
+                    break;
+            }
+        }
+
+        const deleteRes = await client.query('DELETE FROM recycle_bin WHERE id = ANY($1)', [recycleBinIds]);
+        return { success: true, deletedCount: deleteRes.rowCount || rbRows.length };
+    });
+};
+
+export const dbRestoreFromRecycleBinBulk = async (recycleBinIds: string[]) => {
+    if (!recycleBinIds || recycleBinIds.length === 0) return { success: true, restoredCount: 0 };
+
+    return await withTransaction(async (client) => {
+        const rbRes = await client.query('SELECT * FROM recycle_bin WHERE id = ANY($1)', [recycleBinIds]);
+        const rbRows = rbRes.rows;
+        if (rbRows.length === 0) return { success: true, restoredCount: 0 };
+
+        const idsByType: Record<string, any[]> = {};
+        for (const rb of rbRows) {
+            if (!idsByType[rb.entity_type]) idsByType[rb.entity_type] = [];
+            idsByType[rb.entity_type].push(rb);
+        }
+
+        for (const [entityType, items] of Object.entries(idsByType)) {
+            const entityIds = items.map((i: any) => i.entity_id);
+            switch (entityType) {
+                case 'staff':
+                    await client.query('UPDATE staff_members SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'branch':
+                    await client.query('UPDATE branches SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'customer':
+                    await client.query('UPDATE individual_customers SET deleted_at = NULL, deleted_by = NULL WHERE "customerKeyNumber" = ANY($1)', [entityIds]);
+                    break;
+                case 'bulk_meter':
+                    await client.query('UPDATE bulk_meters SET deleted_at = NULL, deleted_by = NULL WHERE "customerKeyNumber" = ANY($1)', [entityIds]);
+                    break;
+                case 'route':
+                    await client.query('UPDATE routes SET deleted_at = NULL, deleted_by = NULL WHERE route_key = ANY($1)', [entityIds]);
+                    break;
+                case 'bill':
+                    for (const rb of items) {
+                        const originalData = rb.original_data || {};
+                        const totalAmt = Number(originalData.TOTALBILLAMOUNT || 0);
+                        const paidAmt = Number(originalData.amount_paid || 0);
+                        const unpaidAmt = Number((totalAmt - paidAmt).toFixed(2));
+                        if (unpaidAmt > 0) {
+                            if (originalData.CUSTOMERKEY) {
+                                await client.query('UPDATE bulk_meters SET "outStandingbill" = COALESCE("outStandingbill", 0) + $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalData.CUSTOMERKEY]);
+                            } else if (originalData.individual_customer_id) {
+                                await client.query('UPDATE individual_customers SET "outStandingbill" = COALESCE("outStandingbill", 0) + $1 WHERE "customerKeyNumber" = $2', [unpaidAmt, originalData.individual_customer_id]);
+                            }
+                        }
+                    }
+                    await client.query('UPDATE bills SET deleted_at = NULL, deleted_by = NULL, status = \'Draft\' WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'reading_individual':
+                    await client.query('UPDATE individual_customer_readings SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'reading_bulk':
+                    await client.query('UPDATE bulk_meter_readings SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'payment':
+                    await client.query('UPDATE payments SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'report':
+                    await client.query('UPDATE reports SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'notification':
+                    await client.query('UPDATE notifications SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'knowledge_base':
+                    await client.query('UPDATE knowledge_base_articles SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+                case 'fault_code':
+                    await client.query('UPDATE fault_codes SET deleted_at = NULL, deleted_by = NULL WHERE id = ANY($1)', [entityIds]);
+                    break;
+            }
+        }
+
+        const deleteRes = await client.query('DELETE FROM recycle_bin WHERE id = ANY($1)', [recycleBinIds]);
+        return { success: true, restoredCount: deleteRes.rowCount || rbRows.length };
+    });
+};
+
 export const dbGetAllPromotions = async () => {
     return await query('SELECT * FROM promotions ORDER BY display_order ASC, created_at DESC');
 };
@@ -4023,6 +4393,10 @@ export const dbGetPaidBillsPaginated = async (params: {
     const queryParams: any[] = [];
     let paramIndex = 1;
 
+    if (params.excludeUnfinalized) {
+        sql += " AND b.status = 'Posted'";
+    }
+
     if (params.branchId && params.branchId !== 'all') {
         sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
         queryParams.push(params.branchId);
@@ -4068,6 +4442,10 @@ export const dbGetPaidBillsCount = async (params: {
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
+
+    if (params.excludeUnfinalized) {
+        sql += " AND b.status = 'Posted'";
+    }
 
     if (params.branchId && params.branchId !== 'all') {
         sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
@@ -5343,6 +5721,20 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     };
 
     const getMonthlyBillAmtLocal = (bill: any): number => {
+        if (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined && Number(bill.THISMONTHBILLAMT) > 0) {
+            return Number(bill.THISMONTHBILLAMT);
+        }
+        // Fallback: Reconstruct from itemized components if available
+        const water = Number(bill.base_water_charge || 0);
+        const sewer = Number(bill.sewerage_charge || 0);
+        const maint = Number(bill.maintenance_fee || 0);
+        const sanit = Number(bill.sanitation_fee || 0);
+        const rent = Number(bill.meter_rent || 0);
+        const vat = Number(bill.vat_amount || 0);
+        const addFee = Number(bill.additional_fees_charge || 0);
+        const sum = water + sewer + maint + sanit + rent + vat + addFee;
+        if (sum > 0) return Number(sum.toFixed(2));
+
         if (bill.THISMONTHBILLAMT !== null && bill.THISMONTHBILLAMT !== undefined) {
             return Number(bill.THISMONTHBILLAMT);
         }
@@ -5355,10 +5747,8 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     };
 
     for (const bill of bills) {
-        // A correction draft bill (notes contain 'Correction of') is a live,
-        // collectable draft that has been rebilled — treat it as active, NOT voided.
-        const isCorrectionDraft = typeof bill.notes === 'string' && bill.notes.includes('Correction of');
-        const isVoided = !isCorrectionDraft && (bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed' || bill.status === 'Draft' || bill.status === 'Rework' || bill.status === 'Pending' || bill.status === 'Pending_Approval');
+        // Only cancelled/deleted records are truly voided. Draft/Pending bills are active in-progress bills.
+        const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed';
         const billMonth = bill.month_year || (bill.created_at ? (bill.created_at instanceof Date ? bill.created_at.toISOString().slice(0,7) : String(bill.created_at).slice(0,7)) : '');
         
         const activeTariff = findActiveTariff(billMonth);
@@ -5472,19 +5862,10 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         }
 
         const billUnpaid = Math.max(0, derivedTotalPayable - amtPaid - creditApplied);
-        const billPaymentStatus = billUnpaid <= 0.01 ? 'Paid' : 'Unpaid';
+        // A bill is only Paid if actual money or credit was paid/applied
+        const billPaymentStatus = (amtPaid > 0 && billUnpaid <= 0.01) ? 'Paid' : 'Unpaid';
 
         // Preserve any bills already manually marked as 'Paid'.
-        //
-        // FIX (Bottleneck 1): The prior CASE unconditionally set 'Unpaid' for any bill whose
-        // notes contain 'Correction of', which wiped out the 'Paid' status even after a
-        // successful CSV payment. The corrected CASE logic is:
-        //   1. If the bill has already been fully paid (amount_paid >= TOTALBILLAMOUNT), keep 'Paid'.
-        //   2. If it is a correction bill that is still a Draft or has zero paid amount, force 'Unpaid'
-        //      so the new amount is collectable (the replacement draft starts fresh).
-        //   3. If the bill was already 'Paid' via manual update (not a correction draft scenario), keep 'Paid'.
-        //   4. Otherwise default to the aging-computed $8::payment_status.
-        //
         // Include month_year in the WHERE clause so PostgreSQL can route the UPDATE
         // directly to the correct partition without crossing the BEFORE ROW trigger boundary.
         await qFunc(
@@ -5497,19 +5878,18 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
                  payment_status = CASE
-                     -- 1. Bill is fully paid (amount_paid >= bill total): always Paid regardless of notes.
+                     -- 1. Bill is fully paid (amount_paid >= bill total AND amount_paid > 0): always Paid
                      WHEN COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01
                           AND COALESCE(amount_paid, 0) > 0
                          THEN 'Paid'::payment_status
-                     -- 2. Correction draft still unpaid (Draft status or zero amount_paid): force Unpaid
-                     --    so the corrected amount is collectable before the bill is posted and paid.
-                     WHEN (notes LIKE '%Correction of%')
-                          AND (status = 'Draft' OR COALESCE(amount_paid, 0) <= 0)
+                     -- 2. Draft / Pending / Unposted / Correction bills or bills with 0 paid amount: ALWAYS Unpaid
+                     WHEN status IN ('Draft', 'Pending', 'Pending Approval', 'Pending_Approval', 'Rework')
+                          OR COALESCE(amount_paid, 0) <= 0
                          THEN 'Unpaid'::payment_status
-                     -- 3. Preserve manually-set 'Paid' on non-draft bills (e.g. posted bills paid via UI).
-                     WHEN payment_status = 'Paid'
+                     -- 3. Preserve manually-set 'Paid' on non-draft bills only if amount_paid > 0
+                     WHEN payment_status = 'Paid' AND COALESCE(amount_paid, 0) > 0
                          THEN 'Paid'::payment_status
-                     -- 4. Use aging-engine computed status.
+                     -- 4. Use aging-engine computed status
                      ELSE $8::payment_status
                  END
              WHERE id = $9 AND month_year = $10`,
