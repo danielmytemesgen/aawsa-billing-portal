@@ -110,6 +110,17 @@ export default function StaffIndividualCustomersPage() {
     fetchSummaryStats();
   }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData, fetchSummaryStats]);
 
+  // Auto-refresh when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+      fetchSummaryStats();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [fetchData, fetchSummaryStats, page, rowsPerPage, debouncedSearch, statusFilter]);
+
+
   React.useEffect(() => {
     Promise.all([
       initializeBulkMeters(),

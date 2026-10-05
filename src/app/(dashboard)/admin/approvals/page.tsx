@@ -97,6 +97,18 @@ export default function ApprovalsPage() {
     };
   }, []);
 
+  // Auto-refresh: read latest store state when DataRefreshProvider signals new data
+  // (store subscribers already handle notifyListeners(); this is a belt-and-suspenders fallback)
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      setCustomers(getCustomers());
+      setBulkMeters(getBulkMeters());
+      setBranches(getBranches());
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   const pendingCustomers = React.useMemo(() => {
     const allPending = customers.filter(c => c.status === 'Pending Approval');
     const roleLower = (currentUser?.role || '').toLowerCase();

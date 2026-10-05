@@ -55,6 +55,17 @@ export default function StaffStaffManagementPage() {
         return () => unsubscribe();
     }, []);
 
+    // Auto-refresh when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            if (hasPermission('staff_view')) {
+                setStaffMembers(getStaffMembers());
+            }
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, [hasPermission]);
+
     const handleAddStaff = () => {
         if (!hasPermission('staff_create')) return;
         setSelectedStaff(null);

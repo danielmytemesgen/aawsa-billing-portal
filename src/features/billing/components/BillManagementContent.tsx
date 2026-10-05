@@ -72,6 +72,7 @@ import {
     Eye,
     Printer,
     ShieldAlert,
+    ShieldCheck,
     X,
     RefreshCw,
     Droplets,
@@ -253,6 +254,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         }
     };
 
+    const refreshAllRef = React.useRef<() => void>(() => { loadData(); });
+
     useEffect(() => {
         loadData();
     }, []);
@@ -367,6 +370,31 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         };
 
         for (const [key, customerBills] of billsByCustomer.entries()) {
+            if (customerBills.length <= 1) {
+                const singleBill = customerBills[0];
+                if (singleBill) {
+                    const isVoided = singleBill.status === 'Deleted' || singleBill.status === 'Void';
+                    const d30 = Number(singleBill.debit_30 || singleBill.debit30 || 0);
+                    const d30_60 = Number(singleBill.debit_30_60 || singleBill.debit30_60 || 0);
+                    const d60 = Number(singleBill.debit_60 || singleBill.debit60 || 0);
+                    const penalty = Number(singleBill.PENALTYAMT || 0);
+                    const outstanding = Number(singleBill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penalty;
+                    const currentMonthly = isVoided ? 0 : getMonthlyBillAmt(singleBill);
+                    const totalPayable = isVoided ? 0 : outstanding + currentMonthly;
+
+                    results.set(singleBill.id, {
+                        d30,
+                        d30_60,
+                        d60,
+                        penalty,
+                        outstanding,
+                        currentMonthly,
+                        totalPayable
+                    });
+                }
+                continue;
+            }
+
             const historyOldestFirst = [...customerBills].sort((a, b) => {
                 const dateA = new Date(a.billPeriodEndDate || a.created_at || 0).getTime();
                 const dateB = new Date(b.billPeriodEndDate || b.created_at || 0).getTime();
@@ -419,14 +447,21 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 const totalD60AndLegacy = d60_bucket + legacyDebt;
 
                 const derivedOutstanding = d30_bucket + d30_60_bucket + totalD60AndLegacy + penalty;
-                const derivedTotalPayable = isVoided ? 0 : derivedOutstanding + currentMonthlyCharge;
+                const dbD30 = Number(bill.debit_30 || bill.debit30 || 0);
+                const dbD30_60 = Number(bill.debit_30_60 || bill.debit30_60 || 0);
+                const dbD60 = Number(bill.debit_60 || bill.debit60 || 0);
+                const dbPenalty = Number(bill.PENALTYAMT || 0);
+                const dbOutstanding = Number(bill.OUTSTANDINGAMT ?? (dbD30 + dbD30_60 + dbD60)) + dbPenalty;
+
+                const finalOutstanding = Math.max(derivedOutstanding, dbOutstanding);
+                const derivedTotalPayable = isVoided ? 0 : finalOutstanding + currentMonthlyCharge;
 
                 results.set(bill.id, {
-                    d30: d30_bucket,
-                    d30_60: d30_60_bucket,
-                    d60: totalD60AndLegacy,
-                    penalty,
-                    outstanding: derivedOutstanding,
+                    d30: d30_bucket > 0 ? d30_bucket : dbD30,
+                    d30_60: d30_60_bucket > 0 ? d30_60_bucket : dbD30_60,
+                    d60: totalD60AndLegacy > 0 ? totalD60AndLegacy : dbD60,
+                    penalty: penalty > 0 ? penalty : dbPenalty,
+                    outstanding: finalOutstanding,
                     currentMonthly: currentMonthlyCharge,
                     totalPayable: derivedTotalPayable
                 });
@@ -470,7 +505,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     }, [bills]);
 
     // Stats Calculations helper based on reconstructed history
-    const getBillTotalPayable = (b: any) => {
+    const getBillTotalPayable = React.useCallback((b: any) => {
+        if (!b) return 0;
         const recon = reconstructedHistoryMap.get(b.id);
         if (recon) {
             return recon.outstanding + Math.max(0, recon.currentMonthly);
@@ -484,38 +520,45 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         const outstanding = totalUnpaidDebt + penalty;
         const current = getMonthlyBillAmt(b);
         return outstanding + current;
-    };
+    }, [reconstructedHistoryMap]);
 
     // ── Feature 2: Billing Anomaly & Fraud Detection Engine ────────────────────
-    // Runs on the current in-memory bills for the selected month.
+    // Runs on the current in-memory bills for the selected month or latest active month.
     const anomalyWarnings = React.useMemo(() => {
         const warnings: { id: string; severity: 'critical' | 'warning'; icon: string; title: string; detail: string }[] = [];
 
         if (bills.length === 0) return warnings;
 
-        // Build per-customer usage history map for spike detection (6-month average)
-        const usageByCustomer: Map<string, number[]> = new Map();
+        // Build per-customer usage history map for spike detection
+        const usageByCustomer: Map<string, { monthYear: string; usage: number }[]> = new Map();
         bills.forEach((b: any) => {
             const key = b.CUSTOMERKEY || b.individual_customer_id;
             if (!key) return;
             const usage = Number(b.CONSUMPTION || b.consumption || b.UNITS || 0);
+            const my = b.month_year || '';
             if (!usageByCustomer.has(key)) usageByCustomer.set(key, []);
-            usageByCustomer.get(key)!.push(usage);
+            usageByCustomer.get(key)!.push({ monthYear: my, usage });
         });
 
-        // Anomaly checks on the latest month's bills only
-        const latestBills = bills.filter((b: any) => b.month_year === latestMonth);
+        // Ensure history is ordered chronologically by month
+        usageByCustomer.forEach((records) => {
+            records.sort((a, b) => a.monthYear.localeCompare(b.monthYear));
+        });
+
+        // Anomaly checks on active month's bills
+        const activeMonth = (monthFilter !== 'all' && monthFilter) ? monthFilter : latestMonth;
+        const targetBills = activeMonth ? bills.filter((b: any) => b.month_year === activeMonth) : bills;
 
         // 1. Consumption Spike Detection (> 150% above customer average)
         const spikeMeters: string[] = [];
-        latestBills.forEach((b: any) => {
+        targetBills.forEach((b: any) => {
             const key = b.CUSTOMERKEY || b.individual_customer_id;
             if (!key) return;
-            const history = usageByCustomer.get(key) || [];
-            if (history.length < 2) return;
-            const pastUsage = history.slice(0, -1);
-            const avg = pastUsage.reduce((s, v) => s + v, 0) / pastUsage.length;
-            const current = history[history.length - 1];
+            const records = usageByCustomer.get(key) || [];
+            if (records.length < 2) return;
+            const pastRecords = records.slice(0, -1);
+            const avg = pastRecords.reduce((s, r) => s + r.usage, 0) / pastRecords.length;
+            const current = records[records.length - 1].usage;
             if (avg > 0 && current > avg * 2.5) {
                 spikeMeters.push(key);
             }
@@ -531,7 +574,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         }
 
         // 2. Zero-Consumption on Active Meters
-        const zeroMeters = latestBills.filter((b: any) => {
+        const zeroMeters = targetBills.filter((b: any) => {
             const usage = Number(b.CONSUMPTION || b.consumption || b.UNITS || 0);
             return usage === 0;
         });
@@ -541,15 +584,15 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 severity: 'warning',
                 icon: '⚠️',
                 title: `${zeroMeters.length} Meter(s) with Zero Consumption`,
-                detail: `${zeroMeters.length} meter(s) recorded 0 m³ for ${latestMonth}. Verify meter reads — these may be inactive, tampered, or missing.`
+                detail: `${zeroMeters.length} meter(s) recorded 0 m³ for ${activeMonth || 'selected cycle'}. Verify meter reads — these may be inactive, tampered, or missing.`
             });
         }
 
         // 3. Suspiciously High Bill Amount (> 5x median bill)
-        const amounts = latestBills.map((b: any) => getBillTotalPayable(b)).filter(v => v > 0).sort((a, b) => a - b);
+        const amounts = targetBills.map((b: any) => getBillTotalPayable(b)).filter(v => v > 0).sort((a, b) => a - b);
         if (amounts.length >= 5) {
             const median = amounts[Math.floor(amounts.length / 2)];
-            const highBills = latestBills.filter((b: any) => getBillTotalPayable(b) > median * 5);
+            const highBills = targetBills.filter((b: any) => getBillTotalPayable(b) > median * 5);
             if (highBills.length > 0) {
                 warnings.push({
                     id: 'highamt',
@@ -562,7 +605,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         }
 
         // 4. Negative outstanding amount anomaly (indicates rollover / data corruption)
-        const negativeDebt = latestBills.filter((b: any) => {
+        const negativeDebt = targetBills.filter((b: any) => {
             const outstanding = Number(b.OUTSTANDINGAMT || 0);
             return outstanding < -0.01;
         });
@@ -577,7 +620,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         }
 
         return warnings.filter(w => !dismissedAnomalies.has(w.id));
-    }, [bills, latestMonth, dismissedAnomalies, getBillTotalPayable]);
+    }, [bills, monthFilter, latestMonth, dismissedAnomalies, getBillTotalPayable]);
     // ────────────────────────────────────────────────────────────────────────────
 
     const handleSubmitAll = async () => {
@@ -603,22 +646,46 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     };
 
     const handleApproveCleanBills = async (cleanIds: string[]) => {
-        await approveBillsBulkAction(cleanIds);
-        toast({ title: 'Clean Invoices Approved', description: `${cleanIds.length} verified invoice(s) approved.` });
-        await loadData();
+        try {
+            const res = await approveBillsBulkAction(cleanIds);
+            if (!res || res.success === false) {
+                const errMsg = res?.error?.message || 'Failed to approve invoices';
+                toast({ title: 'Approval Failed', description: errMsg, variant: 'destructive' });
+                return;
+            }
+            toast({ title: 'Clean Invoices Approved', description: `${cleanIds.length} verified invoice(s) approved.` });
+            await loadData();
+        } catch (err: any) {
+            toast({ title: 'Approval Failed', description: err?.message || 'An unexpected error occurred', variant: 'destructive' });
+        }
     };
 
     const handleApproveAllFromAudit = async () => {
         const ids = pendingApprovals.map(b => b.id);
-        await approveBillsBulkAction(ids);
-        toast({ title: 'All Approved', description: `${ids.length} invoice(s) approved.` });
-        await loadData();
+        if (ids.length === 0) return;
+        try {
+            const res = await approveBillsBulkAction(ids);
+            if (!res || res.success === false) {
+                const errMsg = res?.error?.message || 'Failed to approve invoices';
+                toast({ title: 'Approval Failed', description: errMsg, variant: 'destructive' });
+                return;
+            }
+            toast({ title: 'All Approved', description: `${ids.length} invoice(s) approved.` });
+            await loadData();
+        } catch (err: any) {
+            toast({ title: 'Approval Failed', description: err?.message || 'An unexpected error occurred', variant: 'destructive' });
+        }
     };
 
     const handleFilterFlaggedFromAudit = (flaggedIds: string[]) => {
         if (flaggedIds.length > 0) {
-            setSearchQuery(flaggedIds[0]);
-            toast({ title: 'Filtering Flagged Invoices', description: `Showing flagged invoice in table.` });
+            const matched = bills.find(b => flaggedIds.includes(b.id));
+            const filterKey = matched?.CUSTOMERKEY || matched?.individual_customer_id || matched?.bill_number || flaggedIds[0];
+            setSearchQuery(filterKey);
+            toast({
+                title: 'Filtering Flagged Invoices',
+                description: `Showing invoice(s) matching ${filterKey}.`
+            });
         }
     };
 
@@ -733,9 +800,24 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             }
         };
 
+        refreshAllRef.current = () => {
+            loadData();
+            fetchOutstanding();
+            fetchPaid();
+        };
+
         fetchOutstanding();
         fetchPaid();
     }, [effectiveMonthYear, effectiveBranchId, normalizedSearchTerm, statusFilter, currentPage, itemsPerPage, paidCurrentPage, paidItemsPerPage, monthFilter, canAccessPage]);
+
+    // Auto-refresh: re-fetch bills, outstanding bills, and paid bills when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            refreshAllRef.current();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
 
     if (loading && bills.length === 0) return <div className="p-8 flex items-center gap-2"><Loader2 className="animate-spin h-5 w-5" /> Loading dashboard...</div>;
 
@@ -897,6 +979,19 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     <p className="text-muted-foreground mt-1">Review, approve and track billing workflow across branches.</p>
                 </div>
                 <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        className="h-10 border-blue-200 bg-blue-50/60 hover:bg-blue-100/80 text-blue-900 shadow-sm gap-2 font-semibold"
+                        onClick={() => setSmartAuditOpen(true)}
+                    >
+                        <ShieldCheck className="h-4 w-4 text-blue-600" />
+                        Audit & Inspection
+                        {pendingApprovals.length > 0 && (
+                            <Badge className="h-5 px-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold">
+                                {pendingApprovals.length} Pending
+                            </Badge>
+                        )}
+                    </Button>
                     {hasPermission('billing:close_cycle') && (
                         <Button className="h-10 bg-blue-600 hover:bg-blue-700 shadow-sm" onClick={() => setIsCycleDialogOpen(true)}>
                             Start New Billing Cycle
@@ -1151,37 +1246,45 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
                 </CardHeader>
                 <CardContent className="p-0">
-                    <BillTable
-                        bills={outstandingBills}
-                        onDelete={handleDelete}
-                        onDispute={handleDisputeClick}
-                        router={router}
-                        basePath={basePath}
-                        canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
-                        reconstructedHistoryMap={reconstructedHistoryMap}
-                    />
-
-                    {/* Pagination Controls */}
-                    <TablePagination
-                        count={outstandingTotal}
-                        page={currentPage}
-                        rowsPerPage={itemsPerPage}
-                        onPageChange={setCurrentPage}
-                        onRowsPerPageChange={(val) => {
-                            setItemsPerPage(val);
-                            setCurrentPage(0);
-                        }}
-                    />
-
-
-                    {filteredOutstanding.length === 0 && (
-                        <div className="p-12 text-center">
-                            <div className="inline-flex p-4 rounded-full bg-gray-50 mb-4">
-                                <Search className="h-8 w-8 text-gray-300" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-gray-900">No matching bills found</h3>
-                            <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or search terms.</p>
+                    {outstandingLoading ? (
+                        <div className="p-12 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                            <span className="text-xs font-medium">Loading outstanding bills...</span>
                         </div>
+                    ) : (
+                        <>
+                            <BillTable
+                                bills={outstandingBills}
+                                onDelete={handleDelete}
+                                onDispute={handleDisputeClick}
+                                router={router}
+                                basePath={basePath}
+                                canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
+                                reconstructedHistoryMap={reconstructedHistoryMap}
+                            />
+
+                            {/* Pagination Controls */}
+                            <TablePagination
+                                count={outstandingTotal}
+                                page={currentPage}
+                                rowsPerPage={itemsPerPage}
+                                onPageChange={setCurrentPage}
+                                onRowsPerPageChange={(val) => {
+                                    setItemsPerPage(val);
+                                    setCurrentPage(0);
+                                }}
+                            />
+
+                            {outstandingBills.length === 0 && (
+                                <div className="p-12 text-center">
+                                    <div className="inline-flex p-4 rounded-full bg-gray-50 mb-4">
+                                        <Search className="h-8 w-8 text-gray-300" />
+                                    </div>
+                                    <h3 className="text-lg font-semibold text-gray-900">No matching bills found</h3>
+                                    <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or search terms.</p>
+                                </div>
+                            )}
+                        </>
                     )}
                 </CardContent>
             </Card>
@@ -1198,37 +1301,45 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
                 </CardHeader>
                 <CardContent className="p-0">
-                    <BillTable
-                        bills={paidBills}
-                        onDelete={handleDelete}
-                        onDispute={handleDisputeClick}
-                        router={router}
-                        basePath={basePath}
-                        canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
-                        reconstructedHistoryMap={reconstructedHistoryMap}
-                    />
-
-                    {/* Pagination Controls for Paid */}
-                    <TablePagination
-                        count={paidTotal}
-                        page={paidCurrentPage}
-                        rowsPerPage={paidItemsPerPage}
-                        onPageChange={setPaidCurrentPage}
-                        onRowsPerPageChange={(val) => {
-                            setPaidItemsPerPage(val);
-                            setPaidCurrentPage(0);
-                        }}
-                    />
-
-
-                    {filteredPaid.length === 0 && (
-                        <div className="p-12 text-center">
-                            <div className="inline-flex p-4 rounded-full bg-gray-50 mb-4">
-                                <CheckCircle2 className="h-8 w-8 text-gray-200" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-gray-900">No paid bills found</h3>
-                            <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or search terms.</p>
+                    {paidLoading ? (
+                        <div className="p-12 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                            <span className="text-xs font-medium">Loading paid bills...</span>
                         </div>
+                    ) : (
+                        <>
+                            <BillTable
+                                bills={paidBills}
+                                onDelete={handleDelete}
+                                onDispute={handleDisputeClick}
+                                router={router}
+                                basePath={basePath}
+                                canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
+                                reconstructedHistoryMap={reconstructedHistoryMap}
+                            />
+
+                            {/* Pagination Controls for Paid */}
+                            <TablePagination
+                                count={paidTotal}
+                                page={paidCurrentPage}
+                                rowsPerPage={paidItemsPerPage}
+                                onPageChange={setPaidCurrentPage}
+                                onRowsPerPageChange={(val) => {
+                                    setPaidItemsPerPage(val);
+                                    setPaidCurrentPage(0);
+                                }}
+                            />
+
+                            {paidBills.length === 0 && (
+                                <div className="p-12 text-center">
+                                    <div className="inline-flex p-4 rounded-full bg-gray-50 mb-4">
+                                        <CheckCircle2 className="h-8 w-8 text-gray-200" />
+                                    </div>
+                                    <h3 className="text-lg font-semibold text-gray-900">No paid bills found</h3>
+                                    <p className="text-sm text-gray-500 mt-1">Try adjusting your filters or search terms.</p>
+                                </div>
+                            )}
+                        </>
                     )}
                 </CardContent>
             </Card>
@@ -1296,6 +1407,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 open={smartAuditOpen}
                 onOpenChange={setSmartAuditOpen}
                 monthYear={effectiveMonthYear || latestMonth}
+                basePath={basePath}
                 onApproveClean={handleApproveCleanBills}
                 onApproveAll={handleApproveAllFromAudit}
                 onFilterFlagged={handleFilterFlaggedFromAudit}

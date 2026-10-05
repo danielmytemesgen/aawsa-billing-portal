@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { dataEventEmitter } from "../../../lib/data-event-emitter";
+import { getSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,16 @@ export const dynamic = "force-dynamic";
  * whenever a key mutation (create/update/delete on bills, customers, readings,
  * payments, etc.) completes.  Connected clients immediately refresh their
  * in-memory data-store instead of waiting for the next poll tick.
+ *
+ * Security: Requires an authenticated staff session.
  */
 export async function GET(request: Request) {
+  // AUTH GUARD: reject unauthenticated connections before opening the stream
+  const session = await getSession();
+  if (!session || !session.id) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
   let controller: ReadableStreamDefaultController;
 
   const stream = new ReadableStream({

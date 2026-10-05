@@ -113,6 +113,17 @@ export default function RolesAndPermissionsPage() {
     };
   }, []);
 
+  // Auto-refresh: re-sync roles/permissions when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      setRoles(getRoles());
+      setPermissions(getPermissions());
+      setRolePermissions(getRolePermissions());
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   React.useEffect(() => {
     if (selectedRoleId) {
       const roleIdNum = parseInt(selectedRoleId, 10);

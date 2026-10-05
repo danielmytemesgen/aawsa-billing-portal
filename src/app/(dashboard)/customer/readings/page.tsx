@@ -45,6 +45,15 @@ export default function ReadingHistoryPage() {
         loadReadings();
     }, []);
 
+    // Auto-refresh: re-fetch customer readings when DataRefreshProvider signals new data
+    useEffect(() => {
+        const handleDataRefreshed = () => {
+            loadReadings();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     useEffect(() => {
         filterReadings();
     }, [readings, filterMonth]);

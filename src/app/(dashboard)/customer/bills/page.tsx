@@ -78,6 +78,15 @@ export default function CustomerBillsPage() {
         loadBills();
     }, []);
 
+    // Auto-refresh: re-fetch customer bills when DataRefreshProvider signals new data
+    useEffect(() => {
+        const handleDataRefreshed = () => {
+            loadBills();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     useEffect(() => {
         filterBills();
     }, [bills, filterStatus, filterMonth]);

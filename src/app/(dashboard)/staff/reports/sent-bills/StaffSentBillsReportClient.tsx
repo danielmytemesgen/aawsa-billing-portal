@@ -179,6 +179,9 @@ export default function StaffSentBillsReportClient() {
     };
   }, []);
 
+  // Keep a ref to the latest fetchBills so background data-refreshed events can re-fetch
+  const fetchBillsRef = React.useRef<() => void>(() => {});
+
   // Fetch paginated sent bills from server
   React.useEffect(() => {
     if (!currentUser) return;
@@ -203,8 +206,18 @@ export default function StaffSentBillsReportClient() {
       setIsLoading(false);
     };
 
+    fetchBillsRef.current = fetchBills;
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser]);
+  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
+
+  // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchBillsRef.current();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
 
   const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
     || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)

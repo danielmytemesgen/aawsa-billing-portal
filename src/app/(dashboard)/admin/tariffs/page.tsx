@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { LibraryBig, ListChecks, PlusCircle, RotateCcw, DollarSign, Percent, Copy, Lock, Edit2, Trash2, Calendar, LayoutGrid, Info, ArrowUpRight, TrendingUp, Layers, Pencil, Unlock, AlertTriangle } from "lucide-react";
 import type { TariffTier, TariffInfo, SewerageTier } from "@/lib/billing-calculations";
 import {
-  getTariff, initializeTariffs, subscribeToTariffs, updateTariff, addTariff
+  getTariff, getTariffs, initializeTariffs, subscribeToTariffs, updateTariff, addTariff
 } from "@/lib/data-store";
 import type { CustomerType } from "@/lib/billing";
 import type { TariffRow } from "@/lib/action-types";
@@ -235,6 +235,17 @@ export default function TariffManagementPage() {
     const unsubscribe = subscribeToTariffs(setAllTariffs as any);
     return () => unsubscribe();
   }, []);
+
+  // Auto-refresh when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      const latest = getTariffs();
+      if (latest.length > 0) setAllTariffs(latest as any);
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
 
   const handleTierUpdate = async (newTiers: (TariffTier | SewerageTier)[], type: 'water' | 'sewerage') => {
     if (!activeTariffInfo) return;

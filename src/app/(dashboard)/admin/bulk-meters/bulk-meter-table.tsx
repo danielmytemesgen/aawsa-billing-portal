@@ -9,8 +9,9 @@ import {
   CardTitle,
   CardDescription
 } from "@/components/ui/card";
-import { MoreHorizontal, Edit, Trash2, Gauge, Eye, Check, User, MapPin, Hash, CreditCard, Activity, Globe, CheckCircle2, XCircle, Key, Phone } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Gauge, Eye, Check, User, MapPin, Hash, CreditCard, Activity, Globe, CheckCircle2, XCircle, Key, Phone, RefreshCcw } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Table,
   TableBody,
@@ -43,11 +44,12 @@ interface BulkMeterTableProps {
   canEdit: boolean;
   canDelete: boolean;
   canApprove?: boolean;
+  canSwapMeter?: boolean;
   selectedMeters?: Set<string>;
   onSelectionChange?: (selected: Set<string>) => void;
 }
 
-export function BulkMeterTable({ data, onEdit, onDelete, onApprove, onReject, branches, canEdit, canDelete, canApprove, selectedMeters, onSelectionChange }: BulkMeterTableProps) {
+export function BulkMeterTable({ data, onEdit, onDelete, onApprove, onReject, branches, canEdit, canDelete, canApprove, canSwapMeter = false, selectedMeters, onSelectionChange }: BulkMeterTableProps) {
   if (data.length === 0) {
     return (
       <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
@@ -63,6 +65,9 @@ export function BulkMeterTable({ data, onEdit, onDelete, onApprove, onReject, br
     }
     return fallbackLocation || "-";
   };
+
+  const pathname = usePathname();
+  const basePath = pathname?.startsWith('/staff') ? '/staff' : '/admin';
 
   const showActionsColumn = canEdit || canDelete;
   const showSelection = selectedMeters !== undefined && onSelectionChange !== undefined;
@@ -262,6 +267,15 @@ export function BulkMeterTable({ data, onEdit, onDelete, onApprove, onReject, br
                         </Button>
                       </>
                     )}
+                    {/* Swap Meter — only shown to users with meter-change permission */}
+                    {canSwapMeter && (
+                      <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-emerald-600 bg-emerald-50/80 hover:bg-emerald-600 hover:text-white border border-emerald-200/80 transition-all rounded-lg shadow-sm" title="Swap / Replace Meter">
+                        <Link href={`${basePath}/meter-change?type=bulk&key=${encodeURIComponent(bulkMeter.customerKeyNumber)}`}>
+                          <RefreshCcw className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    )}
+
                     {canEdit && (
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-600 bg-amber-50/80 hover:bg-amber-500 hover:text-white border border-amber-200/80 transition-all rounded-lg shadow-sm" onClick={() => onEdit(bulkMeter)} title="Edit">
                         <Edit className="h-4 w-4" />
@@ -314,6 +328,13 @@ export function BulkMeterTable({ data, onEdit, onDelete, onApprove, onReject, br
                     <Eye className="mr-1.5 h-3 w-3" /> View
                   </Link>
                 </Button>
+                {canSwapMeter && (
+                  <Button asChild variant="outline" size="sm" className="h-8 text-xs flex-1 text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-600 hover:text-white font-semibold">
+                    <Link href={`${basePath}/meter-change?type=bulk&key=${encodeURIComponent(bulkMeter.customerKeyNumber)}`}>
+                      <RefreshCcw className="mr-1.5 h-3 w-3" /> Swap Meter
+                    </Link>
+                  </Button>
+                )}
                 {canEdit && (
                   <Button variant="outline" size="sm" className="h-8 text-xs flex-1 text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-500 hover:text-white font-semibold" onClick={() => onEdit(bulkMeter)}>
                     <Edit className="mr-1.5 h-3 w-3" /> Edit

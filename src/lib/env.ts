@@ -20,6 +20,11 @@ const envSchema = z.object({
     'a9f3c2e1b8d74f6a0e5c9b2d1f4a7e3c8b5d2f9a6e1c4b7d0f3a8e5c2b9d6f1'
   ),
   GOOGLE_API_KEY: devOnly(z.string().min(8), 'AIzaSyC7-example-key-for-build'),
+  AAWSA_INTERNAL_API_URL: z.string().default('http://10.10.254.155:5001'),
+  AAWSA_EXTERNAL_API_URL: z.string().default('http://bill.aawsa.gov.et:5001'),
+  AAWSA_NETWORK_MODE: z.enum(['auto', 'internal', 'external']).default('auto'),
+  AAWSA_UPLOADER_PAYROLL: z.string().optional().default(''),
+  AAWSA_UPLOADER_PASSWORD: z.string().optional().default(''),
 });
 
 const _env = envSchema.safeParse(process.env);

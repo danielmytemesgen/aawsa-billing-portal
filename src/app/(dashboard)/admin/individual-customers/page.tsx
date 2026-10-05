@@ -109,6 +109,16 @@ export default function IndividualCustomersPage() {
     fetchSummaryStats();
   }, [page, rowsPerPage, debouncedSearch, statusFilter, branchFilter, fetchData, fetchSummaryStats]);
 
+  // Auto-refresh: re-run current query whenever DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
+      fetchSummaryStats();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [fetchData, fetchSummaryStats, page, rowsPerPage, debouncedSearch, statusFilter, branchFilter]);
+
   React.useEffect(() => {
     // Initialize secondary data (use cache when available)
     Promise.all([
@@ -588,6 +598,7 @@ export default function IndividualCustomersPage() {
                 canEdit={hasPermission('customers_update')}
                 canDelete={hasPermission('customers_delete')}
                 canApprove={hasPermission('customers_approve')}
+                canSwapMeter={hasPermission('meter_change_create') || hasPermission('meter_change_manage')}
                 isAdmin={true}
               />
             )}

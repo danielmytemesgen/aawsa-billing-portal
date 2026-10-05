@@ -40,6 +40,15 @@ export default function OfflineMetricsPage() {
     loadData();
   }, []);
 
+  // Auto-refresh: re-fetch offline metrics when DataRefreshProvider signals new data
+  useEffect(() => {
+    const handleDataRefreshed = () => {
+      loadData();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   if (!canView) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-4">

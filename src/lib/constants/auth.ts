@@ -182,6 +182,11 @@ export const PERMISSIONS = {
     // Promotions
     PROMOTIONS_MANAGE: 'promotions_manage',
     PROMOTIONS_VIEW: 'promotions_view',
+
+    // Meter Change (Field Operations)
+    METER_CHANGE_VIEW: 'meter_change_view',
+    METER_CHANGE_CREATE: 'meter_change_create',
+    METER_CHANGE_MANAGE: 'meter_change_manage',
 } as const;
 
 export const BRANCHES = {

@@ -79,7 +79,7 @@ async function checkBulkMeter() {
     const subRows: any[] = await query(subSql, [startDate, endDate, monthYear, resolvedKey]);
 
     const assignedCustomers = subRows.map((row: any) => {
-      let curr = Number(row.billCurrRead ?? row.rCurrReading ?? row.icCurrReading ?? 0);
+      const curr = Number(row.billCurrRead ?? row.rCurrReading ?? row.icCurrReading ?? 0);
       let prev: number;
 
       if (row.billPrevRead != null) {

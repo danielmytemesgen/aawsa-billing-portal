@@ -75,6 +75,14 @@ export default function StaffManagementPage() {
     return () => unsubscribe();
   }, [hasPermission]);
 
+  // Auto-refresh when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => { setStaffMembers(getStaffMembers()); };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
+
   const userBranchId = currentUser?.branchId;
   const isHeadOffice = !userBranchId || userBranchId === 'all' || hasPermission('staff_view_all');
 

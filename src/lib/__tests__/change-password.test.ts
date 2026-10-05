@@ -32,6 +32,13 @@ vi.mock('@/lib/db-queries', () => ({
   dbCreateNotification: (...args: any[]) => mockDbCreateNotification(...args),
 }));
 
+// ─── Strong passwords that satisfy the new policy ────────────────────────────
+// Policy: min 8 chars, uppercase, lowercase, digit, special char (!@#$%^&*_-)
+const STRONG_NEW_PASS = 'NewSecure@2026';
+const STRONG_CURRENT  = 'Current@2026!';
+const STRONG_CORRECT  = 'Correct@Pass1';
+const STRONG_FINAL    = 'Final@Pass789!';
+
 describe('changePasswordAction', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,31 +55,35 @@ describe('changePasswordAction', () => {
       expect(result.message).toBe('All fields are required.');
     });
 
-    it('returns error if new password is shorter than 6 characters', async () => {
+    it('returns error if new password fails policy (too short / weak)', async () => {
+      // '123' fails all policy rules — should get policy error
       const result = await changePasswordAction({
-        currentPassword: 'current-pass',
+        currentPassword: STRONG_CURRENT,
         newPassword: '123',
         confirmPassword: '123',
       });
       expect(result.success).toBe(false);
-      expect(result.message).toContain('at least 6 characters');
+      // Updated assertion — policy now requires 8+ chars (not 6)
+      expect(result.message).toContain('At least 8 characters');
     });
 
     it('returns error if new password and confirmation do not match', async () => {
+      // Use a policy-compliant password so we pass the policy check and reach the mismatch check
       const result = await changePasswordAction({
-        currentPassword: 'current-pass',
-        newPassword: 'password123',
-        confirmPassword: 'different-password',
+        currentPassword: STRONG_CURRENT,
+        newPassword: STRONG_NEW_PASS,
+        confirmPassword: 'Different@Pass99',
       });
       expect(result.success).toBe(false);
       expect(result.message).toContain('do not match');
     });
 
     it('returns error if new password is identical to current password', async () => {
+      // Both passwords must be policy-compliant so the policy check passes
       const result = await changePasswordAction({
-        currentPassword: 'same-password123',
-        newPassword: 'same-password123',
-        confirmPassword: 'same-password123',
+        currentPassword: STRONG_NEW_PASS,
+        newPassword: STRONG_NEW_PASS,
+        confirmPassword: STRONG_NEW_PASS,
       });
       expect(result.success).toBe(false);
       expect(result.message).toContain('different from your current password');
@@ -84,9 +95,9 @@ describe('changePasswordAction', () => {
       mockGetSession.mockResolvedValue(null);
 
       const result = await changePasswordAction({
-        currentPassword: 'old-password123',
-        newPassword: 'new-password456',
-        confirmPassword: 'new-password456',
+        currentPassword: STRONG_CURRENT,
+        newPassword: STRONG_NEW_PASS,
+        confirmPassword: STRONG_NEW_PASS,
       });
 
       expect(result.success).toBe(false);
@@ -102,9 +113,9 @@ describe('changePasswordAction', () => {
       mockGetStaffMemberForAuth.mockResolvedValue(null);
 
       const result = await changePasswordAction({
-        currentPassword: 'wrong-password',
-        newPassword: 'new-password456',
-        confirmPassword: 'new-password456',
+        currentPassword: STRONG_CORRECT,
+        newPassword: STRONG_NEW_PASS,
+        confirmPassword: STRONG_NEW_PASS,
       });
 
       expect(result.success).toBe(false);
@@ -131,16 +142,16 @@ describe('changePasswordAction', () => {
       mockDbCreateNotification.mockResolvedValue({ id: 'notif-1' });
 
       const result = await changePasswordAction({
-        currentPassword: 'correct-password',
-        newPassword: 'new-secure-password789',
-        confirmPassword: 'new-secure-password789',
+        currentPassword: STRONG_CORRECT,
+        newPassword: STRONG_FINAL,
+        confirmPassword: STRONG_FINAL,
         revokeOtherSessions: true,
       });
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('2 other active sessions signed out');
       expect(mockDbUpdateStaffMember).toHaveBeenCalledWith('staff@aawsa.gov.et', {
-        password: 'new-secure-password789',
+        password: STRONG_FINAL,
       });
       expect(mockDbRevokeOtherStaffSessions).toHaveBeenCalledWith('user-1', 'session-123');
       expect(mockDbCreateNotification).toHaveBeenCalledWith(

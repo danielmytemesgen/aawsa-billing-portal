@@ -3,6 +3,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { BillTaskBoard } from '@/components/billing/BillTaskBoard';
+import { SyncPaymentStatusDialog } from '@/components/billing/SyncPaymentStatusDialog';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
@@ -49,7 +50,8 @@ import {
     MoreVertical,
     Trash2,
     Eye,
-    Printer
+    Printer,
+    RefreshCw,
 } from 'lucide-react';
 import {
     AlertDialog,
@@ -89,6 +91,17 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [loading, setLoading] = useState(true);
     const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
     const [branches, setBranches] = useState<any[]>([]);
+
+    // AAWSA Sync Payment dialog state
+    const [syncDialogKey, setSyncDialogKey] = useState(0);
+    const [syncCustomerKey, setSyncCustomerKey] = useState('');
+    const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+
+    const handleOpenSyncDialog = (customerKey: string) => {
+        setSyncCustomerKey(customerKey);
+        setSyncDialogKey(k => k + 1);
+        setSyncDialogOpen(true);
+    };
 
     // Filter states
     const [searchQuery, setSearchQuery] = useState('');
@@ -735,6 +748,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         basePath={basePath}
                         canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
                         reconstructedHistoryMap={reconstructedHistoryMap}
+                        onSyncPayment={handleOpenSyncDialog}
                     />
 
                     {/* Pagination Controls */}
@@ -781,6 +795,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         basePath={basePath}
                         canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
                         reconstructedHistoryMap={reconstructedHistoryMap}
+                        onSyncPayment={handleOpenSyncDialog}
                     />
 
                     {/* Pagination Controls for Paid */}
@@ -814,6 +829,14 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 onComplete={() => loadData()}
             />
 
+            {/* AAWSA Sync Payment Dialog */}
+            <SyncPaymentStatusDialog
+                key={syncDialogKey}
+                isOpen={syncDialogOpen}
+                onOpenChange={(open) => { setSyncDialogOpen(open); if (!open) loadData(); }}
+                initialCustomerKey={syncCustomerKey}
+            />
+
             {/* Bulk Action Confirmation Dialog */}
             <AlertDialog open={!!pendingBulkAction} onOpenChange={(open) => !open && setPendingBulkAction(null)}>
                 <AlertDialogContent>
@@ -845,7 +868,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 }
 
 // Sub-components
-function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any> }) {
+function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onSyncPayment }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onSyncPayment?: (customerKey: string) => void }) {
     if (bills.length === 0) return null;
 
     return (
@@ -937,13 +960,21 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                                     <MoreVertical className="h-4 w-4" />
                                                 </Button>
                                             </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end" className="w-40">
+                                            <DropdownMenuContent align="end" className="w-48">
                                                 <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
                                                     <Eye className="mr-2 h-4 w-4" /> View Details
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                                                     <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
                                                 </DropdownMenuItem>
+                                                {onSyncPayment && (
+                                                    <DropdownMenuItem
+                                                        className="text-blue-600 focus:text-blue-600"
+                                                        onClick={() => onSyncPayment(bill.CUSTOMERKEY || bill.individual_customer_id || '')}
+                                                    >
+                                                        <RefreshCw className="mr-2 h-4 w-4" /> Sync AAWSA Payment
+                                                    </DropdownMenuItem>
+                                                )}
                                                 {canDelete && (
                                                     <DropdownMenuItem
                                                         className="text-red-600 focus:text-red-600"

@@ -102,6 +102,17 @@ export default function StaffBulkMetersPage() {
     fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
   }, [page, rowsPerPage, debouncedSearch, statusFilter, fetchData]);
 
+  // Auto-refresh when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchData(page, rowsPerPage, debouncedSearch, statusFilter);
+      fetchSummaryStats();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [fetchData, fetchSummaryStats, page, rowsPerPage, debouncedSearch, statusFilter]);
+
+
   React.useEffect(() => {
     fetchSummaryStats();
     initializeBranches().then(() => {

@@ -194,6 +194,25 @@ export default function StaffSentBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser]);
 
+  // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
+  const staffSentBillsRef = React.useRef<() => void>(() => {});
+  React.useEffect(() => {
+    if (!currentUser) return;
+    staffSentBillsRef.current = async () => {
+      setIsLoading(true);
+      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+      const result = await getAllSentBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
+      if (result.success) { setBills(result.bills || []); setTotalBills(result.total || 0); }
+      setIsLoading(false);
+    };
+  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
+  React.useEffect(() => {
+    const handleDataRefreshed = () => { staffSentBillsRef.current(); };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   if (!hasPermission('reports_generate_all') && !hasPermission('reports_generate_branch')) {
     return (
       <div className="space-y-6">

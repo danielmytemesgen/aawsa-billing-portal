@@ -79,6 +79,17 @@ export default function RecycleBinPage() {
         }
     }, [fetchItems, hasPermission]);
 
+    // Auto-refresh: re-fetch recycle bin items when DataRefreshProvider signals new data
+    useEffect(() => {
+        const handleDataRefreshed = () => {
+            if (hasPermission('settings_manage')) {
+                fetchItems();
+            }
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, [fetchItems, hasPermission]);
+
     if (!hasPermission('settings_manage')) {
         return (
             <div className="p-6">

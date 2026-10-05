@@ -1519,6 +1519,16 @@ export default function AdminReportsPage() {
     initializeData();
   }, [isLockedToBranch]);
 
+  // Auto-refresh: re-fetch active PDF jobs when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = async () => {
+      const pdfRes = await getActivePdfJobsAction();
+      if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
 
   const handleStartPdfBatch = async () => {
     setIsStartingPdf(true);

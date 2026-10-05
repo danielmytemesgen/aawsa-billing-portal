@@ -143,6 +143,26 @@ export default function UnsettledBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser, canViewAllBranches]);
 
+  // Auto-refresh: re-fetch unsettled bills when DataRefreshProvider signals new data
+  const fetchUnsettledRef = React.useRef<() => void>(() => {});
+  React.useEffect(() => {
+    fetchUnsettledRef.current = async () => {
+      setIsLoading(true);
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const result = await getUnsettledBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId });
+      if (result?.success && result?.bills) { setBills(result.bills); setTotalBills(result.total || 0); }
+      else if (result?.data?.bills) { setBills(result.data.bills); setTotalBills(result.data.total || 0); }
+      else { setBills([]); setTotalBills(0); }
+      setIsLoading(false);
+    };
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser, canViewAllBranches]);
+  React.useEffect(() => {
+    const handleDataRefreshed = () => { fetchUnsettledRef.current(); };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   const assignedBranchName = branches.find(b => b.id === currentUser?.branchId)?.name || currentUser?.branchName;
 
   return (

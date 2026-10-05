@@ -201,10 +201,17 @@ export const bills = pgTable('bills', {
   routeKey: text('route_key'),
   walkOrder: integer('walk_order'),
   meterKey: text('meter_key'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.id, t.monthYear] }),
   customerKeyIdx: index('idx_bills_customer').on(t.customerKey, t.monthYear),
   individualCustomerIdx: index('idx_bills_individual').on(t.individualCustomerId, t.monthYear),
+  statusMonthIdx: index('idx_bills_status_month').on(t.status, t.monthYear),
+  billNumberIdx: index('idx_bills_bill_number').on(t.billNumber),
+  branchStatusIdx: index('idx_bills_branch_status').on(t.branchId, t.status),
+  monthYearIdx: index('idx_bills_month_year').on(t.monthYear),
+  deletedAtIdx: index('idx_bills_deleted_at').on(t.deletedAt),
 }));
 
 export const payments = pgTable('payments', {
@@ -421,3 +428,33 @@ export const supportEscalationRules = pgTable('support_escalation_rules', {
 
 
 
+// 13. Audit Trail — records every significant staff action for accountability
+export const auditLogs = pgTable('audit_logs', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  actorId: uuid('actor_id').references(() => staffMembers.id, { onDelete: 'set null' }),
+  actorEmail: text('actor_email'),
+  actorBranch: text('actor_branch'),
+  action: text('action').notNull(),       // e.g. PAYMENT_UPDATED, BILL_REVERSED
+  entityType: text('entity_type').notNull(), // e.g. 'bill', 'payment', 'staff'
+  entityId: text('entity_id'),
+  oldValue: jsonb('old_value'),           // Snapshot BEFORE the change
+  newValue: jsonb('new_value'),           // Snapshot AFTER the change
+  ipAddress: text('ip_address'),
+  metadata: jsonb('metadata'),            // Extra context (batch size, reason, etc.)
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  actorIdx: index('idx_audit_actor').on(t.actorId, t.createdAt),
+  entityIdx: index('idx_audit_entity').on(t.entityType, t.entityId, t.createdAt),
+  actionIdx: index('idx_audit_action').on(t.action, t.createdAt),
+  createdAtIdx: index('idx_audit_created_at').on(t.createdAt),
+}));
+
+// 14. Password History — prevents reuse of last 3 passwords
+export const passwordHistory = pgTable('password_history', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  staffId: uuid('staff_id').notNull().references(() => staffMembers.id, { onDelete: 'cascade' }),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  staffIdx: index('idx_pwd_history_staff').on(t.staffId, t.createdAt),
+}));

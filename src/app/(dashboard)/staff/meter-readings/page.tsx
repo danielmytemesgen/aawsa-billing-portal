@@ -4,12 +4,14 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Activity, ListPlus, Database, FileDown } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Activity, ListPlus, Database, FileDown, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { ReadingAnalyticsReportView } from "@/features/billing/components/reading-analytics-report-view";
 import {
   addIndividualCustomerReading,
   addBulkMeterReading,
@@ -27,7 +29,11 @@ import {
   getStaffMembers,
   initializeStaffMembers,
   getBranches,
-  initializeBranches
+  initializeBranches,
+  initializeIndividualCustomerReadings,
+  initializeBulkMeterReadings,
+  getIndividualCustomerReadings,
+  getBulkMeterReadings
 } from "@/lib/data-store";
 import {
   getPaginatedIndividualReadingsAction,
@@ -86,6 +92,27 @@ export default function StaffMeterReadingsPage() {
 
   const [individualReadings, setIndividualReadings] = React.useState<DisplayReading[]>([]);
   const [bulkReadings, setBulkReadings] = React.useState<DisplayReading[]>([]);
+  const [allIndividualReadings, setAllIndividualReadings] = React.useState<any[]>([]);
+  const [allBulkReadings, setAllBulkReadings] = React.useState<any[]>([]);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = React.useState(false);
+
+  const loadFullReadingsForAnalytics = React.useCallback(async (force = false) => {
+    if (!force && allIndividualReadings.length > 0 && allBulkReadings.length > 0) return;
+    setIsAnalyticsLoading(true);
+    try {
+      await Promise.all([
+        initializeIndividualCustomerReadings(force),
+        initializeBulkMeterReadings(force)
+      ]);
+      setAllIndividualReadings(getIndividualCustomerReadings());
+      setAllBulkReadings(getBulkMeterReadings());
+    } catch (e) {
+      console.warn("Failed to load readings for analytics in staff", e);
+    } finally {
+      setIsAnalyticsLoading(false);
+    }
+  }, [allIndividualReadings.length, allBulkReadings.length]);
+
   const [allBranches, setAllBranches] = React.useState<Branch[]>([]);
   const [allRoutes, setAllRoutes] = React.useState<Route[]>([]);
   const [allStaff, setAllStaff] = React.useState<any[]>([]);
@@ -431,17 +458,35 @@ export default function StaffMeterReadingsPage() {
           {hasPermission('meter_readings_analytics_view') && (
             <div className="flex items-center gap-2">
               <Button
-                variant={activeTab === 'analytics' ? 'default' : 'default'}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={() => setActiveTab(activeTab === 'analytics' ? 'individual' : 'analytics')}
+                className={cn(
+                  "text-white shadow-md transition-all",
+                  activeTab === 'analytics'
+                    ? "bg-blue-700 ring-2 ring-blue-300 shadow-blue-300"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-200"
+                )}
+                onClick={() => {
+                  const next = activeTab === 'analytics' ? (canViewIndividualReadings ? 'individual' : 'bulk') : 'analytics';
+                  setActiveTab(next);
+                  if (next === 'analytics') loadFullReadingsForAnalytics();
+                }}
               >
                 <BarChart className="mr-2 h-4 w-4" /> Reading Analytics
               </Button>
-              <Link href="/staff/reports/reading-classification" passHref>
-                <Button variant="outline" className="bg-white">
-                  <FileSpreadsheet className="mr-2 h-4 w-4 text-muted-foreground" /> Reading Analytics Report
-                </Button>
-              </Link>
+              <Button 
+                className={cn(
+                  "text-white shadow-md transition-all",
+                  activeTab === 'report'
+                    ? "bg-purple-700 ring-2 ring-purple-300 shadow-purple-300"
+                    : "bg-purple-600 hover:bg-purple-700 shadow-purple-200"
+                )}
+                onClick={() => {
+                  const next = activeTab === 'report' ? (canViewIndividualReadings ? 'individual' : 'bulk') : 'report';
+                  setActiveTab(next);
+                  if (next === 'report') loadFullReadingsForAnalytics();
+                }}
+              >
+                <FileSpreadsheet className="mr-2 h-4 w-4" /> Reading Analytics Report
+              </Button>
             </div>
           )}
           {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || 
@@ -468,13 +513,23 @@ export default function StaffMeterReadingsPage() {
                     <span>Manual Entry</span>
                   </DropdownMenuItem>
                 )}
-                {hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) && (
+                {(hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) || 
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+                  hasPermission(PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV) ||
+                  hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) ||
+                  canViewIndividualReadings) && (
                   <DropdownMenuItem onSelect={() => setIsIndividualCsvModalOpen(true)}>
                     <UploadCloud className="mr-2 h-4 w-4" />
                     <span>Upload Individual (CSV)</span>
                   </DropdownMenuItem>
                 )}
-                {hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) && (
+                {(hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) || 
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+                  hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+                  hasPermission(PERMISSIONS.DATA_ENTRY_BULK_CSV) ||
+                  hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) ||
+                  canViewBulkReadings) && (
                   <DropdownMenuItem onSelect={() => setIsBulkCsvModalOpen(true)}>
                     <UploadCloud className="mr-2 h-4 w-4" />
                     <span>Upload Bulk (CSV)</span>
@@ -558,23 +613,46 @@ export default function StaffMeterReadingsPage() {
         </Card>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className={`grid w-full p-1 bg-slate-100 rounded-xl h-auto ${canViewIndividualReadings && canViewBulkReadings ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      <Tabs value={activeTab} onValueChange={(val) => {
+        setActiveTab(val);
+        if (val === 'analytics' || val === 'report') loadFullReadingsForAnalytics();
+      }}>
+        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1.5 bg-slate-100/90 rounded-2xl h-auto gap-1 border border-slate-200/80 shadow-xs">
           {canViewIndividualReadings && (
             <TabsTrigger 
               value="individual"
-              className="rounded-lg data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
+              className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
             >
+              <Activity className="h-4 w-4 mr-2" />
               Individual Readings ({individualTotalCount})
             </TabsTrigger>
           )}
           {canViewBulkReadings && (
             <TabsTrigger 
               value="bulk"
-              className="rounded-lg data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200 transition-all font-semibold py-2.5 text-slate-600"
+              className="rounded-xl data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
             >
-              Bulk Meter Readings ({bulkTotalCount})
+              <ListPlus className="h-4 w-4 mr-2" />
+              Bulk Readings ({bulkTotalCount})
             </TabsTrigger>
+          )}
+          {hasPermission('meter_readings_analytics_view') && (
+            <>
+              <TabsTrigger 
+                value="analytics"
+                className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
+              >
+                <BarChart className="h-4 w-4 mr-2" />
+                Reading Analytics
+              </TabsTrigger>
+              <TabsTrigger 
+                value="report"
+                className="rounded-xl data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Reading Analytics Report
+              </TabsTrigger>
+            </>
           )}
         </TabsList>
         {canViewIndividualReadings && (
@@ -674,59 +752,86 @@ export default function StaffMeterReadingsPage() {
           </TabsContent>
         )}
         {hasPermission('meter_readings_analytics_view') && (
-          <TabsContent value="analytics" className="space-y-4">
-            <ReaderReport
-              branches={allBranches}
-              bulkMeters={allBulkMeters}
-              customers={allCustomers}
-              routes={allRoutes}
-              staff={allStaff}
-              individualReadings={individualReadings}
-              bulkReadings={bulkReadings}
-            />
-          </TabsContent>
+          <>
+            <TabsContent value="analytics" className="space-y-4">
+              {isAnalyticsLoading && allIndividualReadings.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+                  <RefreshCw className="h-8 w-8 text-blue-600 animate-spin mx-auto mb-3" />
+                  <p className="font-bold text-slate-700">Loading reading analytics data across assigned routes...</p>
+                </div>
+              ) : (
+                <ReaderReport
+                  branches={allBranches}
+                  bulkMeters={allBulkMeters}
+                  customers={allCustomers}
+                  routes={allRoutes}
+                  staff={allStaff}
+                  individualReadings={allIndividualReadings.length > 0 ? allIndividualReadings : individualReadings}
+                  bulkReadings={allBulkReadings.length > 0 ? allBulkReadings : bulkReadings}
+                  selectedMonth={selectedMonthYear}
+                  onMonthChange={setSelectedMonthYear}
+                />
+              )}
+            </TabsContent>
+            <TabsContent value="report" className="space-y-4">
+              <ReadingAnalyticsReportView 
+                isAdmin={false}
+                staffBranchId={currentUser?.branchId}
+                isEmbedded={true}
+                fullscreenUrl="/staff/reports/reading-classification"
+              />
+            </TabsContent>
+          </>
         )}
       </Tabs>
 
+      {/* Manual entry dialog — shown for users with manual create permission */}
       {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
         hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
         hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
         hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL)) && (
-        <>
-          <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-            <DialogContent className="w-[95vw] max-w-[480px] max-h-[90vh] overflow-y-auto p-4 sm:p-6 custom-scrollbar">
-              <DialogHeader>
-                <UIDialogTitle>Add New Meter Reading</UIDialogTitle>
-                <UIDialogDescription>
-                  Select the meter type, then the specific meter, and enter the reading details.
-                </UIDialogDescription>
-              </DialogHeader>
-              <AddMeterReadingForm
-                onSubmit={handleAddReadingSubmit}
-                customers={filteredForAddCustomers}
-                bulkMeters={filteredForAddBulkMeters}
-                faultCodes={faultCodesForForm}
-                isLoading={isLoading}
-              />
-            </DialogContent>
-          </Dialog>
-
-          <CsvReadingUploadDialog
-            open={isIndividualCsvModalOpen}
-            onOpenChange={setIsIndividualCsvModalOpen}
-            meterType="individual"
-            meters={filteredForAddCustomers}
-            currentUser={currentUser}
-          />
-          <CsvReadingUploadDialog
-            open={isBulkCsvModalOpen}
-            onOpenChange={setIsBulkCsvModalOpen}
-            meterType="bulk"
-            meters={filteredForAddBulkMeters}
-            currentUser={currentUser}
-          />
-        </>
+        <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+          <DialogContent className="w-[95vw] max-w-[480px] max-h-[90vh] overflow-y-auto p-4 sm:p-6 custom-scrollbar">
+            <DialogHeader>
+              <UIDialogTitle>Add New Meter Reading</UIDialogTitle>
+              <UIDialogDescription>
+                Select the meter type, then the specific meter, and enter the reading details.
+              </UIDialogDescription>
+            </DialogHeader>
+            <AddMeterReadingForm
+              onSubmit={handleAddReadingSubmit}
+              customers={filteredForAddCustomers}
+              bulkMeters={filteredForAddBulkMeters}
+              faultCodes={faultCodesForForm}
+              isLoading={isLoading}
+            />
+          </DialogContent>
+        </Dialog>
       )}
+
+      {/* CSV upload dialogs — always rendered so any user with upload/view permission can use them */}
+      <CsvReadingUploadDialog
+        open={isIndividualCsvModalOpen}
+        onOpenChange={setIsIndividualCsvModalOpen}
+        meterType="individual"
+        meters={filteredForAddCustomers}
+        currentUser={currentUser}
+        onSuccess={() => {
+          fetchReadings();
+          fetchMonthTotals(selectedMonthYear);
+        }}
+      />
+      <CsvReadingUploadDialog
+        open={isBulkCsvModalOpen}
+        onOpenChange={setIsBulkCsvModalOpen}
+        meterType="bulk"
+        meters={filteredForAddBulkMeters}
+        currentUser={currentUser}
+        onSuccess={() => {
+          fetchReadings();
+          fetchMonthTotals(selectedMonthYear);
+        }}
+      />
     </div>
   );
 }

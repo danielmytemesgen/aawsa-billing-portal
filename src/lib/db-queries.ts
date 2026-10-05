@@ -2,6 +2,7 @@ import { query, withTransaction } from './db';
 import { randomUUID } from 'crypto';
 import { buildUserSessionsFilters, USER_SESSION_STATUS_SQL } from './session-monitoring';
 import { computeCreditForBill, roundMoney, type ComputeCreditForBillOutput } from './credit-utils';
+import { normalizeBillingPeriod } from './period-utils';
 
 // Postgres-backed implementations for common DB operations.
 // These functions keep `any` shapes to match the existing codebase.
@@ -136,21 +137,36 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
             permissions p ON rp.permission_id = p.id
         WHERE
             LOWER(TRIM(sm.email)) = LOWER(TRIM($1))
+        GROUP BY sm.id, r.role_name
     `;
 
-    const params = [email];
-
-    if (password) {
-        sql += ' AND sm.password = $2';
-        params.push(password);
-    }
-
-    sql += ' GROUP BY sm.id, r.role_name';
-
-    const rows: any = await query(sql, params);
+    const rows: any = await query(sql, [email]);
 
     if (rows && rows[0]) {
-        const user = rows[0];
+        const rawUser = rows[0];
+        // If password verification is requested
+        if (password !== undefined) {
+            const { verifyPassword, hashPassword } = await import('./password-hash');
+            const { matched, needsUpgrade } = verifyPassword(password, rawUser.password || '');
+            if (!matched) {
+                return null;
+            }
+            // Progressive migration: upgrade plaintext password to scrypt on login
+            if (needsUpgrade) {
+                try {
+                    const newHash = hashPassword(password);
+                    await query(
+                        'UPDATE staff_members SET password = $1, updated_at = now() WHERE id = $2',
+                        [newHash, rawUser.id]
+                    );
+                } catch (upgradeErr) {
+                    console.warn('Failed to progressively upgrade staff password hash:', upgradeErr);
+                }
+            }
+        }
+
+        const user = { ...rawUser };
+        delete user.password;
         if (user.permissions) {
             user.permissions = user.permissions.split(',');
         } else {
@@ -739,38 +755,62 @@ export const dbGetBulkMetersSummary = async (branchId?: string) => {
 };
 
 export const dbGetAllStaffMembers = async (branchId?: string) => {
+    let rows: any[];
     if (branchId) {
-        return await query(`
+        rows = await query(`
             SELECT s.*, r.role_name, b.name as branch_name 
             FROM staff_members s 
             LEFT JOIN roles r ON s.role_id = r.id
             LEFT JOIN branches b ON s.branch_id = b.id
             WHERE s.deleted_at IS NULL AND s.branch_id = $1
         `, [branchId]);
+    } else {
+        rows = await query(`
+            SELECT s.*, r.role_name, b.name as branch_name 
+            FROM staff_members s 
+            LEFT JOIN roles r ON s.role_id = r.id
+            LEFT JOIN branches b ON s.branch_id = b.id
+            WHERE s.deleted_at IS NULL
+        `);
     }
-    return await query(`
-        SELECT s.*, r.role_name, b.name as branch_name 
-        FROM staff_members s 
-        LEFT JOIN roles r ON s.role_id = r.id
-        LEFT JOIN branches b ON s.branch_id = b.id
-        WHERE s.deleted_at IS NULL
-    `);
+    return (rows || []).map((row: any) => {
+        if (!row) return row;
+        const copy = { ...row };
+        delete copy.password;
+        return copy;
+    });
 };
 export const dbCreateStaffMember = async (staffMember: any) => {
-    const keys = Object.keys(staffMember);
+    const toInsert = { ...staffMember };
+    if (toInsert.password && typeof toInsert.password === 'string' && !toInsert.password.startsWith('scrypt:')) {
+        const { hashPassword } = await import('./password-hash');
+        toInsert.password = hashPassword(toInsert.password);
+    }
+    const keys = Object.keys(toInsert);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO staff_members (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
-    const rows: any = await query(sql, keys.map(k => staffMember[k]));
-    return rows[0] || staffMember;
+    const rows: any = await query(sql, keys.map(k => toInsert[k]));
+    const res = rows[0] || toInsert;
+    if (res) {
+        const copy = { ...res };
+        delete copy.password;
+        return copy;
+    }
+    return res;
 };
 
 export const dbUpdateStaffMember = async (email: string, staffMember: any, branchId?: string) => {
-    const keys = Object.keys(staffMember);
+    const toUpdate = { ...staffMember };
+    if (toUpdate.password && typeof toUpdate.password === 'string' && !toUpdate.password.startsWith('scrypt:')) {
+        const { hashPassword } = await import('./password-hash');
+        toUpdate.password = hashPassword(toUpdate.password);
+    }
+    const keys = Object.keys(toUpdate);
     if (keys.length === 0) return null;
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
     
     let sql = `UPDATE staff_members SET ${setClause} WHERE LOWER(TRIM(email)) = LOWER(TRIM($${keys.length + 1}))`;
-    const params = [...keys.map(k => staffMember[k]), email];
+    const params = [...keys.map(k => toUpdate[k]), email];
     
     if (branchId) {
         sql += ` AND branch_id = $${keys.length + 2}`;
@@ -779,7 +819,13 @@ export const dbUpdateStaffMember = async (email: string, staffMember: any, branc
     
     sql += ' RETURNING *';
     const rows = await query(sql, params);
-    return rows[0] ?? null;
+    const res = rows[0] ?? null;
+    if (res) {
+        const copy = { ...res };
+        delete copy.password;
+        return copy;
+    }
+    return null;
 };
 
 export const dbDeleteStaffMember = async (email: string, deletedBy?: string, branchId?: string) => {
@@ -1142,6 +1188,8 @@ export const dbUpdateBill = async (id: string, bill: any, client?: any, monthYea
     const setClause = keys.map((k, i) => {
         if (k === 'payment_status') return `"${k}" = $${i + 1}::payment_status`;
         if (isJsonbKey(k)) return `"${k}" = $${i + 1}::jsonb`;
+        // CRITICAL IMMUTABILITY RULE: Unless the bill is deleted, do not change the original bill's Bill Key!
+        if (k === 'BILLKEY' || k === 'billKey') return `"${k}" = COALESCE(NULLIF(TRIM("${k}"), ''), $${i + 1})`;
         return `"${k}" = $${i + 1}`;
     }).join(',');
 
@@ -1350,7 +1398,8 @@ export const dbUpdateBillStatus = async (id: string, status: string, approvalDat
 };
 
 export const dbCreateBillWorkflowLog = async (log: { bill_id: string, from_status: string, to_status: string, changed_by: string, reason?: string, details?: any }, client?: any) => {
-    const keys = Object.keys(log);
+    const allowedCols = ['bill_id', 'from_status', 'to_status', 'changed_by', 'reason'];
+    const keys = Object.keys(log).filter(k => allowedCols.includes(k) && (log as any)[k] !== undefined);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO bill_workflow_logs (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
     const params = keys.map(k => (log as any)[k]);
@@ -1575,7 +1624,8 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
             );
             if ((existing.rows || existing).length > 0) {
                 console.warn(`[dbCreateIndividualCustomerReading] Reading already exists for customer ${custKey} in month ${monthYear}. Skipping insert.`);
-                return (existing.rows || existing)[0];
+                const existingRow = (existing.rows || existing)[0];
+                return { ...(existingRow || {}), _alreadyExisted: true };
             }
         }
 
@@ -1583,7 +1633,8 @@ export const dbCreateIndividualCustomerReading = async (reading: any, client?: a
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO individual_customer_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
         const rows: any = await executor.query(sql, keys.map(k => safeFields[k]));
-        return (rows.rows || rows)[0] || safeFields;
+        const insertedRow = (rows.rows || rows)[0] || safeFields;
+        return { ...(insertedRow || {}), _alreadyExisted: false };
     } catch (err: any) {
         console.error('dbCreateIndividualCustomerReading error:', err);
         throw err;
@@ -2244,17 +2295,30 @@ const normalizePaymentMethod = (rawMethod?: string | null): string | null => {
     if (validChannels[normalized]) {
         return validChannels[normalized];
     }
-    if (normalized.includes('cbe')) {
-        return 'Bank Transfer';
-    }
-    if (normalized.includes('mobile')) {
+    if (
+        normalized.includes('telebirr') ||
+        normalized.includes('cbebirr') ||
+        normalized.includes('kacha') ||
+        normalized.includes('safaricom') ||
+        normalized.includes('awashpay') ||
+        normalized.includes('ebirr') ||
+        normalized.includes('hellocash') ||
+        normalized.includes('mobile')
+    ) {
         return 'Mobile Money';
+    }
+    if (
+        normalized.includes('cbe') ||
+        normalized.includes('awash') ||
+        normalized.includes('bank') ||
+        normalized.includes('dashen') ||
+        normalized.includes('abyssinia') ||
+        normalized.includes('transfer')
+    ) {
+        return 'Bank Transfer';
     }
     if (normalized.includes('online')) {
         return 'Online Payment';
-    }
-    if (normalized.includes('bank')) {
-        return 'Bank Transfer';
     }
     return 'Other';
 };
@@ -3601,8 +3665,9 @@ export const dbDeletePromotion = async (id: string) => {
 };
 
 export const dbValidateApiKey = async (apiKey: string) => {
-    // Standard implementation: check against an environment variable for internal access
-    const internalKey = process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026';
+    // Check against environment variable for internal access - fail closed if not set
+    const internalKey = process.env.INTERNAL_API_KEY;
+    if (!internalKey || !apiKey) return false;
     return apiKey === internalKey;
 };
 
@@ -6030,11 +6095,11 @@ export const dbGetPreApprovalAuditMetrics = async (
             b.individual_customer_id,
             COALESCE(b."PREVREAD", 0)::numeric as prev_read,
             COALESCE(b."CURRREAD", 0)::numeric as curr_read,
-            COALESCE(b."DIFFERENCEUSAGE", 0)::numeric as diff_usage,
+            COALESCE(b.difference_usage, 0)::numeric as diff_usage,
             COALESCE(b."THISMONTHBILLAMT", 0)::numeric as this_month_bill,
             COALESCE(b."TOTALBILLAMOUNT", 0)::numeric as total_bill,
             COALESCE(b."OUTSTANDINGAMT", 0)::numeric as outstanding_amt,
-            COALESCE(bm."customerName", ic.name, b."CUSTOMERKEY", b.individual_customer_id, 'Customer') as customer_name,
+            COALESCE(bm.name, ic.name, b."CUSTOMERKEY", b.individual_customer_id, 'Customer') as customer_name,
             CASE WHEN b."CUSTOMERKEY" IS NOT NULL THEN 'Bulk' ELSE 'Individual' END as meter_type
         FROM bills b
         LEFT JOIN bulk_meters bm ON LOWER(TRIM(b."CUSTOMERKEY")) = LOWER(TRIM(bm."customerKeyNumber")) AND bm.deleted_at IS NULL
@@ -6148,7 +6213,7 @@ export const dbGetWaterBalanceMetrics = async (
             b."CUSTOMERKEY",
             COALESCE(b."PREVREAD", 0)::numeric as prev_read,
             COALESCE(b."CURRREAD", 0)::numeric as curr_read,
-            COALESCE(b."DIFFERENCEUSAGE", 0)::numeric as diff_usage,
+            COALESCE(b.difference_usage, 0)::numeric as diff_usage,
             COALESCE(b."THISMONTHBILLAMT", 0)::numeric as bill_amt
         FROM bills b
         LEFT JOIN bulk_meters bm ON LOWER(TRIM(b."CUSTOMERKEY")) = LOWER(TRIM(bm."customerKeyNumber")) AND bm.deleted_at IS NULL
@@ -6196,4 +6261,930 @@ export const dbGetWaterBalanceMetrics = async (
         totalActiveBulkMeters: rows.length,
         highLossMetersCount: highLossCount
     };
+};
+
+export interface CustomerSyncInput {
+    customerKey?: string;
+    contractNo?: string;
+    customerName?: string | null;
+    branch?: string | null;
+    billKey?: string | null;
+    paymentStatus?: 'Paid' | 'Unpaid' | string;
+    // NOTE: currentReading / previousReading intentionally removed —
+    // reading updates must go through the standard billing/reading flow, not this payment sync endpoint.
+    billedPeriod?: string | null;
+    amountPaid?: number | null;
+    paymentDate?: string | Date | null;
+    paymentChannel?: string | null;
+    bankRef?: string | null;
+    reconciliationStatus?: string | null;
+    staffId?: string | null;
+    syncSource?: string;
+}
+
+export interface CustomerSyncOutput {
+    success: boolean;
+    customerFound: boolean;
+    customerType: 'individual' | 'bulk' | null;
+    customerKeyNumber?: string;
+    customerName?: string;
+    contractNumber?: string;
+    paymentStatusUpdated: boolean;
+    billUpdated: boolean;
+    billId?: string;
+    paymentRecorded: boolean;
+    details: {
+        previousPaymentStatus?: string;
+        newPaymentStatus?: string;
+        amountPaid?: number | null;
+        paymentChannel?: string | null;
+        bankRef?: string | null;
+    };
+    error?: string;
+}
+
+/**
+ * Synchronizes customer PAYMENT STATUS and RECONCILIATION in the database from the external payment portal.
+ * ONLY updates payment-related fields. Reading updates are intentionally excluded from this path.
+ * Updates individual_customers / bulk_meters, associated bill, and creates audit and payment entries.
+ */
+export const dbSyncCustomerPaymentAndReading = async (input: CustomerSyncInput): Promise<CustomerSyncOutput> => {
+    const rawCustKey = (input.customerKey || '').trim();
+    const rawContract = (input.contractNo || '').trim();
+
+    if (!rawCustKey && !rawContract) {
+        return {
+            success: false,
+            customerFound: false,
+            customerType: null,
+            paymentStatusUpdated: false,
+            billUpdated: false,
+            paymentRecorded: false,
+            details: {},
+            error: 'No customer key or contract number provided for sync.'
+        };
+    }
+
+    try {
+        // 1. Search in individual_customers first with exact-match priority
+        let customer: any = null;
+        let customerType: 'individual' | 'bulk' = 'individual';
+
+        // Phase 1: Exact match on customerKeyNumber or contractNumber
+        let indRows: any[] = await query(`
+            SELECT * FROM individual_customers 
+            WHERE deleted_at IS NULL AND (
+                "customerKeyNumber" = $1 
+                OR "contractNumber" = $2
+            )
+            LIMIT 1
+        `, [rawCustKey, rawContract]);
+
+        // Phase 2: Case-insensitive match if exact didn't match
+        if (!indRows || indRows.length === 0) {
+            indRows = await query(`
+                SELECT * FROM individual_customers 
+                WHERE deleted_at IS NULL AND (
+                    "customerKeyNumber" ILIKE $1 
+                    OR "contractNumber" ILIKE $2
+                )
+                LIMIT 1
+            `, [rawCustKey, rawContract]);
+        }
+
+        // Phase 3: Prefix-stripped match only as fallback
+        if ((!indRows || indRows.length === 0) && rawCustKey) {
+            indRows = await query(`
+                SELECT * FROM individual_customers 
+                WHERE deleted_at IS NULL AND (
+                    REPLACE(REPLACE("customerKeyNumber", 'C-', ''), '-', '') ILIKE REPLACE(REPLACE($1, 'C-', ''), '-', '')
+                    OR REPLACE(REPLACE("customerKeyNumber", 'IND-', ''), '-', '') ILIKE REPLACE(REPLACE($1, 'IND-', ''), '-', '')
+                )
+                LIMIT 1
+            `, [rawCustKey]);
+        }
+
+        if (indRows && indRows.length > 0) {
+            customer = indRows[0];
+            customerType = 'individual';
+        } else {
+            // Search in bulk_meters if not in individual_customers (exact match first)
+            let bmRows: any[] = await query(`
+                SELECT * FROM bulk_meters 
+                WHERE deleted_at IS NULL AND (
+                    "customerKeyNumber" = $1 
+                    OR "contractNumber" = $2
+                )
+                LIMIT 1
+            `, [rawCustKey, rawContract]);
+
+            if (!bmRows || bmRows.length === 0) {
+                bmRows = await query(`
+                    SELECT * FROM bulk_meters 
+                    WHERE deleted_at IS NULL AND (
+                        "customerKeyNumber" ILIKE $1 
+                        OR "contractNumber" ILIKE $2
+                    )
+                    LIMIT 1
+                `, [rawCustKey, rawContract]);
+            }
+
+            if ((!bmRows || bmRows.length === 0) && rawCustKey) {
+                bmRows = await query(`
+                    SELECT * FROM bulk_meters 
+                    WHERE deleted_at IS NULL AND (
+                        REPLACE(REPLACE("customerKeyNumber", 'BM-', ''), '-', '') ILIKE REPLACE(REPLACE($1, 'BM-', ''), '-', '')
+                    )
+                    LIMIT 1
+                `, [rawCustKey]);
+            }
+
+            if (bmRows && bmRows.length > 0) {
+                customer = bmRows[0];
+                customerType = 'bulk';
+            }
+        }
+
+        if (!customer) {
+            return {
+                success: false,
+                customerFound: false,
+                customerType: null,
+                paymentStatusUpdated: false,
+                billUpdated: false,
+                paymentRecorded: false,
+                details: {},
+                error: `Customer not found in database for identifier "${rawCustKey || rawContract}".`
+            };
+        }
+
+        const customerKeyNumber = customer.customerKeyNumber;
+        const customerName = customer.name;
+        const contractNumber = customer.contractNumber;
+        const prevStatus = customer.paymentStatus;
+
+        let paymentStatusUpdated = false;
+        let billUpdated = false;
+        let paymentRecorded = false;
+        let targetBillId: string | undefined = undefined;
+
+        // Normalizing desired payment status
+        const isPaid = input.paymentStatus === 'Paid' || String(input.paymentStatus || '').trim().toLowerCase() === 'paid';
+        const targetPaymentStatus = isPaid ? 'Paid' : (input.paymentStatus || prevStatus || 'Unpaid');
+
+        // Reading updates are intentionally excluded from this endpoint.
+        // Only payment status and reconciliation fields are updated here.
+
+        const normalizedPeriod = normalizeBillingPeriod(input.billedPeriod);
+
+        // 2. Update customer record — PAYMENT STATUS ONLY (no reading updates from this endpoint)
+        if (customerType === 'individual') {
+            const updates: string[] = ['updated_at = NOW()'];
+            const params: any[] = [customerKeyNumber];
+
+            if (targetPaymentStatus) {
+                params.push(targetPaymentStatus);
+                updates.push(`"paymentStatus" = $${params.length}`);
+                paymentStatusUpdated = true;
+            }
+
+            if (isPaid) {
+                updates.push(`"outStandingbill" = 0.00`);
+            }
+
+            await query(`
+                UPDATE individual_customers
+                SET ${updates.join(', ')}
+                WHERE "customerKeyNumber" = $1
+            `, params);
+        } else {
+            // Bulk meter update — PAYMENT STATUS ONLY (no reading updates from this endpoint)
+            const updates: string[] = ['"updatedAt" = NOW()'];
+            const params: any[] = [customerKeyNumber];
+
+            if (targetPaymentStatus) {
+                params.push(targetPaymentStatus);
+                updates.push(`"paymentStatus" = $${params.length}`);
+                paymentStatusUpdated = true;
+            }
+
+            if (isPaid) {
+                updates.push(`"outStandingbill" = 0.00`);
+            }
+
+            await query(`
+                UPDATE bulk_meters
+                SET ${updates.join(', ')}
+                WHERE "customerKeyNumber" = $1
+            `, params);
+        }
+
+        // 3. Find and update / insert active bill for this customer
+        // For bulk meters, update payment status of:
+        // 1. Bill Key, 2. Customer Key, 3. Customer Name, 4. Branch, 5. Amount,
+        // 6. Payment Date, 7. Reconciliation Status, 8. Payment Channel, 9. Bank Ref
+        const rawBillKey = (input.billKey || '').trim();
+        const billRows: any[] = await query(`
+            SELECT * FROM bills
+            WHERE deleted_at IS NULL
+              AND (
+                  ($2 != '' AND ("BILLKEY" = $2 OR "BILLKEY" ILIKE $2))
+                  OR "CUSTOMERKEY" = $1
+                  OR "CUSTOMERKEY" ILIKE $1
+                  OR individual_customer_id = $1
+                  OR individual_customer_id ILIKE $1
+              )
+            ORDER BY
+              CASE WHEN $2 != '' AND ("BILLKEY" = $2 OR "BILLKEY" ILIKE $2) THEN 0 ELSE 1 END,
+              CASE WHEN LOWER(COALESCE(payment_status::text, '')) = 'unpaid' THEN 0 ELSE 1 END,
+              created_at DESC
+            LIMIT 1
+        `, [customerKeyNumber, rawBillKey]);
+
+        const targetBill = billRows && billRows.length > 0 ? billRows[0] : null;
+        const validPaymentDate = input.paymentDate ? new Date(input.paymentDate) : new Date();
+        // CRITICAL REQUIREMENT: For paymentChannel, use the EXACT channel received from the endpoint (do NOT normalize or override)
+        const channel = (input.paymentChannel && input.paymentChannel.trim())
+            ? input.paymentChannel.trim()
+            : (targetBill?.payment_channel?.trim() || 'Bank Transfer');
+        // CRITICAL IMMUTABILITY RULE:
+        // Unless the bill is deleted, NEVER change the original bill's Bill Key!
+        // Preserve targetBill.BILLKEY if it exists; only fallback to external input.billKey / bankRef if empty
+        const originalBillKey = targetBill?.BILLKEY?.trim() || null;
+        const billKey = originalBillKey || input.billKey?.trim() || input.bankRef?.trim() || null;
+        const bankRef = input.bankRef?.trim() || input.billKey?.trim() || originalBillKey || targetBill?.bank_ref || null;
+        const branchName = input.branch?.trim() || targetBill?.CUSTOMERBRANCH || customer.branch_id || null;
+        const custDisplayName = input.customerName?.trim() || customerName || targetBill?.CUSTOMERNAME || null;
+        const reconciliationStatus = input.reconciliationStatus || (isPaid ? 'Reconciled' : (targetBill?.reconciliation_status || 'Pending'));
+
+        const amountToRecord = isPaid
+            ? (input.amountPaid !== undefined && input.amountPaid !== null
+                ? Number(input.amountPaid)
+                : Number(targetBill?.TOTALBILLAMOUNT || targetBill?.amount_paid || 0))
+            : Number(targetBill?.amount_paid || 0);
+
+        const outstandingToRecord = isPaid
+            ? 0.00
+            : Number(targetBill?.OUTSTANDINGAMT ?? targetBill?.TOTALBILLAMOUNT ?? 0);
+
+        if (targetBill) {
+            targetBillId = targetBill.id;
+            // Update existing bill with all payment & reconciliation fields
+            // NOTE: "BILLKEY" = COALESCE(NULLIF(TRIM("BILLKEY"), ''), $2) ensures the original Bill Key is NEVER overwritten!
+            await query(`
+                UPDATE bills
+                SET payment_status = $1,
+                    status = CASE WHEN $1 = 'Paid' THEN 'Posted' ELSE status END,
+                    "BILLKEY" = COALESCE(NULLIF(TRIM("BILLKEY"), ''), $2),
+                    "CUSTOMERKEY" = $3,
+                    "CUSTOMERNAME" = COALESCE($4, "CUSTOMERNAME"),
+                    "CUSTOMERBRANCH" = COALESCE($5, "CUSTOMERBRANCH"),
+                    amount_paid = $6,
+                    "TOTALBILLAMOUNT" = COALESCE("TOTALBILLAMOUNT", $6),
+                    "OUTSTANDINGAMT" = $7,
+                    last_payment_date = $8,
+                    reconciliation_status = $9,
+                    payment_channel = $10,
+                    bank_ref = COALESCE($11, bank_ref),
+                    updated_at = NOW()
+                WHERE id = $12
+            `, [
+                targetPaymentStatus,
+                billKey,
+                customerKeyNumber,
+                custDisplayName,
+                branchName,
+                amountToRecord,
+                outstandingToRecord,
+                validPaymentDate,
+                reconciliationStatus,
+                channel,
+                bankRef,
+                targetBill.id
+            ]);
+            billUpdated = true;
+        } else if (customerType === 'bulk' && isPaid) {
+            // If bulk meter has no bill record yet, insert a reconciled bill with all 9 fields
+            try {
+                const now = new Date();
+                const monthYear = input.billedPeriod || `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+                const insertRes: any = await query(`
+                    INSERT INTO bills (
+                        "BILLKEY",
+                        "CUSTOMERKEY",
+                        "CUSTOMERNAME",
+                        "CUSTOMERBRANCH",
+                        amount_paid,
+                        "TOTALBILLAMOUNT",
+                        "OUTSTANDINGAMT",
+                        last_payment_date,
+                        reconciliation_status,
+                        payment_channel,
+                        bank_ref,
+                        payment_status,
+                        status,
+                        month_year,
+                        created_at,
+                        updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $5, 0.00, $6, $7, $8, $9, 'Paid', 'Posted', $10, NOW(), NOW())
+                    RETURNING id
+                `, [
+                    billKey,
+                    customerKeyNumber,
+                    custDisplayName,
+                    branchName,
+                    amountToRecord,
+                    validPaymentDate,
+                    reconciliationStatus,
+                    channel,
+                    bankRef,
+                    monthYear
+                ]);
+                if (insertRes && insertRes.length > 0) {
+                    targetBillId = insertRes[0].id;
+                    billUpdated = true;
+                }
+            } catch (createBillErr) {
+                console.warn('[AAWSA SYNC] Could not create reconciled bill row:', createBillErr);
+            }
+        }
+
+        // Record entry in payments audit table
+        if (isPaid && (targetBillId || customerKeyNumber)) {
+            try {
+                await query(`
+                    INSERT INTO payments (
+                        bill_id,
+                        bill_month_year,
+                        individual_customer_id,
+                        bulk_meter_id,
+                        amount_paid,
+                        payment_method,
+                        transaction_reference,
+                        processed_by_staff_id,
+                        payment_date,
+                        notes
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                `, [
+                    targetBillId || null,
+                    targetBill?.month_year || input.billedPeriod || null,
+                    customerType === 'individual' ? customerKeyNumber : null,
+                    customerType === 'bulk' ? customerKeyNumber : null,
+                    amountToRecord,
+                    channel,
+                    bankRef,
+                    input.staffId || null,
+                    validPaymentDate,
+                    `Synced via AAWSA Uploader API (${input.syncSource || 'API'}) - Reconciled`
+                ]);
+                paymentRecorded = true;
+            } catch (payErr) {
+                console.warn('[AAWSA SYNC] Warning: Failed to insert payments row:', payErr);
+            }
+        }
+
+        // 4. Create audit log entry
+        try {
+            await query(`
+                INSERT INTO audit_logs (
+                    table_name,
+                    record_id,
+                    action,
+                    entity_type,
+                    old_data,
+                    new_data,
+                    performed_by,
+                    metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `, [
+                customerType === 'individual' ? 'individual_customers' : 'bulk_meters',
+                customerKeyNumber,
+                'PAYMENT_PORTAL_SYNC',
+                customerType === 'individual' ? 'individual_customer' : 'bulk_meter',
+                JSON.stringify({ paymentStatus: prevStatus }),
+                JSON.stringify({ paymentStatus: targetPaymentStatus }),
+                input.staffId || null,
+                JSON.stringify({
+                    contractNumber,
+                    billId: targetBillId,
+                    amountPaid: input.amountPaid,
+                    paymentChannel: channel,
+                    bankRef: input.bankRef,
+                    syncSource: input.syncSource
+                })
+            ]);
+        } catch (auditErr) {
+            console.warn('[AAWSA SYNC] Warning: Failed to insert audit log:', auditErr);
+        }
+
+        return {
+            success: true,
+            customerFound: true,
+            customerType,
+            customerKeyNumber,
+            customerName,
+            contractNumber,
+            paymentStatusUpdated,
+            billUpdated,
+            billId: targetBillId,
+            paymentRecorded,
+            details: {
+                previousPaymentStatus: prevStatus,
+                newPaymentStatus: targetPaymentStatus,
+                amountPaid: input.amountPaid ?? (targetBill ? Number(targetBill.TOTALBILLAMOUNT) : null),
+                paymentChannel: channel,
+                bankRef: input.bankRef ?? (targetBill ? targetBill.bank_ref : null),
+            }
+        };
+    } catch (err: any) {
+        console.error('[dbSyncCustomerPaymentAndReading] Error during payment sync:', err);
+        return {
+            success: false,
+            customerFound: false,
+            customerType: null,
+            paymentStatusUpdated: false,
+            billUpdated: false,
+            paymentRecorded: false,
+            details: {},
+            error: err.message || String(err)
+        };
+    }
+};
+
+export interface CustomerDoubleCheckSummary {
+    found: boolean;
+    customerType: 'bulk' | 'individual' | null;
+    name: string | null;
+    customerKey: string | null;
+    contractNumber: string | null;
+    currentReading: number | null;
+    previousReading: number | null;
+    paymentStatus: string | null;
+    latestBillAmount: number | null;
+    latestOutstanding: number | null;
+    latestPeriod: string | null;
+    latestBillKey: string | null;
+}
+
+export const dbGetCustomerCurrentStateForDoubleCheck = async (
+    customerKey: string,
+    contractNo?: string
+): Promise<CustomerDoubleCheckSummary> => {
+    const rawKey = (customerKey || '').trim();
+    const rawContract = (contractNo || '').trim();
+
+    if (!rawKey && !rawContract) {
+        return {
+            found: false,
+            customerType: null,
+            name: null,
+            customerKey: null,
+            contractNumber: null,
+            currentReading: null,
+            previousReading: null,
+            paymentStatus: null,
+            latestBillAmount: null,
+            latestOutstanding: null,
+            latestPeriod: null,
+            latestBillKey: null,
+        };
+    }
+
+    try {
+        // 1. Try individual_customers
+        const indRows: any[] = await query(`
+            SELECT 'individual' as type, "customerKeyNumber", "contractNumber", name, "paymentStatus", "currentReading", "previousReading"
+            FROM individual_customers
+            WHERE deleted_at IS NULL AND (
+                "customerKeyNumber" = $1 OR "contractNumber" = $2
+                OR "customerKeyNumber" ILIKE $1 OR "contractNumber" ILIKE $2
+            )
+            LIMIT 1
+        `, [rawKey, rawContract]);
+
+        let matched = indRows && indRows[0];
+        let custType: 'bulk' | 'individual' = 'individual';
+
+        if (!matched) {
+            // 2. Try bulk_meters
+            const bmRows: any[] = await query(`
+                SELECT 'bulk' as type, "customerKeyNumber", "contractNumber", name, "paymentStatus", "currentReading", "previousReading"
+                FROM bulk_meters
+                WHERE deleted_at IS NULL AND (
+                    "customerKeyNumber" = $1 OR "contractNumber" = $2
+                    OR "customerKeyNumber" ILIKE $1 OR "contractNumber" ILIKE $2
+                )
+                LIMIT 1
+            `, [rawKey, rawContract]);
+            if (bmRows && bmRows[0]) {
+                matched = bmRows[0];
+                custType = 'bulk';
+            }
+        }
+
+        if (!matched) {
+            return {
+                found: false,
+                customerType: null,
+                name: null,
+                customerKey: rawKey || null,
+                contractNumber: rawContract || null,
+                currentReading: null,
+                previousReading: null,
+                paymentStatus: null,
+                latestBillAmount: null,
+                latestOutstanding: null,
+                latestPeriod: null,
+                latestBillKey: null,
+            };
+        }
+
+        // Fetch latest bill for this customer
+        const billRows: any[] = await query(`
+            SELECT *
+            FROM bills
+            WHERE deleted_at IS NULL AND (
+                "CUSTOMERKEY" = $1 OR individual_customer_id = $1
+            )
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [matched.customerKeyNumber]);
+
+        const latestBill = billRows && billRows[0];
+
+        return {
+            found: true,
+            customerType: custType,
+            name: matched.name,
+            customerKey: matched.customerKeyNumber,
+            contractNumber: matched.contractNumber,
+            currentReading: matched.currentReading != null ? Number(matched.currentReading) : null,
+            previousReading: matched.previousReading != null ? Number(matched.previousReading) : null,
+            paymentStatus: matched.paymentStatus,
+            latestBillAmount: latestBill?.TOTALBILLAMOUNT != null ? Number(latestBill.TOTALBILLAMOUNT) : null,
+            latestOutstanding: latestBill?.OUTSTANDINGAMT != null ? Number(latestBill.OUTSTANDINGAMT) : null,
+            latestPeriod: latestBill?.monthYear || null,
+            latestBillKey: latestBill?.bill_id || null,
+        };
+    } catch (err) {
+        console.error('[dbGetCustomerCurrentStateForDoubleCheck] Error:', err);
+        return {
+            found: false,
+            customerType: null,
+            name: null,
+            customerKey: rawKey || null,
+            contractNumber: rawContract || null,
+            currentReading: null,
+            previousReading: null,
+            paymentStatus: null,
+            latestBillAmount: null,
+            latestOutstanding: null,
+            latestPeriod: null,
+            latestBillKey: null,
+        };
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AAWSA Batch Sync — Job Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ensure the aawsa_sync_jobs tracking table exists with all high-volume columns.
+ * Called once at startup by the batch sync route so no manual migration is needed.
+ * Adds missing columns via ALTER TABLE IF NOT EXISTS (idempotent).
+ */
+export const dbEnsureSyncJobsTable = async (): Promise<void> => {
+    await query(`
+        CREATE TABLE IF NOT EXISTS aawsa_sync_jobs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            job_type TEXT NOT NULL DEFAULT 'batch_bulk',
+            triggered_by TEXT,
+            started_at TIMESTAMPTZ DEFAULT NOW(),
+            completed_at TIMESTAMPTZ,
+            total_meters INTEGER DEFAULT 0,
+            synced_ok INTEGER DEFAULT 0,
+            synced_error INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'running',
+            summary JSONB,
+            error TEXT,
+            filters JSONB,
+            current_offset INTEGER DEFAULT 0,
+            chunk_size INTEGER DEFAULT 500,
+            estimated_completion_at TIMESTAMPTZ,
+            cancelled_at TIMESTAMPTZ
+        )
+    `, []);
+    // Add missing columns for existing installations (idempotent)
+    const alterCols = [
+        `ALTER TABLE aawsa_sync_jobs ADD COLUMN IF NOT EXISTS filters JSONB`,
+        `ALTER TABLE aawsa_sync_jobs ADD COLUMN IF NOT EXISTS current_offset INTEGER DEFAULT 0`,
+        `ALTER TABLE aawsa_sync_jobs ADD COLUMN IF NOT EXISTS chunk_size INTEGER DEFAULT 500`,
+        `ALTER TABLE aawsa_sync_jobs ADD COLUMN IF NOT EXISTS estimated_completion_at TIMESTAMPTZ`,
+        `ALTER TABLE aawsa_sync_jobs ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ`,
+        `ALTER TABLE aawsa_sync_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+    ];
+    for (const sql of alterCols) {
+        try { await query(sql, []); } catch (_) { /* column already exists */ }
+    }
+};
+
+export interface SyncJobFilters {
+    branchId?: string | null;
+    unpaidOnly?: boolean;
+    monthYear?: string | null;
+}
+
+export interface SyncJobRow {
+    id: string;
+    job_type: string;
+    triggered_by: string | null;
+    started_at: string;
+    completed_at: string | null;
+    cancelled_at: string | null;
+    updated_at?: string | null;
+    total_meters: number;
+    synced_ok: number;
+    synced_error: number;
+    current_offset: number;
+    chunk_size: number;
+    estimated_completion_at: string | null;
+    status: 'running' | 'done' | 'partial' | 'error' | 'cancelled';
+    filters: SyncJobFilters | null;
+    summary: any;
+    error: string | null;
+}
+
+export const dbCreateSyncJob = async (params: {
+    jobType?: string;
+    triggeredBy?: string | null;
+    totalMeters: number;
+    chunkSize?: number;
+    filters?: SyncJobFilters;
+}): Promise<SyncJobRow> => {
+    const rows: any = await query(`
+        INSERT INTO aawsa_sync_jobs
+            (job_type, triggered_by, total_meters, status, chunk_size, filters, current_offset, updated_at)
+        VALUES ($1, $2, $3, 'running', $4, $5, 0, NOW())
+        RETURNING *
+    `, [
+        params.jobType || 'batch_bulk',
+        params.triggeredBy || null,
+        params.totalMeters,
+        params.chunkSize || 500,
+        params.filters ? JSON.stringify(params.filters) : null
+    ]);
+    return rows[0];
+};
+
+/** Fetch a single sync job by id for real-time polling */
+export const dbGetSyncJob = async (jobId: string): Promise<SyncJobRow | null> => {
+    try {
+        const rows: any = await query(
+            `SELECT * FROM aawsa_sync_jobs WHERE id = $1 LIMIT 1`,
+            [jobId]
+        );
+        return rows[0] || null;
+    } catch {
+        return null;
+    }
+};
+
+/** Cancel a running sync job (marks it cancelled so the worker stops on next chunk) */
+export const dbCancelSyncJob = async (jobId: string): Promise<void> => {
+    try {
+        await query(
+            `UPDATE aawsa_sync_jobs SET status = 'cancelled', cancelled_at = NOW(), completed_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'running'`,
+            [jobId]
+        );
+    } catch (err) {
+        console.warn('[dbCancelSyncJob] Error:', err);
+    }
+};
+
+export const dbUpdateSyncJob = async (
+    id: string,
+    update: {
+        syncedOk?: number;
+        syncedError?: number;
+        status?: 'running' | 'done' | 'partial' | 'error' | 'cancelled';
+        summary?: any;
+        error?: string | null;
+    }
+): Promise<void> => {
+    const sets: string[] = ['completed_at = NOW()', 'updated_at = NOW()'];
+    const params: any[] = [id];
+    let idx = 2;
+    if (update.syncedOk !== undefined) { sets.push(`synced_ok = $${idx++}`); params.push(update.syncedOk); }
+    if (update.syncedError !== undefined) { sets.push(`synced_error = $${idx++}`); params.push(update.syncedError); }
+    if (update.status !== undefined) {
+        if (update.status === 'cancelled') {
+            sets.push(`status = $${idx++}`);
+            params.push(update.status);
+        } else {
+            // Protect 'cancelled' status: once cancelled by user, never overwrite with partial/done/error
+            sets.push(`status = CASE WHEN status = 'cancelled' THEN 'cancelled' ELSE $${idx++} END`);
+            params.push(update.status);
+        }
+    }
+    if (update.summary !== undefined) { sets.push(`summary = $${idx++}`); params.push(JSON.stringify(update.summary)); }
+    if (update.error !== undefined) { sets.push(`error = $${idx++}`); params.push(update.error); }
+    await query(`UPDATE aawsa_sync_jobs SET ${sets.join(', ')} WHERE id = $1`, params);
+};
+
+export const dbUpdateSyncJobProgress = async (
+    id: string,
+    syncedOk: number,
+    syncedError: number,
+    currentOffset?: number,
+    estimatedCompletionAt?: Date | null
+): Promise<void> => {
+    try {
+        const sets = ['synced_ok = $2', 'synced_error = $3', 'updated_at = NOW()'];
+        const params: any[] = [id, syncedOk, syncedError];
+        if (currentOffset !== undefined) {
+            params.push(currentOffset);
+            sets.push(`current_offset = $${params.length}`);
+        }
+        if (estimatedCompletionAt !== undefined) {
+            params.push(estimatedCompletionAt);
+            sets.push(`estimated_completion_at = $${params.length}`);
+        }
+        await query(
+            `UPDATE aawsa_sync_jobs SET ${sets.join(', ')} WHERE id = $1`,
+            params
+        );
+    } catch (err) {
+        console.warn('[dbUpdateSyncJobProgress] failed to update intermediate progress:', err);
+    }
+};
+
+/**
+ * Attempt to acquire a distributed cluster-safe sync lock.
+ * Checks for any active 'running' job in the database with recent heartbeat within the safety window (default 5 mins).
+ * Returns { acquired: true } if no active job exists, or { acquired: false, runningJob } if occupied.
+ */
+export const dbTryAcquireSyncLock = async (maxRunningMinutes = 5): Promise<{ acquired: boolean; runningJob?: any }> => {
+    try {
+        await dbEnsureSyncJobsTable();
+
+        // Auto-heal stale running jobs whose heartbeat has expired (crashed or killed processes)
+        try {
+            await query(
+                `UPDATE aawsa_sync_jobs 
+                 SET status = 'partial', 
+                     completed_at = NOW(), 
+                     updated_at = NOW(),
+                     error = 'Sync process interrupted (heartbeat expired or process crashed)'
+                 WHERE status = 'running' 
+                   AND COALESCE(updated_at, started_at) <= NOW() - ($1 || ' minutes')::interval`,
+                [String(maxRunningMinutes)]
+            );
+        } catch (_healErr) {
+            // non-fatal
+        }
+
+        const rows: any = await query(
+            `SELECT id, started_at, updated_at, total_meters, synced_ok, synced_error 
+             FROM aawsa_sync_jobs 
+             WHERE status = 'running' 
+               AND COALESCE(updated_at, started_at) > NOW() - ($1 || ' minutes')::interval 
+             ORDER BY started_at DESC 
+             LIMIT 1`,
+            [String(maxRunningMinutes)]
+        );
+        if (rows && rows.length > 0) {
+            return { acquired: false, runningJob: rows[0] };
+        }
+        return { acquired: true };
+    } catch (err) {
+        console.warn('[dbTryAcquireSyncLock] Error checking active sync job in DB:', err);
+        return { acquired: true };
+    }
+};
+
+/**
+ * Release sync lock placeholder (jobs automatically mark status 'done'/'error' on finish).
+ */
+export const dbReleaseSyncLock = async (): Promise<boolean> => {
+    return true;
+};
+
+export const dbGetLatestSyncJob = async (): Promise<SyncJobRow | null> => {
+    try {
+        const rows: any = await query(
+            `SELECT * FROM aawsa_sync_jobs ORDER BY started_at DESC LIMIT 1`,
+            []
+        );
+        return rows[0] || null;
+    } catch {
+        return null;
+    }
+};
+
+/**
+ * Fetch all active bulk meter keys (legacy — loads all into memory).
+ * For large volumes (100k+) prefer dbGetBulkMetersSyncChunk with cursor pagination.
+ */
+export const dbGetAllActiveBulkMeterKeys = async (): Promise<
+    Array<{ customerKeyNumber: string; contractNumber: string | null; name: string }>
+> => {
+    const rows: any = await query(
+        `SELECT "customerKeyNumber", "contractNumber", name
+         FROM bulk_meters
+         WHERE deleted_at IS NULL AND status != 'Pending Approval'
+         ORDER BY "customerKeyNumber" ASC`,
+        []
+    );
+    return rows as Array<{ customerKeyNumber: string; contractNumber: string | null; name: string }>;
+};
+
+/**
+ * Cursor-based chunked query for high-volume (100k+) batch sync.
+ * Supports:
+ *   - branchId filter (sync only one branch at a time)
+ *   - unpaidOnly filter (skip already-paid meters — huge efficiency gain)
+ *   - monthYear filter (target a specific billing cycle)
+ *   - OFFSET/LIMIT pagination for checkpoint/resume
+ *
+ * @param offset - cursor position (0-indexed), resume from last saved current_offset
+ * @param limit  - chunk size (default 500)
+ * @param filters - optional scope filters
+ */
+export const dbGetBulkMetersSyncChunk = async (
+    offset: number,
+    limit: number = 500,
+    filters?: SyncJobFilters
+): Promise<Array<{ customerKeyNumber: string; contractNumber: string | null; name: string; branchId: string | null }>> => {
+    const params: any[] = [limit, offset];
+    const conditions: string[] = [
+        `bm.deleted_at IS NULL`,
+        `bm.status != 'Pending Approval'`,
+    ];
+
+    if (filters?.branchId) {
+        params.push(filters.branchId);
+        conditions.push(`bm.branch_id = $${params.length}`);
+    }
+
+    if (filters?.unpaidOnly) {
+        let monthCondition = '';
+        if (filters.monthYear) {
+            params.push(filters.monthYear);
+            monthCondition = `AND b.month_year = $${params.length}`;
+        }
+        conditions.push(`EXISTS (
+            SELECT 1 FROM bills b
+            WHERE b.deleted_at IS NULL
+              AND (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+              AND LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid'
+              ${monthCondition}
+        )`);
+    }
+
+    const sql = `
+        SELECT bm."customerKeyNumber", bm."contractNumber", bm.name, bm.branch_id as "branchId"
+        FROM bulk_meters bm
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY bm."customerKeyNumber" ASC
+        LIMIT $1 OFFSET $2
+    `;
+
+    const rows: any = await query(sql, params);
+    return rows as Array<{ customerKeyNumber: string; contractNumber: string | null; name: string; branchId: string | null }>;
+};
+
+/**
+ * Count total meters matching the sync filters (used for accurate progress % and ETA calculation).
+ */
+export const dbCountBulkMetersForSync = async (filters?: SyncJobFilters): Promise<number> => {
+    const params: any[] = [];
+    const conditions: string[] = [
+        `bm.deleted_at IS NULL`,
+        `bm.status != 'Pending Approval'`,
+    ];
+
+    if (filters?.branchId) {
+        params.push(filters.branchId);
+        conditions.push(`bm.branch_id = $${params.length}`);
+    }
+
+    if (filters?.unpaidOnly) {
+        let monthCondition = '';
+        if (filters.monthYear) {
+            params.push(filters.monthYear);
+            monthCondition = `AND b.month_year = $${params.length}`;
+        }
+        conditions.push(`EXISTS (
+            SELECT 1 FROM bills b
+            WHERE b.deleted_at IS NULL
+              AND (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+              AND LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid'
+              ${monthCondition}
+        )`);
+    }
+
+    const sql = `SELECT COUNT(*) as total FROM bulk_meters bm WHERE ${conditions.join(' AND ')}`;
+    const rows: any = await query(sql, params);
+    return Number(rows[0]?.total || 0);
 };

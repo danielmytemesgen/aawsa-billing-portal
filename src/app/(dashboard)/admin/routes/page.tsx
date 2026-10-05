@@ -73,6 +73,14 @@ export default function RoutesPage() {
         });
     }, [fetchRoutes]);
 
+    // Auto-refresh when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => { fetchRoutes(); };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, [fetchRoutes]);
+
+
     const handleAddRoute = () => {
         if (!canCreate) return;
         // Pre-fill branch for branch managers

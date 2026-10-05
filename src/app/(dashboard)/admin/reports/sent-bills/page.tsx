@@ -199,6 +199,25 @@ export default function SentBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
 
+  // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
+  const fetchBillsRef = React.useRef<() => void>(() => {});
+  React.useEffect(() => {
+    fetchBillsRef.current = async () => {
+      setIsLoading(true);
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+      const result = await getAllSentBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
+      if (result.success && result.bills) { setBills(result.bills); setTotalBills(result.total || 0); } else { setBills([]); setTotalBills(0); }
+      setIsLoading(false);
+    };
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+  React.useEffect(() => {
+    const handleDataRefreshed = () => { fetchBillsRef.current(); };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
     || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
     || hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS)

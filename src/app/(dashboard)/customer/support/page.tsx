@@ -29,6 +29,15 @@ export default function CustomerSupportPage() {
 
   const { tickets, isLoading, refetch } = useCustomerTickets(customerKey);
 
+  // Auto-refresh: re-fetch customer tickets when DataRefreshProvider signals new data
+  useEffect(() => {
+    const handleDataRefreshed = () => {
+      refetch();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [refetch]);
+
   const openTicketsCount = tickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length;
   const resolvedCount = tickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
 

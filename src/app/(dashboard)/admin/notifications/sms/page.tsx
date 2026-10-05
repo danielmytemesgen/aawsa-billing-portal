@@ -91,6 +91,17 @@ export default function SmsNotificationPage() {
     }
   }, [canSendSms]);
 
+  // Auto-refresh: re-fetch billing months when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    if (!canSendSms) return;
+    const handleDataRefreshed = async () => {
+      const res = await getDistinctBillingMonthsAction();
+      if (res.data) setMonths(res.data as string[]);
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [canSendSms]);
+
   const handleDragStart = (e: React.DragEvent, placeholder: string) => {
     e.dataTransfer.setData("text/plain", placeholder);
     e.dataTransfer.effectAllowed = "copy";

@@ -58,6 +58,15 @@ export default function FaultCodesPage() {
         return () => unsubscribe();
     }, []);
 
+    // Auto-refresh when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            setData(getFaultCodes());
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     React.useEffect(() => {
         if (!searchQuery) {
             setFilteredData(data);

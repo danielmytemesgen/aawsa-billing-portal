@@ -29,6 +29,14 @@ module.exports = {
       script: serverScript,
       instances: isWindows ? 1 : 'max',
       exec_mode: isWindows ? 'fork' : 'cluster',
+      // Log rotation: cap each file at 10 MB, keep 7 rotated copies
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: './logs/err.log',
+      out_file: './logs/out.log',
+      combine_logs: false,
+      max_size: '10M',
+      retain: 7,
+      compress: true,
       env: {
         NODE_ENV: 'production',
         PORT: process.env.PORT || (useHttps ? 443 : 3000),

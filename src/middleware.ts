@@ -13,7 +13,7 @@ async function decrypt(token: string): Promise<any> {
   return payload;
 }
 
-const protectedRoutes = ['/admin', '/staff'];
+const protectedRoutes = ['/admin', '/staff', '/customer'];
 const adminRoutes = ['/admin'];
 const staffRoutes = ['/staff'];
 
@@ -46,13 +46,15 @@ async function getLivePermissions(session: any, request: NextRequest): Promise<s
   }
 
   try {
+    const internalKey = process.env.INTERNAL_API_KEY;
+    if (!internalKey) return null; // key not configured — skip live lookup, fall back to JWT
     const origin = getInternalOrigin(request);
     const res = await fetch(
       `${origin}/api/permissions/live?staffId=${encodeURIComponent(staffId)}`,
       {
         headers: {
           Accept: 'application/json',
-          'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
+          'x-internal-key': internalKey,
         },
         signal: AbortSignal.timeout(1500),
       }
@@ -83,13 +85,15 @@ async function isSessionRevoked(session: any, request: NextRequest): Promise<boo
     return false;
   }
   try {
+    const internalKey = process.env.INTERNAL_API_KEY;
+    if (!internalKey) return false; // key not configured — skip revocation check, fail-open
     const origin = getInternalOrigin(request);
     const res = await fetch(
       `${origin}/api/session/revocation-status?sessionId=${encodeURIComponent(sessionId)}`,
       {
         headers: {
           Accept: 'application/json',
-          'x-internal-key': process.env.INTERNAL_API_KEY || 'aawsa-internal-secret-2026',
+          'x-internal-key': internalKey,
         },
         signal: AbortSignal.timeout(1500),
       }
@@ -105,6 +109,54 @@ async function isSessionRevoked(session: any, request: NextRequest): Promise<boo
   } catch (e) {
     return false;
   }
+}
+
+/**
+ * CSRF protection: for mutating HTTP methods (POST/PUT/PATCH/DELETE) that are NOT
+ * Next.js Server Actions (those carry their own origin check), we validate that the
+ * Origin or Referer header matches the app origin.
+ *
+ * Returns true if the request should be blocked.
+ */
+function isCsrfBlocked(request: NextRequest): boolean {
+  const method = request.method?.toUpperCase();
+  if (!method || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return false;
+
+  // Next.js Server Actions always include the Next-Action header — allow them through
+  // (they have their own origin check inside the framework).
+  if (request.headers.get('next-action')) return false;
+
+  // Allow internal API calls (already secured by INTERNAL_API_KEY)
+  if (request.headers.get('x-internal-key')) return false;
+
+  // Allow JSON API calls from the same origin (e.g. fetch() in useEffect / SWR)
+  const origin = request.headers.get('origin');
+  const referer = request.headers.get('referer');
+  const allowedHosts = new Set(
+    [
+      request.headers.get('x-forwarded-host'),
+      request.headers.get('host'),
+      request.nextUrl.host,
+    ].filter(Boolean) as string[]
+  );
+
+  if (origin) {
+    try {
+      const originHost = new URL(origin).host;
+      if (allowedHosts.size > 0 && !allowedHosts.has(originHost)) return true; // cross-origin — block
+    } catch {
+      return true; // malformed origin — block
+    }
+  } else if (referer) {
+    try {
+      const refHost = new URL(referer).host;
+      if (allowedHosts.size > 0 && !allowedHosts.has(refHost)) return true;
+    } catch {
+      return true;
+    }
+  }
+  // No Origin or Referer — allow (same-origin browser forms, curl, internal calls)
+  return false;
 }
 
 function setSecurityHeaders(res: NextResponse) {
@@ -198,9 +250,25 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const staticPrefixes = ['/_next/', '/favicon.ico', '/manifest.json', '/sw.js', '/public/', '/api/'];
   if (staticPrefixes.some(p => path === p || path.startsWith(p))) {
+    // Apply CSRF check on API routes for mutating methods
+    if (path.startsWith('/api/') && isCsrfBlocked(request)) {
+      return new NextResponse('Forbidden: Cross-origin request blocked', { status: 403 });
+    }
     const res = NextResponse.next();
     return setSecurityHeaders(res);
   }
+
+  // Allow headless cron requests to backup API endpoints if valid cron secret is supplied
+  if (path.startsWith('/admin/backup/api')) {
+    const cronSecret = process.env.BACKUP_CRON_SECRET;
+    const reqCronSecret = request.headers.get('x-cron-secret') ||
+      request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+    if (cronSecret && reqCronSecret && reqCronSecret === cronSecret) {
+      const res = NextResponse.next();
+      return setSecurityHeaders(res);
+    }
+  }
+
   const isProtectedRoute = protectedRoutes.some(route => path.startsWith(route));
 
   const cookie = request.cookies.get('session')?.value;
@@ -215,6 +283,25 @@ export async function middleware(request: NextRequest) {
   }
 
   if (!isProtectedRoute) {
+    const res = NextResponse.next();
+    return setSecurityHeaders(res);
+  }
+
+  // Customer Portal Route Protection
+  if (path.startsWith('/customer')) {
+    const customerCookie = request.cookies.get('customer_session')?.value;
+    let customerSession = null;
+    if (customerCookie) {
+      try {
+        customerSession = await decrypt(customerCookie);
+      } catch (e) {
+        customerSession = null;
+      }
+    }
+    if (!customerSession || !customerSession.customerKeyNumber) {
+      const redirect = NextResponse.redirect(new URL('/customer-login', request.url));
+      return setSecurityHeaders(redirect);
+    }
     const res = NextResponse.next();
     return setSecurityHeaders(res);
   }

@@ -69,6 +69,7 @@ const initialMemoizedDetails = {
     penaltyAmt: 0,
     outstandingBill: 0, totalPayable: 0, paymentStatus: 'Unpaid' as PaymentStatus,
     month: 'N/A',
+    billKey: null as string | null,
   },
   totalIndividualUsage: 0,
 };
@@ -288,6 +289,7 @@ export default function StaffBulkMeterDetailsPage() {
         totalPayable: (billToRender.OUTSTANDINGAMT ?? reconstructedOutstanding) + getMonthlyBillAmt(billToRender) + Number(billToRender.PENALTYAMT || 0),
         paymentStatus: (billToRender.paymentStatus as PaymentStatus) || 'Unpaid',
         month: billToRender.monthYear,
+        billKey: billToRender.BILLKEY || (billToRender as any).billKey || null,
       };
     } else {
       // Reconstruction for current unsaved bill
@@ -328,7 +330,8 @@ export default function StaffBulkMeterDetailsPage() {
         outstandingBill: Number(currentReconstructedOutstanding.toFixed(2)),
         totalPayable: Number((currentReconstructedOutstanding + differenceBill + livePenaltyAmt).toFixed(2)),
         paymentStatus: paymentStatus,
-        month: currentBulkMeter.month || 'N/A'
+        month: currentBulkMeter.month || 'N/A',
+        billKey: null,
       };
     }
 
@@ -484,13 +487,26 @@ export default function StaffBulkMeterDetailsPage() {
       }
     };
 
+    const handleDataRefreshed = () => {
+      handleStoresUpdate();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+
     const unsubBM = subscribeToBulkMeters(handleStoresUpdate);
     const unsubCust = subscribeToCustomers(handleStoresUpdate);
     const unsubBranches = subscribeToBranches(handleStoresUpdate);
     const unsubMeterReadings = subscribeToBulkMeterReadings(handleStoresUpdate);
     const unsubBills = subscribeToBills(handleStoresUpdate);
 
-    return () => { isMounted = false; unsubBM(); unsubCust(); unsubBranches(); unsubMeterReadings(); unsubBills(); };
+    return () => {
+      isMounted = false;
+      window.removeEventListener('data-refreshed', handleDataRefreshed);
+      unsubBM();
+      unsubCust();
+      unsubBranches();
+      unsubMeterReadings();
+      unsubBills();
+    };
   }, [bulkMeterKey, router, toast]);
 
   useEffect(() => {
@@ -645,6 +661,21 @@ export default function StaffBulkMeterDetailsPage() {
     isMinOfThreeApplied,
     rawDifference,
   } = memoizedDetails;
+
+  // Count how many distinct months are carrying unpaid debt that feeds into the outstanding balance.
+  const overdueMonthsCount = useMemo(() => {
+    if (!billingHistory.length) return 0;
+    const displayedMonth = billCardDetails.month && billCardDetails.month !== 'N/A'
+      ? billCardDetails.month
+      : null;
+    const unpaidOlderBills = billingHistory.filter(b => {
+      if (b.paymentStatus === 'Paid') return false;
+      if (b.status === 'Deleted' || b.status === 'Void' || b.status === 'Reversed') return false;
+      if (!displayedMonth) return true;
+      return b.monthYear < displayedMonth;
+    });
+    return unpaidOlderBills.length;
+  }, [billingHistory, billCardDetails.month]);
 
   const handleEditBulkMeter = () => setIsBulkMeterFormOpen(true);
   const handleDeleteBulkMeter = () => setIsBulkMeterDeleteDialogOpen(true);
@@ -1074,6 +1105,7 @@ export default function StaffBulkMeterDetailsPage() {
                       <tr><td>Account Name</td><td>{bulkMeter.name}</td></tr>
                       <tr><td>Customer Key</td><td>{bulkMeter.customerKeyNumber}</td></tr>
                       <tr><td>Contract Number</td><td>{bulkMeter.contractNumber ?? 'N/A'}</td></tr>
+                      <tr><td>Bill Key</td><td className="font-mono font-bold">{billForPrintView?.BILLKEY || (billForPrintView as any)?.billKey || 'N/A'}</td></tr>
                       <tr><td>Operational Branch</td><td>{displayBranchName ?? 'N/A'}</td></tr>
                       <tr><td>Location (Sub-City)</td><td>{bulkMeter.location}</td></tr>
                     </tbody>
@@ -1280,10 +1312,35 @@ export default function StaffBulkMeterDetailsPage() {
 
             <Card className="shadow-lg border-primary/20">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <DollarSign className="h-4 w-4 text-primary" />
-                  Difference Billing Calculation
-                </CardTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-primary" />
+                    Difference Billing Calculation
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    {billCardDetails.billKey && (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 text-[11px] px-2 py-0.5 font-mono font-bold bg-muted/60 text-foreground border"
+                      >
+                        Key: {billCardDetails.billKey}
+                      </Badge>
+                    )}
+                    {billCardDetails.month && billCardDetails.month !== 'N/A' && (
+                      <Badge
+                        variant="secondary"
+                        className="shrink-0 text-[11px] px-2 py-0.5 bg-primary/10 text-primary border border-primary/25 font-semibold tracking-wide"
+                      >
+                        {billCardDetails.month}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <CardDescription className="text-[11px] mt-0.5">
+                  {billCardDetails.month && billCardDetails.month !== 'N/A'
+                    ? `Showing billed data for month: ${billCardDetails.month}`
+                    : 'Live calculation — no billing history yet'}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-1.5 text-sm">
                 {/* Difference Usage highlight */}
@@ -1327,9 +1384,26 @@ export default function StaffBulkMeterDetailsPage() {
                     <span className="font-medium">Penalty</span>
                     <span className="font-semibold tabular-nums">ETB {billCardDetails.penaltyAmt.toFixed(2)}</span>
                   </div>
-                  <div className={cn("flex items-center justify-between py-0.5", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>
-                    <span className="font-medium">Outstanding</span>
-                    <span className="font-semibold tabular-nums">ETB {billCardDetails.outstandingBill.toFixed(2)}</span>
+                  <div className={cn("py-0.5", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">Outstanding</span>
+                        {billCardDetails.outstandingBill > 0 && overdueMonthsCount > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/25">
+                            {overdueMonthsCount} month{overdueMonthsCount !== 1 ? 's' : ''} overdue
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-semibold tabular-nums">ETB {billCardDetails.outstandingBill.toFixed(2)}</span>
+                    </div>
+                    {billCardDetails.outstandingBill > 0 && overdueMonthsCount > 0 && (
+                      <p className="text-[10px] text-destructive/70 mt-0.5 text-right">
+                        Accumulated unpaid debt from {overdueMonthsCount} previous billing cycle{overdueMonthsCount !== 1 ? 's' : ''}
+                      </p>
+                    )}
+                    {billCardDetails.outstandingBill <= 0 && (
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 text-right">No carried-forward debt</p>
+                    )}
                   </div>
                   <div className="flex items-center justify-between px-3 py-2 rounded-md bg-primary/10 border border-primary/30 mt-1">
                     <span className="font-bold text-primary">Total Amount Payable</span>
@@ -1537,7 +1611,10 @@ export default function StaffBulkMeterDetailsPage() {
                   const displayDiffUsage = !isNaN(diffUsageValue) ? diffUsageValue.toFixed(2) : 'N/A';
                   return (
                     <TableRow key={bill.id ?? `${bill.monthYear}-${String(bill.billPeriodEndDate)}-${_billIndex}`}>
-                      <TableCell>{bill.monthYear}</TableCell>
+                      <TableCell>
+                        <div className="font-semibold">{bill.monthYear}</div>
+                        {bill.BILLKEY && <div className="text-[10px] font-mono text-muted-foreground">{bill.BILLKEY}</div>}
+                      </TableCell>
                       <TableCell>{format(
                         Object.prototype.toString.call(bill.billPeriodEndDate) === '[object Date]'
                           ? (bill.billPeriodEndDate as unknown as Date)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Table,
@@ -54,6 +54,8 @@ export default function SecurityLogsPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    const fetchLogsRef = useRef<() => void>(() => {});
+
     useEffect(() => {
         const page = parseInt(searchParams?.get('page') || '1', 10);
         const size = parseInt(searchParams?.get('pageSize') || '10', 10);
@@ -65,8 +67,18 @@ export default function SecurityLogsPage() {
         setSortBy(sort);
         setSortOrder(order);
 
+        fetchLogsRef.current = () => fetchSecurityLogs(page, size, sort, order);
         fetchSecurityLogs(page, size, sort, order);
     }, [searchParams]);
+
+    // Auto-refresh: re-fetch security logs when DataRefreshProvider signals new data
+    useEffect(() => {
+        const handleDataRefreshed = () => {
+            fetchLogsRef.current();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
 
     if (!hasPermission('settings_manage')) {
         return (

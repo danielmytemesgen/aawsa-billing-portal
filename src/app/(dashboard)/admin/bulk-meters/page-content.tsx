@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash, Download, ChevronDown, X, Building2 } from "lucide-react";
+import { PlusCircle, Gauge, Search, MapIcon, Activity, CheckCircle2, AlertCircle, ListFilter, Hash, Download, ChevronDown, X, Building2, RefreshCw, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { BulkMeterMap } from "@/components/maps/BulkMeterMap";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { bulkMeterStatuses, type BulkMeterStatus } from "./bulk-meter-types";
+import { BatchSyncProgressDialog } from "@/components/billing/BatchSyncProgressDialog";
 
 import {
   getBulkMeters,
@@ -64,7 +65,67 @@ export default function BulkMetersPage() {
   // Determines if user can see all branches (Head Office / Admin)
   const userBranchIdRaw = React.useRef<string | null>(null);
 
+  // ── AAWSA Batch Sync state ────────────────────────────────────────────────
+  const [isBatchSyncOpen, setIsBatchSyncOpen] = React.useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = React.useState<Date | null>(null);
+  const [autoSyncEnabled, setAutoSyncEnabled] = React.useState(true);
+  const [autoSyncRunning, setAutoSyncRunning] = React.useState(false);
+  const [timeAgoText, setTimeAgoText] = React.useState<string>('Never');
+  const autoSyncInProgressRef = React.useRef(false);
+
   const canCreateBulkMeter = hasPermission('bulk_meters_create') || hasPermission('bulk_meters_create_restricted');
+
+  // ── Real-time time-ago counter for badge ────────────────────────────────────
+  React.useEffect(() => {
+    const update = () => {
+      if (!lastSyncedAt) {
+        setTimeAgoText('Never');
+        return;
+      }
+      const diffSec = Math.floor((Date.now() - lastSyncedAt.getTime()) / 1000);
+      if (diffSec < 10) setTimeAgoText('Just now');
+      else if (diffSec < 60) setTimeAgoText(`${diffSec}s ago`);
+      else setTimeAgoText(`${Math.floor(diffSec / 60)}m ago`);
+    };
+    update();
+    const timer = setInterval(update, 10000);
+    return () => clearInterval(timer);
+  }, [lastSyncedAt]);
+
+  // ── Every-minute automatic background sync ────────────────────────────────
+  React.useEffect(() => {
+    if (!autoSyncEnabled) return;
+
+    const doAutoSync = async () => {
+      if (autoSyncInProgressRef.current) return;
+      autoSyncInProgressRef.current = true;
+      setAutoSyncRunning(true);
+      try {
+        const res = await fetch('/api/billing/batch-sync-bulk-meters', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-internal-key': 'd52e2cc3ace3a52a189ed2607f311da6' },
+          body: JSON.stringify({ concurrency: 20, dryRun: false }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+          setLastSyncedAt(new Date());
+          // Silently refresh active table view & summary stats
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('data-refreshed'));
+          }
+          fetchSummaryStats();
+        }
+      } catch (_e) { /* silent — don't interrupt user */ } finally {
+        autoSyncInProgressRef.current = false;
+        setAutoSyncRunning(false);
+      }
+    };
+    // Run immediately on enable/mount, then every 60 seconds
+    doAutoSync();
+    const interval = setInterval(doAutoSync, 60 * 1000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSyncEnabled]);
 
 
   const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string, branch?: string) => {
@@ -102,6 +163,16 @@ export default function BulkMetersPage() {
   React.useEffect(() => {
     fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
   }, [page, rowsPerPage, debouncedSearch, statusFilter, branchFilter, fetchData]);
+
+  // Auto-refresh: re-run current query whenever DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchData(page, rowsPerPage, debouncedSearch, statusFilter, branchFilter);
+      fetchSummaryStats();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [fetchData, fetchSummaryStats, page, rowsPerPage, debouncedSearch, statusFilter, branchFilter]);
 
   React.useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -297,16 +368,54 @@ export default function BulkMetersPage() {
           <h1 className="text-3xl font-bold tracking-tight">Bulk Meters Management</h1>
           <p className="text-muted-foreground mt-1 text-base">Monitor and organize high-volume water consumption points across all branches.</p>
         </div>
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          {/* Auto-sync status badge and ON/OFF toggle */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 shadow-sm text-xs">
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                autoSyncRunning
+                  ? 'bg-amber-500 animate-ping'
+                  : autoSyncEnabled
+                  ? 'bg-emerald-500'
+                  : 'bg-slate-400'
+              }`}
+            />
+            <span className="text-muted-foreground font-medium">Auto-sync:</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAutoSyncEnabled((v) => !v)}
+              className={`h-6 px-2 text-[11px] font-bold rounded ${
+                autoSyncEnabled
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800'
+                  : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+              }`}
+            >
+              {autoSyncEnabled ? 'ON' : 'OFF'}
+            </Button>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span className="text-muted-foreground font-normal">
+              {autoSyncRunning ? 'Syncing...' : `Last: ${timeAgoText}`}
+            </span>
+          </div>
+
+          {/* AAWSA Batch Sync button */}
+          <Button
+            onClick={() => setIsBatchSyncOpen(true)}
+            className="flex-shrink-0 shadow-sm gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <Zap className="h-4 w-4" />
+            Sync All via AAWSA
+          </Button>
           {canCreateBulkMeter && (
-            <Button onClick={handleAddBulkMeter} className="flex-shrink-0 shadow-sm order-1 md:order-2">
+            <Button onClick={handleAddBulkMeter} className="flex-shrink-0 shadow-sm">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Meter
             </Button>
           )}
           <Button
             variant="outline"
             onClick={() => setViewMode(viewMode === 'table' ? 'map' : 'table')}
-            className="flex-shrink-0 shadow-sm border-slate-200 order-2 md:order-1"
+            className="flex-shrink-0 shadow-sm border-slate-200"
           >
             <MapIcon className="mr-2 h-4 w-4" />
             {viewMode === 'table' ? 'View on Map' : 'Back to Table'}
@@ -603,6 +712,7 @@ export default function BulkMetersPage() {
                 canEdit={hasPermission('bulk_meters_update')}
                 canDelete={hasPermission('bulk_meters_delete')}
                 canApprove={hasPermission('bulk_meters_approve')}
+                canSwapMeter={hasPermission('meter_change_create') || hasPermission('meter_change_manage')}
                 selectedMeters={selectedMeters}
                 onSelectionChange={setSelectedMeters}
               />
@@ -661,6 +771,13 @@ export default function BulkMetersPage() {
         onComplete={() => {
           setSelectedMeters(new Set());
         }}
+      />
+
+      {/* AAWSA Batch Sync Dialog */}
+      <BatchSyncProgressDialog
+        isOpen={isBatchSyncOpen}
+        onOpenChange={setIsBatchSyncOpen}
+        autoStart={false}
       />
     </div>
   );

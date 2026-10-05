@@ -40,6 +40,15 @@ export default function MaintenancePage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Auto-refresh: re-fetch system maintenance stats when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchStats();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   const handleArchive = async () => {
     if (!confirm("Are you sure you want to archive records older than 36 months? This will move them to history tables.")) return;
     

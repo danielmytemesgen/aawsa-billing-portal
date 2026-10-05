@@ -515,6 +515,20 @@ export default function StaffReportsPage() {
     }
   }, [canGenerateAllReports]);
 
+  // Auto-refresh: re-fetch bulk meters and branches when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = async () => {
+      const rawBms = ((await getAllBulkMetersAction())?.data as any[] ?? []);
+      setBulkMeters(rawBms.map(mapBulkMeter));
+      if (canGenerateAllReports) {
+        const branchRes = ((await getAllBranchesAction())?.data as any[] ?? []);
+        setAllBranches(branchRes);
+      }
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [canGenerateAllReports]);
+
   React.useEffect(() => { setSelectedColumns(new Set(selectedReport?.headers || [])); }, [selectedReport]);
 
   const getFilteredData = React.useCallback(async () => {

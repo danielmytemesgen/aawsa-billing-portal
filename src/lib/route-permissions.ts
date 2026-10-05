@@ -225,6 +225,18 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.SUPPORT_MANAGE,
       ],
     },
+    {
+      match: (currentPath) => currentPath.startsWith('/admin/meter-change') || currentPath.startsWith('/staff/meter-change'),
+      anyOf: [
+        PERMISSIONS.METER_CHANGE_VIEW,
+        PERMISSIONS.METER_CHANGE_CREATE,
+        PERMISSIONS.METER_CHANGE_MANAGE,
+        PERMISSIONS.CUSTOMERS_UPDATE,
+        PERMISSIONS.BULK_METERS_UPDATE,
+        PERMISSIONS.SETTINGS_MANAGE,
+        PERMISSIONS.DASHBOARD_VIEW_ALL,
+      ],
+    },
   ];
 
   return rules.find((rule) => rule.match(path));

@@ -1,6 +1,9 @@
 'use server'
+import { cookies } from 'next/headers';
+import { checkAawsaPaidStatus } from '@/lib/aawsa-uploader-client';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { checkActionRateLimit } from '@/lib/rate-limiter';
+import { sanitizeCsvRecords } from '@/lib/csv-sanitizer';
 import { canCreateMeterReadingForType } from '@/lib/meter-reading-permissions';
 import { format } from 'date-fns';
 import fs from 'fs';
@@ -132,6 +135,8 @@ import {
   dbGetPaidBillsPaginated,
   dbGetPaidBillsCount,
   dbBatchUpdatePaymentsFromCsv,
+  dbSyncCustomerPaymentAndReading,
+  dbGetCustomerCurrentStateForDoubleCheck,
   dbGetAllSentBillsPaginated,
   dbGetAllSentBillsCount,
   dbArchiveOldRecords,
@@ -154,6 +159,16 @@ import {
   dbGetPreApprovalAuditMetrics,
   dbGetWaterBalanceMetrics,
   type CreditLedgerEntry,
+  dbGetAllActiveBulkMeterKeys,
+  dbGetBulkMetersSyncChunk,
+  dbCountBulkMetersForSync,
+  dbCreateSyncJob,
+  dbGetSyncJob,
+  dbUpdateSyncJob,
+  dbUpdateSyncJobProgress,
+  dbEnsureSyncJobsTable,
+  dbGetLatestSyncJob,
+  type SyncJobFilters,
 } from './db-queries';
 import { roundMoney, MONEY_EPSILON } from './credit-utils';
 import { withTransaction, query } from './db';
@@ -1134,7 +1149,29 @@ export async function deleteStaffMemberAction(email: string) {
     });
   });
 }
-export async function getStaffMemberForAuthAction(email: string, password?: string) { return await wrap(() => dbGetStaffMemberForAuth(email, password)); }
+export async function getStaffMemberForAuthAction(email: string, password?: string) {
+  if (!email || !password) {
+    return { data: null, error: { message: "Email and password are required" } };
+  }
+  // Rate limit: max 5 login attempts per email per 60 seconds to prevent brute-force
+  const rateCheck = checkActionRateLimit(`staff_login:${email.toLowerCase()}`, 5, 60);
+  if (!rateCheck.allowed) {
+    return {
+      data: null,
+      error: {
+        message: `Too many login attempts. Please wait ${rateCheck.retryAfterSeconds ?? 60} seconds before trying again.`,
+        code: 'RATE_LIMITED',
+      },
+    };
+  }
+  return await wrap(async () => {
+    const user = await dbGetStaffMemberForAuth(email, password);
+    if (user && user.password) {
+      delete user.password;
+    }
+    return user;
+  });
+}
 
 export async function getBillsPaginatedAction(options: {
   limit: number;
@@ -1767,9 +1804,21 @@ export async function updateBillAction(id: string, bill: BillUpdate) {
       throw new Error(`Bill ${id} not found.`);
     }
 
+    // Immutability Guard: Unless the bill is deleted, do not change the original bill Bill Key!
+    if ((bill as any).BILLKEY !== undefined || (bill as any).billKey !== undefined) {
+      if (currentBill.BILLKEY && currentBill.BILLKEY.trim() !== '') {
+        delete (bill as any).BILLKEY;
+        delete (bill as any).billKey;
+      }
+    }
+
     if (currentBill.status === 'Approved' || currentBill.status === 'Posted') {
       // Whitelist of fields that can still be updated even for Posted bills
-      const allowedFields = ['payment_status', 'amount_paid', 'amountPaid', 'last_payment_date', 'receipt_number', 'note', 'BILLKEY'];
+      const allowedFields = ['payment_status', 'amount_paid', 'amountPaid', 'last_payment_date', 'receipt_number', 'note', 'notes', 'payment_channel', 'bank_ref', 'reconciliation_status'];
+      // Only permit BILLKEY if the bill currently has no BILLKEY
+      if (!currentBill.BILLKEY || currentBill.BILLKEY.trim() === '') {
+        allowedFields.push('BILLKEY');
+      }
       const updateFields = Object.keys(bill);
       const isSafeUpdate = updateFields.every(field => allowedFields.includes(field));
 
@@ -1779,6 +1828,16 @@ export async function updateBillAction(id: string, bill: BillUpdate) {
     }
 
     const result = await dbUpdateBill(id, bill);
+
+    // Sync aging if payment status or amount changed
+    const billCustomerKey = currentBill.CUSTOMERKEY || currentBill.individual_customer_id;
+    if (billCustomerKey && ((bill as any).payment_status !== undefined || (bill as any).amount_paid !== undefined || (bill as any).amountPaid !== undefined)) {
+      try {
+        await dbSyncAgingForCustomer(billCustomerKey);
+      } catch (e) {
+        console.error("Failed to sync aging after bill payment update:", e);
+      }
+    }
 
     if (currentBill.individual_customer_id) {
       const { dbGetCustomerById } = await import('./db-queries');
@@ -1819,6 +1878,215 @@ export async function updateBillAction(id: string, bill: BillUpdate) {
       details: { id, updates: bill }
     });
     return result;
+  });
+}
+
+export interface UpdateBillPaymentStatusPayload {
+  billId: string;
+  monthYear?: string;
+  newStatus: 'Paid' | 'Unpaid';
+  amountPaid?: number;
+  paymentDate?: string;
+  paymentChannel?: string;
+  transactionReference?: string;
+  reversalReason?: string;
+  notes?: string;
+  customerKey?: string;
+}
+
+export async function updateBillPaymentStatusAction(payload: UpdateBillPaymentStatusPayload) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_UPDATE,
+      PERMISSIONS.PAYMENTS_CREATE,
+      PERMISSIONS.BILL_VIEW_ALL
+    );
+    await verifyBillBranchAccess(payload.billId, session);
+
+    const currentBill = await dbGetBillByIdQuery(payload.billId);
+    if (!currentBill) {
+      throw new Error(`Bill ${payload.billId} not found.`);
+    }
+
+    const targetCustomerKey = payload.customerKey || currentBill.CUSTOMERKEY || currentBill.individual_customer_id;
+
+    const result = await withTransaction(async (client) => {
+      const now = new Date();
+      const pDate = payload.paymentDate ? new Date(payload.paymentDate) : now;
+      const channel = payload.paymentChannel || 'Manual / Portal';
+      const ref = payload.transactionReference ? payload.transactionReference.trim() : null;
+
+      let billUpdateFields: Record<string, any> = {};
+
+      if (payload.newStatus === 'Paid') {
+        const billTotal = Number(currentBill.TOTALBILLAMOUNT || 0);
+        const thisMonth = Number(currentBill.THISMONTHBILLAMT || 0);
+        const amountToPay = payload.amountPaid !== undefined && Number(payload.amountPaid) > 0
+          ? Number(payload.amountPaid)
+          : (billTotal > 0 ? billTotal : thisMonth);
+
+        const paymentNote = payload.notes?.trim()
+          ? `[Manual Payment: ${channel} ${pDate.toISOString().slice(0, 10)}] ${payload.notes.trim()}`
+          : `[Manual Payment: ${channel} ${pDate.toISOString().slice(0, 10)}] Marked Paid by ${session.name || session.email || 'Admin'}`;
+        const newNotes = currentBill.notes ? `${currentBill.notes}\n${paymentNote}` : paymentNote;
+
+        billUpdateFields = {
+          payment_status: 'Paid',
+          amount_paid: amountToPay,
+          last_payment_date: pDate,
+          payment_channel: channel,
+          bank_ref: ref,
+          reconciliation_status: 'Reconciled',
+          notes: newNotes,
+        };
+
+        // Helper to ensure payment_method obeys payments_payment_method_check constraint
+        const mapToAllowedMethod = (m?: string | null): 'Cash' | 'Bank Transfer' | 'Mobile Money' | 'Online Payment' | 'Other' => {
+          if (!m) return 'Other';
+          const lower = m.toLowerCase();
+          if (lower === 'cash') return 'Cash';
+          if (
+            lower.includes('telebirr') ||
+            lower.includes('cbebirr') ||
+            lower.includes('kacha') ||
+            lower.includes('safaricom') ||
+            lower.includes('awashpay') ||
+            lower.includes('ebirr') ||
+            lower.includes('hellocash') ||
+            lower.includes('mobile')
+          ) return 'Mobile Money';
+          if (
+            lower.includes('bank') ||
+            lower.includes('cbe') ||
+            lower.includes('awash') ||
+            lower.includes('dashen') ||
+            lower.includes('abyssinia') ||
+            lower.includes('hibret') ||
+            lower.includes('bunna') ||
+            lower.includes('nib') ||
+            lower.includes('transfer')
+          ) return 'Bank Transfer';
+          if (lower.includes('online')) return 'Online Payment';
+          return 'Other';
+        };
+
+        let finalRef = ref;
+        if (finalRef) {
+          // If a reference with this string already exists for this bill, append timestamp to satisfy idx_payments_dedup
+          const existingRef = await client.query(
+            'SELECT id FROM payments WHERE bill_id = $1 AND bill_month_year = $2 AND transaction_reference = $3 LIMIT 1',
+            [currentBill.id, currentBill.month_year, finalRef]
+          );
+          if (existingRef.rows && existingRef.rows.length > 0) {
+            finalRef = `${finalRef}-${Date.now().toString(36).toUpperCase()}`;
+          }
+        }
+
+        // Record in payments table for full transaction audit
+        await dbCreatePayment({
+          bill_id: currentBill.id,
+          bill_month_year: currentBill.month_year,
+          bulk_meter_id: currentBill.CUSTOMERKEY || null,
+          individual_customer_id: currentBill.individual_customer_id || null,
+          amount_paid: amountToPay,
+          payment_method: mapToAllowedMethod(channel),
+          transaction_reference: finalRef,
+          processed_by_staff_id: session.id || null,
+          payment_date: pDate,
+          notes: paymentNote,
+        }, client);
+
+      } else {
+        // Changing back to 'Unpaid' (reversal)
+        const reason = payload.reversalReason || payload.notes || 'Status reverted to Unpaid by Admin';
+        const reversalNote = `[Reversal: ${now.toISOString().slice(0, 10)}] ${reason} by ${session.name || session.email || 'Admin'}`;
+        const newNotes = currentBill.notes ? `${currentBill.notes}\n${reversalNote}` : reversalNote;
+
+        billUpdateFields = {
+          payment_status: 'Unpaid',
+          amount_paid: 0.00,
+          last_payment_date: null,
+          reconciliation_status: 'Not reconciled',
+          notes: newNotes,
+        };
+
+        // If there was an amount previously recorded as paid, record a reversal entry in payments
+        const previousPaid = Number(currentBill.amount_paid || 0);
+        if (previousPaid > 0) {
+          const timestampStr = Date.now().toString(36).toUpperCase();
+          const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+          const reversalRef = ref
+            ? `REV-${ref.replace(/^REV-/, '')}-${timestampStr}`
+            : `REV-${currentBill.id.slice(0, 8)}-${timestampStr}-${randomSuffix}`;
+
+          await dbCreatePayment({
+            bill_id: currentBill.id,
+            bill_month_year: currentBill.month_year,
+            bulk_meter_id: currentBill.CUSTOMERKEY || null,
+            individual_customer_id: currentBill.individual_customer_id || null,
+            amount_paid: -previousPaid,
+            payment_method: 'Other', // payments_payment_method_check requires one of Cash, Bank Transfer, Mobile Money, Online Payment, Other
+            transaction_reference: reversalRef,
+            processed_by_staff_id: session.id || null,
+            payment_date: now,
+            notes: `[Payment Reversal] ${reversalNote}`,
+          }, client);
+        }
+      }
+
+      // Update the bill row
+      const updatedBill = await dbUpdateBill(payload.billId, billUpdateFields, client, currentBill.month_year);
+
+      // Recalculate debt aging and sync bulk meter outstanding & status
+      if (targetCustomerKey) {
+        await dbSyncAgingForCustomer(targetCustomerKey, client);
+      }
+
+      // Recalculate bulk bill if an individual customer bill was changed
+      if (currentBill.individual_customer_id) {
+        const { dbGetCustomerById } = await import('./db-queries');
+        const customer = await dbGetCustomerById(currentBill.individual_customer_id);
+        if (customer && customer.assignedBulkMeterId) {
+          try {
+            await recalculateBulkBillAction(customer.assignedBulkMeterId, currentBill.month_year);
+          } catch (e) {
+            console.error("Failed to recalculate bulk bill after status change:", e);
+          }
+        }
+      }
+
+      // Log workflow history
+      await dbCreateBillWorkflowLog({
+        bill_id: currentBill.id,
+        from_status: currentBill.payment_status || 'Unpaid',
+        to_status: payload.newStatus,
+        changed_by: session.id,
+        reason: payload.newStatus === 'Paid'
+          ? `Marked Paid via ${payload.paymentChannel || 'Manual Payment'}${ref ? ` (Ref: ${ref})` : ''}`
+          : `Reverted to Unpaid: ${payload.reversalReason || 'Manual Reversal'}`,
+      }, client);
+
+      return updatedBill;
+    });
+
+    await logSecurityEventAction({
+      event: payload.newStatus === 'Paid' ? 'Mark Bill Paid' : 'Reverse Bill Payment',
+      customerKeyNumber: targetCustomerKey || undefined,
+      details: {
+        billId: payload.billId,
+        newStatus: payload.newStatus,
+        amountPaid: payload.amountPaid,
+        channel: payload.paymentChannel,
+        reference: payload.transactionReference,
+      }
+    });
+
+    return {
+      success: true,
+      data: result,
+      newStatus: payload.newStatus,
+      customerKey: targetCustomerKey,
+    };
   });
 }
 export async function deleteBillAction(id: string) {
@@ -2166,6 +2434,8 @@ export async function correctBillAction(id: string, reason: string) {
       delete billData.id;
       delete billData.created_at;
       delete billData.updated_at;
+      // Preserve the original BILLKEY — correction draft must carry the same Bill Key (no extension, no new key)
+      const originalBillKey = originalBill.BILLKEY?.trim() || null;
       delete billData.BILLKEY;
       delete billData.amount_paid;
       delete billData.approval_date;
@@ -2187,7 +2457,9 @@ export async function correctBillAction(id: string, reason: string) {
 
       const replacementBill = await dbCreateBill(billData, client);
       if (replacementBill?.id) {
-        const billKey = generateBillKey(replacementBill.id);
+        // Use the EXACT same Bill Key as the original bill — no extension, no new key generated.
+        // Only fall back to generating a new key if the original had none (should never happen).
+        const billKey = originalBillKey || generateBillKey(replacementBill.id);
         await dbUpdateBill(replacementBill.id, { BILLKEY: billKey }, client);
         replacementBill.BILLKEY = billKey;
       }
@@ -2293,7 +2565,7 @@ export async function getBillCorrectionDetailsAction(billId: string) {
       if (originalRef) {
         const res: any = await query(
           `SELECT * FROM bills 
-           WHERE (bill_number = $1 OR id = $1)
+           WHERE (bill_number = $1 OR id::text = $1)
              AND deleted_at IS NULL
            ORDER BY created_at DESC LIMIT 1`,
           [originalRef]
@@ -2312,7 +2584,7 @@ export async function getBillCorrectionDetailsAction(billId: string) {
              WHERE ("CUSTOMERKEY" = $1 OR individual_customer_id = $1)
                AND month_year = $2
                AND status = 'Reversed'
-               AND id != $3
+               AND id::text != $3::text
                AND deleted_at IS NULL
              ORDER BY created_at DESC LIMIT 1`,
             [custKey, currentBill.month_year, currentBill.id]
@@ -2683,6 +2955,7 @@ export async function createIndividualCustomerReadingAction(
 export async function batchCreateIndividualCustomerReadingsAction(
   items: Array<{ reading: IndividualCustomerReadingInsert; previousReading?: number }>
 ): Promise<{ success: boolean; data?: { count: number; insertedCount?: number; updatedCount?: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
+  try {
   if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
   // 1. Check reading period status ONCE
@@ -2785,15 +3058,21 @@ export async function batchCreateIndividualCustomerReadingsAction(
     const chunk = toInsert.slice(start, start + INSERT_CHUNK);
     if (chunk.length === 0) continue;
 
-    // Derive column list from first row (all rows have same shape)
-    const { reading_month: _ignored, ...firstSafe } = chunk[0].reading;
-    const cols = Object.keys(firstSafe);
+    // Derive column list as the union of all present keys across the entire chunk
+    const colSet = new Set<string>();
+    for (const item of chunk) {
+      const { reading_month: _ign, id: _ignId, created_at: _ignCa, ...safe } = item.reading;
+      Object.keys(safe).forEach(k => {
+        if (safe[k] !== undefined) colSet.add(k);
+      });
+    }
+    const cols = Array.from(colSet);
     const colsSql = cols.map(k => `"${k}"`).join(',');
 
     const params: any[] = [];
     const rowPlaceholders: string[] = [];
     for (const item of chunk) {
-      const { reading_month: _ign2, ...safe } = item.reading;
+      const safe = item.reading;
       const base = params.length;
       rowPlaceholders.push(`(${cols.map((_, ci) => `$${base + ci + 1}`).join(',')})`);
       cols.forEach(c => params.push(safe[c] ?? null));
@@ -2849,7 +3128,22 @@ export async function batchCreateIndividualCustomerReadingsAction(
     );
   }
 
+  await logSecurityEventAction({
+    event: 'Batch CSV Individual Readings',
+    details: {
+      count: createdCount,
+      insertedCount: toInsert.length,
+      updatedCount: toUpdate.length,
+      months: uniqueMonths,
+    }
+  });
+
   return { success: true, data: { count: createdCount, insertedCount: toInsert.length, updatedCount: toUpdate.length, rowResults } };
+  } catch (e) {
+    console.error('batchCreateIndividualCustomerReadingsAction unexpected error:', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    return { success: false, message: `Batch upload failed: ${msg}`, error: e };
+  }
 }
 
 
@@ -3052,6 +3346,7 @@ export async function createBulkMeterReadingAction(
 export async function batchCreateBulkMeterReadingsAction(
   items: Array<{ reading: BulkMeterReadingInsert; previousReading?: number }>
 ): Promise<{ success: boolean; data?: { count: number; insertedCount?: number; updatedCount?: number; rowResults: Array<{ custKey: string; success: boolean; error?: string }> }; message?: string; error?: unknown }> {
+  try {
   if (!items || items.length === 0) return { success: true, data: { count: 0, rowResults: [] } };
 
   // 1. Check reading period status ONCE
@@ -3152,14 +3447,21 @@ export async function batchCreateBulkMeterReadingsAction(
     const chunk = toInsert.slice(start, start + INSERT_CHUNK);
     if (chunk.length === 0) continue;
 
-    const { reading_month: _ignored, ...firstSafe } = chunk[0].reading;
-    const cols = Object.keys(firstSafe);
+    // Derive column list as the union of all present keys across the entire chunk
+    const colSet = new Set<string>();
+    for (const item of chunk) {
+      const { reading_month: _ign, id: _ignId, created_at: _ignCa, ...safe } = item.reading;
+      Object.keys(safe).forEach(k => {
+        if (safe[k] !== undefined) colSet.add(k);
+      });
+    }
+    const cols = Array.from(colSet);
     const colsSql = cols.map(k => `"${k}"`).join(',');
 
     const params: any[] = [];
     const rowPlaceholders: string[] = [];
     for (const item of chunk) {
-      const { reading_month: _ign2, ...safe } = item.reading;
+      const safe = item.reading;
       const base = params.length;
       rowPlaceholders.push(`(${cols.map((_, ci) => `$${base + ci + 1}`).join(',')})`);
       cols.forEach(c => params.push(safe[c] ?? null));
@@ -3215,7 +3517,22 @@ export async function batchCreateBulkMeterReadingsAction(
     );
   }
 
+  await logSecurityEventAction({
+    event: 'Batch CSV Bulk Readings',
+    details: {
+      count: createdCount,
+      insertedCount: toInsert.length,
+      updatedCount: toUpdate.length,
+      months: uniqueMonths,
+    }
+  });
+
   return { success: true, data: { count: createdCount, insertedCount: toInsert.length, updatedCount: toUpdate.length, rowResults } };
+  } catch (e) {
+    console.error('batchCreateBulkMeterReadingsAction unexpected error:', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    return { success: false, message: `Batch upload failed: ${msg}`, error: e };
+  }
 }
 
 export async function previewShiftReadingMonthAction(params: {
@@ -4798,8 +5115,12 @@ export async function getCustomerAccountAction(
     const dbCustomer = await dbGetCustomerById(customerKeyNumber);
     if (!dbCustomer) return null;
 
-    // Login-lookup path: expose ONLY minimal fields needed to verify account and complete login.
+    // Login-lookup path: enforce server-side rate limit and expose ONLY minimal fields.
     if (!isStaffOrOwner) {
+      const rateCheck = checkActionRateLimit(`cust_lookup:${customerKeyNumber}`, 10, 60);
+      if (!rateCheck.allowed) {
+        throw new Error('Too many lookup attempts. Please wait a minute before trying again.');
+      }
       return {
         customerKeyNumber: dbCustomer.customerKeyNumber,
         name: dbCustomer.name,
@@ -4858,6 +5179,10 @@ export async function getBulkMeterAccountAction(
     if (!dbBulkMeter) return null;
 
     if (!isStaffOrOwner) {
+      const rateCheck = checkActionRateLimit(`bulk_lookup:${customerKeyNumber}`, 10, 60);
+      if (!rateCheck.allowed) {
+        throw new Error('Too many lookup attempts. Please wait a minute before trying again.');
+      }
       return {
         customerKeyNumber: dbBulkMeter.customerKeyNumber,
         name: dbBulkMeter.name,
@@ -5115,6 +5440,26 @@ export async function createCustomerSessionAction(session: {
     }
 
     const result = await dbCreateCustomerSession(session);
+
+    // Issue secure httpOnly customer_session cookie for middleware route protection
+    try {
+      const cookieStore = await cookies();
+      const token = await encrypt({
+        customerKeyNumber: session.customer_key_number,
+        customerType: session.customer_type,
+        sessionId: result.id,
+      });
+      cookieStore.set('customer_session', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60, // 7 days
+      });
+    } catch (cookieErr) {
+      console.warn('Failed to set customer_session cookie:', cookieErr);
+    }
+
     await logSecurityEventAction({
       event: 'Customer Login',
       customerKeyNumber: session.customer_key_number,
@@ -5126,6 +5471,11 @@ export async function createCustomerSessionAction(session: {
 
 export async function revokeCustomerSessionAction(sessionId: string, reason: 'revoked' | 'logout' = 'revoked') {
   return await wrap(async () => {
+    // Delete customer_session cookie on logout/revocation
+    try {
+      const cookieStore = await cookies();
+      cookieStore.delete('customer_session');
+    } catch (_) {}
     // Either an admin/staff with settings perm, or the owning customer may revoke.
     const staffSession = await getSession();
     let authorized = false;
@@ -7142,7 +7492,11 @@ export async function updatePaymentsFromCsvAction(records: Array<{
     if (!rateCheck.allowed) {
       throw new Error(`Rate limit exceeded for CSV upload. Please wait ${rateCheck.retryAfterSeconds} seconds before trying again.`);
     }
-    
+
+    // Security: sanitize all CSV string fields to prevent formula injection attacks
+    // (strips leading =, +, -, @ characters per OWASP CSV Injection guidelines)
+    records = sanitizeCsvRecords(records);
+
     const startTime = Date.now();
     console.log(`[CSV UPLOAD] ⏱️  Started at ${new Date().toISOString()}`);
     console.log(`[CSV UPLOAD] 📊 Records to process: ${records.length}`);
@@ -7218,5 +7572,524 @@ export async function updatePaymentsFromCsvAction(records: Array<{
     
     return result;
   });
+}
+
+/**
+ * Synchronize customer payment status and meter reading directly from the central AAWSA port 5001 endpoint.
+ * Supports auto-fallback between internal (10.10.254.155:5001) and external (bill.aawsa.gov.et:5001).
+ */
+export async function syncCustomerPaymentAndReadingAction(params: {
+  customerKey?: string;
+  contractNo?: string;
+  payrollNumber?: string;
+  password?: string;
+  networkMode?: 'auto' | 'internal' | 'external';
+  /** When true, only query the endpoint — do NOT write to the database */
+  dryRun?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_POST,
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.CUSTOMERS_VIEW_ALL,
+      PERMISSIONS.METER_READINGS_VIEW_ALL
+    );
+
+    const rateCheck = checkActionRateLimit(`payment-sync:${session.id}`, 30, 60 * 1000);
+    if (!rateCheck.allowed) {
+      throw new Error(`Rate limit exceeded for payment sync. Please wait ${rateCheck.retryAfterSeconds} seconds before trying again.`);
+    }
+
+    const endpointResult = await checkAawsaPaidStatus({
+      customerKey: params.customerKey,
+      contractNo: params.contractNo,
+      payrollNumber: params.payrollNumber,
+      password: params.password,
+      networkMode: params.networkMode || 'external',
+    });
+
+    if (!endpointResult.success) {
+      return {
+        success: false,
+        error: endpointResult.error || 'Failed to check payment status from AAWSA endpoint',
+        networkUsed: endpointResult.networkUsed,
+        endpointUsed: endpointResult.endpointUsed,
+        rawResponse: endpointResult.rawResponse,
+      };
+    }
+
+    // Common endpointData payload (shared between dryRun and real sync)
+    const endpointData = {
+      isPaid: endpointResult.isPaid,
+      paymentStatus: endpointResult.paymentStatus,
+      currentReading: endpointResult.currentReading,
+      previousReading: endpointResult.previousReading,
+      consumption: endpointResult.consumption,
+      billedPeriod: endpointResult.billedPeriod,
+      thisMonthAmount: endpointResult.thisMonthAmount,
+      outstandingAmount: endpointResult.outstandingAmount,
+      totalBillAmount: endpointResult.totalBillAmount,
+      amountPaid: endpointResult.amountPaid,
+      paymentDate: endpointResult.paymentDate,
+      // CRITICAL: must include the EXACT paymentChannel string from the endpoint
+      // This is displayed in the preview step and saved verbatim to the database
+      paymentChannel: endpointResult.paymentChannel,
+      bankRef: endpointResult.bankRef,
+      billKey: endpointResult.billKey,
+      customerName: endpointResult.customerName,
+      branch: endpointResult.branch,
+      customerKeyFromApi: endpointResult.customerKeyFromApi,
+      contractNo: endpointResult.contractNo,
+      confirmed: endpointResult.confirmed,
+      deposited: endpointResult.deposited,
+      reconciled: endpointResult.reconciled,
+    };
+
+    // Fetch current local DB record for side-by-side double check comparison
+    const currentDbState = await dbGetCustomerCurrentStateForDoubleCheck(
+      params.customerKey || endpointResult.rawResponse?.customer_key || '',
+      params.contractNo || endpointResult.rawResponse?.contract_no || ''
+    );
+
+    // DRY RUN — endpoint-check only, no DB write
+    if (params.dryRun) {
+      return {
+        success: true,
+        dryRun: true,
+        networkUsed: endpointResult.networkUsed,
+        endpointUsed: endpointResult.endpointUsed,
+        endpointData,
+        currentDbState,
+        dbSync: null,
+        rawResponse: endpointResult.rawResponse,
+      };
+    }
+
+    // REAL SYNC — write to database with payment status and reconciliation only
+    const dbSyncResult = await dbSyncCustomerPaymentAndReading({
+      customerKey: params.customerKey || endpointResult.rawResponse?.customer_key,
+      contractNo: params.contractNo || endpointResult.rawResponse?.contract_no,
+      customerName: endpointResult.customerName,
+      branch: endpointResult.branch,
+      billKey: endpointResult.billKey,
+      paymentStatus: endpointResult.paymentStatus,
+      billedPeriod: endpointResult.billedPeriod,
+      amountPaid: endpointResult.amountPaid ?? endpointResult.totalBillAmount,
+      paymentDate: endpointResult.paymentDate,
+      paymentChannel: endpointResult.paymentChannel,
+      bankRef: endpointResult.bankRef || endpointResult.billKey,
+      reconciliationStatus: 'Reconciled',
+      staffId: session.id,
+      syncSource: `AAWSA_UPLOADER_${endpointResult.networkUsed.toUpperCase()}`,
+    });
+
+    try {
+      revalidatePath('/admin/reports');
+      revalidatePath('/staff/reports');
+      revalidatePath('/admin/reports/paid-bills');
+      revalidatePath('/staff/reports/paid-bills');
+      revalidatePath('/staff/bill-management');
+      revalidatePath('/admin/bill-management');
+      revalidatePath('/admin/customers');
+      revalidatePath('/staff/customers');
+    } catch (e) {
+      console.warn('revalidatePath warning in payment sync:', e);
+    }
+
+    return {
+      success: true,
+      dryRun: false,
+      networkUsed: endpointResult.networkUsed,
+      endpointUsed: endpointResult.endpointUsed,
+      endpointData,
+      dbSync: dbSyncResult,
+      rawResponse: endpointResult.rawResponse,
+    };
+  });
+}
+
+/**
+ * Batch synchronize payment statuses and readings for multiple bulk meters
+ * automatically against the central AAWSA external server.
+ */
+export async function batchSyncBulkMetersFromExternalServerAction(params: {
+  customerKeys: string[];
+  payrollNumber?: string;
+  password?: string;
+  networkMode?: 'auto' | 'internal' | 'external';
+}) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_POST,
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.CUSTOMERS_VIEW_ALL
+    );
+
+    const keys = (params.customerKeys || []).filter(Boolean);
+    if (keys.length === 0) {
+      throw new Error('No customer keys provided for batch sync.');
+    }
+
+    const results: Array<{
+      customerKey: string;
+      success: boolean;
+      paymentStatus?: string;
+      currentReading?: number | null;
+      error?: string;
+    }> = [];
+
+    let updatedCount = 0;
+    let failedCount = 0;
+
+    for (const key of keys) {
+      try {
+        const endpointResult = await checkAawsaPaidStatus({
+          customerKey: key,
+          payrollNumber: params.payrollNumber,
+          password: params.password,
+          networkMode: params.networkMode || 'external',
+        });
+
+        if (!endpointResult.success) {
+          failedCount++;
+          results.push({
+            customerKey: key,
+            success: false,
+            error: endpointResult.error || 'Failed to retrieve data from AAWSA endpoint',
+          });
+          continue;
+        }
+
+        const dbSyncResult = await dbSyncCustomerPaymentAndReading({
+          customerKey: key,
+          paymentStatus: endpointResult.paymentStatus,
+          amountPaid: endpointResult.amountPaid,
+          paymentDate: endpointResult.paymentDate,
+          paymentChannel: endpointResult.paymentChannel,
+          bankRef: endpointResult.bankRef,
+          reconciliationStatus: 'Reconciled',
+          staffId: session.id,
+          syncSource: `AAWSA_BATCH_${endpointResult.networkUsed.toUpperCase()}`,
+        });
+
+        updatedCount++;
+        results.push({
+          customerKey: key,
+          success: true,
+          paymentStatus: endpointResult.paymentStatus,
+          currentReading: endpointResult.currentReading,
+        });
+      } catch (err: any) {
+        failedCount++;
+        results.push({
+          customerKey: key,
+          success: false,
+          error: err.message || 'Unknown error occurred during sync',
+        });
+      }
+    }
+
+    try {
+      revalidatePath('/admin/bill-management');
+      revalidatePath('/staff/bill-management');
+      revalidatePath('/admin/reports/paid-bills');
+      revalidatePath('/staff/reports/paid-bills');
+    } catch (e) {
+      console.warn('revalidatePath warning:', e);
+    }
+
+    return {
+      success: true,
+      total: keys.length,
+      updatedCount,
+      failedCount,
+      results,
+    };
+  });
+}
+
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AAWSA BATCH SYNC — All Bulk Meters (every-minute auto-sync)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BatchSyncMeterResult {
+  customerKeyNumber: string;
+  name: string;
+  status: 'ok' | 'error' | 'skipped';
+  paymentStatus?: string;
+  currentReading?: number | null;
+  paymentChannel?: string | null;
+  billKey?: string | null;
+  error?: string;
+}
+
+export interface BatchSyncAllBulkMetersResult {
+  success: boolean;
+  jobId?: string;
+  total: number;
+  synced: number;
+  failed: number;
+  skipped: number;
+  results: BatchSyncMeterResult[];
+  durationMs: number;
+  error?: string;
+}
+
+export async function getActiveBulkMeterKeysAction() {
+  return await wrap(async () => {
+    await checkPermissionAny(PERMISSIONS.BILL_POST, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    return await dbGetAllActiveBulkMeterKeys();
+  });
+}
+
+/**
+ * Shared core sync logic for a single bulk meter.
+ * Fetches latest paid status & reading from AAWSA uploader endpoint and updates DB.
+ * Uses 'auto' mode so the internal IP is tried as fallback when the external domain is down.
+ */
+async function syncOneMeterCore(
+  meter: { customerKeyNumber: string; contractNumber: string | null; name: string },
+  dryRun = false
+): Promise<BatchSyncMeterResult> {
+  try {
+    const ep = await checkAawsaPaidStatus({
+      customerKey: meter.customerKeyNumber,
+      contractNo: meter.contractNumber || undefined,
+      networkMode: (process.env.AAWSA_NETWORK_MODE as any) || 'auto',
+      batchMode: true,
+    });
+    if (!ep.success) {
+      return {
+        customerKeyNumber: meter.customerKeyNumber,
+        name: meter.name,
+        status: 'error' as const,
+        error: ep.error || 'API error',
+      };
+    }
+    if (!dryRun) {
+      await dbSyncCustomerPaymentAndReading({
+        customerKey: meter.customerKeyNumber,
+        contractNo: meter.contractNumber || undefined,
+        customerName: ep.customerName,
+        branch: ep.branch,
+        billKey: ep.billKey,
+        paymentStatus: ep.paymentStatus,
+        billedPeriod: ep.billedPeriod,
+        amountPaid: ep.amountPaid ?? ep.totalBillAmount,
+        paymentDate: ep.paymentDate,
+        paymentChannel: ep.paymentChannel,
+        bankRef: ep.bankRef || ep.billKey,
+        reconciliationStatus: 'Reconciled',
+        syncSource: 'AAWSA_BATCH_SYNC_EXTERNAL',
+      });
+    }
+    return {
+      customerKeyNumber: meter.customerKeyNumber,
+      name: meter.name,
+      status: 'ok' as const,
+      paymentStatus: ep.paymentStatus,
+      currentReading: ep.currentReading,
+      paymentChannel: ep.paymentChannel,
+      billKey: ep.billKey,
+    };
+  } catch (err: any) {
+    return {
+      customerKeyNumber: meter.customerKeyNumber,
+      name: meter.name,
+      status: 'error' as const,
+      error: err.message || String(err),
+    };
+  }
+}
+
+// ─── Circuit-breaker constants ──────────────────────────────────────────────
+/** How many consecutive timeout errors trigger an early abort of the batch */
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+/** Error substrings that count as a "timeout / unreachable" failure */
+const TIMEOUT_PATTERNS = ['timed out', 'ECONNREFUSED', 'ENOTFOUND', 'Could not reach AAWSA endpoint', 'fetch failed'];
+
+function isTimeoutError(msg?: string): boolean {
+  if (!msg) return false;
+  const lower = msg.toLowerCase();
+  return TIMEOUT_PATTERNS.some((p) => lower.includes(p.toLowerCase()));
+}
+
+export async function batchSyncAllBulkMetersAction(params?: {
+  concurrency?: number;
+  chunkSize?: number;
+  dryRun?: boolean;
+  triggeredBy?: string;
+  skipPermissionCheck?: boolean;
+  filters?: SyncJobFilters;
+}): Promise<BatchSyncAllBulkMetersResult> {
+  const startTime = Date.now();
+  const defaultConcurrency = Number(process.env.AAWSA_BATCH_SYNC_CONCURRENCY) || 3;
+  const concurrency = Math.min(Math.max(params?.concurrency ?? defaultConcurrency, 1), 30);
+  const chunkSize = Math.min(Math.max(params?.chunkSize ?? 500, 50), 2000);
+  const dryRun = params?.dryRun ?? false;
+  const filters: SyncJobFilters = params?.filters || {};
+  try {
+    await dbEnsureSyncJobsTable();
+    if (!params?.skipPermissionCheck) {
+      await checkPermissionAny(PERMISSIONS.BILL_POST, PERMISSIONS.BILL_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_ALL);
+    }
+    // Use a fast COUNT query with filters instead of loading all rows into memory
+    const total = await dbCountBulkMetersForSync(filters);
+    if (total === 0) return { success: true, total: 0, synced: 0, failed: 0, skipped: 0, results: [], durationMs: Date.now() - startTime };
+
+    // ── Endpoint pre-flight health check ─────────────────────────────────────
+    // Fetch just the first meter and test connectivity before running the full job.
+    console.log('[batchSyncAllBulkMetersAction] Running endpoint pre-flight check...');
+    const firstChunk = await dbGetBulkMetersSyncChunk(0, 1, filters);
+    const probe = await checkAawsaPaidStatus({
+      customerKey: firstChunk[0]?.customerKeyNumber,
+      contractNo: firstChunk[0]?.contractNumber || undefined,
+      networkMode: (process.env.AAWSA_NETWORK_MODE as any) || 'auto',
+      batchMode: true,
+    });
+    if (!probe.success && isTimeoutError(probe.error)) {
+      const errMsg = `AAWSA endpoint is unreachable (pre-flight timed out): ${probe.error}`;
+      console.error('[batchSyncAllBulkMetersAction]', errMsg);
+      if (!dryRun) {
+        const job = await dbCreateSyncJob({ jobType: 'batch_bulk', triggeredBy: params?.triggeredBy || 'auto', totalMeters: total, chunkSize, filters });
+        if (job?.id) {
+          await dbUpdateSyncJob(job.id, { syncedOk: 0, syncedError: 0, status: 'error', summary: { error: errMsg } });
+        }
+      }
+      return { success: false, total, synced: 0, failed: 0, skipped: total, results: [], durationMs: Date.now() - startTime, error: errMsg };
+    }
+    console.log(`[batchSyncAllBulkMetersAction] Pre-flight OK (network: ${probe.networkUsed}). Starting ${total} meters (chunk: ${chunkSize}, concurrency: ${concurrency})...`);
+    // ─────────────────────────────────────────────────────────────────────────
+
+    let jobId: string | undefined;
+    if (!dryRun) {
+      const job = await dbCreateSyncJob({ jobType: 'batch_bulk', triggeredBy: params?.triggeredBy || 'auto', totalMeters: total, chunkSize, filters });
+      jobId = job?.id;
+    }
+    const results: BatchSyncMeterResult[] = [];
+    let synced = 0; let failed = 0; let skipped = 0;
+    let offset = 0;
+    let wasCancelled = false;
+
+    // ── Circuit breaker state ─────────────────────────────────────────────────
+    let consecutiveTimeouts = 0;
+    let circuitOpen = false;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Chunked cursor-based processing loop ──────────────────────────────────
+    while (offset < total) {
+      // Check cancel flag from DB (allows UI Cancel button to stop mid-sync)
+      if (jobId) {
+        const jobState = await dbGetSyncJob(jobId);
+        if (jobState?.status === 'cancelled') {
+          console.log('[batchSyncAllBulkMetersAction] Job was cancelled via UI/API. Stopping.');
+          wasCancelled = true;
+          break;
+        }
+      }
+
+      if (circuitOpen) break;
+
+      const chunk = await dbGetBulkMetersSyncChunk(offset, chunkSize, filters);
+      if (!chunk || chunk.length === 0) break;
+
+      for (let i = 0; i < chunk.length; i += concurrency) {
+        if (circuitOpen) {
+          const remaining = chunk.slice(i);
+          for (const m of remaining) {
+            results.push({ customerKeyNumber: m.customerKeyNumber, name: m.name, status: 'error', error: 'Skipped: AAWSA endpoint circuit breaker tripped' });
+            failed++;
+          }
+          break;
+        }
+
+        const batch = chunk.slice(i, i + concurrency);
+        const batchResults = await Promise.allSettled(
+          batch.map((meter) => syncOneMeterCore(meter, dryRun))
+        );
+        for (const s of batchResults) {
+          const r = s.status === 'fulfilled'
+            ? s.value
+            : { customerKeyNumber: '', name: '', status: 'error' as const, error: (s as any).reason?.message || 'Unknown' };
+          results.push(r);
+          if (r.status === 'ok') {
+            synced++;
+            consecutiveTimeouts = 0;
+          } else if (r.status === 'error') {
+            failed++;
+            if (isTimeoutError(r.error)) {
+              consecutiveTimeouts++;
+              if (consecutiveTimeouts >= CIRCUIT_BREAKER_THRESHOLD) {
+                circuitOpen = true;
+                console.error(`[batchSyncAllBulkMetersAction] Circuit breaker tripped after ${consecutiveTimeouts} consecutive timeouts. Aborting batch.`);
+              }
+            } else {
+              consecutiveTimeouts = 0;
+            }
+          } else {
+            skipped++;
+          }
+        }
+        // Save progress checkpoint after each parallel batch with ETA
+        if (jobId) {
+          const processed = synced + failed;
+          const elapsed = Date.now() - startTime;
+          const etaDate = processed > 0 && elapsed > 0 && total > processed
+            ? new Date(Date.now() + ((total - processed) / (processed / elapsed)))
+            : null;
+          await dbUpdateSyncJobProgress(jobId, synced, failed, offset + Math.min(i + concurrency, chunk.length), etaDate);
+        }
+      }
+
+      offset += chunk.length;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    if (jobId) {
+      if (wasCancelled) {
+        await dbUpdateSyncJob(jobId, {
+          syncedOk: synced,
+          syncedError: failed,
+          status: 'cancelled',
+          summary: { results: results.slice(0, 200), circuitBroken: circuitOpen, cancelled: true },
+        });
+      } else {
+        const fs: 'done' | 'partial' | 'error' = failed === 0 ? 'done' : synced === 0 ? 'error' : 'partial';
+        await dbUpdateSyncJob(jobId, {
+          syncedOk: synced,
+          syncedError: failed,
+          status: fs,
+          summary: { results: results.slice(0, 200), circuitBroken: circuitOpen },
+        });
+      }
+    }
+    if (!dryRun) {
+      try { revalidatePath('/admin/bulk-meters'); revalidatePath('/admin/reports'); revalidatePath('/admin/bill-management'); revalidatePath('/staff/bill-management'); } catch (_e) { /* ignore */ }
+    }
+    if (circuitOpen) {
+      console.warn('[batchSyncAllBulkMetersAction] Batch completed with circuit breaker active — AAWSA endpoint became unreachable mid-sync.');
+    }
+    return {
+      success: !wasCancelled && (!circuitOpen || synced > 0),
+      jobId,
+      total,
+      synced,
+      failed,
+      skipped,
+      results,
+      durationMs: Date.now() - startTime,
+      error: wasCancelled
+        ? 'Sync job was cancelled by user.'
+        : circuitOpen
+        ? 'AAWSA endpoint became unreachable mid-sync. Circuit breaker activated.'
+        : undefined,
+    };
+  } catch (err: any) {
+    console.error('[batchSyncAllBulkMetersAction] Fatal:', err);
+    return { success: false, total: 0, synced: 0, failed: 0, skipped: 0, results: [], durationMs: Date.now() - startTime, error: err.message || String(err) };
+  }
 }
 

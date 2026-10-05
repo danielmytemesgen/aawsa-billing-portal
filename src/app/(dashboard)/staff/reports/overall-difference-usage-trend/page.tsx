@@ -54,6 +54,16 @@ export default function OverallDifferenceUsageTrendPage() {
     };
   }, []);
 
+  // Auto-refresh: re-sync bulk meters data when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      setBulkMeters(getBulkMeters());
+      setBranches(getBranches());
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   const years = React.useMemo(() => {
     const allYears = new Set(bulkMeters.map(bm => bm.month.split('-')[0]));
     return Array.from(allYears).sort().reverse();

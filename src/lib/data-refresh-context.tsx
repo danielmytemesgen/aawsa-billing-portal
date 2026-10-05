@@ -11,6 +11,7 @@ import {
   initializeStaffMembers,
   initializeNotifications,
   initializePayments,
+  fetchRoutes,
 } from "@/lib/data-store";
 import { useNetworkQuality, type NetworkQuality } from "@/lib/network-quality";
 
@@ -78,6 +79,12 @@ async function refreshAllEntities(): Promise<void> {
     initializeNotifications(true),
     initializeBills(true),
     initializeStaffMembers(true),
+    initializeCustomers(true),
+    initializeBulkMeters(true),
+    initializePayments(true),
+    initializeIndividualCustomerReadings(true),
+    initializeBulkMeterReadings(true),
+    fetchRoutes(),
   ]);
 }
 

@@ -211,22 +211,24 @@ export async function getAllTicketsAction(filters?: {
 }): Promise<ActionResponse<SupportTicket[]>> {
   try {
     const session = await getSession();
+    if (!session || !session.id) {
+      return failure('Unauthorized: Authentication required', 'UNAUTHORIZED');
+    }
+
     let queryFilters = { ...filters };
 
     // Strict Permission & Branch Isolation for Staff:
-    if (session && session.id) {
-      const perms = await getEffectivePermissions(session);
-      if (!canViewBranchSupport(session, perms)) {
-        return failure('Forbidden: Missing permission to view support tickets', 'FORBIDDEN');
-      }
+    const perms = await getEffectivePermissions(session);
+    if (!canViewBranchSupport(session, perms)) {
+      return failure('Forbidden: Missing permission to view support tickets', 'FORBIDDEN');
+    }
 
-      // If user does not have global 'support:view_all', restrict strictly to their assigned branch
-      if (!canViewAllSupport(session, perms)) {
-        if (!session.branchId) {
-          return failure('Forbidden: Your staff account is not assigned to any branch', 'NO_BRANCH');
-        }
-        queryFilters.branchId = session.branchId;
+    // If user does not have global 'support:view_all', restrict strictly to their assigned branch
+    if (!canViewAllSupport(session, perms)) {
+      if (!session.branchId) {
+        return failure('Forbidden: Your staff account is not assigned to any branch', 'NO_BRANCH');
       }
+      queryFilters.branchId = session.branchId;
     }
 
     const tickets = await dbGetAllTickets(queryFilters);

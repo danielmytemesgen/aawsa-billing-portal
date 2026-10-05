@@ -136,7 +136,24 @@ export default function StaffSettingsPage() {
                 document.documentElement.classList.remove('dark');
             }
         }
-    }, []);
+    }, [loadLiveSessionSettings]);
+
+    // Auto-refresh when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            getSystemSettingsAction().then(res => {
+                if (res.data) {
+                    const s = res.data as Record<string, string>;
+                    if (s.billing_cycle_mode) setCycleMode(s.billing_cycle_mode as 'once_per_month' | 'custom' | 'unlimited');
+                    if (s.billing_cycle_start_day) setBillingCycleDay(s.billing_cycle_start_day);
+                    if (s.billing_due_date_offset) setDueDateOffset(s.billing_due_date_offset);
+                }
+            });
+            loadLiveSessionSettings();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, [loadLiveSessionSettings]);
 
     const handleSaveSettings = async () => {
         if (!canUpdateSettings) {

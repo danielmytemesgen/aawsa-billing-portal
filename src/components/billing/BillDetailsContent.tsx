@@ -26,13 +26,14 @@ import {
     recalculateBulkBillAction,
 } from '@/lib/actions';
 import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
+import { SyncPaymentStatusDialog } from '@/components/billing/SyncPaymentStatusDialog';
 import { initializeTariffs, getTariff } from '@/lib/data-store';
 
 import { usePermissions } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload } from 'lucide-react';
+import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, RefreshCw } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import {
@@ -845,6 +846,15 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     <Button variant="outline" onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                         <Printer className="mr-2 h-4 w-4" /> Print Bill
                     </Button>
+                    <SyncPaymentStatusDialog
+                        initialCustomerKey={bill.CUSTOMERKEY || bill.individual_customer_id || ''}
+                        triggerButton={
+                            <Button variant="outline" className="gap-2 text-blue-600 border-blue-200 hover:bg-blue-50">
+                                <RefreshCw className="h-4 w-4" />
+                                Sync AAWSA Payment
+                            </Button>
+                        }
+                    />
                 </div>
 
             </div>

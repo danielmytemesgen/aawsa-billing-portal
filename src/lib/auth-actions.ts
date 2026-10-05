@@ -229,13 +229,15 @@ export async function changePasswordAction(params: {
     revokeOtherSessions?: boolean;
 }) {
     const { currentPassword, newPassword, confirmPassword, revokeOtherSessions } = params || {};
-
     if (!currentPassword || !newPassword || !confirmPassword) {
         return { success: false, message: 'All fields are required.' };
     }
 
-    if (newPassword.length < 6) {
-        return { success: false, message: 'New password must be at least 6 characters long.' };
+    // Enforce full password policy (min 8, uppercase, digit, special char)
+    const { getPasswordErrors } = await import('./password-validator');
+    const policyError = getPasswordErrors(newPassword);
+    if (policyError) {
+        return { success: false, message: policyError };
     }
 
     if (newPassword !== confirmPassword) {

@@ -51,6 +51,15 @@ export default function StaffBranchesPage() {
         return () => unsubscribe();
     }, []);
 
+    // Auto-refresh when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            setBranches(getBranches());
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     const handleAddBranch = () => {
         if (!canCreate) return;
         setSelectedBranch(null);

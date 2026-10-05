@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { Droplets, Edit, Edit2, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, AlertTriangle, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
+import { Droplets, Edit, Edit2, Trash2, Menu, User, CheckCircle, XCircle, FileEdit, RefreshCcw, RefreshCw, Gauge, Users as UsersIcon, DollarSign, TrendingUp, Clock, MinusCircle, PlusCircle as PlusCircleIcon, Printer, History, AlertTriangle, ListCollapse, Eye, MapPin, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -35,6 +35,8 @@ import { AddReadingDialog } from "@/features/billing/components/add-reading-dial
 import { ManageAssignedCustomersDialog } from "@/components/billing/ManageAssignedCustomersDialog";
 import { EditReadingsRecalculateSection } from "@/components/billing/EditReadingsRecalculateSection";
 import { BulkMeterCreditCard, type BulkMeterCreditData } from "@/components/billing/BulkMeterCreditCard";
+import { SyncPaymentStatusDialog } from "@/components/billing/SyncPaymentStatusDialog";
+import { EditBillStatusDialog } from "@/components/billing/EditBillStatusDialog";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
@@ -83,6 +85,7 @@ const initialMemoizedDetails = {
     penaltyAmt: 0,
     outstandingBill: 0, totalPayable: 0, paymentStatus: 'Unpaid' as PaymentStatus,
     month: 'N/A',
+    billKey: null as string | null,
     snapshot_data: null as any,
   },
   totalIndividualUsage: 0,
@@ -111,6 +114,10 @@ export default function BulkMeterDetailsPage() {
     hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
     hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
     hasPermission(PERMISSIONS.METER_READINGS_ADD_MANUAL);
+  const canUpdateBillStatus =
+    hasPermission(PERMISSIONS.BILL_UPDATE) ||
+    hasPermission(PERMISSIONS.PAYMENTS_CREATE) ||
+    hasPermission(PERMISSIONS.BILL_VIEW_ALL);
   const idRaw = params?.id;
   const bulkMeterKey = Array.isArray(idRaw) ? idRaw[0] : (idRaw as string || "");
 
@@ -272,7 +279,11 @@ export default function BulkMeterDetailsPage() {
 
     const displayBranchName = currentBulkMeter.branchId ? (currentBranches.find(b => b.id === currentBulkMeter.branchId)?.name ?? currentBulkMeter.location ?? "N/A") : (currentBulkMeter.location ?? "N/A");
 
-    const billToRender = currentBillForPrintView;
+    // Use the explicitly selected bill for print view, OR auto-select the most recent bill
+    // from billing history so the card always reflects real billed data.
+    // Only fall back to live calculation when there is no billing history yet.
+    const mostRecentBill = currentBillingHistory.length > 0 ? currentBillingHistory[0] : null;
+    const billToRender = currentBillForPrintView ?? mostRecentBill;
 
     let finalBillCardDetails: any;
 
@@ -333,6 +344,7 @@ export default function BulkMeterDetailsPage() {
         totalPayable: (billToRender.OUTSTANDINGAMT ?? reconstructedOutstanding) + getMonthlyBillAmt(billToRender) + Number(billToRender.PENALTYAMT || 0),
         paymentStatus: (billToRender.paymentStatus as PaymentStatus) || 'Unpaid',
         month: billToRender.monthYear,
+        billKey: billToRender.BILLKEY || (billToRender as any).billKey || null,
         snapshot_data: snapshot,
       };
     } else {
@@ -361,7 +373,8 @@ export default function BulkMeterDetailsPage() {
         outstandingBill: Number(currentReconstructedOutstanding.toFixed(2)),
         totalPayable: Number((currentReconstructedOutstanding + differenceBill + livePenaltyAmt).toFixed(2)),
         paymentStatus: paymentStatus,
-        month: currentBulkMeter.month || 'N/A'
+        month: currentBulkMeter.month || 'N/A',
+        billKey: null,
       };
     }
 
@@ -485,6 +498,12 @@ export default function BulkMeterDetailsPage() {
       }
     };
 
+    const handleDataRefreshed = () => {
+      handleStoresUpdate();
+      refreshCreditData();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+
     const unsubBM = subscribeToBulkMeters(handleStoresUpdate);
     const unsubCust = subscribeToCustomers(handleStoresUpdate);
     const unsubBranches = subscribeToBranches(handleStoresUpdate);
@@ -497,6 +516,7 @@ export default function BulkMeterDetailsPage() {
 
     return () => {
       isMounted = false;
+      window.removeEventListener('data-refreshed', handleDataRefreshed);
       unsubBM();
       unsubCust();
       unsubBranches();
@@ -504,7 +524,7 @@ export default function BulkMeterDetailsPage() {
       unsubBills();
       unsubTariffs();
     };
-  }, [bulkMeterKey, router, toast]);
+  }, [bulkMeterKey, router, toast, refreshCreditData]);
 
   // Poll tariffs every 15 seconds to detect Rule of 3 toggle changes from settings page
   useEffect(() => {
@@ -706,6 +726,23 @@ export default function BulkMeterDetailsPage() {
     ruleOfThreeActive,
     snapshot_data,
   } = memoizedDetails;
+
+  // Count how many distinct months are carrying unpaid debt that feeds into the outstanding balance.
+  // We look at the billing history relative to the currently displayed bill month:
+  // any older unpaid bill contributes to the outstanding shown on the card.
+  const overdueMonthsCount = useMemo(() => {
+    if (!billingHistory.length) return 0;
+    const displayedMonth = billCardDetails.month && billCardDetails.month !== 'N/A'
+      ? billCardDetails.month
+      : null;
+    const unpaidOlderBills = billingHistory.filter(b => {
+      if (b.paymentStatus === 'Paid') return false;
+      if (b.status === 'Deleted' || b.status === 'Void' || b.status === 'Reversed') return false;
+      if (!displayedMonth) return true; // no context, count all unpaid
+      return b.monthYear < displayedMonth; // strictly older than the displayed month
+    });
+    return unpaidOlderBills.length;
+  }, [billingHistory, billCardDetails.month]);
 
   const handleEditBulkMeter = () => setIsBulkMeterFormOpen(true);
   const handleDeleteBulkMeter = () => setIsBulkMeterDeleteDialogOpen(true);
@@ -1001,26 +1038,30 @@ export default function BulkMeterDetailsPage() {
   };
 
   const handleUpdateBillStatus = (bill: DomainBill) => {
+    if (!canUpdateBillStatus) {
+      toast({
+        variant: "destructive",
+        title: "Permission Denied",
+        description: "You do not have permission to edit bill payment statuses.",
+      });
+      return;
+    }
     setBillToUpdate(bill);
     setIsUpdateStatusDialogOpen(true);
   };
 
-  const confirmUpdateBillStatus = async () => {
-    if (billToUpdate && bulkMeter) {
-      const newStatus = billToUpdate.paymentStatus === 'Paid' ? 'Unpaid' : 'Paid';
-      const result = await updateExistingBill(billToUpdate.id, { paymentStatus: newStatus });
-      if (result.success) {
-        toast({ title: "Payment Status Updated", description: `The bill for ${billToUpdate.monthYear} has been marked as ${newStatus}.` });
-
-        // Update the bulk meter's payment status
+  const handleStatusUpdateSuccess = async (billId: string, newStatus: "Paid" | "Unpaid") => {
+    toast({
+      title: "Payment Status Updated",
+      description: `Bill for ${billToUpdate?.monthYear ?? ""} has been marked as ${newStatus}. Debt aging and bulk meter totals have been recalculated.`,
+    });
+    if (bulkMeter) {
+      const isLatest = billingHistory[0]?.id === billId;
+      if (isLatest) {
         await updateBulkMeterInStore(bulkMeter.customerKeyNumber, { paymentStatus: newStatus });
-
-      } else {
-        toast({ variant: "destructive", title: "Update Failed", description: result.message });
       }
-      setBillToUpdate(null);
     }
-    setIsUpdateStatusDialogOpen(false);
+    setBillToUpdate(null);
   };
 
   React.useEffect(() => {
@@ -1083,6 +1124,7 @@ export default function BulkMeterDetailsPage() {
                       <tr><td>Bulk meter name:</td><td>{currentBulkMeter.name}</td></tr>
                       <tr><td>Customer key number:</td><td>{currentBulkMeter.customerKeyNumber}</td></tr>
                       <tr><td>Contract No:</td><td>{currentBulkMeter.contractNumber ?? 'N/A'}</td></tr>
+                      <tr><td>Bill Key:</td><td className="font-mono font-bold">{billForPrintView?.BILLKEY || (billForPrintView as any)?.billKey || 'N/A'}</td></tr>
                       <tr><td>Branch:</td><td>{displayBranchName ?? 'N/A'}</td></tr>
                       <tr><td>Sub-City:</td><td>{currentBulkMeter.location}</td></tr>
                     </tbody>
@@ -1223,20 +1265,34 @@ export default function BulkMeterDetailsPage() {
                     <CardDescription>Key: {currentBulkMeter.customerKeyNumber}</CardDescription>
                   </div>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-8 w-8 p-0">
-                      <span className="sr-only">Open menu</span>
-                      <Menu className="h-5 w-5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleViewSlip}>
-                      <Eye className="mr-2 h-4 w-4" />
-                      <span>View Slip</span>
-                    </DropdownMenuItem>
+                <div className="flex items-center gap-2">
+                  <SyncPaymentStatusDialog
+                    initialCustomerKey={currentBulkMeter.customerKeyNumber}
+                    triggerButton={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-emerald-700 dark:text-emerald-300 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 text-emerald-600" />
+                        Sync AAWSA Payment
+                      </Button>
+                    }
+                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" className="h-8 w-8 p-0">
+                        <span className="sr-only">Open menu</span>
+                        <Menu className="h-5 w-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={handleViewSlip}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        <span>View Slip</span>
+                      </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => handlePrintSlip()}>
                       <Printer className="mr-2 h-4 w-4" />
                       <span>Print Slip</span>
@@ -1257,7 +1313,8 @@ export default function BulkMeterDetailsPage() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </CardHeader>
+              </div>
+            </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                   {/* Left column */}
@@ -1314,10 +1371,35 @@ export default function BulkMeterDetailsPage() {
 
             <Card className="shadow-lg border-primary/20">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <DollarSign className="h-4 w-4 text-primary" />
-                  Difference Billing Calculation
-                </CardTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-primary" />
+                    Difference Billing Calculation
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    {billCardDetails.billKey && (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 text-[11px] px-2 py-0.5 font-mono font-bold bg-muted/60 text-foreground border"
+                      >
+                        Key: {billCardDetails.billKey}
+                      </Badge>
+                    )}
+                    {billCardDetails.month && billCardDetails.month !== 'N/A' && (
+                      <Badge
+                        variant="secondary"
+                        className="shrink-0 text-[11px] px-2 py-0.5 bg-primary/10 text-primary border border-primary/25 font-semibold tracking-wide"
+                      >
+                        {billCardDetails.month}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <CardDescription className="text-[11px] mt-0.5">
+                  {billCardDetails.month && billCardDetails.month !== 'N/A'
+                    ? `Showing billed data for month: ${billCardDetails.month}`
+                    : 'Live calculation — no billing history yet'}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-1.5 text-sm">
                 {/* ⚠️ Negative Consumption Warning — shown when sub-meter total exceeds bulk meter reading AND Rule of 3 is OFF */}
@@ -1415,9 +1497,26 @@ export default function BulkMeterDetailsPage() {
                     <span className="font-medium">Penalty</span>
                     <span className="font-semibold tabular-nums">ETB {billCardDetails.penaltyAmt.toFixed(2)}</span>
                   </div>
-                  <div className={cn("flex items-center justify-between py-0.5", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>
-                    <span className="font-medium">Outstanding</span>
-                    <span className="font-semibold tabular-nums">ETB {billCardDetails.outstandingBill.toFixed(2)}</span>
+                  <div className={cn("py-0.5", billCardDetails.outstandingBill > 0 ? "text-destructive" : "text-muted-foreground")}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">Outstanding</span>
+                        {billCardDetails.outstandingBill > 0 && overdueMonthsCount > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/25">
+                            {overdueMonthsCount} month{overdueMonthsCount !== 1 ? 's' : ''} overdue
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-semibold tabular-nums">ETB {billCardDetails.outstandingBill.toFixed(2)}</span>
+                    </div>
+                    {billCardDetails.outstandingBill > 0 && overdueMonthsCount > 0 && (
+                      <p className="text-[10px] text-destructive/70 mt-0.5 text-right">
+                        Accumulated unpaid debt from {overdueMonthsCount} previous billing cycle{overdueMonthsCount !== 1 ? 's' : ''}
+                      </p>
+                    )}
+                    {billCardDetails.outstandingBill <= 0 && (
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 text-right">No carried-forward debt</p>
+                    )}
                   </div>
                   <div className="flex items-center justify-between px-3 py-2 rounded-md bg-primary/10 border border-primary/30 mt-1">
                     <span className="font-bold text-primary">Total Amount Payable</span>
@@ -1602,7 +1701,10 @@ export default function BulkMeterDetailsPage() {
 
                           return (
                             <TableRow key={bill.id + bill.monthYear}>
-                              <TableCell>{bill.monthYear}</TableCell>
+                              <TableCell>
+                                <div className="font-semibold">{bill.monthYear}</div>
+                                {bill.BILLKEY && <div className="text-[10px] font-mono text-muted-foreground">{bill.BILLKEY}</div>}
+                              </TableCell>
                               <TableCell>{formatDateForDisplay(bill.billPeriodEndDate)}</TableCell>
                               <TableCell className="text-right">{bill.PREVREAD.toFixed(2)}</TableCell>
                               <TableCell className="text-right">{bill.CURRREAD.toFixed(2)}</TableCell>
@@ -1627,7 +1729,9 @@ export default function BulkMeterDetailsPage() {
                                   <DropdownMenuContent align="end">
                                     <DropdownMenuLabel>Actions</DropdownMenuLabel>
                                     <DropdownMenuItem onClick={() => handlePrintSlip(bill)}><Printer className="mr-2 h-4 w-4" />Print/Export Bill</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleUpdateBillStatus(bill)}><FileEdit className="mr-2 h-4 w-4" />Edit Status</DropdownMenuItem>
+                                    {canUpdateBillStatus && (
+                                      <DropdownMenuItem onClick={() => handleUpdateBillStatus(bill)}><FileEdit className="mr-2 h-4 w-4" />Edit Status</DropdownMenuItem>
+                                    )}
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem onClick={() => handleDeleteBillingRecord(bill)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" />Delete Record</DropdownMenuItem>
                                   </DropdownMenuContent>
@@ -1658,7 +1762,10 @@ export default function BulkMeterDetailsPage() {
                       return (
                         <Card key={bill.id} className="border shadow-sm overflow-hidden bg-slate-50/30">
                           <div className="px-4 py-2 bg-slate-100/50 border-b flex justify-between items-center">
-                            <span className="font-bold text-sm">{bill.monthYear}</span>
+                            <div>
+                              <span className="font-bold text-sm">{bill.monthYear}</span>
+                              {bill.BILLKEY && <span className="block text-[10px] font-mono text-muted-foreground">{bill.BILLKEY}</span>}
+                            </div>
                             <Badge variant={bill.paymentStatus === 'Paid' ? 'default' : 'destructive'} className="text-[10px] h-4.5 px-1">{bill.paymentStatus}</Badge>
                           </div>
                           <CardContent className="p-4 space-y-2">
@@ -1676,7 +1783,9 @@ export default function BulkMeterDetailsPage() {
                             </div>
                             <div className="flex justify-end gap-2 pt-2 border-t mt-1">
                               <Button variant="outline" size="sm" className="h-7 text-[10px] px-2" onClick={() => handlePrintSlip(bill)}><Printer className="h-3 w-3 mr-1" />Print</Button>
-                              <Button variant="ghost" size="sm" className="h-7 text-[10px] px-2" onClick={() => handleUpdateBillStatus(bill)}><RefreshCcw className="h-3 w-3 mr-1" />Status</Button>
+                              {canUpdateBillStatus && (
+                                <Button variant="ghost" size="sm" className="h-7 text-[10px] px-2" onClick={() => handleUpdateBillStatus(bill)}><RefreshCcw className="h-3 w-3 mr-1" />Status</Button>
+                              )}
                             </div>
                           </CardContent>
                         </Card>
@@ -1915,20 +2024,16 @@ export default function BulkMeterDetailsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={isUpdateStatusDialogOpen} onOpenChange={setIsUpdateStatusDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Status Change</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to mark the bill for {billToUpdate?.monthYear} as {billToUpdate?.paymentStatus === 'Paid' ? 'Unpaid' : 'Paid'}?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setBillToUpdate(null)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmUpdateBillStatus}>Confirm</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <EditBillStatusDialog
+        open={isUpdateStatusDialogOpen}
+        onOpenChange={(open) => {
+          setIsUpdateStatusDialogOpen(open);
+          if (!open) setBillToUpdate(null);
+        }}
+        bill={billToUpdate}
+        customerKey={currentBulkMeter.customerKeyNumber}
+        onSuccess={handleStatusUpdateSuccess}
+      />
 
     </div>
   );

@@ -12,14 +12,17 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { CheckCircle2, AlertTriangle, ShieldCheck, Filter, AlertCircle, Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { CheckCircle2, AlertTriangle, ShieldCheck, Filter, AlertCircle, Loader2, ExternalLink, RefreshCw } from 'lucide-react';
 import { getPreApprovalAuditAction } from '@/lib/actions';
 import type { PreApprovalAuditResult } from '@/lib/db-queries';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface PreApprovalAuditDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   monthYear: string;
+  basePath?: string;
   onApproveClean: (cleanIds: string[]) => Promise<void>;
   onApproveAll: () => Promise<void>;
   onFilterFlagged: (flaggedIds: string[]) => void;
@@ -29,40 +32,55 @@ export function PreApprovalAuditDialog({
   open,
   onOpenChange,
   monthYear,
+  basePath = '/staff/bill-management',
   onApproveClean,
   onApproveAll,
   onFilterFlagged,
 }: PreApprovalAuditDialogProps) {
+  const router = useRouter();
   const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const [auditData, setAuditData] = React.useState<PreApprovalAuditResult | null>(null);
   const [actionLoading, setActionLoading] = React.useState(false);
 
-  React.useEffect(() => {
-    if (!open || !monthYear) return;
-
-    let isMounted = true;
+  const runAudit = React.useCallback(() => {
+    if (!monthYear) return;
     setLoading(true);
+    setError(null);
 
     getPreApprovalAuditAction(monthYear)
-      .then((res) => {
-        if (isMounted) {
-          setAuditData(res);
+      .then((res: any) => {
+        if (res && res.success === false) {
+          setError(res.error?.message || 'Failed to fetch pre-approval audit metrics.');
+          setAuditData(null);
+        } else {
+          const payload = (res?.data ?? res) as PreApprovalAuditResult;
+          if (payload && Array.isArray(payload.cleanBillIds) && Array.isArray(payload.flaggedBills)) {
+            setAuditData(payload);
+            setError(null);
+          } else {
+            setError('Received invalid audit response from server.');
+            setAuditData(null);
+          }
         }
       })
       .catch((err) => {
         console.error('Error fetching pre-approval audit:', err);
+        setError(err?.message || 'Error running pre-approval audit.');
+        setAuditData(null);
       })
       .finally(() => {
-        if (isMounted) setLoading(false);
+        setLoading(false);
       });
+  }, [monthYear]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [open, monthYear]);
+  React.useEffect(() => {
+    if (!open || !monthYear) return;
+    runAudit();
+  }, [open, monthYear, runAudit]);
 
   const handleApproveClean = async () => {
-    if (!auditData || auditData.cleanBillIds.length === 0) return;
+    if (!auditData || !Array.isArray(auditData.cleanBillIds) || auditData.cleanBillIds.length === 0) return;
     setActionLoading(true);
     try {
       await onApproveClean(auditData.cleanBillIds);
@@ -83,7 +101,7 @@ export function PreApprovalAuditDialog({
   };
 
   const handleFilterFlagged = () => {
-    if (!auditData) return;
+    if (!auditData || !Array.isArray(auditData.flaggedBills)) return;
     const flaggedIds = auditData.flaggedBills.map((b) => b.id);
     onFilterFlagged(flaggedIds);
     onOpenChange(false);
@@ -100,7 +118,7 @@ export function PreApprovalAuditDialog({
             <div>
               <DialogTitle className="text-xl">Pre-Approval Smart Audit</DialogTitle>
               <DialogDescription>
-                Cycle {monthYear} • Pre-flight safety check before approving invoices
+                Cycle {monthYear} • Pre-flight anomaly verification before approving invoices
               </DialogDescription>
             </div>
           </div>
@@ -110,6 +128,18 @@ export function PreApprovalAuditDialog({
           <div className="py-12 flex flex-col items-center justify-center space-y-3">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
             <p className="text-sm text-muted-foreground">Running anomaly heuristics on pending invoices...</p>
+          </div>
+        ) : error ? (
+          <div className="py-6 space-y-3">
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Audit Execution Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+            <Button variant="outline" size="sm" onClick={runAudit} className="gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5" />
+              Retry Audit
+            </Button>
           </div>
         ) : auditData ? (
           <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
@@ -121,7 +151,7 @@ export function PreApprovalAuditDialog({
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
-                    {auditData.cleanBillsCount}
+                    {auditData.cleanBillsCount ?? 0}
                   </div>
                   <div className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">Clean Invoices</div>
                   <div className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80 mt-0.5">
@@ -136,7 +166,7 @@ export function PreApprovalAuditDialog({
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">
-                    {auditData.flaggedBillsCount}
+                    {auditData.flaggedBillsCount ?? 0}
                   </div>
                   <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">Flagged For Review</div>
                   <div className="text-[11px] text-amber-600/80 dark:text-amber-400/80 mt-0.5">
@@ -147,7 +177,7 @@ export function PreApprovalAuditDialog({
             </div>
 
             {/* Flagged Invoices List */}
-            {auditData.flaggedBills.length > 0 ? (
+            {auditData.flaggedBills && auditData.flaggedBills.length > 0 ? (
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div className="flex items-center justify-between py-1">
                   <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -161,34 +191,51 @@ export function PreApprovalAuditDialog({
                     className="h-7 text-xs text-primary gap-1"
                   >
                     <Filter className="w-3 h-3" />
-                    Filter in Table
+                    Filter in Board
                   </Button>
                 </div>
 
-                <ScrollArea className="flex-1 border rounded-lg bg-muted/20 p-2 max-h-[220px]">
+                <ScrollArea className="flex-1 border rounded-lg bg-muted/20 p-2 max-h-[240px]">
                   <div className="space-y-2">
                     {auditData.flaggedBills.map((bill) => (
                       <div
                         key={bill.id}
-                        className="p-2.5 rounded-lg border bg-card text-card-foreground shadow-sm space-y-1.5"
+                        className="p-3 rounded-lg border bg-card text-card-foreground shadow-sm space-y-2"
                       >
                         <div className="flex items-center justify-between text-xs">
-                          <div className="font-semibold flex items-center gap-1.5">
+                          <div className="font-semibold flex items-center gap-1.5 flex-wrap">
                             <span>{bill.customerName}</span>
-                            <Badge variant="outline" className="text-[10px] px-1 py-0 font-normal">
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
                               {bill.customerKey}
                             </Badge>
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 font-medium">
+                              {bill.meterType || 'Meter'}
+                            </Badge>
                           </div>
-                          <span className="font-mono text-muted-foreground">
-                            ETB {bill.thisMonthBillAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-muted-foreground font-semibold">
+                              ETB {(bill.thisMonthBillAmt ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 text-[11px] px-2 gap-1 text-primary hover:bg-primary/10"
+                              onClick={() => {
+                                onOpenChange(false);
+                                router.push(`${basePath}/${bill.id}`);
+                              }}
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Inspect
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex flex-wrap gap-1.5">
                           {bill.flags.map((flag, idx) => (
                             <Badge
                               key={idx}
                               variant="destructive"
-                              className="text-[10px] font-normal py-0.5 px-2 bg-amber-500/10 text-amber-700 dark:text-amber-400 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800"
+                              className="text-[10px] font-normal py-0.5 px-2 bg-amber-500/15 text-amber-900 dark:text-amber-300 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800"
                             >
                               {flag}
                             </Badge>
@@ -206,7 +253,7 @@ export function PreApprovalAuditDialog({
                   All Invoices Verified Clean
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  No readings inversions, high losses, or anomalies were detected.
+                  No readings inversions, high distribution losses, negative debt, or anomalies detected.
                 </div>
               </div>
             )}
@@ -225,7 +272,7 @@ export function PreApprovalAuditDialog({
           </Button>
 
           <div className="flex items-center gap-2">
-            {auditData && auditData.flaggedBillsCount > 0 && (
+            {auditData && (auditData.flaggedBillsCount ?? 0) > 0 && (
               <Button
                 type="button"
                 variant="outline"
@@ -242,7 +289,7 @@ export function PreApprovalAuditDialog({
               type="button"
               size="sm"
               onClick={handleApproveClean}
-              disabled={actionLoading || !auditData || auditData.cleanBillsCount === 0}
+              disabled={actionLoading || !auditData || (auditData.cleanBillsCount ?? 0) === 0}
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               {actionLoading ? (

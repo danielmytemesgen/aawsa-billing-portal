@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 import { writeFile } from 'fs/promises';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { checkPermission } from '@/lib/actions';
 import { PERMISSIONS } from '@/lib/constants/auth';
@@ -33,10 +33,15 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Generate unique filename
-    const fileName = `${uuidv4()}-${file.name.replace(/\s+/g, '_')}`;
+    // Generate safe unique filename, preventing directory traversal
+    const safeBaseName = basename(file.name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileName = `${uuidv4()}-${safeBaseName}`;
     const uploadDir = join(process.cwd(), 'public', 'uploads', 'pdf');
     const filePath = join(uploadDir, fileName);
+
+    if (!filePath.startsWith(uploadDir)) {
+      return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
+    }
 
     await writeFile(filePath, buffer);
 

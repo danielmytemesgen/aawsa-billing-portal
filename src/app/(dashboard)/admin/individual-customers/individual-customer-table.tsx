@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -27,6 +28,7 @@ import {
   Building2,
   DollarSign,
   AlertTriangle,
+  RefreshCcw,
 } from "lucide-react";
 import {
   Table,
@@ -55,6 +57,7 @@ interface IndividualCustomerTableProps {
   canEdit: boolean;
   canDelete: boolean;
   canApprove?: boolean;
+  canSwapMeter?: boolean;
   isAdmin?: boolean;
 }
 
@@ -71,6 +74,7 @@ export function IndividualCustomerTable({
   canEdit,
   canDelete,
   canApprove = false,
+  canSwapMeter = false,
   isAdmin = true,
 }: IndividualCustomerTableProps) {
   const getCustomerBranchName = (branchId?: string, fallbackLocation?: string) => {
@@ -84,6 +88,9 @@ export function IndividualCustomerTable({
   const getBulkMeterHref = (bmKey: string) => {
     return isAdmin ? `/admin/bulk-meters/${bmKey}` : `/staff/bulk-meters/${bmKey}`;
   };
+
+  const pathname = usePathname();
+  const basePath = pathname?.startsWith('/staff') || !isAdmin ? '/staff' : '/admin';
 
   if (data.length === 0) {
     return (
@@ -326,6 +333,22 @@ export function IndividualCustomerTable({
                         </>
                       )}
 
+                      {/* Swap Meter — only shown to users with meter-change permission */}
+                      {canSwapMeter && (
+                        <Link
+                          href={`${basePath}/meter-change?type=individual&key=${encodeURIComponent(customer.customerKeyNumber)}`}
+                          title="Swap / Replace Meter"
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-emerald-600 bg-emerald-50/80 hover:bg-emerald-600 hover:text-white border border-emerald-200/80 transition-all rounded-lg shadow-sm"
+                          >
+                            <RefreshCcw className="h-4 w-4" />
+                          </Button>
+                        </Link>
+                      )}
+
                       {/* Edit */}
                       {canEdit && (
                         <Button
@@ -429,6 +452,20 @@ export function IndividualCustomerTable({
                     >
                       <Eye className="mr-1.5 h-3 w-3" /> View
                     </Button>
+                  )}
+                  {canSwapMeter && (
+                    <Link
+                      href={`${basePath}/meter-change?type=individual&key=${encodeURIComponent(customer.customerKeyNumber)}`}
+                      className="flex-1"
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs w-full text-emerald-700 bg-emerald-50 border-emerald-200 hover:bg-emerald-600 hover:text-white font-semibold"
+                      >
+                        <RefreshCcw className="mr-1.5 h-3 w-3" /> Swap
+                      </Button>
+                    </Link>
                   )}
                   {canEdit && (
                     <Button

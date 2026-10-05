@@ -155,6 +155,17 @@ export default function PromotionsManagementPage() {
         }
     }, [hasPermission, fetchPromotions]);
 
+    // Auto-refresh: re-fetch promotions when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            if (hasPermission('promotions_manage') || hasPermission('settings_view')) {
+                fetchPromotions();
+            }
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, [hasPermission, fetchPromotions]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (editingPromo) {

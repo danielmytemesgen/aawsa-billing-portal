@@ -392,7 +392,16 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
         const handlePdfExportClick = () => handleExportPdf();
         window.addEventListener('export-pdf-click', handlePdfExportClick);
-        return () => window.removeEventListener('export-pdf-click', handlePdfExportClick);
+
+        const handleDataRefreshed = () => {
+            if (id) loadData();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+
+        return () => {
+            window.removeEventListener('export-pdf-click', handlePdfExportClick);
+            window.removeEventListener('data-refreshed', handleDataRefreshed);
+        };
     }, [id]);
 
     async function handleExportPdf() {

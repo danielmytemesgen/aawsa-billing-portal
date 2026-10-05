@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { TablePagination } from "@/components/ui/table-pagination";
 import { PaidBillsTable } from "@/components/billing/PaidBillsTable";
 import { PaymentCsvUploadDialog } from "@/components/billing/PaymentCsvUploadDialog";
+import { SyncPaymentStatusDialog } from "@/components/billing/SyncPaymentStatusDialog";
 import { Button } from "@/components/ui/button";
 import {
   getCustomers, initializeCustomers, subscribeToCustomers,
@@ -16,7 +17,7 @@ import { getPaidBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { CheckCircle2, Search, FileSpreadsheet, Lock, Download, Loader2, Calendar, ChevronDown, FileText, Printer } from "lucide-react";
+import { CheckCircle2, Search, FileSpreadsheet, Lock, Download, Loader2, Calendar, ChevronDown, FileText, Printer, RefreshCw } from "lucide-react";
 import { exportPaidBillsToCsv, exportPaidBillsToXlsx, getAvailableMonthYearOptions } from "@/lib/export-utils";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -51,6 +52,7 @@ export default function StaffPaidBillsReportPage() {
   const [selectedMonthYear, setSelectedMonthYear] = React.useState("all");
   const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [openTrigger, setOpenTrigger] = React.useState(0);
+  const [syncTrigger, setSyncTrigger] = React.useState(0);
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
   const [isExporting, setIsExporting] = React.useState(false);
   const [isPrintSummaryOpen, setIsPrintSummaryOpen] = React.useState(false);
@@ -212,6 +214,27 @@ export default function StaffPaidBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, refreshTrigger]);
 
+  // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
+  const staffPaidBillsRef = React.useRef<() => void>(() => {});
+  React.useEffect(() => {
+    if (!currentUser) return;
+    staffPaidBillsRef.current = async () => {
+      setIsLoading(true);
+      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+      const result = await getPaidBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
+      if (result?.success && result?.bills) { setBills(result.bills || []); setTotalBills(result.total || 0); }
+      else if (result?.data?.bills) { setBills(result.data.bills || []); setTotalBills(result.data.total || 0); }
+      else { setBills([]); setTotalBills(0); }
+      setIsLoading(false);
+    };
+  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
+  React.useEffect(() => {
+    const handleDataRefreshed = () => { staffPaidBillsRef.current(); };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
   const canAccess = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
     || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
     || hasPermission(PERMISSIONS.REPORT_LIST_OF_PAID_BILLS)
@@ -241,12 +264,21 @@ export default function StaffPaidBillsReportPage() {
           <p className="text-muted-foreground text-sm">List of paid bill records for {currentUser?.branchName || 'your branch'}.</p>
         </div>
         {canUploadPaymentCsv && (
-          <Button
-            onClick={() => setOpenTrigger((prev) => prev + 1)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl gap-2 shadow-sm"
-          >
-            <FileSpreadsheet className="h-4 w-4" /> Upload Payment CSV
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              onClick={() => setSyncTrigger((prev) => prev + 1)}
+              className="border-primary/40 hover:bg-primary/5 text-primary font-semibold rounded-xl gap-2 shadow-sm"
+            >
+              <RefreshCw className="h-4 w-4" /> Sync AAWSA Status
+            </Button>
+            <Button
+              onClick={() => setOpenTrigger((prev) => prev + 1)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl gap-2 shadow-sm"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> Upload Payment CSV
+            </Button>
+          </div>
         )}
       </div>
 
@@ -338,6 +370,10 @@ export default function StaffPaidBillsReportPage() {
 
       <PaymentCsvUploadDialog
         openTrigger={openTrigger}
+      />
+
+      <SyncPaymentStatusDialog
+        openTrigger={syncTrigger}
       />
 
       <ReportPrintSummaryDialog

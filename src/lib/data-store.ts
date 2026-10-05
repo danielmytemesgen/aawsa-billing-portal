@@ -39,6 +39,7 @@ import {
   getAllBillsAction,
   createBillAction,
   updateBillAction,
+  updateBillPaymentStatusAction,
   deleteBillAction,
   getAllIndividualCustomerReadingsAction,
   createIndividualCustomerReadingAction,
@@ -2568,7 +2569,11 @@ export const addBill = async (billData: Omit<DomainBill, 'id' | 'createdAt' | 'u
 };
 
 export const updateExistingBill = async (id: string, billUpdateData: Partial<Omit<DomainBill, 'id'>>): Promise<StoreOperationResult<void>> => {
-  const payload = mapDomainBillToDb(billUpdateData) as BillUpdate;
+  // Immutability Guard: Unless the bill is deleted, do not change the original bill Bill Key
+  const safeData = { ...billUpdateData };
+  delete (safeData as any).BILLKEY;
+  delete (safeData as any).billKey;
+  const payload = mapDomainBillToDb(safeData) as BillUpdate;
   const { data: updatedDbBill, error } = await updateBillAction(id, payload);
   if (updatedDbBill && !error) {
     const updatedBill = mapDbBillToDomain(updatedDbBill);
@@ -2586,6 +2591,41 @@ export const updateExistingBill = async (id: string, billUpdateData: Partial<Omi
     userMessage = `Failed to update bill: ${error.message}`;
   }
   return { success: false, message: userMessage, isNotFoundError, error };
+};
+
+export const updateBillPaymentStatus = async (payload: {
+  billId: string;
+  monthYear?: string;
+  newStatus: 'Paid' | 'Unpaid';
+  amountPaid?: number;
+  paymentDate?: string;
+  paymentChannel?: string;
+  transactionReference?: string;
+  reversalReason?: string;
+  notes?: string;
+  customerKey?: string;
+}): Promise<StoreOperationResult<void>> => {
+  const result = await updateBillPaymentStatusAction(payload);
+  if (result.error) {
+    console.error("DataStore: Failed to update bill payment status:", result.error);
+    return { success: false, message: result.error.message || "Failed to update payment status." };
+  }
+
+  // Refresh bills and customer bulk meter state
+  await initializeBills(true);
+  if (payload.customerKey) {
+    try {
+      await syncBulkMeterLive(payload.customerKey);
+    } catch (e) {
+      console.error("DataStore: syncBulkMeterLive error after payment status update:", e);
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('data-refreshed'));
+  }
+
+  return { success: true };
 };
 
 export const removeBill = async (billId: string): Promise<StoreOperationResult<void>> => {
@@ -2838,13 +2878,14 @@ export const addIndividualCustomerReadingsBatch = async (
     previousReading: item.readingData.previousReading
   }));
 
-  const { success, data: result, error } = await batchCreateIndividualCustomerReadingsAction(batchPayload);
+  const actionRes = await batchCreateIndividualCustomerReadingsAction(batchPayload);
 
-  if (!success || !result) {
-    const msg = error ? (error as any).message || "Batch insert failed." : "Batch insert failed.";
-    return { success: false, message: msg, error };
+  if (!actionRes.success || !actionRes.data) {
+    const msg = (actionRes as any)?.message || (actionRes.error ? (actionRes.error as any).message : null) || "Batch insert failed.";
+    return { success: false, message: msg, error: actionRes.error };
   }
 
+  const result = actionRes.data;
   return { success: true, data: { count: result.count ?? 0, insertedCount: result.insertedCount ?? 0, updatedCount: result.updatedCount ?? 0, rowResults: result.rowResults } };
 };
 
@@ -2860,13 +2901,14 @@ export const addBulkMeterReadingsBatch = async (
     previousReading: item.readingData.previousReading
   }));
 
-  const { success, data: result, error } = await batchCreateBulkMeterReadingsAction(batchPayload);
+  const actionRes = await batchCreateBulkMeterReadingsAction(batchPayload);
 
-  if (!success || !result) {
-    const msg = error ? (error as any).message || "Batch insert failed." : "Batch insert failed.";
-    return { success: false, message: msg, error };
+  if (!actionRes.success || !actionRes.data) {
+    const msg = (actionRes as any)?.message || (actionRes.error ? (actionRes.error as any).message : null) || "Batch insert failed.";
+    return { success: false, message: msg, error: actionRes.error };
   }
 
+  const result = actionRes.data;
   return { success: true, data: { count: result.count ?? 0, insertedCount: result.insertedCount ?? 0, updatedCount: result.updatedCount ?? 0, rowResults: result.rowResults } };
 };
 

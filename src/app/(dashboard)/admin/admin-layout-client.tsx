@@ -84,6 +84,19 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         routeOpsItems.push({ title: "Reader Monitoring", href: "/staff/reader-progress", iconName: "Activity" });
     }
 
+    const canAccessMeterChange = hasAny(
+        PERMISSIONS.METER_CHANGE_VIEW,
+        PERMISSIONS.METER_CHANGE_CREATE,
+        PERMISSIONS.METER_CHANGE_MANAGE
+    );
+    if (canAccessMeterChange) {
+        routeOpsItems.push({
+            title: "Meter Change",
+            href: isAdmin ? "/admin/meter-change" : "/staff/meter-change",
+            iconName: "RefreshCcw"
+        });
+    }
+
     if (routeOpsItems.length > 0) {
         navItems.push({ 
             title: "Field Operations", 
@@ -289,6 +302,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
     if (hasPermission(PERMISSIONS.SETTINGS_MANAGE)) {
         settingsItems.push({ title: "Security Logs", href: "/admin/security-logs", iconName: "Shield" });
         settingsItems.push({ title: "Recycle Bin", href: "/admin/recycle-bin", iconName: "Trash2" });
+        settingsItems.push({ title: "Database Backup", href: "/admin/backup", iconName: "Database" });
         settingsItems.push({ title: "System Maintenance", href: "/admin/maintenance", iconName: "Activity" });
     }
 

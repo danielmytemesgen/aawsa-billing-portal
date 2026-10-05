@@ -61,6 +61,15 @@ export default function CustomerDashboardPage() {
         loadDashboardData();
     }, []);
 
+    // Auto-refresh: re-fetch customer dashboard data when DataRefreshProvider signals new data
+    useEffect(() => {
+        const handleDataRefreshed = () => {
+            loadDashboardData();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     const loadDashboardData = async () => {
         try {
             const customerData = localStorage.getItem("customer");

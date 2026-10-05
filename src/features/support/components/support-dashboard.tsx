@@ -112,6 +112,15 @@ export function SupportDashboard({
     fetchMetrics();
   }, [selectedBranch, branchId]);
 
+  // Auto-refresh: re-fetch support metrics when DataRefreshProvider signals new data
+  useEffect(() => {
+    const handleDataRefreshed = () => {
+      fetchMetrics();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [selectedBranch, branchId]);
+
   if (isLoading || !metrics) {
     return (
       <div className="space-y-6">

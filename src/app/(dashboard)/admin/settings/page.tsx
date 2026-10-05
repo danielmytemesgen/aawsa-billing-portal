@@ -189,6 +189,31 @@ export default function AdminSettingsPage() {
     }
   }, [loadLiveGpsSettings]);
 
+  // Auto-refresh: re-fetch system settings, reading period, session settings, and GPS settings when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      getSystemSettingsAction().then(res => {
+        if (res.data) {
+          const s = res.data as Record<string, string>;
+          if (s.billing_cycle_mode) setCycleMode(s.billing_cycle_mode as 'once_per_month' | 'custom' | 'unlimited');
+          if (s.billing_cycle_start_day) setBillingCycleDay(s.billing_cycle_start_day);
+          if (s.billing_due_date_offset) setDueDateOffset(s.billing_due_date_offset);
+        }
+      });
+      getReadingPeriodDetailsAction().then(details => {
+        if (details) {
+          setReadingPeriodStatus(details.status);
+          setReadingStartDate(details.startDate || "");
+          setReadingEndDate(details.endDate || "");
+        }
+      });
+      loadLiveSessionSettings();
+      loadLiveGpsSettings();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [loadLiveSessionSettings, loadLiveGpsSettings]);
+
   const handleSaveSettings = async () => {
     if (!canUpdateSettings) {
       toast({

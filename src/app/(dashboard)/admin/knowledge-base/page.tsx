@@ -49,6 +49,14 @@ export default function KnowledgeBasePage() {
     return () => unsubscribe();
   }, []);
 
+  // Auto-refresh when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => { setArticles(getKnowledgeBaseArticles()); };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, []);
+
+
   const handleAddArticle = () => {
     setSelectedArticle(null);
     setIsFormOpen(true);

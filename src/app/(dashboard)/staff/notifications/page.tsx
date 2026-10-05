@@ -81,6 +81,16 @@ export default function StaffNotificationsPage() {
         };
     }, []);
 
+    // Auto-refresh when DataRefreshProvider signals new data
+    React.useEffect(() => {
+        const handleDataRefreshed = () => {
+            setSentNotifications(getNotifications());
+            setBranches(getBranches());
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     const form = useForm<NotificationFormValues>({
         resolver: zodResolver(formSchema),
         defaultValues: {

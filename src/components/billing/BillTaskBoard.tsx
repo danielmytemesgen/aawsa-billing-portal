@@ -255,6 +255,8 @@ function TaskColumn({
         setIsBulkLoading(true);
         try {
             await onBulkAction();
+        } catch (err) {
+            console.error('Bulk action failed:', err);
         } finally {
             setIsBulkLoading(false);
         }

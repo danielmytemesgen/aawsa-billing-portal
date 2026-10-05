@@ -42,6 +42,8 @@ import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getFaultCodeLabel, getFaultCodeColor } from "@/lib/fault-codes";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { classifyReadingCategory } from '@/lib/reading-classification';
 
 interface ReaderReportProps {
@@ -52,6 +54,8 @@ interface ReaderReportProps {
     staff: any[];
     individualReadings: any[];
     bulkReadings: any[];
+    selectedMonth?: string;
+    onMonthChange?: (month: string) => void;
 }
 
 const chartConfig = {
@@ -62,60 +66,123 @@ const chartConfig = {
     gps: { label: "GPS Encoded", color: "#3b82f6" },
 } satisfies import("@/components/ui/chart").ChartConfig;
 
-export function ReaderReport({ branches, bulkMeters, customers, routes, staff, individualReadings, bulkReadings }: ReaderReportProps) {
-    const currentMonthYear = format(new Date(), 'yyyy-MM');
-    const monthName = format(new Date(), 'MMMM');
-    const currentYear = format(new Date(), 'yyyy');
+export function ReaderReport({ 
+    branches, 
+    bulkMeters, 
+    customers, 
+    routes, 
+    staff, 
+    individualReadings = [], 
+    bulkReadings = [],
+    selectedMonth,
+    onMonthChange
+}: ReaderReportProps) {
+    const [meterScope, setMeterScope] = React.useState<'all' | 'individual' | 'bulk'>('all');
+    const [internalMonth, setInternalMonth] = React.useState<string>(selectedMonth || format(new Date(), 'yyyy-MM'));
+
+    const monthDate = React.useMemo(() => {
+        try {
+            return internalMonth ? new Date(internalMonth + "-01") : new Date();
+        } catch {
+            return new Date();
+        }
+    }, [internalMonth]);
+    const monthName = format(monthDate, 'MMMM');
+    const currentYear = format(monthDate, 'yyyy');
+
+    React.useEffect(() => {
+        if (selectedMonth && selectedMonth !== internalMonth) {
+            setInternalMonth(selectedMonth);
+        }
+    }, [selectedMonth]);
+
+    const handleMonthSelect = (m: string) => {
+        setInternalMonth(m);
+        if (onMonthChange) onMonthChange(m);
+    };
+
+    const allReadings = React.useMemo(() => {
+        return [...(individualReadings || []), ...(bulkReadings || [])];
+    }, [individualReadings, bulkReadings]);
+
+    const availableMonths = React.useMemo(() => {
+        const set = new Set<string>();
+        allReadings.forEach(r => {
+            const m = r.monthYear || (r.readingDate ? String(r.readingDate).substring(0, 7) : '');
+            if (m && /^\d{4}-\d{2}$/.test(m)) set.add(m);
+        });
+        if (internalMonth && /^\d{4}-\d{2}$/.test(internalMonth)) set.add(internalMonth);
+        const currentM = format(new Date(), 'yyyy-MM');
+        set.add(currentM);
+        return Array.from(set).sort().reverse();
+    }, [allReadings, internalMonth]);
 
     const stats = React.useMemo(() => {
-        // Determine the current calendar month for Collected vs Pending stats
-        const allReadings = [...individualReadings, ...bulkReadings];
-        const recentCycleMonth = format(new Date(), 'yyyy-MM');
+        const recentCycleMonth = internalMonth || format(new Date(), 'yyyy-MM');
         const cycleDisplayText = recentCycleMonth;
         
-        const activeBulkMeters = bulkMeters.filter(bm => bm.status === 'Active' || !bm.status);
-        const totalCustomers = activeBulkMeters.length;
+        const activeBulkMeters = (bulkMeters || []).filter(bm => bm.status === 'Active' || !bm.status);
+        const activeCustomers = (customers || []).filter(c => c.status === 'Active' || !c.status);
+
+        let targetMeters: any[] = [];
+        if (meterScope === 'all') {
+            targetMeters = [...activeBulkMeters, ...activeCustomers];
+        } else if (meterScope === 'bulk') {
+            targetMeters = activeBulkMeters;
+        } else {
+            targetMeters = activeCustomers;
+        }
+
+        const totalCustomers = targetMeters.length;
 
         // GPS Encoded: Meters with coordinates
-        const gpsEncoded = bulkMeters.filter(bm => bm.xCoordinate && bm.yCoordinate).length;
+        const gpsEncoded = targetMeters.filter(m => (m.xCoordinate || (m as any).x_coordinate) && (m.yCoordinate || (m as any).y_coordinate)).length;
 
-        // Collected vs Pending (Current Month - supporting raw & mapped reading shapes)
-        const activeBulkMeterKeys = new Set(activeBulkMeters.map(bm => bm.customerKeyNumber));
-        const cycleReadings = allReadings.filter(r => r.monthYear === recentCycleMonth);
-        const cycleBulkReadings = cycleReadings.filter(r => {
-            const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId;
-            return meterId ? activeBulkMeterKeys.has(meterId) : false;
+        // Collected vs Pending in the selected cycle
+        const cycleReadings = allReadings.filter(r => {
+            const m = r.monthYear || (r.readingDate ? String(r.readingDate).substring(0, 7) : '');
+            return m === recentCycleMonth;
         });
-        const uniqueMetersRead = new Set(cycleBulkReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId));
+
+        const scopedCycleReadings = cycleReadings.filter(r => {
+            if (meterScope === 'bulk') {
+                return r.meterType === 'Bulk' || r.CUSTOMERKEY || r.bulkMeterId;
+            }
+            if (meterScope === 'individual') {
+                return r.meterType === 'Individual' || r.individualCustomerId;
+            }
+            return true;
+        });
+
+        const uniqueMetersRead = new Set(
+            scopedCycleReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber).filter(Boolean)
+        );
         
-        const collectedCount = uniqueMetersRead.size;
+        const collectedCount = Math.min(uniqueMetersRead.size, totalCustomers > 0 ? totalCustomers : uniqueMetersRead.size);
+        const pendingCount = Math.max(0, totalCustomers - collectedCount);
 
-        const totalActiveMeters = activeBulkMeters.length;
-
-        const pendingCount = Math.max(0, totalActiveMeters - collectedCount);
-
-        // Charts: Reading Type Ratio (Filtered for recent cycle)
-        const zeroReadings = cycleReadings.filter(r => {
-            const prev = Number(r.previousReading) || 0;
-            const curr = Number(r.readingValue) || 0;
-            return classifyReadingCategory(prev, curr, r.faultCode || r.FAULT_CODE) === 'Zero';
+        // Charts: Reading Type Ratio
+        const zeroReadings = scopedCycleReadings.filter(r => {
+            const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
+            const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
+            return classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE) === 'Zero';
         }).length;
 
-        const faultReadings = cycleReadings.filter(r => {
-            const code = r.FAULT_CODE || r.faultCode;
+        const faultReadings = scopedCycleReadings.filter(r => {
+            const code = (r as any).FAULT_CODE || r.faultCode;
             return code && code !== '';
         }).length;
 
-        const increaseReadings = cycleReadings.filter(r => {
-            const prev = Number(r.previousReading) || 0;
-            const curr = Number(r.readingValue) || 0;
-            return classifyReadingCategory(prev, curr, r.faultCode || r.FAULT_CODE) === 'Increase';
+        const increaseReadings = scopedCycleReadings.filter(r => {
+            const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
+            const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
+            return classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE) === 'Increase';
         }).length;
 
-        const decreaseReadings = cycleReadings.filter(r => {
-            const prev = Number(r.previousReading) || 0;
-            const curr = Number(r.readingValue) || 0;
-            return classifyReadingCategory(prev, curr, r.faultCode || r.FAULT_CODE) === 'Decrease';
+        const decreaseReadings = scopedCycleReadings.filter(r => {
+            const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
+            const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
+            return classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE) === 'Decrease';
         }).length;
 
         const readingTypes = [
@@ -125,9 +192,9 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             { category: 'Decrease', count: decreaseReadings, color: '#f59e0b' },
         ];
 
-        // Fault Code Breakdown (Filtered for recent cycle)
+        // Fault Code Breakdown
         const faultCodeBreakdown: { code: string; label: string; count: number; color: string; percentage: number }[] = [];
-        const faultReadingsInCycle = cycleReadings.filter(r => (r.FAULT_CODE && r.FAULT_CODE !== '') || (r.faultCode && r.faultCode !== ''));
+        const faultReadingsInCycle = scopedCycleReadings.filter(r => ((r as any).FAULT_CODE && (r as any).FAULT_CODE !== '') || (r.faultCode && r.faultCode !== ''));
 
         const faultCodeCounts = new Map<string, number>();
         faultReadingsInCycle.forEach((r: any) => {
@@ -145,23 +212,26 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             });
         });
 
-        // Sort by count descending
         faultCodeBreakdown.sort((a, b) => b.count - a.count);
 
         // Consumption Trend Calculation (Single-pass aggregation over allReadings)
         const last6Months = Array.from({ length: 6 }, (_, i) => {
-            const date = subMonths(new Date(), i);
+            const date = subMonths(new Date(recentCycleMonth + "-01"), i);
             return format(date, 'yyyy-MM');
         }).reverse();
         const last6MonthsSet = new Set(last6Months);
 
         const monthlyUsageMap = new Map<string, number>();
         for (const r of allReadings) {
+            if (meterScope === 'bulk' && !(r.meterType === 'Bulk' || r.CUSTOMERKEY || r.bulkMeterId)) continue;
+            if (meterScope === 'individual' && !(r.meterType === 'Individual' || r.individualCustomerId)) continue;
+
             const dateStr = r.readingDate || r.createdAt;
             if (!dateStr) continue;
-            const rMonth = typeof dateStr === 'string' ? dateStr.substring(0, 7) : format(new Date(dateStr), 'yyyy-MM');
+            const rMonth = r.monthYear || (typeof dateStr === 'string' ? dateStr.substring(0, 7) : format(new Date(dateStr), 'yyyy-MM'));
             if (last6MonthsSet.has(rMonth)) {
-                const diff = (Number(r.readingValue) || 0) - (Number(r.previousReading) || 0);
+                const diff = (Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0) - 
+                             (Number(r.previousReading ?? (r as any).PREV_READING) || 0);
                 if (diff > 0) {
                     monthlyUsageMap.set(rMonth, (monthlyUsageMap.get(rMonth) || 0) + diff);
                 }
@@ -173,7 +243,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             consumption: monthlyUsageMap.get(month) || 0
         }));
 
-        const currentMonthUsage = trendData[trendData.length - 1].consumption;
+        const currentMonthUsage = trendData[trendData.length - 1]?.consumption || 0;
         const previousMonthUsage = trendData[trendData.length - 2]?.consumption || 0;
         const trendPercentage = previousMonthUsage > 0
             ? ((currentMonthUsage - previousMonthUsage) / previousMonthUsage) * 100
@@ -185,23 +255,34 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                 ? `${(currentMonthUsage / 1000).toFixed(1)}K`
                 : currentMonthUsage.toFixed(0);
 
-        // Branch Detail Table Data (Filtered for recent cycle)
-        const branchDetails = branches.filter(b => b.name.toLowerCase() !== 'head office').map(branch => {
-            const bBulkMeters = activeBulkMeters.filter(bm => bm.branchId === branch.id);
-            const totalInBranch = bBulkMeters.length;
+        // Branch Detail Table Data
+        const branchDetails = (branches || []).filter(b => b.name.toLowerCase() !== 'head office').map(branch => {
+            const bBulk = activeBulkMeters.filter(bm => bm.branchId === branch.id);
+            const bInd = activeCustomers.filter(c => c.branchId === branch.id);
 
-            const branchReaders = staff.filter(s => s.branchId === branch.id && isReaderStaff(s)).length;
-            const branchRoutes = routes.filter(r => r.branchId === branch.id).length;
+            let totalInBranch = 0;
+            if (meterScope === 'all') totalInBranch = bBulk.length + bInd.length;
+            else if (meterScope === 'bulk') totalInBranch = bBulk.length;
+            else totalInBranch = bInd.length;
 
-            const branchReadings = cycleReadings.filter(r => {
-                const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId;
-                return bBulkMeters.some(b => b.customerKeyNumber === meterId);
+            const branchReaders = (staff || []).filter(s => s.branchId === branch.id && isReaderStaff(s)).length;
+            const branchRoutes = (routes || []).filter(r => r.branchId === branch.id).length;
+
+            const branchReadings = scopedCycleReadings.filter(r => {
+                const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber;
+                if (meterScope === 'all') {
+                    return bBulk.some(b => b.customerKeyNumber === meterId) || bInd.some(c => c.customerKeyNumber === meterId);
+                } else if (meterScope === 'bulk') {
+                    return bBulk.some(b => b.customerKeyNumber === meterId);
+                } else {
+                    return bInd.some(c => c.customerKeyNumber === meterId);
+                }
             });
-            const uniqueBranchMetersRead = new Set(branchReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId));
-            const collected = uniqueBranchMetersRead.size;
+            const uniqueBranchMetersRead = new Set(branchReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber).filter(Boolean));
+            const collected = Math.min(uniqueBranchMetersRead.size, totalInBranch > 0 ? totalInBranch : uniqueBranchMetersRead.size);
             
             const pending = Math.max(0, totalInBranch - collected);
-            const performance = totalInBranch > 0 ? Math.round((collected / totalInBranch) * 100) : 0;
+            const performance = totalInBranch > 0 ? Math.round((collected / totalInBranch) * 100) : (collected > 0 ? 100 : 0);
 
             return {
                 id: branch.id,
@@ -217,7 +298,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
 
         const readingQuality = collectedCount > 0 ? (faultReadings / collectedCount) * 100 : 0;
 
-        // Charts: Customer Data Status (Modernized for Pie/Bar)
+        // Charts: Customer Data Status
         const dataStatus = [
             { name: 'Collected', value: collectedCount, color: '#10b981', fill: '#10b981' },
             { name: 'Pending', value: pendingCount, color: '#f59e0b', fill: '#f59e0b' },
@@ -240,25 +321,79 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
             trendPercentage,
             cycleMonth: cycleDisplayText
         };
-    }, [branches, bulkMeters, customers, routes, staff, individualReadings, bulkReadings]);
+    }, [branches, bulkMeters, customers, routes, staff, allReadings, meterScope, internalMonth]);
+
+    const activeScopeLabel = meterScope === 'all' 
+        ? 'Total Meters' 
+        : meterScope === 'bulk' 
+            ? 'Total Bulk Meters' 
+            : 'Total Individual Meters';
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-700">
-            <div className="flex items-center justify-between mb-4 bg-slate-100/80 p-4 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-600 rounded-lg shadow-blue-500/20 shadow-lg">
-                        <Calendar className="h-5 w-5 text-white" />
+        <div className="space-y-6 animate-in fade-in duration-500">
+            {/* Control Bar: Cycle + Meter Scope Switcher */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-100/90 p-4 rounded-2xl border border-slate-200/90 shadow-xs">
+                <div className="flex items-center gap-3 flex-wrap">
+                    <div className="p-2.5 bg-blue-600 rounded-xl shadow-md shadow-blue-500/20 text-white">
+                        <Calendar className="h-5 w-5" />
                     </div>
                     <div>
                         <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Operational Cycle</span>
-                        <Badge variant="secondary" className="bg-white text-blue-700 px-3 py-0.5 text-sm font-black border border-blue-100 shadow-sm mt-0.5">
-                            {stats.cycleMonth}
-                        </Badge>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            <Select value={internalMonth} onValueChange={handleMonthSelect}>
+                                <SelectTrigger className="h-8 bg-white text-blue-800 font-black border-blue-200 shadow-xs text-xs rounded-lg px-2.5 w-[140px]">
+                                    <SelectValue placeholder="Select Cycle" />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-xl">
+                                    {availableMonths.map(m => (
+                                        <SelectItem key={m} value={m} className="font-bold text-xs">
+                                            {m}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <span className="text-xs text-slate-500 font-semibold">
+                                ({allReadings.length.toLocaleString()} readings loaded)
+                            </span>
+                        </div>
                     </div>
                 </div>
-                <div className="hidden sm:flex items-center gap-2 text-slate-400">
-                    <Activity className="h-4 w-4 animate-pulse text-emerald-500" />
-                    <span className="text-[10px] font-black uppercase tracking-tighter">Live Telemetry Active</span>
+
+                {/* Meter Scope Filter */}
+                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-xs">
+                    <Button
+                        size="sm"
+                        variant={meterScope === 'all' ? 'default' : 'ghost'}
+                        onClick={() => setMeterScope('all')}
+                        className={cn(
+                            "h-7 text-xs font-bold px-3 rounded-lg",
+                            meterScope === 'all' ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                        )}
+                    >
+                        All Meters
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant={meterScope === 'individual' ? 'default' : 'ghost'}
+                        onClick={() => setMeterScope('individual')}
+                        className={cn(
+                            "h-7 text-xs font-bold px-3 rounded-lg",
+                            meterScope === 'individual' ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                        )}
+                    >
+                        Individual
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant={meterScope === 'bulk' ? 'default' : 'ghost'}
+                        onClick={() => setMeterScope('bulk')}
+                        className={cn(
+                            "h-7 text-xs font-bold px-3 rounded-lg",
+                            meterScope === 'bulk' ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                        )}
+                    >
+                        Bulk
+                    </Button>
                 </div>
             </div>
 
@@ -276,7 +411,7 @@ export function ReaderReport({ branches, bulkMeters, customers, routes, staff, i
                         </div>
                         <div className="space-y-1">
                             <h3 className="text-3xl font-bold">{stats.totalCustomers.toLocaleString()}</h3>
-                            <div className="text-blue-100 text-sm font-medium">Total Bulk Meters</div>
+                            <div className="text-blue-100 text-sm font-medium">{activeScopeLabel}</div>
                         </div>
                         <div className="mt-4 flex items-center text-xs text-blue-100">
                             <Activity className="h-3 w-3 mr-1" />

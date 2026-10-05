@@ -47,6 +47,15 @@ export default function CustomerAccountPage() {
         loadAccountData();
     }, []);
 
+    // Auto-refresh: re-fetch customer account data when DataRefreshProvider signals new data
+    useEffect(() => {
+        const handleDataRefreshed = () => {
+            loadAccountData();
+        };
+        window.addEventListener('data-refreshed', handleDataRefreshed);
+        return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+    }, []);
+
     const loadAccountData = async () => {
         try {
             const customerData = localStorage.getItem("customer");

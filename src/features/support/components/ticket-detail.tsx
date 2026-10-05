@@ -67,6 +67,15 @@ export function TicketDetail({
 
   const { ticket, messages, isLoading, sendMessage, refetch } = useTicketMessages(ticketId);
 
+  // Auto-refresh: re-fetch ticket and messages when DataRefreshProvider signals new data
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      refetch();
+    };
+    window.addEventListener('data-refreshed', handleDataRefreshed);
+    return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
+  }, [refetch]);
+
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'thread' | '360'>('thread');
 

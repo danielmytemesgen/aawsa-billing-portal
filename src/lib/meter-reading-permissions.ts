@@ -18,7 +18,16 @@ export function canCreateMeterReadingForType(
       hasPermission('meter_readings_create_bulk') ||
       hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) ||
       hasPermission('meter_readings:upload_bulk') ||
-      hasPermission('meter_readings_upload_bulk')
+      hasPermission('meter_readings_upload_bulk') ||
+      hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+      hasPermission('meter_readings:create') ||
+      hasPermission('meter_readings_create') ||
+      hasPermission(PERMISSIONS.DATA_ENTRY_BULK_CSV) ||
+      hasPermission('data_entry:bulk_csv') ||
+      hasPermission('data_entry_bulk_csv') ||
+      hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) ||
+      hasPermission('data_entry:access') ||
+      hasPermission('data_entry_access')
     );
   }
 
@@ -29,7 +38,16 @@ export function canCreateMeterReadingForType(
       hasPermission('meter_readings_create_individual') ||
       hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_INDIVIDUAL) ||
       hasPermission('meter_readings:upload_individual') ||
-      hasPermission('meter_readings_upload_individual')
+      hasPermission('meter_readings_upload_individual') ||
+      hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+      hasPermission('meter_readings:create') ||
+      hasPermission('meter_readings_create') ||
+      hasPermission(PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV) ||
+      hasPermission('data_entry:individual_csv') ||
+      hasPermission('data_entry_individual_csv') ||
+      hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) ||
+      hasPermission('data_entry:access') ||
+      hasPermission('data_entry_access')
     );
   }
 
