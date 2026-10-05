@@ -1404,8 +1404,15 @@ const availableReports: ReportType[] = [
           baseWater = Number(b.THISMONTHBILLAMT);
         }
 
-        // Normalise charge group to a short readable label
-        const chargeGroupLabel = (cGroup || 'Unknown').trim();
+        // Normalise charge group to a short readable label.
+        // When the charge group is missing, infer it from the water GL code already computed above.
+        let chargeGroupLabel = (cGroup || '').trim();
+        if (!chargeGroupLabel) {
+          if (baseWaterGlCode === 'WDGL')    chargeGroupLabel = 'Domestic';
+          else if (baseWaterGlCode === 'WBORGL')  chargeGroupLabel = 'Borehole';
+          else if (baseWaterGlCode === 'WPFNTGL') chargeGroupLabel = 'Public Fountain';
+          else                                     chargeGroupLabel = 'Non-domestic'; // default WNDGL
+        }
 
         const addItem = (glCode: string, amount: number, vatAmt: number = 0) => {
           if (amount <= 0 && vatAmt <= 0) return;

@@ -305,6 +305,10 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         settingsItems.push({ title: "Database Backup", href: "/admin/backup", iconName: "Database" });
         settingsItems.push({ title: "System Maintenance", href: "/admin/maintenance", iconName: "Activity" });
     }
+    // User Manual — visible to all staff with any settings access
+    if (hasPermission(PERMISSIONS.SETTINGS_VIEW) || hasPermission(PERMISSIONS.SETTINGS_MANAGE) || hasPermission(PERMISSIONS.KNOWLEDGE_BASE_VIEW)) {
+        settingsItems.push({ title: "User Manual", href: isAdmin ? "/admin/user-manual" : "/staff/user-manual", iconName: "BookOpen" });
+    }
 
     if (settingsItems.length > 0) {
         navItems.push({ title: "System", items: settingsItems });
