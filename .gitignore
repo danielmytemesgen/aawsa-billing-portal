@@ -61,3 +61,14 @@ pm2_csv_logs.txt
 y/
 
 
+
+# -- Debug & temp files (auto-cleanup) -----------------------
+*.bak
+*_snapshot.html
+local_response.*
+remote_html.*
+pm2_*.txt
+server-error.log
+
+# PM2 runtime dir (accidentally created in project root)
+/y/

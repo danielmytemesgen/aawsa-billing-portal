@@ -169,7 +169,7 @@ export function SupportChatbot() {
         onClick={toggleOpen}
         aria-label="Toggle AAWSA Support Bot"
         className={cn(
-          'fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-2xl transition-all duration-300 no-print',
+          'fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-2xl transition-all duration-300 no-print print:hidden',
           'bg-gradient-to-br from-blue-600 to-blue-800 text-white hover:scale-110 active:scale-95',
           isOpen && 'rotate-12',
         )}
@@ -193,7 +193,7 @@ export function SupportChatbot() {
         <div
           id="support-chatbot-panel"
           className={cn(
-            'fixed bottom-24 right-6 z-50 flex flex-col rounded-2xl shadow-2xl border border-blue-100 overflow-hidden no-print',
+            'fixed bottom-24 right-6 z-50 flex flex-col rounded-2xl shadow-2xl border border-blue-100 overflow-hidden no-print print:hidden',
             'bg-white transition-all duration-300',
             isMinimized ? 'h-14 w-80' : 'h-[500px] w-80 sm:w-96',
           )}

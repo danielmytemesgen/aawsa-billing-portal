@@ -1,4 +1,4 @@
-import { query, withTransaction } from './db';
+﻿import { query, withTransaction } from './db';
 import { randomUUID } from 'crypto';
 import { buildUserSessionsFilters, USER_SESSION_STATUS_SQL } from './session-monitoring';
 import { computeCreditForBill, roundMoney, type ComputeCreditForBillOutput } from './credit-utils';
@@ -238,7 +238,7 @@ export const dbDeleteBranch = async (id: string, deletedBy?: string) => {
 
         await client.query('UPDATE branches SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['branch', id, branch.name, deletedBy, JSON.stringify(branch)]);
+            ['branch', id, branch.name, deletedBy, branch]);
         return true;
     });
 };
@@ -521,7 +521,7 @@ export const dbDeleteCustomer = async (customerKeyNumber: string, deletedBy?: st
 
         await client.query('UPDATE individual_customers SET deleted_at = now(), deleted_by = $2 WHERE "customerKeyNumber" = $1', [customerKeyNumber, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['customer', customerKeyNumber, customer.name, deletedBy, JSON.stringify(customer)]);
+            ['customer', customerKeyNumber, customer.name, deletedBy, customer]);
         return true;
     });
 };
@@ -731,7 +731,7 @@ export const dbDeleteBulkMeter = async (customerKeyNumber: string, deletedBy?: s
 
         await client.query('UPDATE bulk_meters SET deleted_at = now(), deleted_by = $2 WHERE "customerKeyNumber" = $1', [customerKeyNumber, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['bulk_meter', customerKeyNumber, bm.name, deletedBy, JSON.stringify(bm)]);
+            ['bulk_meter', customerKeyNumber, bm.name, deletedBy, bm]);
         return true;
     });
 };
@@ -850,7 +850,7 @@ export const dbDeleteStaffMember = async (email: string, deletedBy?: string, bra
 
         await client.query(deleteSql, deleteParams);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['staff', staff.id, staff.name, deletedBy, JSON.stringify(staff)]);
+            ['staff', staff.id, staff.name, deletedBy, staff]);
         return true;
     });
 };
@@ -1177,7 +1177,7 @@ export const dbCreateBill = async (bill: any, client?: any) => {
 };
 
 export const dbUpdateBill = async (id: string, bill: any, client?: any, monthYear?: string) => {
-    // Never update the partition key — strip it defensively so callers can't accidentally
+    // Never update the partition key â€” strip it defensively so callers can't accidentally
     // change month_year, which would require PostgreSQL to move the row to another partition.
     const { month_year: _ignored, ...safeFields } = bill;
     const keys = Object.keys(safeFields);
@@ -1286,7 +1286,7 @@ export const dbDeleteBill = async (id: string, deletedBy?: string) => {
 
         await client.query('UPDATE bills SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['bill', id, bill.bill_number || `Bill ${id}`, deletedBy, JSON.stringify(bill)]);
+            ['bill', id, bill.bill_number || `Bill ${id}`, deletedBy, bill]);
 
         // Re-run the aging replay so any credit created by this bill's overpayment
         // is reversed (bill no longer exists) and balances stay consistent.
@@ -1723,18 +1723,27 @@ export const dbGetPaginatedIndividualCustomerReadings = async (options: Paginate
         )`);
     }
 
+    const needsCustomerJoin = Boolean(options.branchId || (options.searchTerm && options.searchTerm.trim()));
+    const needsRouteJoin = Boolean(options.readerId || options.routeKey);
+    const needsBulkMeterJoin = Boolean(options.routeKey);
+
+    let countFromSql = 'FROM individual_customer_readings r';
+    if (needsCustomerJoin || needsRouteJoin) {
+        countFromSql += ' LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"';
+    }
+    if (needsBulkMeterJoin) {
+        countFromSql += ' LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"';
+    }
+    if (needsRouteJoin) {
+        countFromSql += ' LEFT JOIN routes ro ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = ro.route_key';
+    }
+
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const countSql = `
         SELECT COUNT(*)::int as total
-        FROM individual_customer_readings r
-        LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
-        LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
-        LEFT JOIN routes ro ON COALESCE(ic."ROUTE_KEY", bm."ROUTE_KEY") = ro.route_key
+        ${countFromSql}
         ${whereSql}
     `;
-
-    const countRes = await query(countSql, params);
-    const totalCount = countRes[0]?.total ?? 0;
 
     const dataSql = `
         SELECT r.*, 
@@ -1755,7 +1764,13 @@ export const dbGetPaginatedIndividualCustomerReadings = async (options: Paginate
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
-    const rawRows = await query(dataSql, [...params, pageSize, offset]);
+    // Run COUNT and DATA queries in parallel to halve round-trip time
+    const [countRes, rawRows] = await Promise.all([
+        query(countSql, params),
+        query(dataSql, [...params, pageSize, offset]),
+    ]);
+    const totalCount = countRes[0]?.total ?? 0;
+
     const rows = rawRows.map((r: any) => {
         const rDate = r.READING_DATE instanceof Date ? r.READING_DATE.toISOString().slice(0, 10) : (r.READING_DATE ? String(r.READING_DATE).slice(0, 10) : '');
         const monthYear = rDate ? rDate.slice(0, 7) : 'Unknown';
@@ -1890,7 +1905,7 @@ export const dbDeleteIndividualCustomerReading = async (id: string, deletedBy?: 
 
         await client.query('UPDATE individual_customer_readings SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['reading_individual', id, `Reading ${id}`, deletedBy, JSON.stringify(reading)]);
+            ['reading_individual', id, `Reading ${id}`, deletedBy, reading]);
         return true;
     });
 };
@@ -1978,18 +1993,23 @@ export const dbGetPaginatedBulkMeterReadings = async (options: PaginatedReadings
         )`);
     }
 
-    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const needsBmJoin = Boolean(options.branchId || options.routeKey || (options.searchTerm && options.searchTerm.trim()));
+    const needsRouteJoin = Boolean(options.readerId);
 
+    let countFromSql = 'FROM bulk_meter_readings r';
+    if (needsBmJoin || needsRouteJoin) {
+        countFromSql += ' LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"';
+    }
+    if (needsRouteJoin) {
+        countFromSql += ' LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key';
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const countSql = `
         SELECT COUNT(*)::int as total
-        FROM bulk_meter_readings r
-        LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
-        LEFT JOIN routes ro ON bm."ROUTE_KEY" = ro.route_key
+        ${countFromSql}
         ${whereSql}
     `;
-
-    const countRes = await query(countSql, params);
-    const totalCount = countRes[0]?.total ?? 0;
 
     const dataSql = `
         SELECT r.*,
@@ -2009,7 +2029,13 @@ export const dbGetPaginatedBulkMeterReadings = async (options: PaginatedReadings
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
-    const rawRows = await query(dataSql, [...params, pageSize, offset]);
+    // Run COUNT and DATA queries in parallel to halve round-trip time
+    const [countRes, rawRows] = await Promise.all([
+        query(countSql, params),
+        query(dataSql, [...params, pageSize, offset]),
+    ]);
+    const totalCount = countRes[0]?.total ?? 0;
+
     const rows = rawRows.map((r: any) => {
         const rDate = r.READING_DATE instanceof Date ? r.READING_DATE.toISOString().slice(0, 10) : (r.READING_DATE ? String(r.READING_DATE).slice(0, 10) : '');
         const monthYear = rDate ? rDate.slice(0, 7) : 'Unknown';
@@ -2261,7 +2287,7 @@ export const dbGetReadingConsumptionAnomalies = async (branchId?: string, monthY
                 key: row.key,
                 name: row.name,
                 type: isBulk ? 'Bulk' : 'Individual',
-                reason: `Negative consumption (${usage} m³): meter counter rollback or rollover`,
+                reason: `Negative consumption (${usage} mÂ³): meter counter rollback or rollover`,
                 severity: 'high',
                 usage,
                 readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
@@ -2274,7 +2300,7 @@ export const dbGetReadingConsumptionAnomalies = async (branchId?: string, monthY
                 key: row.key,
                 name: row.name,
                 type: isBulk ? 'Bulk' : 'Individual',
-                reason: 'Zero consumption — possible stopped or broken meter',
+                reason: 'Zero consumption â€” possible stopped or broken meter',
                 severity: 'medium',
                 usage,
                 readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
@@ -2287,7 +2313,7 @@ export const dbGetReadingConsumptionAnomalies = async (branchId?: string, monthY
                 key: row.key,
                 name: row.name,
                 type: 'Individual',
-                reason: `Extreme consumption spike: ${usage.toFixed(0)} m³`,
+                reason: `Extreme consumption spike: ${usage.toFixed(0)} mÂ³`,
                 severity: 'high',
                 usage,
                 readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
@@ -2300,7 +2326,7 @@ export const dbGetReadingConsumptionAnomalies = async (branchId?: string, monthY
                 key: row.key,
                 name: row.name,
                 type: 'Bulk',
-                reason: `Extreme bulk consumption spike: ${usage.toFixed(0)} m³`,
+                reason: `Extreme bulk consumption spike: ${usage.toFixed(0)} mÂ³`,
                 severity: 'high',
                 usage,
                 readingDate: row.readingDate ? String(row.readingDate).slice(0, 10) : undefined,
@@ -2404,7 +2430,7 @@ export const dbDeleteBulkMeterReading = async (id: string, deletedBy?: string) =
 
         await client.query('UPDATE bulk_meter_readings SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['reading_bulk', id, `Bulk Reading ${id}`, deletedBy, JSON.stringify(reading)]);
+            ['reading_bulk', id, `Bulk Reading ${id}`, deletedBy, reading]);
         return true;
     });
 };
@@ -2422,7 +2448,7 @@ export const dbGetBulkMeterReadingsByMeter = async (meterKey: string) => {
 
 export const dbCreateMeterReadingPhoto = async (photo: {
     reading_id: string;
-    photo_data?: string | null;   // base64 string — stored as bytea
+    photo_data?: string | null;   // base64 string â€” stored as bytea
     photo_url?: string | null;    // optional URL reference
 }, client?: any) => {
     // Convert base64 string to Buffer for bytea storage
@@ -2591,7 +2617,7 @@ export const dbDeletePayment = async (id: string, deletedBy?: string) => {
 
         await client.query('UPDATE payments SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['payment', id, `Payment ${payment.amount_paid}`, deletedBy, JSON.stringify(payment)]);
+            ['payment', id, `Payment ${payment.amount_paid}`, deletedBy, payment]);
         return true;
     });
 };
@@ -2631,7 +2657,7 @@ export const dbDeleteReportLog = async (id: string, deletedBy?: string) => {
 
         await client.query('UPDATE reports SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['report', id, report.name || `Report ${id}`, deletedBy, JSON.stringify(report)]);
+            ['report', id, report.name || `Report ${id}`, deletedBy, report]);
         return true;
     });
 };
@@ -2651,7 +2677,7 @@ export const dbDeleteNotification = async (id: string, deletedBy?: string) => {
 
         await client.query('UPDATE notifications SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['notification', id, notification.title || `Notification ${id}`, deletedBy, JSON.stringify(notification)]);
+            ['notification', id, notification.title || `Notification ${id}`, deletedBy, notification]);
         return true;
     });
 };
@@ -2849,7 +2875,7 @@ export const dbDeleteKnowledgeBaseArticle = async (id: number, deletedBy?: strin
 
         await client.query('UPDATE knowledge_base_articles SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['knowledge_base', id.toString(), article.title || `Article ${id}`, deletedBy, JSON.stringify(article)]);
+            ['knowledge_base', id.toString(), article.title || `Article ${id}`, deletedBy, article]);
         return true;
     });
 };
@@ -2993,7 +3019,7 @@ export const dbRevokeCustomerSession = async (sessionId: string, reason: 'revoke
  * the revoked flag so the row shows as active again. Only applies to ended
  * sessions. Note the guard covers BOTH shapes: rows revoked before migration
  * 017 (is_revoked=true with no logout_time) and rows ended afterwards
- * (logout_time set) — otherwise old revoked rows could never be reactivated.
+ * (logout_time set) â€” otherwise old revoked rows could never be reactivated.
  */
 export const dbReactivateCustomerSession = async (sessionId: string) => {
     const sql = `
@@ -3211,7 +3237,7 @@ export const dbRevokeOtherStaffSessions = async (staffId: string, currentSession
  * Undo for an ended staff session: clears the end-of-session fields and bumps
  * last_active_at so the nightly sweep gives the reactivated session a fresh
  * lease instead of immediately re-closing it. Only applies to ended sessions
- * (logout_time IS NOT NULL). Note: it restores the DB row only — if the user's
+ * (logout_time IS NOT NULL). Note: it restores the DB row only â€” if the user's
  * JWT cookie was already cleared by the kick-out redirect, they re-login.
  */
 export const dbReactivateStaffSession = async (sessionId: string) => {
@@ -3243,7 +3269,7 @@ export const dbIsStaffSessionActive = async (sessionId: string) => {
 /**
  * Nightly sweep: closes staff sessions that have been idle longer than the
  * configured session duration (defaults to the 2h JWT ceiling). Customers are
- * deliberately NOT swept — customer sessions have no expiry policy.
+ * deliberately NOT swept â€” customer sessions have no expiry policy.
  * Returns the number of sessions closed.
  */
 export const dbSweepExpiredStaffSessions = async (durationSeconds: number = 7200) => {
@@ -3327,8 +3353,8 @@ export interface UserSessionsOptions {
     pageSize?: number;
     type?: 'staff' | 'customer';
     status?: string;
-    branchName?: string; // exact match — branch isolation for non-management staff
-    branch?: string;     // ILIKE — UI filter
+    branchName?: string; // exact match â€” branch isolation for non-management staff
+    branch?: string;     // ILIKE â€” UI filter
     search?: string;     // ILIKE on user identifier
 }
 
@@ -3439,7 +3465,7 @@ export const dbDeleteFaultCode = async (id: string, deletedBy?: string) => {
 
         await client.query('UPDATE fault_codes SET deleted_at = now(), deleted_by = $2 WHERE id = $1', [id, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['fault_code', id, faultCode.code || `Fault Code ${id}`, deletedBy, JSON.stringify(faultCode)]);
+            ['fault_code', id, faultCode.code || `Fault Code ${id}`, deletedBy, faultCode]);
         return true;
     });
 };
@@ -3511,13 +3537,13 @@ export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
 
         await client.query('UPDATE routes SET deleted_at = now(), deleted_by = $2 WHERE route_key = $1', [routeKey, deletedBy]);
         await client.query('INSERT INTO recycle_bin (entity_type, entity_id, entity_name, deleted_by, original_data) VALUES ($1, $2, $3, $4, $5)',
-            ['route', routeKey, route.description || routeKey, deletedBy, JSON.stringify(route)]);
+            ['route', routeKey, route.description || routeKey, deletedBy, route]);
         return true;
     });
 };
 
 export const dbGetDashboardMetrics = async (branchId?: string) => {
-    // ── Step 1: Resolve latestMonth first (needed by most queries) ────────────
+    // â”€â”€ Step 1: Resolve latestMonth first (needed by most queries) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let latestMonth = new Date().toISOString().substring(0, 7);
     try {
         const [postedRes, anyRes]: any[] = await Promise.all([
@@ -3529,7 +3555,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         console.warn('Failed to fetch latest bill month_year, falling back to current calendar month:', err);
     }
 
-    // ── Step 2: Build shared filter fragments ─────────────────────────────────
+    // â”€â”€ Step 2: Build shared filter fragments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const params = [latestMonth];
     let branchFilter = '';
     if (branchId) {
@@ -3558,7 +3584,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         : 'WHERE DATE(imr."READING_DATE") = $1 OR DATE(imr.created_at) = $1';
     let todayCustFilter = branchId ? 'AND branch_id = $2' : '';
 
-    // ── Step 3: Run all independent queries in parallel ────────────────────────
+    // â”€â”€ Step 3: Run all independent queries in parallel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const [
         billStatuses,
         revenueData,
@@ -3704,7 +3730,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         ).catch(() => [{ count: 0 }]),
     ]);
 
-    // ── Step 4: Assemble result ───────────────────────────────────────────────
+    // â”€â”€ Step 4: Assemble result â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
     const totalCustomers = parseInt(totalCustomersData[0]?.count || 0);
     const currentReadings = parseInt(currentReadingsData[0]?.count || 0);
@@ -4164,7 +4190,7 @@ export const dbBatchInsertBills = async (bills: any[], client?: any) => {
     }
 
     // Map all fields in the bills table with their PostgreSQL types.
-    // Explicit types are REQUIRED for unnest() — without them PostgreSQL
+    // Explicit types are REQUIRED for unnest() â€” without them PostgreSQL
     // cannot resolve the overload when the array contains only null values.
     const columnDefs: { name: string; pgType: string }[] = [
         { name: 'id',                       pgType: 'uuid' },
@@ -4222,7 +4248,7 @@ export const dbBatchInsertBills = async (bills: any[], client?: any) => {
 
     // Build one array per column.
     // JSONB fields must be serialized to strings so PostgreSQL's unnest(::jsonb[])
-    // can parse them correctly — pg driver does not auto-stringify object array elements.
+    // can parse them correctly â€” pg driver does not auto-stringify object array elements.
     const columnData = columnDefs.map(c => bills.map(b => {
         const val = (b as any)[c.name];
         if (val === undefined || val === null) return null;
@@ -4677,7 +4703,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     // FIX (Bottleneck 2): Correction chain resolution.
     // Banks and customers often reference the original bill key/number, not the CORR- replacement.
     // When findTargetBill resolves to a Reversed bill, follow the correction link to the active
-    // replacement bill so the payment is applied to the live collectable bill — not the voided one.
+    // replacement bill so the payment is applied to the live collectable bill â€” not the voided one.
     const followCorrectionChain = async (bill: any): Promise<any> => {
         if (!bill || bill.status !== 'Reversed') return bill;
         const bNum = bill.bill_number || bill.BILLKEY || '';
@@ -4707,7 +4733,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             console.log(`[CSV] Correction chain: redirected from reversed bill "${bill.bill_number || bill.BILLKEY}" to replacement bill "${replacement.bill_number || replacement.BILLKEY}"`);
             return replacement;
         }
-        // No replacement found — return the reversed bill as-is so the existing
+        // No replacement found â€” return the reversed bill as-is so the existing
         // error handling below gives the operator a clear message.
         return bill;
     };
@@ -4770,7 +4796,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const existingReconStatus = String(targetBill.reconciliation_status || '').trim().toLowerCase();
             const existingBankRef = String(targetBill.bank_ref || '').trim();
             
-            // CSV is the source of truth — allow overwriting even if already paid & reconciled.
+            // CSV is the source of truth â€” allow overwriting even if already paid & reconciled.
             if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled') {
                 console.log(`Row ${rowNum} - Overwriting already paid+reconciled bill "${billIdent}":`, {
                     prev_payment_status: targetBill.payment_status,
@@ -4815,7 +4841,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             // The CSV is the source of truth for payment reconciliation, so an amount
             // LOWER than the bill total is treated as a mismatch (partial payments go
             // through other channels). An amount HIGHER than the bill is an
-            // overpayment (duplicate transaction / bill corrected downward) — the
+            // overpayment (duplicate transaction / bill corrected downward) â€” the
             // credit-note engine turns the excess into a deposit on the meter, so it
             // is allowed through and linked to this bill (source_bill_id).
             if (rec.amount !== undefined && rec.amount !== null && !isNaN(Number(rec.amount))) {
@@ -4889,7 +4915,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 reconciliation_status: targetBill.reconciliation_status,
                 bank_ref: targetBill.bank_ref
             });
-            console.log(`[CSV] Row ${rowNum} - Payment channel mapping: "${rawChannel}" → "${channel}"`);
+            console.log(`[CSV] Row ${rowNum} - Payment channel mapping: "${rawChannel}" â†’ "${channel}"`);
             console.log(`[CSV] Row ${rowNum} - Will update to:`, {
                 payment_status: 'Paid',
                 amount_paid: amountPaid,
@@ -4960,7 +4986,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             }
 
             if (!updateRes || updateRes.length === 0) {
-                console.error(`[CSV] Row ${rowNum} ❌ UPDATE FAILED - No rows affected`, {
+                console.error(`[CSV] Row ${rowNum} âŒ UPDATE FAILED - No rows affected`, {
                     billId: targetBill.id,
                     billKey: targetBill.BILLKEY,
                     billNumber: targetBill.bill_number,
@@ -4973,40 +4999,40 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 continue;
             }
             
-            console.log(`[CSV] Row ${rowNum} ✅ UPDATE SUCCESS:`, updateRes[0]);
+            console.log(`[CSV] Row ${rowNum} âœ… UPDATE SUCCESS:`, updateRes[0]);
 
             // Synchronize paymentStatus on individual_customers or bulk_meters
             if (targetBill.individual_customer_id) {
                 try {
                     const syncRes = await query(`UPDATE individual_customers SET "paymentStatus" = 'Paid', "updated_at" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.individual_customer_id]);
-                    console.log(`[CSV] Row ${rowNum} ✅ Synced individual_customers for customer ${targetBill.individual_customer_id}:`, syncRes);
+                    console.log(`[CSV] Row ${rowNum} âœ… Synced individual_customers for customer ${targetBill.individual_customer_id}:`, syncRes);
                 } catch (syncErr) {
-                    console.error(`[CSV] Row ${rowNum} ❌ Individual customer sync failed:`, syncErr);
+                    console.error(`[CSV] Row ${rowNum} âŒ Individual customer sync failed:`, syncErr);
                 }
             }
             if (targetBill.CUSTOMERKEY) {
                 try {
                     const syncRes = await query(`UPDATE bulk_meters SET "paymentStatus" = 'Paid', "updatedAt" = NOW() WHERE "customerKeyNumber" = $1`, [targetBill.CUSTOMERKEY]);
-                    console.log(`[CSV] Row ${rowNum} ✅ Synced bulk_meters for customer ${targetBill.CUSTOMERKEY}:`, syncRes);
+                    console.log(`[CSV] Row ${rowNum} âœ… Synced bulk_meters for customer ${targetBill.CUSTOMERKEY}:`, syncRes);
                 } catch (syncErr) {
-                    console.error(`[CSV] Row ${rowNum} ❌ Bulk meter sync failed:`, syncErr);
+                    console.error(`[CSV] Row ${rowNum} âŒ Bulk meter sync failed:`, syncErr);
                 }
             }
 
             // Double check that the individual customer ID exists before inserting payment
             const validIndividualCustomerId = await resolveExistingIndividualCustomerId(targetBill.individual_customer_id || null);
             if (!validIndividualCustomerId && targetBill.individual_customer_id) {
-                console.warn(`[CSV] Row ${rowNum} ⚠️ individual_customer_id "${targetBill.individual_customer_id}" does not exist in individual_customers. Inserting payment with NULL individual_customer_id.`);
+                console.warn(`[CSV] Row ${rowNum} âš ï¸ individual_customer_id "${targetBill.individual_customer_id}" does not exist in individual_customers. Inserting payment with NULL individual_customer_id.`);
             }
             const bulkMeterId = targetBill.CUSTOMERKEY || null;
             if (bulkMeterId) affectedBulkKeys.add(bulkMeterId);
 
             // Log payment into payments table.
             // If this bill was previously paid (re-upload scenario), remove the old payment
-            // record first so we never accumulate duplicates — one record per bill per CSV update.
+            // record first so we never accumulate duplicates â€” one record per bill per CSV update.
             try {
                 await query(`DELETE FROM payments WHERE bill_id = $1`, [targetBill.id]);
-                console.log(`[CSV] Row ${rowNum} 🗑️  Removed previous payment record(s) for bill ${targetBill.id} (if any)`);
+                console.log(`[CSV] Row ${rowNum} ðŸ—‘ï¸  Removed previous payment record(s) for bill ${targetBill.id} (if any)`);
 
                 const payRes = await query(`
                     INSERT INTO payments (bill_id, bill_month_year, individual_customer_id, bulk_meter_id, amount_paid, payment_method, transaction_reference, processed_by_staff_id, payment_date, notes)
@@ -5024,9 +5050,9 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                     validPaymentDate,
                     `CSV Payment Update: Recon=${reconStatus}`
                 ]);
-                console.log(`[CSV] Row ${rowNum} ✅ Payment logged to payments table (id: ${payRes?.[0]?.id})`);
+                console.log(`[CSV] Row ${rowNum} âœ… Payment logged to payments table (id: ${payRes?.[0]?.id})`);
             } catch (pErr: any) {
-                console.log(`[CSV] Row ${rowNum} ⚠️  Payment insert with method="${channel}" failed, retrying without payment_method...`);
+                console.log(`[CSV] Row ${rowNum} âš ï¸  Payment insert with method="${channel}" failed, retrying without payment_method...`);
                 // If payment_method causes constraint violation, retry without payment_method
                 try {
                     await query(`DELETE FROM payments WHERE bill_id = $1`, [targetBill.id]);
@@ -5045,9 +5071,9 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                         validPaymentDate,
                         `CSV Payment Update: Recon=${reconStatus}`
                     ]);
-                    console.log(`[CSV] Row ${rowNum} ✅ Payment logged to payments table without method (id: ${payRes2?.[0]?.id})`);
+                    console.log(`[CSV] Row ${rowNum} âœ… Payment logged to payments table without method (id: ${payRes2?.[0]?.id})`);
                 } catch (pErr2: any) {
-                    console.error(`[CSV] Row ${rowNum} ❌ Payments insert failed (both attempts):`, pErr2);
+                    console.error(`[CSV] Row ${rowNum} âŒ Payments insert failed (both attempts):`, pErr2);
                     // Continue even if payments table insert fails - the main update succeeded
                 }
             }
@@ -5061,19 +5087,19 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
 
             updatedCount++;
         } catch (err: any) {
-            console.error(`[CSV] Row ${rowNum} ❌ Unexpected error:`, err);
+            console.error(`[CSV] Row ${rowNum} âŒ Unexpected error:`, err);
             errors.push({ row: rowNum, error: err.message || 'Database update error' });
         }
     }
 
-    console.log(`[CSV] ✅ Batch complete: ${updatedCount} updated, ${errors.length} errors`);
+    console.log(`[CSV] âœ… Batch complete: ${updatedCount} updated, ${errors.length} errors`);
 
     // Credit-note wiring: an overpaid bulk-meter bill is a deposit. The engine's
     // replay creates the credit (source_bill_id stamped from the matched bill);
     // this links each new credit to the payment row that produced it so
     // credit_ledger.source_payment_id is populated. Finally, a backfill pass
     // links any duplicate-transaction / bill-correction credit that still has no
-    // source bill to the meter's most recent overpaid bill — a defensive
+    // source bill to the meter's most recent overpaid bill â€” a defensive
     // invariant for credits recorded before the overpayment was recognised.
     for (const key of affectedBulkKeys) {
         try {
@@ -5084,14 +5110,14 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     }
     try {
         const linked = await dbLinkCreditSourcePayments();
-        if (linked > 0) console.log(`[CSV] ✅ Linked ${linked} credit(s) to their source payment`);
+        if (linked > 0) console.log(`[CSV] âœ… Linked ${linked} credit(s) to their source payment`);
     } catch (linkErr) {
         console.error('[CSV] Credit source-payment linking failed:', linkErr);
     }
     if (affectedBulkKeys.size > 0) {
         try {
             const backfilled = await dbLinkCreditsToOverpaidBills([...affectedBulkKeys]);
-            if (backfilled > 0) console.log(`[CSV] ✅ Backfilled source bill on ${backfilled} credit(s)`);
+            if (backfilled > 0) console.log(`[CSV] âœ… Backfilled source bill on ${backfilled} credit(s)`);
         } catch (backfillErr) {
             console.error('[CSV] Credit source-bill backfill failed:', backfillErr);
         }
@@ -5133,8 +5159,8 @@ export const dbLinkCreditSourcePayments = async (): Promise<number> => {
  * CSV payment batches so a duplicate-transaction credit recorded before the
  * overpayment was recognised is tied to the bill the batch reveals.
  *
- * Normally this matches 0 rows — the aging engine stamps source_bill_id itself
- * (dbSyncAgingForCustomer) — so this is a defensive invariant, not the primary
+ * Normally this matches 0 rows â€” the aging engine stamps source_bill_id itself
+ * (dbSyncAgingForCustomer) â€” so this is a defensive invariant, not the primary
  * path. It only links credits whose reason semantically implies a bill
  * ('duplicate_transaction' / 'bill_correction'); manual standalone deposits
  * (reason 'manual') are intentionally left alone, as are voided credits and
@@ -5622,7 +5648,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     );
     const bills = client ? billsRes.rows : billsRes;
 
-    // 2b. Credit-note state (bulk meters only — see docs/CREDIT_NOTE_PLAN.md).
+    // 2b. Credit-note state (bulk meters only â€” see docs/CREDIT_NOTE_PLAN.md).
     //     Individual customers have no creditBalance column yet; they keep the
     //     legacy clamp behaviour until the schema is extended.
     let creditEnabled = isBulk;
@@ -6009,7 +6035,7 @@ export const dbGetMeterCreditBalance = async (customerKey: string): Promise<numb
 
 /**
  * Recompute a bulk meter's creditBalance from the credit_ledger trail
- * (sum of non-voided created − non-voided applied) and persist it.
+ * (sum of non-voided created âˆ’ non-voided applied) and persist it.
  * Self-healing / test helper: keeps the stored balance in sync with the ledger.
  */
 export const dbRebuildCreditBalance = async (customerKey: string): Promise<number> => {
@@ -6313,7 +6339,7 @@ export const dbExecuteShiftReadingMonth = async (
         let shiftedIndiv = 0;
         let shiftedBulk = 0;
 
-        // ── Individual Customer Readings ──────────────────────────────────────
+        // â”€â”€ Individual Customer Readings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (meterType === 'individual' || meterType === 'both') {
             await ensureReadingPartitionExists('individual_customer_readings', targetMonth, client);
 
@@ -6363,7 +6389,7 @@ export const dbExecuteShiftReadingMonth = async (
             `, branchId ? [targetMonth, sourceMonth, branchId] : [targetMonth, sourceMonth]);
         }
 
-        // ── Bulk Meter Readings ───────────────────────────────────────────────
+        // â”€â”€ Bulk Meter Readings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (meterType === 'bulk' || meterType === 'both') {
             await ensureReadingPartitionExists('bulk_meter_readings', targetMonth, client);
 
@@ -6504,13 +6530,13 @@ export const dbGetPreApprovalAuditMetrics = async (
 
         // Rule 1: Negative difference consumption
         if (row.meter_type === 'Bulk' && diffUsage < 0) {
-            flags.push(`Negative difference usage: sub-meters recorded ${Math.abs(diffUsage).toFixed(1)} m³ more than bulk meter`);
+            flags.push(`Negative difference usage: sub-meters recorded ${Math.abs(diffUsage).toFixed(1)} mÂ³ more than bulk meter`);
         }
 
         // Rule 2: Water loss / difference exceeds 30% of bulk intake
         if (row.meter_type === 'Bulk' && intakeUsage > 0 && (diffUsage / intakeUsage) > 0.30) {
             const lossPct = ((diffUsage / intakeUsage) * 100).toFixed(1);
-            flags.push(`High distribution loss: difference usage is ${lossPct}% (${diffUsage.toFixed(1)} m³) of bulk inflow`);
+            flags.push(`High distribution loss: difference usage is ${lossPct}% (${diffUsage.toFixed(1)} mÂ³) of bulk inflow`);
         }
 
         // Rule 3: Negative outstanding balance
@@ -6624,7 +6650,7 @@ export const dbGetWaterBalanceMetrics = async (
 
     const totalSubMeter = Math.max(0, totalBulkIntake - totalDifference);
     const lossPercentage = totalBulkIntake > 0 ? (totalDifference / totalBulkIntake) * 100 : 0;
-    // Estimated average tariff rate per m³ from the cycle's revenue
+    // Estimated average tariff rate per mÂ³ from the cycle's revenue
     const avgRatePerM3 = totalBulkIntake > 0 ? (totalRevenue / totalBulkIntake) : 35;
     const estimatedRevenueLoss = Math.max(0, totalDifference * avgRatePerM3);
 
@@ -6648,7 +6674,7 @@ export interface CustomerSyncInput {
     branch?: string | null;
     billKey?: string | null;
     paymentStatus?: 'Paid' | 'Unpaid' | string;
-    // NOTE: currentReading / previousReading intentionally removed —
+    // NOTE: currentReading / previousReading intentionally removed â€”
     // reading updates must go through the standard billing/reading flow, not this payment sync endpoint.
     billedPeriod?: string | null;
     amountPaid?: number | null;
@@ -6815,7 +6841,7 @@ export const dbSyncCustomerPaymentAndReading = async (input: CustomerSyncInput):
 
         const normalizedPeriod = normalizeBillingPeriod(input.billedPeriod);
 
-        // 2. Update customer record — PAYMENT STATUS ONLY (no reading updates from this endpoint)
+        // 2. Update customer record â€” PAYMENT STATUS ONLY (no reading updates from this endpoint)
         if (customerType === 'individual') {
             const updates: string[] = ['updated_at = NOW()'];
             const params: any[] = [customerKeyNumber];
@@ -6836,7 +6862,7 @@ export const dbSyncCustomerPaymentAndReading = async (input: CustomerSyncInput):
                 WHERE "customerKeyNumber" = $1
             `, params);
         } else {
-            // Bulk meter update — PAYMENT STATUS ONLY (no reading updates from this endpoint)
+            // Bulk meter update â€” PAYMENT STATUS ONLY (no reading updates from this endpoint)
             const updates: string[] = ['"updatedAt" = NOW()'];
             const params: any[] = [customerKeyNumber];
 
@@ -7223,9 +7249,9 @@ export const dbGetCustomerCurrentStateForDoubleCheck = async (
     }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AAWSA Batch Sync — Job Tracking
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// AAWSA Batch Sync â€” Job Tracking
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Ensure the aawsa_sync_jobs tracking table exists with all high-volume columns.
@@ -7461,7 +7487,7 @@ export const dbGetLatestSyncJob = async (): Promise<SyncJobRow | null> => {
 };
 
 /**
- * Fetch all active bulk meter keys (legacy — loads all into memory).
+ * Fetch all active bulk meter keys (legacy â€” loads all into memory).
  * For large volumes (100k+) prefer dbGetBulkMetersSyncChunk with cursor pagination.
  */
 export const dbGetAllActiveBulkMeterKeys = async (): Promise<
@@ -7481,7 +7507,7 @@ export const dbGetAllActiveBulkMeterKeys = async (): Promise<
  * Cursor-based chunked query for high-volume (100k+) batch sync.
  * Supports:
  *   - branchId filter (sync only one branch at a time)
- *   - unpaidOnly filter (skip already-paid meters — huge efficiency gain)
+ *   - unpaidOnly filter (skip already-paid meters â€” huge efficiency gain)
  *   - monthYear filter (target a specific billing cycle)
  *   - OFFSET/LIMIT pagination for checkpoint/resume
  *

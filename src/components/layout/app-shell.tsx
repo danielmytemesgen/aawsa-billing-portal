@@ -409,7 +409,12 @@ export function AppShell({ user, userRole, sidebar, children }: { user: UserProf
             </div>
           ) : null}
         </div>
-        <main className="flex-1 p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 bg-background overflow-x-hidden">
+        <main className={cn(
+          "flex-1 bg-background overflow-x-hidden print:p-0 print:m-0 print:w-full print:max-w-none print:overflow-visible",
+          pathname?.includes('user-manual')
+            ? "p-0 space-y-0"
+            : "p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6"
+        )}>
           {children}
         </main>
         <footer className="text-xs text-center text-muted-foreground p-3 sm:p-4 no-print">

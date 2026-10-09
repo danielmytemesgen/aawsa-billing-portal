@@ -225,13 +225,13 @@ const SidebarInset = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLD
     const marginLeftClass = isMobile
       ? ""
       : state === "collapsed"
-        ? "sm:ml-16"
-        : "sm:ml-64";
+        ? "sm:ml-16 print:!ml-0"
+        : "sm:ml-64 print:!ml-0";
 
     return (
       <div
         ref={ref}
-        className={cn("flex flex-1 flex-col transition-all duration-300 ease-in-out", marginLeftClass, className)}
+        className={cn("flex flex-1 flex-col transition-all duration-300 ease-in-out print:!m-0 print:!p-0 print:!w-full", marginLeftClass, className)}
         {...props}
       >
         {children}

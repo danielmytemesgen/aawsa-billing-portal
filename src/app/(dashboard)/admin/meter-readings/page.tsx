@@ -100,7 +100,12 @@ export default function AdminMeterReadingsPage() {
   const [isAnalyticsLoading, setIsAnalyticsLoading] = React.useState(false);
   const [individualTotalCount, setIndividualTotalCount] = React.useState(0);
   const [bulkTotalCount, setBulkTotalCount] = React.useState(0);
-  const [isTableLoading, setIsTableLoading] = React.useState(false);
+  const [isTableLoading, setIsTableLoading] = React.useState(true);
+
+  // Abort controller ref — cancel stale in-flight requests when deps change
+  const fetchAbortRef = React.useRef<AbortController | null>(null);
+  // Track if heavy background init has started to avoid duplicate calls
+  const bgInitStartedRef = React.useRef(false);
 
   const loadFullReadingsForAnalytics = React.useCallback(async (force = false) => {
     if (!force && allIndividualReadings.length > 0 && allBulkReadings.length > 0) return;
@@ -159,6 +164,13 @@ export default function AdminMeterReadingsPage() {
   }, []);
 
   const fetchReadings = React.useCallback(async () => {
+    // Cancel any in-flight request
+    if (fetchAbortRef.current) {
+      fetchAbortRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    fetchAbortRef.current = abortCtrl;
+
     setIsTableLoading(true);
     try {
       if (activeTab === 'individual') {
@@ -168,11 +180,11 @@ export default function AdminMeterReadingsPage() {
           searchTerm: debouncedSearch || undefined,
           monthYear: selectedMonthYear || undefined,
         });
+        if (abortCtrl.signal.aborted) return;
         if (res?.data) {
           setIndividualReadings(res.data.rows);
-          if (debouncedSearch) {
-            setIndividualTotalCount(res.data.totalCount);
-          }
+          // Always update total count from the response
+          setIndividualTotalCount(res.data.totalCount);
         }
       } else if (activeTab === 'bulk') {
         const res = await getPaginatedBulkReadingsAction({
@@ -181,17 +193,18 @@ export default function AdminMeterReadingsPage() {
           searchTerm: debouncedSearch || undefined,
           monthYear: selectedMonthYear || undefined,
         });
+        if (abortCtrl.signal.aborted) return;
         if (res?.data) {
           setBulkReadings(res.data.rows);
-          if (debouncedSearch) {
-            setBulkTotalCount(res.data.totalCount);
-          }
+          // Always update total count from the response
+          setBulkTotalCount(res.data.totalCount);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error("Failed to load paginated readings", err);
     } finally {
-      setIsTableLoading(false);
+      if (!abortCtrl.signal.aborted) setIsTableLoading(false);
     }
   }, [activeTab, individualPage, individualRowsPerPage, bulkPage, bulkRowsPerPage, debouncedSearch, selectedMonthYear]);
 
@@ -206,14 +219,14 @@ export default function AdminMeterReadingsPage() {
     return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
   }, [fetchReadings]);
 
-  React.useEffect(() => {
-    fetchMonthTotals(selectedMonthYear);
-  }, [selectedMonthYear, fetchMonthTotals]);
+  // Period-month totals are kept in sync by fetchReadings (which always updates totalCount).
+  // fetchMonthTotals is only needed after write operations (add/upload) to refresh both tabs.
 
   React.useEffect(() => {
     let isMounted = true;
-    const storedUser = localStorage.getItem("user");
 
+    // ── 1. Parse stored user immediately (synchronous, no delay)
+    const storedUser = localStorage.getItem("user");
     if (storedUser) {
       try {
         const parsedUser: User = JSON.parse(storedUser);
@@ -221,37 +234,58 @@ export default function AdminMeterReadingsPage() {
       } catch (e) { console.error("Failed to parse user from localStorage", e); }
     }
 
+    // ── 2. Fetch period details independently — lightweight, often fast
+    getReadingPeriodDetailsAction()
+      .then(details => {
+        if (details && isMounted) {
+          setPeriodDetails(details);
+          if (details.startDate) setSelectedMonthYear(details.startDate.slice(0, 7));
+        }
+      })
+      .catch(e => console.warn("Period details load failed", e));
+
+    // ── 3. Prevent duplicate background initialization on re-renders
+    if (bgInitStartedRef.current) return;
+    bgInitStartedRef.current = true;
+
     setIsLoading(true);
+
+    // ── 4. Tier 1 — fast/small datasets: fault codes, branches, routes
+    //    These are needed for forms and resolve quickly.
     Promise.all([
-      initializeCustomers(true),
-      initializeBulkMeters(true),
       initializeFaultCodes(true),
       initializeBranches(true),
       fetchRoutes(),
-      initializeStaffMembers(true),
-      initializeBills(true),
+    ]).then(() => {
+      if (!isMounted) return;
+      setFaultCodesForForm(getFaultCodes());
+      setAllBranches(getBranches());
+      setAllRoutes(getRoutes());
+    }).catch(e => console.warn("Tier 1 init failed", e));
+
+    // ── 5. Tier 2 — heavier datasets: customers & bulk meters
+    //    Loaded in parallel after Tier 1 starts, but don't block Tier 1 resolution.
+    Promise.all([
+      initializeCustomers(true),
+      initializeBulkMeters(true),
     ]).then(() => {
       if (!isMounted) return;
       setAllCustomers(getCustomers());
       setAllBulkMeters(getBulkMeters());
-      setAllBranches(getBranches());
-      setAllRoutes(getRoutes());
+    }).catch(e => console.warn("Tier 2 (customers/bulk) init failed", e));
+
+    // ── 6. Tier 3 — auxiliary data: staff & bills (lowest priority)
+    Promise.all([
+      initializeStaffMembers(true),
+      initializeBills(true),
+    ]).then(() => {
+      if (!isMounted) return;
       setAllStaff(getStaffMembers());
       setAllBills(getBills());
-      setFaultCodesForForm(getFaultCodes());
-      getReadingPeriodDetailsAction().then(details => {
-        if (details && isMounted) {
-          setPeriodDetails(details);
-          if (details.startDate) {
-            setSelectedMonthYear(details.startDate.slice(0, 7));
-          }
-        }
-      }).catch(e => console.warn("Failed to load period details for anomalies", e));
       setIsLoading(false);
     }).catch(error => {
       if (!isMounted) return;
-      console.error("Error initializing data for meter readings page:", error);
-      toast({ title: "Error Loading Data", description: "Could not load necessary data.", variant: "destructive" });
+      console.error("Error in Tier 3 initialization:", error);
       setIsLoading(false);
     });
 
@@ -791,9 +825,25 @@ export default function AdminMeterReadingsPage() {
               </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
-              {isTableLoading && individualReadings.length === 0 ? (
-                <div className="mt-4 p-8 border rounded-md bg-muted/50 text-center text-muted-foreground">
-                  Loading meter readings...
+              {isTableLoading ? (
+                <div className="space-y-0">
+                  {Array.from({ length: Math.min(individualRowsPerPage, 8) }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-4 px-4 py-3 border-b last:border-0 animate-pulse"
+                      style={{ animationDelay: `${i * 60}ms` }}
+                    >
+                      <div className="h-3 w-28 rounded bg-slate-200" />
+                      <div className="h-3 w-20 rounded bg-slate-200" />
+                      <div className="h-3 w-16 rounded bg-slate-200" />
+                      <div className="h-3 w-16 rounded bg-slate-200" />
+                      <div className="h-3 flex-1 rounded bg-slate-100" />
+                    </div>
+                  ))}
+                </div>
+              ) : individualReadings.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">
+                  No individual readings found for the selected period.
                 </div>
               ) : (
                 <MeterReadingsTable data={individualReadings} />
@@ -837,9 +887,25 @@ export default function AdminMeterReadingsPage() {
               </Button>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
-              {isTableLoading && bulkReadings.length === 0 ? (
-                <div className="mt-4 p-8 border rounded-md bg-muted/50 text-center text-muted-foreground">
-                  Loading meter readings...
+              {isTableLoading ? (
+                <div className="space-y-0">
+                  {Array.from({ length: Math.min(bulkRowsPerPage, 8) }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-4 px-4 py-3 border-b last:border-0 animate-pulse"
+                      style={{ animationDelay: `${i * 60}ms` }}
+                    >
+                      <div className="h-3 w-28 rounded bg-slate-200" />
+                      <div className="h-3 w-20 rounded bg-slate-200" />
+                      <div className="h-3 w-16 rounded bg-slate-200" />
+                      <div className="h-3 w-16 rounded bg-slate-200" />
+                      <div className="h-3 flex-1 rounded bg-slate-100" />
+                    </div>
+                  ))}
+                </div>
+              ) : bulkReadings.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">
+                  No bulk readings found for the selected period.
                 </div>
               ) : (
                 <MeterReadingsTable data={bulkReadings} />

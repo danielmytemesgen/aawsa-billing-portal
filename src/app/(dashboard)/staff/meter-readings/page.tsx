@@ -216,14 +216,16 @@ export default function StaffMeterReadingsPage() {
     fetchReadings();
   }, [fetchReadings]);
 
-  React.useEffect(() => {
-    fetchMonthTotals(selectedMonthYear);
-  }, [selectedMonthYear, fetchMonthTotals]);
+  // Period-month totals are kept in sync by fetchReadings (which always updates totalCount).
+  // fetchMonthTotals is only called after write operations.
+
+  const bgInitStartedRef = React.useRef(false);
 
   React.useEffect(() => {
     let isMounted = true;
-    const storedUser = localStorage.getItem("user");
 
+    // ── 1. Parse stored user immediately
+    const storedUser = localStorage.getItem("user");
     if (storedUser) {
       try {
         const parsedUser: User = JSON.parse(storedUser);
@@ -231,29 +233,41 @@ export default function StaffMeterReadingsPage() {
       } catch (e) { console.error("Failed to parse user from localStorage", e); }
     }
 
+    // ── 2. Fetch period details independently — lightweight
+    getReadingPeriodDetailsAction()
+      .then(details => {
+        if (details && isMounted && details.startDate) {
+          setSelectedMonthYear(details.startDate.slice(0, 7));
+        }
+      })
+      .catch(e => console.warn("Failed to load period details", e));
+
+    // ── 3. Prevent duplicate background initialization on re-renders
+    if (bgInitStartedRef.current) return;
+    bgInitStartedRef.current = true;
+
     setIsLoading(true);
+
+    // ── 4. Tier 1 — fast/small data: fault codes, branches, routes
     Promise.all([
-      initializeCustomers(true),
-      initializeBulkMeters(true),
       initializeFaultCodes(true),
       initializeBranches(true),
       fetchRoutes(),
-      hasPermission('staff_view') ? initializeStaffMembers(true) : Promise.resolve(),
+    ]).then(() => {
+      if (!isMounted) return;
+      setFaultCodesForForm(getFaultCodes());
+      setAllBranches(getBranches());
+      setAllRoutes(getRoutes());
+    }).catch(e => console.warn("Tier 1 init failed", e));
+
+    // ── 5. Tier 2 — heavier: customers & bulk meters
+    Promise.all([
+      initializeCustomers(true),
+      initializeBulkMeters(true),
     ]).then(() => {
       if (!isMounted) return;
       setAllCustomers(getCustomers());
       setAllBulkMeters(getBulkMeters());
-      setAllBranches(getBranches());
-      setAllRoutes(getRoutes());
-      setAllStaff(getStaffMembers());
-      setFaultCodesForForm(getFaultCodes());
-
-      getReadingPeriodDetailsAction().then(details => {
-        if (details && isMounted && details.startDate) {
-          setSelectedMonthYear(details.startDate.slice(0, 7));
-        }
-      }).catch(e => console.warn("Failed to load period details", e));
-
       setIsLoading(false);
     }).catch(error => {
       if (!isMounted) return;
@@ -261,6 +275,13 @@ export default function StaffMeterReadingsPage() {
       toast({ title: "Error Loading Data", description: "Could not load necessary data.", variant: "destructive" });
       setIsLoading(false);
     });
+
+    // ── 6. Tier 3 — optional: staff (lowest priority)
+    if (hasPermission('staff_view')) {
+      initializeStaffMembers(true)
+        .then(() => { if (isMounted) setAllStaff(getStaffMembers()); })
+        .catch(e => console.warn("Staff init failed", e));
+    }
 
     const unsubCust = subscribeToCustomers((updated) => { if (isMounted) setAllCustomers(updated); });
     const unsubBM = subscribeToBulkMeters((updated) => { if (isMounted) setAllBulkMeters(updated); });
