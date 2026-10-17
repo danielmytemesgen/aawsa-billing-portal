@@ -17,7 +17,8 @@ import { getPaidBillsAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { CheckCircle2, Search, FileSpreadsheet, Lock, Download, Loader2, Calendar, ChevronDown, FileText, Printer, RefreshCw } from "lucide-react";
+import { CheckCircle2, Search, FileSpreadsheet, Lock, Download, Loader2, Calendar, ChevronDown, FileText, Printer, RefreshCw, ShieldAlert } from "lucide-react";
+import { ReconciliationAuditDialog } from "@/components/billing/ReconciliationAuditDialog";
 import { exportPaidBillsToCsv, exportPaidBillsToXlsx, getAvailableMonthYearOptions } from "@/lib/export-utils";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -53,6 +54,7 @@ export default function StaffPaidBillsReportPage() {
   const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [openTrigger, setOpenTrigger] = React.useState(0);
   const [syncTrigger, setSyncTrigger] = React.useState(0);
+  const [auditTrigger, setAuditTrigger] = React.useState(0);
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
   const [isExporting, setIsExporting] = React.useState(false);
   const [isPrintSummaryOpen, setIsPrintSummaryOpen] = React.useState(false);
@@ -69,7 +71,7 @@ export default function StaffPaidBillsReportPage() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching paid bill records..." });
     try {
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -111,7 +113,7 @@ export default function StaffPaidBillsReportPage() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching paid bill records across all pages..." });
     try {
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -187,7 +189,7 @@ export default function StaffPaidBillsReportPage() {
 
     const fetchBills = async () => {
       setIsLoading(true);
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -220,7 +222,7 @@ export default function StaffPaidBillsReportPage() {
     if (!currentUser) return;
     staffPaidBillsRef.current = async () => {
       setIsLoading(true);
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
       const result = await getPaidBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
       if (result?.success && result?.bills) { setBills(result.bills || []); setTotalBills(result.total || 0); }
@@ -242,7 +244,17 @@ export default function StaffPaidBillsReportPage() {
     || hasPermission(PERMISSIONS.BILL_VIEW_PAID)
     || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
-  const canUploadPaymentCsv = hasPermission(PERMISSIONS.BILL_POST) || hasPermission(PERMISSIONS.BILL_VIEW_ALL) || hasPermission('payments_create');
+  const isAdmin = (
+    (currentUser?.role || '').toLowerCase().trim() === 'admin' ||
+    (currentUser?.role || '').toLowerCase().trim() === 'system administrator' ||
+    (currentUser?.role || '').toLowerCase().trim() === 'super admin' ||
+    hasPermission('*') ||
+    hasPermission('admin')
+  );
+
+  const canAuditAndFixStatus = isAdmin;
+
+  const canUploadPaymentCsv = isAdmin;
 
   if (!canAccess) {
     return (
@@ -263,8 +275,17 @@ export default function StaffPaidBillsReportPage() {
           <h1 className="text-2xl font-bold tracking-tight">Paid Bills</h1>
           <p className="text-muted-foreground text-sm">List of paid bill records for {currentUser?.branchName || 'your branch'}.</p>
         </div>
-        {canUploadPaymentCsv && (
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          {canAuditAndFixStatus && (
+            <Button
+              variant="outline"
+              onClick={() => setAuditTrigger((prev) => prev + 1)}
+              className="border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold rounded-xl gap-2 shadow-sm"
+            >
+              <ShieldAlert className="h-4 w-4 text-amber-600" /> Audit & Fix Status
+            </Button>
+          )}
+          {isAdmin && (
             <Button
               variant="outline"
               onClick={() => setSyncTrigger((prev) => prev + 1)}
@@ -272,14 +293,16 @@ export default function StaffPaidBillsReportPage() {
             >
               <RefreshCw className="h-4 w-4" /> Sync AAWSA Status
             </Button>
+          )}
+          {canUploadPaymentCsv && (
             <Button
               onClick={() => setOpenTrigger((prev) => prev + 1)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl gap-2 shadow-sm"
             >
               <FileSpreadsheet className="h-4 w-4" /> Upload Payment CSV
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <Card className="shadow-lg">
@@ -351,7 +374,14 @@ export default function StaffPaidBillsReportPage() {
           {isLoading ? (
             <div className="text-center p-8 text-muted-foreground">Loading paid bills...</div>
           ) : (
-            <PaidBillsTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} />
+            <PaidBillsTable
+              bills={bills}
+              customers={customers}
+              bulkMeters={bulkMeters}
+              branches={branches}
+              onBillUpdated={() => setRefreshTrigger((prev) => prev + 1)}
+              canManage={canAuditAndFixStatus}
+            />
           )}
         </CardContent>
         {totalBills > 0 && (
@@ -374,6 +404,12 @@ export default function StaffPaidBillsReportPage() {
 
       <SyncPaymentStatusDialog
         openTrigger={syncTrigger}
+      />
+
+      <ReconciliationAuditDialog
+        openTrigger={auditTrigger}
+        onComplete={() => setRefreshTrigger((prev) => prev + 1)}
+        branchId={currentUser?.branchId}
       />
 
       <ReportPrintSummaryDialog

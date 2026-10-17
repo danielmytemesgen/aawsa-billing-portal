@@ -3,17 +3,28 @@
 import * as React from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
+import { MoreVertical, RotateCcw } from "lucide-react";
+import { EditBillStatusDialog } from "./EditBillStatusDialog";
 
 interface PaidBillsTableProps {
   bills: DomainBill[];
   customers?: IndividualCustomer[];
   bulkMeters?: BulkMeter[];
   branches?: Branch[];
+  onBillUpdated?: () => void;
+  canManage?: boolean;
 }
 
 export function PaidBillsTable({
@@ -21,7 +32,12 @@ export function PaidBillsTable({
   customers = [],
   bulkMeters = [],
   branches = [],
+  onBillUpdated,
+  canManage = false,
 }: PaidBillsTableProps) {
+  const [editingBill, setEditingBill] = React.useState<any | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
+
   const formatAmt = (val: any) => {
     if (val === null || val === undefined || val === "") return "0.00";
     const num = Number(val);
@@ -149,6 +165,22 @@ export function PaidBillsTable({
     return "-";
   };
 
+  const handleOpenReverseDialog = (bill: any) => {
+    // Normalise bill structure to match DomainBill expected by EditBillStatusDialog
+    const normalized: any = {
+      ...bill,
+      id: bill.id,
+      monthYear: bill.month_year || bill.monthYear,
+      paymentStatus: bill.payment_status || bill.paymentStatus || "Paid",
+      amountPaid: bill.amount_paid !== undefined ? Number(bill.amount_paid) : bill.amountPaid,
+      TOTALBILLAMOUNT: bill.TOTALBILLAMOUNT !== undefined ? Number(bill.TOTALBILLAMOUNT) : bill.totalBillAmount,
+      OUTSTANDINGAMT: bill.OUTSTANDINGAMT !== undefined ? Number(bill.OUTSTANDINGAMT) : bill.outstandingAmt,
+      CUSTOMERKEY: bill.CUSTOMERKEY || bill.customerKey || bill.individualCustomerId || bill.individual_customer_id,
+    };
+    setEditingBill(normalized);
+    setIsEditDialogOpen(true);
+  };
+
   return (
     <div className="rounded-xl border border-slate-200 shadow-sm bg-white overflow-hidden">
       <Table className="text-xs">
@@ -167,6 +199,9 @@ export function PaidBillsTable({
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Route Key</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Walk Order</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Meter Key</TableHead>
+            {canManage && (
+              <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px] text-right">Actions</TableHead>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -177,7 +212,7 @@ export function PaidBillsTable({
 
               return (
                 <TableRow key={bill.id || bill.BILLKEY} className="hover:bg-slate-50/70 transition-colors">
-                  {/* Bill Key badge button style like screenshot */}
+                  {/* Bill Key badge button style */}
                   <TableCell className="py-3 px-3 whitespace-nowrap">
                     <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold text-white bg-indigo-600 shadow-sm">
                       {getBillKeyDisplay(bill)}
@@ -253,18 +288,57 @@ export function PaidBillsTable({
                   <TableCell className="py-3 px-3 text-slate-500 whitespace-nowrap">
                     {getMeterKeyDisplay(bill)}
                   </TableCell>
+
+                  {/* Actions Column */}
+                  {canManage && (
+                    <TableCell className="py-3 px-3 text-right whitespace-nowrap">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-500 hover:text-slate-800">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52 rounded-xl shadow-lg">
+                          <DropdownMenuItem
+                            onClick={() => handleOpenReverseDialog(bill)}
+                            className="cursor-pointer gap-2 py-2 text-destructive font-medium focus:text-destructive"
+                          >
+                            <RotateCcw className="h-4 w-4 text-destructive" />
+                            <span>Reverse / Mark Unpaid</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  )}
                 </TableRow>
               );
             })
           ) : (
             <TableRow>
-              <TableCell colSpan={13} className="h-24 text-center text-slate-500">
+              <TableCell colSpan={canManage ? 14 : 13} className="h-24 text-center text-slate-500">
                 No paid bills found.
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
+
+      {/* Reversal / Edit Payment Status Dialog */}
+      {editingBill && (
+        <EditBillStatusDialog
+          open={isEditDialogOpen}
+          onOpenChange={(isOpen) => {
+            setIsEditDialogOpen(isOpen);
+            if (!isOpen) setEditingBill(null);
+          }}
+          bill={editingBill}
+          customerKey={editingBill.CUSTOMERKEY || editingBill.individualCustomerId || editingBill.customerKey || ""}
+          onSuccess={() => {
+            onBillUpdated?.();
+            setEditingBill(null);
+          }}
+        />
+      )}
     </div>
   );
 }

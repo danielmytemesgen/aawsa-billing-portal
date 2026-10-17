@@ -85,6 +85,8 @@ export async function ensureMeterChangeTable() {
       CREATE INDEX IF NOT EXISTS idx_mcl_customer_key ON meter_change_log(customer_key_number);
       CREATE INDEX IF NOT EXISTS idx_mcl_change_date ON meter_change_log(change_date DESC);
       CREATE INDEX IF NOT EXISTS idx_mcl_status ON meter_change_log(status);
+      ALTER TABLE meter_change_log ADD COLUMN IF NOT EXISTS branch_id text;
+      CREATE INDEX IF NOT EXISTS idx_mcl_branch_id ON meter_change_log(branch_id);
     `);
     tableChecked = true;
   } catch (err) {
@@ -95,25 +97,27 @@ export async function ensureMeterChangeTable() {
 function verifyBranchAccess(
   entityBranchId: string | undefined | null,
   session: any,
-  viewAllPermission: string,
   entityLabel = 'record'
 ) {
   const perms: string[] = session?.permissions || [];
-  const hasGlobalAccess =
+  const role = (session?.role || '').toLowerCase().trim();
+  const isAdmin =
+    role === 'admin' ||
+    role === 'system administrator' ||
+    role === 'super admin' ||
     perms.includes('*') ||
     perms.includes('all') ||
-    perms.includes('admin') ||
-    perms.includes(viewAllPermission);
+    perms.includes('admin');
 
-  if (hasGlobalAccess) return;
+  if (isAdmin) return;
 
   const userBranchId = session?.branchId;
   if (!userBranchId || userBranchId === 'all') {
-    return;
+    throw new Error(`Forbidden: You do not have an assigned branch to change this ${entityLabel}.`);
   }
 
-  if (entityBranchId && userBranchId !== entityBranchId) {
-    throw new Error(`Forbidden: You can only modify a ${entityLabel} that belongs to your branch.`);
+  if (!entityBranchId || String(userBranchId).trim().toLowerCase() !== String(entityBranchId).trim().toLowerCase()) {
+    throw new Error(`Forbidden: You can only modify a ${entityLabel} that belongs to your assigned branch.`);
   }
 }
 
@@ -122,7 +126,7 @@ function verifyBranchAccess(
  */
 export async function getMeterDetailsForChangeAction(meterType: 'individual' | 'bulk', customerKeyNumber: string) {
   try {
-    await checkPermissionAny(
+    const session = await checkPermissionAny(
       PERMISSIONS.METER_CHANGE_VIEW,
       PERMISSIONS.METER_CHANGE_CREATE,
       PERMISSIONS.METER_CHANGE_MANAGE,
@@ -146,6 +150,38 @@ export async function getMeterDetailsForChangeAction(meterType: 'individual' | '
 
     if (!entity) {
       return { data: null, error: { message: `${meterType === 'individual' ? 'Customer' : 'Bulk meter'} not found.` } };
+    }
+
+    // Branch verification: staff can only lookup and change meters belonging to their branch
+    const entityBranchId = (entity as any).branch_id || (entity as any).branchId;
+    const role = (session?.role || '').toLowerCase().trim();
+    const perms: string[] = session?.permissions || [];
+    const isAdmin =
+      role === 'admin' ||
+      role === 'system administrator' ||
+      role === 'super admin' ||
+      perms.includes('*') ||
+      perms.includes('all') ||
+      perms.includes('admin');
+
+    if (!isAdmin) {
+      const userBranchId = session?.branchId;
+      if (!userBranchId || userBranchId === 'all') {
+        return {
+          data: null,
+          error: {
+            message: `Forbidden: You do not have an assigned branch to change meters.`
+          }
+        };
+      }
+      if (!entityBranchId || String(userBranchId).trim().toLowerCase() !== String(entityBranchId).trim().toLowerCase()) {
+        return {
+          data: null,
+          error: {
+            message: `Forbidden: This ${meterType === 'individual' ? 'customer' : 'bulk meter'} belongs to another branch. Staff members can only change meters for their assigned branch.`
+          }
+        };
+      }
     }
 
     return {
@@ -220,8 +256,7 @@ export async function meterChangeAction(payload: MeterChangePayload) {
     verifyBranchAccess(
       (entity as any).branch_id || (entity as any).branchId,
       session,
-      meterType === 'individual' ? PERMISSIONS.CUSTOMERS_VIEW_ALL : PERMISSIONS.BULK_METERS_VIEW_ALL,
-      meterType === 'individual' ? 'customer' : 'bulk meter'
+      meterType === 'individual' ? 'customer meter' : 'bulk meter'
     );
 
     const performedBy = session.id || session.sub || 'unknown';
@@ -241,10 +276,11 @@ export async function meterChangeAction(payload: MeterChangePayload) {
           old_meter_closing_reading, new_meter_number, new_meter_opening_reading,
           change_date, notes, performed_by, performed_by_email,
           old_meter_size, new_meter_size, new_seal_number, new_dial_count,
-          closing_consumption, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Active')
+          closing_consumption, status, branch_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Active', $16)
         RETURNING *
       `;
+      const entityBranchId = (entity as any).branch_id || (entity as any).branchId || session.branchId || null;
       const insertParams = [
         meterType,
         customerKeyNumber.trim(),
@@ -260,7 +296,8 @@ export async function meterChangeAction(payload: MeterChangePayload) {
         newMeterSize || oldMeterSize,
         newSealNumber || null,
         newDialCount || 5,
-        closingConsumption
+        closingConsumption,
+        entityBranchId
       ];
       const logRes = await client.query(insertSql, insertParams);
       const row = logRes.rows[0];
@@ -358,7 +395,7 @@ export async function meterChangeAction(payload: MeterChangePayload) {
 export async function getMeterChangeLogsAction(params?: GetMeterChangeLogsParams) {
   try {
     await ensureMeterChangeTable();
-    await checkPermissionAny(
+    const session = await checkPermissionAny(
       PERMISSIONS.METER_CHANGE_VIEW,
       PERMISSIONS.METER_CHANGE_CREATE,
       PERMISSIONS.METER_CHANGE_MANAGE,
@@ -367,6 +404,16 @@ export async function getMeterChangeLogsAction(params?: GetMeterChangeLogsParams
       PERMISSIONS.SETTINGS_MANAGE,
       PERMISSIONS.DASHBOARD_VIEW_ALL
     );
+
+    const perms: string[] = session?.permissions || [];
+    const role = (session?.role || '').toLowerCase().trim();
+    const isAdmin =
+      role === 'admin' ||
+      role === 'system administrator' ||
+      role === 'super admin' ||
+      perms.includes('*') ||
+      perms.includes('all') ||
+      perms.includes('admin');
 
     const page = Math.max(1, params?.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, params?.pageSize ?? 20));
@@ -395,6 +442,11 @@ export async function getMeterChangeLogsAction(params?: GetMeterChangeLogsParams
     if (params?.status && params.status !== 'all') {
       conditions.push(`status = $${idx++}`);
       values.push(params.status);
+    }
+    if (!isAdmin) {
+      const userBranchId = session?.branchId || '00000000-0000-0000-0000-000000000000';
+      conditions.push(`branch_id = $${idx++}`);
+      values.push(userBranchId);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -468,6 +520,15 @@ export async function voidMeterChangeAction(changeId: string, reason: string) {
     if (record.status === 'Voided') {
       return { data: null, error: { message: 'This meter change has already been voided.' } };
     }
+
+    let recordBranchId = record.branch_id;
+    if (!recordBranchId) {
+      const entity = record.meter_type === 'individual'
+        ? await dbGetCustomerById(record.customer_key_number)
+        : await dbGetBulkMeterById(record.customer_key_number);
+      recordBranchId = (entity as any)?.branch_id || (entity as any)?.branchId;
+    }
+    verifyBranchAccess(recordBranchId, session, 'meter change record');
 
     const voidedBy = session.email || session.id || 'supervisor';
 

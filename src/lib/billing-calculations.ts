@@ -38,6 +38,7 @@ export interface TariffInfo {
     penalty_month_threshold?: number;
     bank_lending_rate?: number;
     penalty_tiered_rates?: { month: number; rate: number }[];
+    penalty_enabled?: boolean;
     fixed_tier_index?: number | null; // Selected tier to use as a flat rate, overriding normal billing logic
     use_rule_of_three?: boolean; // If true, consumption < 3 is treated as 3
 }

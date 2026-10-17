@@ -11,7 +11,8 @@ import { format, parseISO } from "date-fns";
 import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
 import type { Branch } from "../branches/branch-types";
-import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from "@/lib/billing-utils";
+import { getTariffs } from "@/lib/data-store";
 import { getBillKey, getCustomerPhone } from "@/lib/export-utils";
 
 interface BillTableProps {
@@ -24,6 +25,7 @@ interface BillTableProps {
 }
 
 export function BillTable({ bills, customers, bulkMeters, branches, allBills, showDebitColumns = true }: BillTableProps) {
+  const penaltyEnabled = isPenaltyEngineEnabled(getTariffs());
   const getIdentifier = (bill: DomainBill): string => {
     if (bill.individualCustomerId) {
       const customer = customers.find(c => c.customerKeyNumber === bill.individualCustomerId);
@@ -103,7 +105,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
             )}
             <TableHead className="text-right font-bold text-slate-700 py-5">Outstanding (ETB)</TableHead>
             <TableHead className="text-right font-bold text-slate-700 py-5">Current Bill (ETB)</TableHead>
-            <TableHead className="text-right font-bold text-red-600 py-5">Penalty (ETB)</TableHead>
+            <TableHead className="text-right font-bold text-red-600 py-5">{penaltyEnabled ? "Penalty (ETB)" : "Penalty (Off) (ETB)"}</TableHead>
             <TableHead className="text-right font-bold text-indigo-700 py-5 pr-6">Total Due (ETB)</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Due Date</TableHead>
             <TableHead className="font-bold text-slate-700 py-5">Status</TableHead>
@@ -175,7 +177,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
                   return formatNumber(outstanding);
                 })()}</TableCell>
                 <TableCell className="text-right text-slate-600 py-4">{formatNumber(getMonthlyBillAmt(bill))}</TableCell>
-                <TableCell className="text-right text-red-500 font-bold py-4">{formatNumber(normalizeNumber(bill.PENALTYAMT))}</TableCell>
+                <TableCell className="text-right text-red-500 font-bold py-4">{formatNumber(getPenaltyValue(normalizeNumber(bill.PENALTYAMT) ?? 0, penaltyEnabled))}</TableCell>
                 <TableCell className="text-right font-black font-mono text-indigo-700 bg-indigo-50/40 py-4 pr-6">{(() => {
                   const outstanding = normalizeNumber(bill.OUTSTANDINGAMT) ?? (
                     (normalizeNumber((bill as any).debit_30 ?? bill.debit30) ?? 0) + 
@@ -183,7 +185,7 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
                     (normalizeNumber((bill as any).debit_60 ?? bill.debit60) ?? 0)
                   );
                   const current = getMonthlyBillAmt(bill);
-                  const penalty = normalizeNumber(bill.PENALTYAMT) ?? 0;
+                  const penalty = getPenaltyValue(normalizeNumber(bill.PENALTYAMT) ?? 0, penaltyEnabled);
                   const totalDue = normalizeNumber((bill as any).totalAmountDue ?? bill.TOTALBILLAMOUNT) ?? (outstanding + current + penalty);
 
                   return formatNumber(totalDue);

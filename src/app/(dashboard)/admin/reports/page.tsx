@@ -6,7 +6,7 @@ import Link from "next/link";
 import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from '@/lib/xlsx';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart, FileDown, RefreshCw as RefreshCwIcon } from "lucide-react";
+import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart, FileDown, RefreshCw, RefreshCw as RefreshCwIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -28,10 +28,9 @@ import { ReportDataView } from './report-data-view';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { calculateBillAction, deleteBillAction, getAllBranchesAction , getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllTariffsAction } from "@/lib/actions";
 import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
-import { RefreshCw } from "lucide-react";
 import { format as formatDate, parse } from "date-fns";
 import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
-import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from "@/lib/billing-utils";
 
 
 // Top-level type guards for meter reading unions (used by multiple reports)
@@ -263,12 +262,14 @@ const availableReports: ReportType[] = [
       const { branchId, startDate, endDate, chargeGroup } = filters;
 
       // Fetch all data in parallel from the live database
-      const [billsRes, bulkMetersRes, customersRes, branchesRes] = await Promise.all([
+      const [billsRes, bulkMetersRes, customersRes, branchesRes, tariffsRes] = await Promise.all([
         getAllBillsAction(),
         getAllBulkMetersAction(),
         getAllCustomersAction(),
         getAllBranchesAction(),
+        getAllTariffsAction(),
       ]);
+      const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
 
       const allBills: any[]   = billsRes?.data     ?? [];
       const bulkMeters: any[] = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
@@ -353,7 +354,7 @@ const availableReports: ReportType[] = [
         // Use DB-stored financial fields (synced by dbSyncAgingForCustomer)
         const currentBill = parseFloat(Number(b.THISMONTHBILLAMT || b.base_water_charge || 0).toFixed(2));
         const outstanding = parseFloat(Number(b.OUTSTANDINGAMT   || 0).toFixed(2));
-        const penalty     = parseFloat(Number(b.PENALTYAMT       || 0).toFixed(2));
+        const penalty     = parseFloat(getPenaltyValue(Number(b.PENALTYAMT || 0), penaltyEnabled).toFixed(2));
         const totalBill   = parseFloat(Number(b.TOTALBILLAMOUNT  || (currentBill + outstanding + penalty)).toFixed(2));
         const amountPaid  = parseFloat(Number(b.amount_paid      || 0).toFixed(2));
 
@@ -853,11 +854,13 @@ const availableReports: ReportType[] = [
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
-      const [billsRes, customersRes, bulkMetersRes] = await Promise.all([
+      const [billsRes, customersRes, bulkMetersRes, tariffsRes] = await Promise.all([
         getAllBillsAction(),
         getAllCustomersAction(),
         getAllBulkMetersAction(),
+        getAllTariffsAction(),
       ]);
+      const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
       const allBills = (billsRes?.data as any[] ?? []);
       const allCustomers = (customersRes?.data as any[] ?? []).map(mapCustomer);
       const allBulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
@@ -872,7 +875,7 @@ const availableReports: ReportType[] = [
         sanit: Number(bill.sanitation_fee) || 0,
         rent: Number(bill.meter_rent) || 0,
         add: Number(bill.additional_fees_charge) || 0,
-        penalty: Number(bill.PENALTYAMT) || 0,
+        penalty: getPenaltyValue(Number(bill.PENALTYAMT) || 0, penaltyEnabled),
         vat: Number(bill.vat_amount || bill.vatAmount) || 0,
         total: Number(bill.TOTALBILLAMOUNT) || 0,
       });
@@ -994,11 +997,13 @@ const availableReports: ReportType[] = [
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
-      const [billsRes, customersRes, bulkMetersRes] = await Promise.all([
+      const [billsRes, customersRes, bulkMetersRes, tariffsRes] = await Promise.all([
         getAllBillsAction(),
         getAllCustomersAction(),
         getAllBulkMetersAction(),
+        getAllTariffsAction(),
       ]);
+      const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
       const allBills = (billsRes?.data as any[] ?? []);
       const allCustomers = (customersRes?.data as any[] ?? []).map(mapCustomer);
       const allBulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
@@ -1013,7 +1018,7 @@ const availableReports: ReportType[] = [
         sanit: Number(bill.sanitation_fee) || 0,
         rent: Number(bill.meter_rent) || 0,
         add: Number(bill.additional_fees_charge) || 0,
-        penalty: Number(bill.PENALTYAMT) || 0,
+        penalty: getPenaltyValue(Number(bill.PENALTYAMT) || 0, penaltyEnabled),
         vat: Number(bill.vat_amount || bill.vatAmount) || 0,
         total: Number(bill.TOTALBILLAMOUNT) || 0,
       });
@@ -1138,12 +1143,14 @@ const availableReports: ReportType[] = [
       const { branchId, startDate, endDate } = filters;
 
       // Fetch all required data in parallel from the live database
-      const [billsRes, customersRes, bulkMetersRes, branchesRes] = await Promise.all([
+      const [billsRes, customersRes, bulkMetersRes, branchesRes, tariffsRes] = await Promise.all([
         getAllBillsAction(),
         getAllCustomersAction(),
         getAllBulkMetersAction(),
         getAllBranchesAction(),
+        getAllTariffsAction(),
       ]);
+      const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
 
       const allBills: any[]      = billsRes?.data ?? [];
       const customers: any[]     = (customersRes?.data ?? []).map(mapCustomer);
@@ -1203,7 +1210,7 @@ const availableReports: ReportType[] = [
         const thisMonthBillAmt = Number(bill.THISMONTHBILLAMT || bill.baseWaterCharge || 0);
         // OUTSTANDINGAMT in the DB is the carry-forward from previous unpaid bills
         const outstandingAmt   = Number(bill.OUTSTANDINGAMT || 0);
-        const penaltyAmt       = Number(bill.PENALTYAMT || 0);
+        const penaltyAmt       = getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
         const totalBillAmount  = Number(bill.TOTALBILLAMOUNT || (thisMonthBillAmt + outstandingAmt + penaltyAmt));
 
         // Generate BILLKEY if missing
@@ -1280,12 +1287,14 @@ const availableReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
 
-      const [billsRes, bulkMetersRes, customersRes, branchesRes] = await Promise.all([
+      const [billsRes, bulkMetersRes, customersRes, branchesRes, tariffsRes] = await Promise.all([
         getAllBillsAction(),
         getAllBulkMetersAction(),
         getAllCustomersAction(),
         getAllBranchesAction(),
+        getAllTariffsAction(),
       ]);
+      const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
 
       let allBills: any[]      = billsRes?.data ?? [];
       const bulkMeters: any[]  = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
@@ -1397,7 +1406,7 @@ const availableReports: ReportType[] = [
         const sanitation = Number(b.sanitation_fee ?? b.sanitationFee ?? 0);
         const meterRent = Number(b.meter_rent ?? b.meterRent ?? 0);
         const maintenance = Number(b.maintenance_fee ?? b.maintenanceFee ?? 0);
-        const additional = Number(b.additional_fees_charge ?? b.additionalFeesCharge ?? 0) + Number(b.PENALTYAMT ?? 0);
+        const additional = Number(b.additional_fees_charge ?? b.additionalFeesCharge ?? 0) + getPenaltyValue(Number(b.PENALTYAMT ?? 0), penaltyEnabled);
         const vat = Number(b.vat_amount ?? b.vatAmount ?? 0);
 
         if (baseWater === 0 && Number(b.THISMONTHBILLAMT || 0) > 0 && sewerage === 0 && sanitation === 0 && meterRent === 0 && maintenance === 0) {

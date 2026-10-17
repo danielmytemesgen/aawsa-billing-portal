@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DollarSign, FileText, CheckCircle, AlertCircle, Calendar } from "lucide-react";
+import { DollarSign, FileText, CheckCircle, AlertCircle, Calendar, Users, ArrowRight } from "lucide-react";
 import { getCustomerBillsAction, getCustomerAccountAction } from "@/lib/actions";
 import { format } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
@@ -48,6 +48,8 @@ export default function CustomerDashboardPage() {
     const [bills, setBills] = useState<Bill[]>([]);
     const [account, setAccount] = useState<CustomerAccount | null>(null);
     const [currentBill, setCurrentBill] = useState<Bill | null>(null);
+    const [customerType, setCustomerType] = useState<string>("individual");
+    const [submeterCount, setSubmeterCount] = useState<number>(0);
     const [stats, setStats] = useState({
         totalBills: 0,
         paidBills: 0,
@@ -77,12 +79,20 @@ export default function CustomerDashboardPage() {
 
             const customer = JSON.parse(customerData);
             const customerKeyNumber = customer.customerKeyNumber;
-            const customerType = customer.customerType || "individual";
+            const currentCustomerType = customer.customerType || "individual";
             const sessionId = customer.sessionId;
+            setCustomerType(currentCustomerType);
 
             // Load bills based on customer type
-            if (customerType === "bulk") {
-                const { getBulkMeterBillsAction, getBulkMeterAccountAction } = await import("@/lib/actions");
+            if (currentCustomerType === "bulk") {
+                const { getBulkMeterBillsAction, getBulkMeterAccountAction, getBulkCustomerSubmetersAction } = await import("@/lib/actions");
+
+                // Fetch sub-meters count for quick banner
+                getBulkCustomerSubmetersAction(customerKeyNumber, sessionId).then(res => {
+                    if (res?.data && Array.isArray(res.data)) {
+                        setSubmeterCount(res.data.length);
+                    }
+                }).catch(() => {});
 
                 const { data: billsData } = await getBulkMeterBillsAction(customerKeyNumber, true, sessionId);
                 if (billsData) {
@@ -254,6 +264,36 @@ export default function CustomerDashboardPage() {
                 </motion.div>
             )}
 
+            {/* Bulk Meter Sub-Meters Banner */}
+            {customerType === "bulk" && (
+                <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+                    <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white rounded-3xl p-6 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-blue-800/40">
+                        <div className="flex items-center gap-4">
+                            <div className="h-12 w-12 rounded-2xl bg-blue-500/20 text-blue-300 flex items-center justify-center shrink-0 border border-blue-400/20">
+                                <Users className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h3 className="text-lg font-bold">Associated Individual Sub-Meters</h3>
+                                    <Badge className="bg-blue-500/20 text-blue-200 border-blue-400/30 text-xs font-mono">
+                                        {submeterCount} Units
+                                    </Badge>
+                                </div>
+                                <p className="text-sm text-slate-300 mt-0.5">
+                                    Audit period-by-period meter readings, consumption, and billing history for all connected individual units.
+                                </p>
+                            </div>
+                        </div>
+                        <Button
+                            onClick={() => (window.location.href = "/customer/sub-meters")}
+                            className="bg-white hover:bg-blue-50 text-slate-900 font-bold gap-2 shrink-0 shadow-md h-11 px-5 rounded-xl cursor-pointer"
+                        >
+                            <span>Sub-Meters & Readings</span>
+                            <ArrowRight className="h-4 w-4 text-blue-600" />
+                        </Button>
+                    </div>
+                </motion.div>
+            )}
 
             {/* Quick Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

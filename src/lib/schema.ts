@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, smallint, uuid, numeric, integer, jsonb, date, boolean, primaryKey, check, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, smallint, uuid, numeric, integer, jsonb, date, boolean, primaryKey, check, index, unique } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 // 1. RBAC
@@ -244,6 +244,7 @@ export const tariffs = pgTable('tariffs', {
   penaltyMonthThreshold: integer('penalty_month_threshold').default(3),
   bankLendingRate: numeric('bank_lending_rate').default('0.15'),
   penaltyTieredRates: jsonb('penalty_tiered_rates').default([]),
+  penaltyEnabled: boolean('penalty_enabled').default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -457,4 +458,40 @@ export const passwordHistory = pgTable('password_history', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   staffIdx: index('idx_pwd_history_staff').on(t.staffId, t.createdAt),
+}));
+
+// 15. Bulk Meter Difference Distributions & Apportionment Records
+export const bulkDifferenceDistributions = pgTable('bulk_difference_distributions', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  bulkMeterKey: text('bulk_meter_key').notNull(),
+  bulkBillId: uuid('bulk_bill_id'),
+  monthYear: text('month_year').notNull(),
+  totalBulkUsage: numeric('total_bulk_usage').notNull(),
+  totalSubmeterUsage: numeric('total_submeter_usage').notNull(),
+  differenceUsage: numeric('difference_usage').notNull(),
+  differenceBillAmount: numeric('difference_bill_amount').notNull(),
+  distributionMethod: text('distribution_method').default('proportional_usage'),
+  status: text('status').default('Draft'),
+  createdBy: text('created_by'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+  bulkPeriodUnique: unique('uq_dist_bulk_period').on(t.bulkMeterKey, t.monthYear),
+  statusIdx: index('idx_dist_status').on(t.status),
+}));
+
+export const bulkDifferenceApportionmentItems = pgTable('bulk_difference_apportionment_items', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  distributionId: uuid('distribution_id').notNull().references(() => bulkDifferenceDistributions.id, { onDelete: 'cascade' }),
+  individualCustomerId: text('individual_customer_id').notNull().references(() => individualCustomers.customerKeyNumber),
+  individualUsage: numeric('individual_usage').notNull(),
+  consumptionShareRatio: numeric('consumption_share_ratio').notNull(),
+  apportionedAmount: numeric('apportioned_amount').notNull(),
+  ownBillAmount: numeric('own_bill_amount').default('0.00'),
+  totalDue: numeric('total_due').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+  distCustomerUnique: unique('uq_dist_items_cust').on(t.distributionId, t.individualCustomerId),
+  distIdIdx: index('idx_dist_items_dist_id').on(t.distributionId),
+  custIdx: index('idx_dist_items_cust').on(t.individualCustomerId),
 }));

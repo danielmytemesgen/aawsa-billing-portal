@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Droplets, Calendar, BarChart3, Info, RotateCcw } from "lucide-react";
+import { Droplets, Calendar, BarChart3, Info, RotateCcw, Users } from "lucide-react";
 import { getCustomerReadingsAction, getBulkMeterReadingsAction } from "@/lib/actions";
 import { format, parse } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
@@ -143,6 +143,18 @@ export default function ReadingHistoryPage() {
                             )}
                         </div>
                     </div>
+                    {customerType === "bulk" && (
+                        <div className="pt-5 sm:pt-0">
+                            <Button
+                                variant="outline"
+                                onClick={() => (window.location.href = "/customer/sub-meters")}
+                                className="h-11 px-4 gap-2 bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900 font-semibold rounded-xl"
+                            >
+                                <Users className="h-4 w-4 text-indigo-600" />
+                                <span>Sub-Meters & Readings</span>
+                            </Button>
+                        </div>
+                    )}
                     <div className="flex items-center gap-2 pt-5 sm:pt-0">
                         <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-slate-800">
                             <Droplets className="h-5 w-5 text-blue-600 dark:text-blue-400" />

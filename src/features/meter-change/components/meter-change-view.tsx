@@ -64,6 +64,8 @@ import {
   initializeCustomers,
   getBulkMeters,
   initializeBulkMeters,
+  getBranches,
+  initializeBranches,
 } from "@/lib/data-store";
 
 interface MeterChangeViewProps {
@@ -112,6 +114,34 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
     PERMISSIONS.METER_CHANGE_MANAGE,
     PERMISSIONS.SETTINGS_MANAGE
   );
+
+  const [currentUser, setCurrentUser] = useState<{
+    id?: string;
+    email?: string;
+    role?: string;
+    branchId?: string;
+    branchName?: string;
+  } | null>(null);
+  const [branches, setBranches] = useState<any[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        setCurrentUser(JSON.parse(stored));
+      }
+    } catch (_) {}
+    initializeBranches().then(() => setBranches(getBranches())).catch(() => {});
+  }, []);
+
+  const isAdmin = (
+    basePath !== "/staff" &&
+    (((currentUser?.role || "").toLowerCase().trim() === "admin" ||
+      (currentUser?.role || "").toLowerCase().trim() === "system administrator" ||
+      (currentUser?.role || "").toLowerCase().trim() === "super admin" ||
+      hasAnyPermission("*", "admin")))
+  );
+  const userBranchId = !isAdmin ? currentUser?.branchId : undefined;
 
   const [activeTab, setActiveTab] = useState<string>("record");
 
@@ -209,12 +239,16 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
     if (meterType === "individual") {
       const customers = getCustomers();
       const filtered = customers
-        .filter(
-          (c) =>
+        .filter((c) => {
+          if (userBranchId && (!c.branchId || String(c.branchId).trim().toLowerCase() !== String(userBranchId).trim().toLowerCase())) {
+            return false;
+          }
+          return (
             c.customerKeyNumber.toLowerCase().includes(query) ||
             (c.name && c.name.toLowerCase().includes(query)) ||
             (c.meterNumber && c.meterNumber.toLowerCase().includes(query))
-        )
+          );
+        })
         .slice(0, 6)
         .map((c) => ({
           key: c.customerKeyNumber,
@@ -225,12 +259,16 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
     } else {
       const bulks = getBulkMeters();
       const filtered = bulks
-        .filter(
-          (b) =>
+        .filter((b) => {
+          if (userBranchId && (!b.branchId || String(b.branchId).trim().toLowerCase() !== String(userBranchId).trim().toLowerCase())) {
+            return false;
+          }
+          return (
             b.customerKeyNumber.toLowerCase().includes(query) ||
             (b.name && b.name.toLowerCase().includes(query)) ||
             (b.meterNumber && b.meterNumber.toLowerCase().includes(query))
-        )
+          );
+        })
         .slice(0, 6)
         .map((b) => ({
           key: b.customerKeyNumber,
@@ -239,7 +277,7 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
         }));
       setSearchSuggestions(filtered);
     }
-  }, [customerSearch, meterType]);
+  }, [customerSearch, meterType, userBranchId]);
 
   // Load history records from DB action
   const loadHistory = async (page = historyPage, pageSize = historyPageSize) => {
@@ -301,6 +339,15 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
         });
         setSelectedEntity(null);
       } else if (res?.data) {
+        if (!isAdmin && userBranchId && (!res.data.branchId || String(res.data.branchId).trim().toLowerCase() !== String(userBranchId).trim().toLowerCase())) {
+          toast({
+            title: "Access Restricted",
+            description: "Forbidden: This meter belongs to another branch. Staff members can only change meters in their assigned branch.",
+            variant: "destructive",
+          });
+          setSelectedEntity(null);
+          return;
+        }
         setSelectedEntity(res.data);
         setOldMeterNumber(res.data.meterNumber);
         setOldMeterClosingReading(String(res.data.currentReading));
@@ -331,6 +378,15 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
         }
 
         if (found) {
+          if (!isAdmin && userBranchId && (!found.branchId || String(found.branchId).trim().toLowerCase() !== String(userBranchId).trim().toLowerCase())) {
+            toast({
+              title: "Access Restricted",
+              description: "Forbidden: This meter belongs to another branch. Staff members can only change meters in their assigned branch.",
+              variant: "destructive",
+            });
+            setSelectedEntity(null);
+            return;
+          }
           const mNum = (found as any).METER_KEY || found.meterNumber || "";
           const mSize = Number(found.meterSize) || 0.5;
           const dials = Number((found as any).NUMBER_OF_DIALS || (found as any).numberOfDials) || 5;
@@ -389,6 +445,14 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
       toast({
         title: "Validation Error",
         description: "Please search and select a customer / bulk meter first.",
+        variant: "destructive",
+      });
+      return false;
+    }
+    if (!isAdmin && userBranchId && (!selectedEntity.branchId || String(selectedEntity.branchId).trim().toLowerCase() !== String(userBranchId).trim().toLowerCase())) {
+      toast({
+        title: "Access Restricted",
+        description: "Forbidden: This meter belongs to another branch. Staff members can only change meters in their assigned branch.",
         variant: "destructive",
       });
       return false;
@@ -788,12 +852,19 @@ function MeterChangeContent({ basePath = "/admin" }: MeterChangeViewProps) {
               <div className="lg:col-span-4 space-y-6">
                 <Card className="border-slate-200/80 dark:border-slate-800 rounded-3xl shadow-sm overflow-hidden">
                   <CardHeader className="bg-slate-50/70 dark:bg-slate-900/50 pb-4">
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
-                      <Search className="h-4 w-4 text-emerald-600" />
-                      1. Select Target Meter
-                    </CardTitle>
+                    <div className="flex items-center justify-between gap-2">
+                      <CardTitle className="text-base font-bold flex items-center gap-2">
+                        <Search className="h-4 w-4 text-emerald-600" />
+                        1. Select Target Meter
+                      </CardTitle>
+                      {!isAdmin && (currentUser?.branchName || currentUser?.branchId) && (
+                        <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-300 text-[11px] font-semibold">
+                          Branch: {branches.find(b => b.id === currentUser?.branchId)?.name || currentUser?.branchName || "Your Branch"}
+                        </Badge>
+                      )}
+                    </div>
                     <CardDescription>
-                      Choose meter category and lookup the customer key
+                      Choose meter category and lookup the customer key {!isAdmin ? "(scoped to your branch)" : ""}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="p-5 space-y-5">

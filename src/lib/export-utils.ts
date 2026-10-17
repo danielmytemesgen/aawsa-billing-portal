@@ -3,7 +3,7 @@ import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
-import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue } from "@/lib/billing-utils";
 import { formatDate } from "@/lib/utils";
 import { arrayToCsvBlob, arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 
@@ -114,7 +114,8 @@ export const exportSentBillsToCsv = (
   customers: IndividualCustomer[] = [],
   bulkMeters: BulkMeter[] = [],
   branches: Branch[] = [],
-  filenamePrefix = "sent_bills_report"
+  filenamePrefix = "sent_bills_report",
+  penaltyEnabled = true
 ) => {
   const headers = [
     "Bill Key",
@@ -158,7 +159,8 @@ export const exportSentBillsToCsv = (
 
     const outstanding = parseNumber(bill.OUTSTANDINGAMT) ?? (d30 + d30_60 + d60);
     const currentBill = getMonthlyBillAmt(bill);
-    const penalty = parseNumber(bill.PENALTYAMT) ?? 0;
+    const rawPenalty = parseNumber(bill.PENALTYAMT) ?? 0;
+    const penalty = getPenaltyValue(rawPenalty, penaltyEnabled);
     const totalDue = parseNumber((bill as any).totalAmountDue ?? bill.TOTALBILLAMOUNT) ?? (outstanding + currentBill + penalty);
     const status = (bill.paymentStatus || (bill as any).payment_status || 'Unpaid') === 'Paid' ? 'Paid' : 'Unpaid';
     const dueDate = formatDate(bill.dueDate || (bill as any).due_date);
@@ -196,7 +198,8 @@ export const exportSentBillsToXlsx = (
   customers: IndividualCustomer[] = [],
   bulkMeters: BulkMeter[] = [],
   branches: Branch[] = [],
-  filenamePrefix = "sent_bills_report"
+  filenamePrefix = "sent_bills_report",
+  penaltyEnabled = true
 ) => {
   const headers = [
     "Bill Key",
@@ -240,7 +243,8 @@ export const exportSentBillsToXlsx = (
 
     const outstanding = parseNumber(bill.OUTSTANDINGAMT) ?? (d30 + d30_60 + d60);
     const currentBill = getMonthlyBillAmt(bill);
-    const penalty = parseNumber(bill.PENALTYAMT) ?? 0;
+    const rawPenalty = parseNumber(bill.PENALTYAMT) ?? 0;
+    const penalty = getPenaltyValue(rawPenalty, penaltyEnabled);
     const totalDue = parseNumber((bill as any).totalAmountDue ?? bill.TOTALBILLAMOUNT) ?? (outstanding + currentBill + penalty);
     const status = (bill.paymentStatus || (bill as any).payment_status || 'Unpaid') === 'Paid' ? 'Paid' : 'Unpaid';
     const dueDate = formatDate(bill.dueDate || (bill as any).due_date);

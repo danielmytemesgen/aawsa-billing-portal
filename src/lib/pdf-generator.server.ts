@@ -1,7 +1,7 @@
 import { jsPDF } from "jspdf";
 import fs from "fs";
 import path from "path";
-import { getMonthlyBillAmt } from "./billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue } from "./billing-utils";
 
 /**
  * Generates a single bill on the current page of the provided jsPDF instance.
@@ -9,7 +9,7 @@ import { getMonthlyBillAmt } from "./billing-utils";
  * @param bill The bill data from the database
  * @param yOffset Starting Y position in mm
  */
-export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
+export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20, penaltyEnabled: boolean = true) => {
   const leftMargin = 15;
   const rightMargin = 195;
   const contentWidth = 180;
@@ -119,7 +119,8 @@ export const drawBillOnPdf = (doc: jsPDF, bill: any, yOffset: number = 20) => {
   // --- Section: TOTAL AMOUNT PAYABLE ---
   const outstandingVal = Number(bill.OUTSTANDINGAMT || 0) || (Number(bill.debit_30 || 0) + Number(bill.debit_30_60 || 0) + Number(bill.debit_60 || 0));
   const currentVal = getMonthlyBillAmt(bill);
-  const penaltyVal = Number(bill.PENALTYAMT || 0);
+  // Clamp penalty to 0 when the Penalty Policy Engine is OFF
+  const penaltyVal = getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
   const totalPayableVal = outstandingVal + Math.max(0, currentVal) + penaltyVal;
 
   yOffset += 5;

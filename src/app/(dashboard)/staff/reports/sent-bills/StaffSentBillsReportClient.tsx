@@ -64,7 +64,7 @@ export default function StaffSentBillsReportClient() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching bill records..." });
     try {
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -106,7 +106,7 @@ export default function StaffSentBillsReportClient() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching records across all pages..." });
     try {
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -188,7 +188,7 @@ export default function StaffSentBillsReportClient() {
 
     const fetchBills = async () => {
       setIsLoading(true);
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({

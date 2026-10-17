@@ -138,6 +138,8 @@ import {
   dbGetUnsettledBillsCount,
   dbGetPaidBillsPaginated,
   dbGetPaidBillsCount,
+  dbGetReconciliationAnomalies,
+  dbFixReconciliationAnomalies,
   dbBatchUpdatePaymentsFromCsv,
   dbSyncCustomerPaymentAndReading,
   dbGetCustomerCurrentStateForDoubleCheck,
@@ -177,9 +179,11 @@ import {
 import { roundMoney, MONEY_EPSILON } from './credit-utils';
 import { withTransaction, query } from './db';
 import { calculateDistance } from './geo-utils';
+import { auditLogAsync, AUDIT_ACTIONS } from './audit-logger';
+import { getCachedPenaltyGuardFlags, invalidatePenaltyGuardCache, invalidateTariffsCache } from './server-cache';
 
 import { calculateBill, calculateBillFromTariff, type CustomerType, type SewerageConnection } from './billing';
-import { encrypt, getSession } from './auth';
+import { encrypt, decrypt, getSession } from './auth';
 // Removed unused redirect import
 import { revalidatePath } from 'next/cache';
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from './billing-config';
@@ -309,10 +313,13 @@ export async function getReadingPeriodDetailsAction(): Promise<ReadingPeriodDeta
     dbUpdateSystemSetting('reading_period_status', finalStatus).catch(() => {});
   }
 
+  const actualStartDate = rawMode === 'manual' && rawStart ? rawStart : startDateStr;
+  const actualEndDate = rawMode === 'manual' && rawEnd ? rawEnd : endDateStr;
+
   return {
     status: finalStatus,
-    startDate: startDateStr,
-    endDate: endDateStr,
+    startDate: actualStartDate,
+    endDate: actualEndDate,
     startDay,
     endDay,
     isRecurring: true,
@@ -592,8 +599,22 @@ export async function assertCustomerAccess(
   }
 
   // 2) Customer path — require valid session matching the requested customerKeyNumber
-  if (customerSessionId) {
-    const cSession = await dbGetCustomerSession(customerSessionId);
+  let effectiveSessionId = customerSessionId;
+  if (!effectiveSessionId) {
+    try {
+      const cookieStore = await cookies();
+      const token = cookieStore.get('customer_session')?.value;
+      if (token) {
+        const payload = await decrypt(token);
+        if (payload?.sessionId) {
+          effectiveSessionId = payload.sessionId;
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (effectiveSessionId) {
+    const cSession = await dbGetCustomerSession(effectiveSessionId);
     if (cSession && cSession.customer_key_number === customerKeyNumber) {
       return { kind: 'customer' as const, session: cSession, perms: [] as string[] };
     }
@@ -646,8 +667,9 @@ function verifyEntityBranchAccess(
   // Branch-scoped user: their session must match the entity's branch
   const userBranchId = session?.branchId;
   if (!userBranchId || userBranchId === 'all') {
-    // No branch assigned — allow (Admin-level accounts without a branch restriction)
-    return;
+    // Staff with no assigned branch should never be allowed to mutate branch-specific data.
+    // Only admins (already returned above) may operate without a branch restriction.
+    throw new Error(`Forbidden: Your account has no branch assignment. Contact your administrator.`);
   }
 
   if (!entityBranchId || entityBranchId !== userBranchId) {
@@ -745,6 +767,13 @@ export async function getCustomersSummaryAction() {
 
     const branchId = getEffectiveBranchId(session, undefined, 'customers_view_all');
     return await dbGetCustomersSummary(branchId);
+  });
+}
+
+export async function getCustomersByBulkMeterIdAction(bulkMeterId: string) {
+  return await wrap(async () => {
+    await checkPermissionAny(PERMISSIONS.CUSTOMERS_VIEW_ALL, PERMISSIONS.CUSTOMERS_VIEW_BRANCH);
+    return await dbGetCustomersByBulkMeterId(bulkMeterId);
   });
 }
 
@@ -1568,7 +1597,7 @@ export async function runBillingCycleAction(payload: {
     const balanceFromPreviousPeriods = Number(bulkMeter.outStandingbill || 0);
 
     // 5. Aging & Penalty Calculation (FIFO based on historical bills, considering partial payments)
-    const { calculateDebtAging } = await import('./billing-utils');
+    const { calculateDebtAging, isPenaltyEngineEnabled } = await import('./billing-utils');
     const historicalBills = await dbGetBillsByBulkMeterId(payload.bulkMeterId);
 
     // Convert DB row to expected TariffInfo structure for calculateDebtAging if a row was found
@@ -1583,11 +1612,18 @@ export async function runBillingCycleAction(payload: {
         penalty_tiered_rates: typeof activeTariffRow.penalty_tiered_rates === 'string' && activeTariffRow.penalty_tiered_rates ? JSON.parse(activeTariffRow.penalty_tiered_rates) : activeTariffRow.penalty_tiered_rates,
         penalty_month_threshold: activeTariffRow.penalty_month_threshold !== null && activeTariffRow.penalty_month_threshold !== undefined ? Number(activeTariffRow.penalty_month_threshold) : undefined,
         bank_lending_rate: activeTariffRow.bank_lending_rate !== null && activeTariffRow.bank_lending_rate !== undefined ? Number(activeTariffRow.bank_lending_rate) : undefined,
+        penalty_enabled: activeTariffRow.penalty_enabled !== undefined && activeTariffRow.penalty_enabled !== null ? Boolean(activeTariffRow.penalty_enabled) : true,
         use_rule_of_three: activeTariffRow.use_rule_of_three !== undefined && activeTariffRow.use_rule_of_three !== null ? Boolean(activeTariffRow.use_rule_of_three) : true,
       };
     }
 
-    const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, activeTariff, payload.monthYear);
+    const allTariffsForGuard = await getCachedPenaltyGuardFlags(
+      () => query('SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC')
+    );
+    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffsForGuard);
+    const tariffForAging = globalPenaltyOn ? activeTariff : ({ ...(activeTariff || {}), penalty_enabled: false } as any);
+
+    const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, tariffForAging, payload.monthYear);
 
     const { buildBillingPeriod } = await import('./billing-config');
     const period = buildBillingPeriod({
@@ -1899,7 +1935,8 @@ export async function updateBillPaymentStatusAction(payload: UpdateBillPaymentSt
     const session = await checkPermissionAny(
       PERMISSIONS.BILL_UPDATE,
       PERMISSIONS.PAYMENTS_CREATE,
-      PERMISSIONS.BILL_VIEW_ALL
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.BILL_POST
     );
     await verifyBillBranchAccess(payload.billId, session);
 
@@ -3696,18 +3733,23 @@ export async function uploadReadingPhotoAction(
   });
 }
 
-export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: string, monthYear: string) {
+export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: string, monthYear: string, customerKeys?: string[], customerSessionId?: string) {
   return await wrap(async () => {
-    await checkPermissionAny(
-      PERMISSIONS.BULK_METERS_VIEW_ALL,
-      PERMISSIONS.BULK_METERS_VIEW_BRANCH,
-      PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW,
-      PERMISSIONS.BULK_METERS_EDIT_READINGS,
-      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW,
-      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE,
-      PERMISSIONS.BILL_VIEW_ALL,
-      PERMISSIONS.BILL_VIEW_BRANCH
-    );
+    const staffSession = await getSession();
+    if (!staffSession || !staffSession.id) {
+      await assertCustomerAccess(bulkMeterKey, customerSessionId, 'bulk');
+    } else {
+      await checkPermissionAny(
+        PERMISSIONS.BULK_METERS_VIEW_ALL,
+        PERMISSIONS.BULK_METERS_VIEW_BRANCH,
+        PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW,
+        PERMISSIONS.BULK_METERS_EDIT_READINGS,
+        PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW,
+        PERMISSIONS.METER_READINGS_EDIT_RECALCULATE,
+        PERMISSIONS.BILL_VIEW_ALL,
+        PERMISSIONS.BILL_VIEW_BRANCH
+      );
+    }
 
     const bulkKey = (bulkMeterKey || '').trim();
     if (!bulkKey) return { bulkMeter: null, assignedCustomers: [] };
@@ -3861,7 +3903,27 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
     }
 
     // 2. Fetch Assigned Sub-meter Period Readings
-    // individual_customers.assignedBulkMeterId stores the bulk meter's customerKeyNumber
+    // Match either by assignedBulkMeterId OR explicitly by provided customerKeys
+    const subParams: any[] = [startDate, endDate, monthYear, resolvedKey];
+    let customerFilterClause: string;
+    if (customerKeys && customerKeys.length > 0) {
+      subParams.push(customerKeys);
+      customerFilterClause = `
+        (
+          (ic."customerKeyNumber" = ANY($5::text[]))
+          OR LOWER(TRIM(ic."assignedBulkMeterId")) = LOWER(TRIM($4))
+          OR LOWER(TRIM(ic."assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($4)) LIMIT 1)
+        )
+      `;
+    } else {
+      customerFilterClause = `
+        (
+          LOWER(TRIM(ic."assignedBulkMeterId")) = LOWER(TRIM($4))
+          OR LOWER(TRIM(ic."assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($4)) LIMIT 1)
+        )
+      `;
+    }
+
     const subSql = `
       SELECT 
         ic."customerKeyNumber",
@@ -3877,7 +3939,9 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
         prev_r."METER_READING" as "priorReading",
         b.id as "billId",
         b.status as "billStatus",
+        b.payment_status as "billPaymentStatus",
         b."THISMONTHBILLAMT" as "billAmount",
+        b."TOTALBILLAMOUNT" as "totalBillAmount",
         b."PREVREAD" as "billPrevRead",
         b."CURRREAD" as "billCurrRead",
         last_b."CURRREAD" as "lastMonthCurr"
@@ -3903,20 +3967,25 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
         ORDER BY "READING_DATE" DESC
         LIMIT 1
       ) prev_r ON true
-      LEFT JOIN bills b ON ic."customerKeyNumber" = b.individual_customer_id
+      LEFT JOIN bills b ON (
+        ic."customerKeyNumber" = b.individual_customer_id
+        OR ic."customerKeyNumber" = b."CUSTOMERKEY"
+      )
         AND b.month_year = $3
         AND b.status != 'Reversed'
-      LEFT JOIN bills last_b ON ic."customerKeyNumber" = last_b.individual_customer_id
+        AND b.deleted_at IS NULL
+      LEFT JOIN bills last_b ON (
+        ic."customerKeyNumber" = last_b.individual_customer_id
+        OR ic."customerKeyNumber" = last_b."CUSTOMERKEY"
+      )
         AND last_b.month_year = (SELECT TO_CHAR(TO_DATE($3, 'YYYY-MM') - INTERVAL '1 month', 'YYYY-MM'))
         AND last_b.status != 'Reversed'
-      WHERE (
-        LOWER(TRIM(ic."assignedBulkMeterId")) = LOWER(TRIM($4))
-        OR LOWER(TRIM(ic."assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($4)) LIMIT 1)
-      )
+        AND last_b.deleted_at IS NULL
+      WHERE ${customerFilterClause}
         AND ic.deleted_at IS NULL
       ORDER BY ic.name ASC, ic."customerKeyNumber" ASC
     `;
-    const subRows: any[] = await query(subSql, [startDate, endDate, monthYear, resolvedKey]);
+    const subRows: any[] = await query(subSql, subParams);
 
     const assignedCustomers = subRows.map((row: any) => {
       let curr: number;
@@ -3956,11 +4025,13 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
         sewerageConnection: row.sewerageConnection || 'No',
         previous: prev,
         current: curr,
-        hasExactRecord: row.rCurrReading != null,
+        usage: curr - prev,
+        hasExactRecord: row.rCurrReading != null || row.billCurrRead != null,
         readingDate: row.readingDate || null,
         billId: row.billId,
         billStatus: row.billStatus,
-        billAmount: row.billAmount ? Number(row.billAmount) : null
+        paymentStatus: row.billPaymentStatus || null,
+        billAmount: row.totalBillAmount != null ? Number(row.totalBillAmount) : (row.billAmount != null ? Number(row.billAmount) : null)
       };
     });
 
@@ -3971,9 +4042,9 @@ export async function getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey: strin
   });
 }
 
-export async function getAssignedCustomerReadingsAction(bulkMeterId: string, monthYear: string) {
+export async function getAssignedCustomerReadingsAction(bulkMeterId: string, monthYear: string, customerKeys?: string[], customerSessionId?: string) {
   return await wrap(async () => {
-    const res = await getBulkAndSubmeterPeriodReadingsAction(bulkMeterId, monthYear);
+    const res = await getBulkAndSubmeterPeriodReadingsAction(bulkMeterId, monthYear, customerKeys, customerSessionId);
     const list: any = [...(res.assignedCustomers || [])];
     list.bulkReading = res.bulkMeter ? {
       previous: res.bulkMeter.previousReading,
@@ -4988,6 +5059,10 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
       throw new Error('Update failed: tariff row not found for provided effective date.');
     }
 
+    // Invalidate server-side caches so the next billing action reads fresh data
+    invalidatePenaltyGuardCache();
+    invalidateTariffsCache();
+
     await logSecurityEventAction({
       event: 'Update Tariff',
       severity: 'critical',
@@ -4998,6 +5073,32 @@ export async function updateTariffAction(customerType: string, effectiveDate: st
         new_values: tariff
       }
     });
+
+    // ── Penalty Toggle Audit Log ──────────────────────────────────────────────
+    // Fire a dedicated audit entry when the penalty engine is toggled ON or OFF.
+    // oldTariff.penalty_enabled defaults to true when undefined (engine is ON by default).
+    const oldPenaltyEnabled = oldTariff?.penalty_enabled !== undefined && oldTariff?.penalty_enabled !== null
+      ? Boolean(oldTariff.penalty_enabled)
+      : true;
+    const newPenaltyEnabled = (tariff as any).penalty_enabled !== undefined
+      ? Boolean((tariff as any).penalty_enabled)
+      : oldPenaltyEnabled; // field not touched — no toggle occurred
+
+    if (oldPenaltyEnabled !== newPenaltyEnabled) {
+      const session = await getSession();
+      auditLogAsync({
+        actorId:     session?.id,
+        actorEmail:  session?.email,
+        actorBranch: session?.branch,
+        action:      AUDIT_ACTIONS.PENALTY_TOGGLE_CHANGED,
+        entityType:  'tariff',
+        entityId:    String(result.id ?? lookupDate),
+        oldValue:    { penalty_enabled: oldPenaltyEnabled, customer_type: customerType, effective_date: lookupDate },
+        newValue:    { penalty_enabled: newPenaltyEnabled, customer_type: customerType, effective_date: lookupDate },
+        metadata:    { effective_date: lookupDate, customer_type: customerType },
+      });
+    }
+
     return result;
   });
 }
@@ -5179,10 +5280,23 @@ export async function getCustomerAccountAction(
       if (perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) || perms.includes(PERMISSIONS.CUSTOMERS_VIEW_BRANCH)) {
         isStaffOrOwner = true;
       }
-    } else if (customerSessionId) {
-      const cSession = await dbGetCustomerSession(customerSessionId);
-      if (cSession && cSession.customer_key_number === customerKeyNumber) {
-        isStaffOrOwner = true;
+    } else {
+      let effectiveSessionId = customerSessionId;
+      if (!effectiveSessionId) {
+        try {
+          const cookieStore = await cookies();
+          const token = cookieStore.get('customer_session')?.value;
+          if (token) {
+            const payload = await decrypt(token);
+            if (payload?.sessionId) effectiveSessionId = payload.sessionId;
+          }
+        } catch (_) {}
+      }
+      if (effectiveSessionId) {
+        const cSession = await dbGetCustomerSession(effectiveSessionId);
+        if (cSession && cSession.customer_key_number === customerKeyNumber) {
+          isStaffOrOwner = true;
+        }
       }
     }
 
@@ -5242,10 +5356,23 @@ export async function getBulkMeterAccountAction(
       if (perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL) || perms.includes(PERMISSIONS.BULK_METERS_VIEW_BRANCH)) {
         isStaffOrOwner = true;
       }
-    } else if (customerSessionId) {
-      const cSession = await dbGetCustomerSession(customerSessionId);
-      if (cSession && cSession.customer_key_number === customerKeyNumber) {
-        isStaffOrOwner = true;
+    } else {
+      let effectiveSessionId = customerSessionId;
+      if (!effectiveSessionId) {
+        try {
+          const cookieStore = await cookies();
+          const token = cookieStore.get('customer_session')?.value;
+          if (token) {
+            const payload = await decrypt(token);
+            if (payload?.sessionId) effectiveSessionId = payload.sessionId;
+          }
+        } catch (_) {}
+      }
+      if (effectiveSessionId) {
+        const cSession = await dbGetCustomerSession(effectiveSessionId);
+        if (cSession && cSession.customer_key_number === customerKeyNumber) {
+          isStaffOrOwner = true;
+        }
       }
     }
 
@@ -5291,6 +5418,194 @@ export async function getCustomerReadingsAction(
   return await wrap(async () => {
     await assertCustomerAccess(customerKeyNumber, customerSessionId, 'individual');
     return await dbGetIndividualCustomerReadingsByCustomer(customerKeyNumber);
+  });
+}
+
+export interface IndividualCustomerReadingHistoryItem {
+  id: string;
+  monthYear: string;
+  prevRead: number;
+  currRead: number;
+  usage: number;
+  billAmount: number | null;
+  paymentStatus: string | null;
+  status: string;
+  readingDate?: string | null;
+  notes?: string | null;
+  source: 'bill' | 'reading' | 'profile';
+}
+
+export async function getIndividualCustomerReadingHistoryAction(
+  customerKeyNumber: string,
+  customerSessionId?: string
+): Promise<{ data: IndividualCustomerReadingHistoryItem[] | null; error: any }> {
+  return await wrap(async () => {
+    // checkPermission() is sufficient — any authenticated session can view history.
+    // assertCustomerAccess() would require CUSTOMERS_VIEW_ALL/BRANCH which many staff lack.
+    const session = await checkPermission();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const key = (customerKeyNumber || '').trim();
+    if (!key) return [];
+
+    const billsRes: any[] = await query(
+      `SELECT id, month_year, "PREVREAD", "CURRREAD", difference_usage, "THISMONTHBILLAMT", "TOTALBILLAMOUNT", payment_status, status, bill_period_end_date, created_at
+       FROM bills
+       WHERE (individual_customer_id = $1 OR "CUSTOMERKEY" = $1)
+         AND deleted_at IS NULL
+         AND status != 'Reversed'
+       ORDER BY COALESCE(bill_period_end_date, created_at::date) DESC, created_at DESC`,
+      [key]
+    );
+
+    const readingsRes: any[] = await query(
+      `SELECT id, "READING_DATE", "PREVIOUS_READING", "METER_READING", created_at,
+              TO_CHAR(COALESCE("READING_DATE", created_at) AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') as reading_month
+       FROM individual_customer_readings
+       WHERE "CUST_KEY" = $1
+         AND deleted_at IS NULL
+       ORDER BY "READING_DATE" DESC, created_at DESC`,
+      [key]
+    );
+
+    const customerRes: any[] = await query(
+      `SELECT "customerKeyNumber", "previousReading", "currentReading", "calculatedBill", "paymentStatus", "month", "status", "customerType", "sewerageConnection", "meterSize", created_at
+       FROM individual_customers
+       WHERE "customerKeyNumber" = $1 AND deleted_at IS NULL
+       LIMIT 1`,
+      [key]
+    );
+
+    const historyMap = new Map<string, IndividualCustomerReadingHistoryItem>();
+
+    for (const b of billsRes) {
+      const my = b.month_year || (b.created_at ? new Date(b.created_at).toISOString().slice(0, 7) : 'Unknown');
+      // Support both uppercase (quoted) and lowercase column names from node-postgres
+      const prev = Number(b.PREVREAD ?? b.prevread ?? 0);
+      const curr = Number(b.CURRREAD ?? b.currread ?? 0);
+      const usage = b.difference_usage != null ? Number(b.difference_usage) : (curr - prev);
+      const rawAmt = b.TOTALBILLAMOUNT ?? b.totalbillamount ?? b.THISMONTHBILLAMT ?? b.thismonthbillamt ?? null;
+      const amount = rawAmt != null ? Number(rawAmt) : null;
+
+      historyMap.set(my, {
+        id: String(b.id),
+        monthYear: my,
+        prevRead: prev,
+        currRead: curr,
+        usage,
+        billAmount: amount,
+        paymentStatus: b.payment_status || 'Unpaid',
+        status: b.status || 'Posted',
+        readingDate: b.bill_period_end_date ? new Date(b.bill_period_end_date).toISOString() : (b.created_at ? new Date(b.created_at).toISOString() : null),
+        source: 'bill'
+      });
+    }
+
+    for (const r of readingsRes) {
+      const rdRaw = r.READING_DATE ?? r.reading_date ?? r.created_at;
+      const my = r.reading_month || (rdRaw ? new Date(rdRaw).toISOString().slice(0, 7) : 'Unknown');
+      const prev = Number(r.PREVIOUS_READING ?? r.previous_reading ?? 0);
+      const curr = Number(r.METER_READING ?? r.meter_reading ?? 0);
+      const usage = curr - prev;
+
+      if (historyMap.has(my)) {
+        const existing = historyMap.get(my)!;
+        if (!existing.readingDate && rdRaw) existing.readingDate = new Date(rdRaw).toISOString();
+      } else {
+        historyMap.set(my, {
+          id: String(r.id),
+          monthYear: my,
+          prevRead: prev,
+          currRead: curr,
+          usage,
+          billAmount: null,
+          paymentStatus: null,
+          status: 'Reading Recorded',
+          readingDate: rdRaw ? new Date(rdRaw).toISOString() : null,
+          source: 'reading'
+        });
+      }
+    }
+
+    // Always show at least the current profile reading
+    const c = customerRes && customerRes.length > 0 ? customerRes[0] : null;
+    if (c) {
+      const cMonth = c.month || null;
+      if (cMonth) {
+        const prev = Number(c.previousReading ?? 0);
+        const curr = Number(c.currentReading ?? 0);
+        const usage = Math.max(0, curr - prev);
+        const calcBill = c.calculatedBill;
+
+        if (!historyMap.has(cMonth)) {
+          historyMap.set(cMonth, {
+            id: `profile-${c.customerKeyNumber}`,
+            monthYear: cMonth,
+            prevRead: prev,
+            currRead: curr,
+            usage,
+            billAmount: calcBill != null ? Number(calcBill) : null,
+            paymentStatus: c.paymentStatus || 'Unpaid',
+            status: c.status || 'Active',
+            readingDate: c.created_at ? new Date(c.created_at).toISOString() : null,
+            source: 'profile'
+          });
+        } else {
+          const existing = historyMap.get(cMonth)!;
+          if (existing.billAmount == null && calcBill != null) existing.billAmount = Number(calcBill);
+          if (!existing.paymentStatus) existing.paymentStatus = c.paymentStatus || 'Unpaid';
+        }
+      }
+
+      // Automatically calculate bill amount for any historical reading month where billAmount is missing
+      for (const item of historyMap.values()) {
+        if (item.billAmount == null && item.usage >= 0 && item.monthYear && item.monthYear.match(/^\d{4}-\d{2}$/)) {
+          try {
+            const calc = await calculateBill(
+              item.usage,
+              (c.customerType as CustomerType) || 'Domestic',
+              (c.sewerageConnection as SewerageConnection) || 'No',
+              Number(c.meterSize || 0.5),
+              item.monthYear
+            );
+            if (calc && calc.totalBill != null) {
+              item.billAmount = calc.totalBill;
+              if (!item.paymentStatus) item.paymentStatus = 'Unpaid';
+            }
+          } catch {
+            // Ignore calculation errors for unusual historical months
+          }
+        }
+      }
+    }
+
+    const items = Array.from(historyMap.values());
+    items.sort((a, b) => {
+      const aVal = a.monthYear || '';
+      const bVal = b.monthYear || '';
+      return bVal.localeCompare(aVal);
+    });
+
+    return items;
+  });
+}
+
+export async function getCustomerByKeyAction(customerKey: string) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    if (!session || !session.id) throw new Error('Unauthorized');
+    const key = (customerKey || '').trim();
+    if (!key) return null;
+    const rows: any[] = await query(
+      `SELECT ic.*, b.name as branch_name, bm.name as bulk_meter_name
+       FROM individual_customers ic
+       LEFT JOIN branches b ON ic.branch_id = b.id
+       LEFT JOIN bulk_meters bm ON ic."assignedBulkMeterId" = bm."customerKeyNumber"
+       WHERE ic."customerKeyNumber" = $1 AND ic.deleted_at IS NULL
+       LIMIT 1`,
+      [key]
+    );
+    return rows && rows.length > 0 ? rows[0] : null;
   });
 }
 
@@ -5471,6 +5786,504 @@ export async function getBulkMeterBillsAction(
       branchId = hasManageAll ? undefined : (ctx.session as any).branchId;
     }
     return await dbGetBillsByBulkMeterId(customerKeyNumber, branchId, excludeUnfinalized);
+  });
+}
+
+export async function getBulkCustomerSubmetersAction(bulkMeterKey: string, customerSessionId?: string) {
+  return await wrap(async () => {
+    await assertCustomerAccess(bulkMeterKey, customerSessionId, 'bulk');
+    const rows = await query(
+      `SELECT "customerKeyNumber", name, "METER_KEY", "meterSize", "customerType", "sewerageConnection", "previousReading", "currentReading", status, "phone_number", email
+       FROM individual_customers
+       WHERE (
+         LOWER(TRIM("assignedBulkMeterId")) = LOWER(TRIM($1))
+         OR LOWER(TRIM("assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) LIMIT 1)
+       )
+         AND deleted_at IS NULL
+       ORDER BY name ASC, "customerKeyNumber" ASC`,
+      [bulkMeterKey]
+    );
+    return rows;
+  });
+}
+
+export async function getBulkCustomerAvailablePeriodsAction(bulkMeterKey: string, customerSessionId?: string) {
+  return await wrap(async () => {
+    await assertCustomerAccess(bulkMeterKey, customerSessionId, 'bulk');
+    const rows: any[] = await query(
+      `SELECT DISTINCT month_year 
+       FROM bills 
+       WHERE ("CUSTOMERKEY" = $1 OR individual_customer_id IN (
+         SELECT "customerKeyNumber" FROM individual_customers WHERE LOWER(TRIM("assignedBulkMeterId")) = LOWER(TRIM($1))
+       ))
+         AND month_year IS NOT NULL AND month_year != ''
+       ORDER BY month_year DESC
+       LIMIT 36`,
+      [bulkMeterKey]
+    );
+    return rows.map((r: any) => r.month_year).filter(Boolean);
+  });
+}
+
+export async function getBulkCustomerSubmeterHistoryAction(bulkMeterKey: string, individualCustomerKey: string, customerSessionId?: string) {
+  return await wrap(async () => {
+    await assertCustomerAccess(bulkMeterKey, customerSessionId, 'bulk');
+    const custCheck: any[] = await query(
+      `SELECT "customerKeyNumber", name, "METER_KEY", "meterSize", "customerType"
+       FROM individual_customers
+       WHERE "customerKeyNumber" = $1
+         AND (
+           LOWER(TRIM("assignedBulkMeterId")) = LOWER(TRIM($2))
+           OR LOWER(TRIM("assignedBulkMeterId")) = (SELECT LOWER(TRIM("customerKeyNumber")) FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2)) LIMIT 1)
+         )
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [individualCustomerKey, bulkMeterKey]
+    );
+    if (!custCheck || custCheck.length === 0) {
+      throw new Error('Customer does not belong to this bulk meter');
+    }
+
+    const readings: any[] = await query(
+      `SELECT 
+         r.id,
+         r."READING_DATE" as "readingDate",
+         r."PREVIOUS_READING" as "prevReading",
+         r."METER_READING" as "currReading",
+         (r."METER_READING" - r."PREVIOUS_READING") as "usage",
+         b.id as "billId",
+         b.month_year as "monthYear",
+         b."THISMONTHBILLAMT" as "billAmount",
+         b."TOTALBILLAMOUNT" as "totalBillAmount",
+         b.payment_status as "paymentStatus",
+         b.status as "billStatus"
+       FROM individual_customer_readings r
+       FULL OUTER JOIN bills b ON (b.individual_customer_id = r."CUST_KEY" AND TO_CHAR(r."READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM') = b.month_year)
+       WHERE (r."CUST_KEY" = $1 OR b.individual_customer_id = $1)
+         AND (r.deleted_at IS NULL OR r.deleted_at IS NULL)
+       ORDER BY COALESCE(b.month_year, TO_CHAR(r."READING_DATE" AT TIME ZONE 'Africa/Addis_Ababa', 'YYYY-MM')) DESC
+       LIMIT 50`,
+      [individualCustomerKey]
+    );
+    return {
+      customer: custCheck[0],
+      history: readings
+    };
+  });
+}
+
+export async function calculateDifferenceApportionmentAction(params: {
+  bulkMeterKey: string;
+  monthYear: string;
+  distributionMethod?: 'proportional_usage' | 'equal_split';
+  customTotalBillAmount?: number;
+  customerSessionId?: string;
+  autoSave?: boolean;
+}) {
+  return await wrap(async () => {
+    const { bulkMeterKey, monthYear, distributionMethod = 'proportional_usage', customTotalBillAmount, customerSessionId, autoSave = true } = params;
+
+    // Check staff permissions or customer portal access
+    const staffSession = await getSession();
+    if (!staffSession || !staffSession.id) {
+      await assertCustomerAccess(bulkMeterKey, customerSessionId, 'bulk');
+    } else {
+      await checkPermissionAny(
+        PERMISSIONS.BULK_METERS_VIEW_ALL,
+        PERMISSIONS.BULK_METERS_VIEW_BRANCH,
+        PERMISSIONS.BILL_VIEW_ALL,
+        PERMISSIONS.BILL_VIEW_BRANCH
+      );
+    }
+
+    // 1. Fetch bulk and sub-meter period readings
+    const periodData = await getBulkAndSubmeterPeriodReadingsAction(bulkMeterKey, monthYear, undefined, customerSessionId);
+    const bulk = periodData.bulkMeter;
+    const submeters = periodData.assignedCustomers || [];
+
+    // 2. Determine bulk bill amount and difference usage
+    let diffBillAmount = 0;
+    if (customTotalBillAmount !== undefined && customTotalBillAmount !== null) {
+      diffBillAmount = Number(customTotalBillAmount);
+    } else if (bulk?.totalBillAmount != null) {
+      diffBillAmount = Number(bulk.totalBillAmount);
+    } else if (bulk?.billAmount != null) {
+      diffBillAmount = Number(bulk.billAmount);
+    } else {
+      // Look up bulk meter bill for this period from bills table directly
+      const bulkBillRows: any[] = await query(
+        `SELECT "TOTALBILLAMOUNT", "THISMONTHBILLAMT", difference_usage 
+         FROM bills 
+         WHERE "CUSTOMERKEY" = $1 AND month_year = $2 AND status != 'Reversed' 
+         ORDER BY created_at DESC LIMIT 1`,
+        [bulkMeterKey, monthYear]
+      );
+      if (bulkBillRows.length > 0) {
+        diffBillAmount = Number(bulkBillRows[0].TOTALBILLAMOUNT ?? bulkBillRows[0].THISMONTHBILLAMT ?? 0);
+      }
+    }
+
+    const bulkUsage = Number(bulk?.currentReading ?? 0) - Number(bulk?.previousReading ?? 0);
+    const totalSubmeterUsage = submeters.reduce((sum: number, s: any) => sum + Math.max(0, Number(s.usage || 0)), 0);
+    const differenceUsage = bulk?.differenceUsage != null ? Number(bulk.differenceUsage) : Math.max(0, bulkUsage - totalSubmeterUsage);
+
+    const totalUnits = submeters.length;
+    let items: any[] = [];
+    let allocatedTotal = 0;
+
+    if (totalUnits === 0) {
+      return {
+        summary: {
+          bulkMeterKey,
+          monthYear,
+          bulkUsage,
+          totalSubmeterUsage,
+          differenceUsage,
+          differenceBillAmount: diffBillAmount,
+          unitCount: 0,
+          distributionMethod
+        },
+        items: []
+      };
+    }
+
+    if (distributionMethod === 'equal_split' || totalSubmeterUsage <= 0) {
+      // Split equally across all assigned units
+      const equalShare = Number((diffBillAmount / totalUnits).toFixed(2));
+      items = submeters.map((cust: any) => {
+        const ownUsage = Math.max(0, Number(cust.usage || 0));
+        const ownBill = Number(cust.billAmount || 0);
+        return {
+          customerKeyNumber: cust.customerKeyNumber,
+          name: cust.name,
+          meterSize: cust.meterSize,
+          customerType: cust.customerType,
+          ownUsage,
+          shareRatio: Number((1 / totalUnits).toFixed(6)),
+          sharePercentage: `${(100 / totalUnits).toFixed(2)}%`,
+          apportionedDifferenceBill: equalShare,
+          ownBillAmount: ownBill,
+          totalPayable: Number((ownBill + equalShare).toFixed(2))
+        };
+      });
+      allocatedTotal = equalShare * totalUnits;
+    } else {
+      // Proportional to consumption
+      items = submeters.map((cust: any) => {
+        const ownUsage = Math.max(0, Number(cust.usage || 0));
+        const ratio = ownUsage / totalSubmeterUsage;
+        const apportioned = Number((ratio * diffBillAmount).toFixed(2));
+        allocatedTotal += apportioned;
+        const ownBill = Number(cust.billAmount || 0);
+        return {
+          customerKeyNumber: cust.customerKeyNumber,
+          name: cust.name,
+          meterSize: cust.meterSize,
+          customerType: cust.customerType,
+          ownUsage,
+          shareRatio: Number(ratio.toFixed(6)),
+          sharePercentage: `${(ratio * 100).toFixed(2)}%`,
+          apportionedDifferenceBill: apportioned,
+          ownBillAmount: ownBill,
+          totalPayable: Number((ownBill + apportioned).toFixed(2))
+        };
+      });
+    }
+
+    // Cent rounding discrepancy fix: adjust the delta cents to the highest consumer unit
+    const roundingDelta = Number((diffBillAmount - allocatedTotal).toFixed(2));
+    if (roundingDelta !== 0 && items.length > 0) {
+      let maxIdx = 0;
+      for (let i = 1; i < items.length; i++) {
+        if (items[i].ownUsage > items[maxIdx].ownUsage) {
+          maxIdx = i;
+        }
+      }
+      items[maxIdx].apportionedDifferenceBill = Number((items[maxIdx].apportionedDifferenceBill + roundingDelta).toFixed(2));
+      items[maxIdx].totalPayable = Number((items[maxIdx].ownBillAmount + items[maxIdx].apportionedDifferenceBill).toFixed(2));
+    }
+
+    // Auto-save distribution to database if enabled and records exist
+    let savedDistributionId: string | null = null;
+    if (autoSave && totalUnits > 0 && diffBillAmount > 0) {
+      try {
+        const billRows: any[] = await query(
+          `SELECT id FROM bills WHERE "CUSTOMERKEY" = $1 AND month_year = $2 AND status != 'Reversed' LIMIT 1`,
+          [bulkMeterKey, monthYear]
+        );
+        const bulkBillId = billRows[0]?.id || null;
+
+        await withTransaction(async (client) => {
+          const upsertDistSql = `
+            INSERT INTO bulk_difference_distributions (
+              bulk_meter_key, bulk_bill_id, month_year, total_bulk_usage,
+              total_submeter_usage, difference_usage, difference_bill_amount,
+              distribution_method, status, created_by, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Finalized', $9, NOW())
+            ON CONFLICT (bulk_meter_key, month_year) DO UPDATE SET
+              bulk_bill_id = EXCLUDED.bulk_bill_id,
+              total_bulk_usage = EXCLUDED.total_bulk_usage,
+              total_submeter_usage = EXCLUDED.total_submeter_usage,
+              difference_usage = EXCLUDED.difference_usage,
+              difference_bill_amount = EXCLUDED.difference_bill_amount,
+              distribution_method = EXCLUDED.distribution_method,
+              status = 'Finalized',
+              updated_at = NOW()
+            RETURNING id;
+          `;
+          const distRes = await client.query(upsertDistSql, [
+            bulkMeterKey,
+            bulkBillId,
+            monthYear,
+            bulkUsage,
+            totalSubmeterUsage,
+            differenceUsage,
+            diffBillAmount,
+            distributionMethod,
+            staffSession?.email || 'auto-save'
+          ]);
+          savedDistributionId = distRes.rows[0].id;
+
+          await client.query(
+            `DELETE FROM bulk_difference_apportionment_items WHERE distribution_id = $1`,
+            [savedDistributionId]
+          );
+
+          const CHUNK_SIZE = 100;
+          for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+            const chunk = items.slice(i, i + CHUNK_SIZE);
+            const valueClauses: string[] = [];
+            const queryParams: any[] = [];
+            let paramIdx = 1;
+
+            for (const it of chunk) {
+              valueClauses.push(
+                `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`
+              );
+              queryParams.push(
+                savedDistributionId,
+                it.customerKeyNumber,
+                it.ownUsage,
+                it.shareRatio,
+                it.apportionedDifferenceBill,
+                it.ownBillAmount,
+                it.totalPayable
+              );
+            }
+
+            const insertItemsSql = `
+              INSERT INTO bulk_difference_apportionment_items (
+                distribution_id, individual_customer_id, individual_usage,
+                consumption_share_ratio, apportioned_amount, own_bill_amount, total_due
+              ) VALUES ${valueClauses.join(', ')}
+              ON CONFLICT (distribution_id, individual_customer_id) DO UPDATE SET
+                individual_usage = EXCLUDED.individual_usage,
+                consumption_share_ratio = EXCLUDED.consumption_share_ratio,
+                apportioned_amount = EXCLUDED.apportioned_amount,
+                own_bill_amount = EXCLUDED.own_bill_amount,
+                total_due = EXCLUDED.total_due;
+            `;
+            await client.query(insertItemsSql, queryParams);
+          }
+        });
+      } catch (autoErr) {
+        console.warn('Auto-save distribution warning:', autoErr);
+      }
+    }
+
+    return {
+      summary: {
+        bulkMeterKey,
+        monthYear,
+        bulkUsage,
+        totalSubmeterUsage,
+        differenceUsage,
+        differenceBillAmount: diffBillAmount,
+        unitCount: totalUnits,
+        distributionMethod
+      },
+      items,
+      savedDistributionId,
+      autoSaved: !!savedDistributionId
+    };
+  });
+}
+
+export async function saveDifferenceDistributionAction(params: {
+  bulkMeterKey: string;
+  monthYear: string;
+  distributionMethod?: 'proportional_usage' | 'equal_split';
+  status?: 'Draft' | 'Finalized' | 'Published';
+  customTotalBillAmount?: number;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermissionAny(
+      PERMISSIONS.BULK_METERS_EDIT_READINGS,
+      PERMISSIONS.METER_READINGS_EDIT_RECALCULATE,
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.BILL_VIEW_BRANCH,
+      PERMISSIONS.BULK_METERS_VIEW_ALL
+    );
+
+    const { bulkMeterKey, monthYear, distributionMethod = 'proportional_usage', status = 'Finalized', customTotalBillAmount } = params;
+
+    // 1. Calculate the verified distribution
+    const calc = await calculateDifferenceApportionmentAction({
+      bulkMeterKey,
+      monthYear,
+      distributionMethod,
+      customTotalBillAmount,
+    });
+
+    const summary = calc.summary;
+    const items = calc.items;
+
+    if (!summary || items.length === 0) {
+      throw new Error('No apportionment items available to save for this meter and period.');
+    }
+
+    // 2. Lookup bulk_bill_id if exists
+    const billRows: any[] = await query(
+      `SELECT id FROM bills WHERE "CUSTOMERKEY" = $1 AND month_year = $2 AND status != 'Reversed' LIMIT 1`,
+      [bulkMeterKey, monthYear]
+    );
+    const bulkBillId = billRows[0]?.id || null;
+
+    // 3. Upsert parent record in bulk_difference_distributions within a transaction
+    return await withTransaction(async (client) => {
+      const upsertDistSql = `
+        INSERT INTO bulk_difference_distributions (
+          bulk_meter_key, bulk_bill_id, month_year, total_bulk_usage,
+          total_submeter_usage, difference_usage, difference_bill_amount,
+          distribution_method, status, created_by, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        ON CONFLICT (bulk_meter_key, month_year) DO UPDATE SET
+          bulk_bill_id = EXCLUDED.bulk_bill_id,
+          total_bulk_usage = EXCLUDED.total_bulk_usage,
+          total_submeter_usage = EXCLUDED.total_submeter_usage,
+          difference_usage = EXCLUDED.difference_usage,
+          difference_bill_amount = EXCLUDED.difference_bill_amount,
+          distribution_method = EXCLUDED.distribution_method,
+          status = EXCLUDED.status,
+          created_by = EXCLUDED.created_by,
+          updated_at = NOW()
+        RETURNING id;
+      `;
+      const distRes = await client.query(upsertDistSql, [
+        bulkMeterKey,
+        bulkBillId,
+        monthYear,
+        summary.bulkUsage,
+        summary.totalSubmeterUsage,
+        summary.differenceUsage,
+        summary.differenceBillAmount,
+        distributionMethod,
+        status,
+        session?.email || session?.id || 'staff'
+      ]);
+      const distId = distRes.rows[0].id;
+
+      // 4. Delete old items if re-saving/updating
+      await client.query(
+        `DELETE FROM bulk_difference_apportionment_items WHERE distribution_id = $1`,
+        [distId]
+      );
+
+      // 5. Batch insert all customer apportionment items
+      if (items.length > 0) {
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+          const chunk = items.slice(i, i + CHUNK_SIZE);
+          const valueClauses: string[] = [];
+          const queryParams: any[] = [];
+          let paramIdx = 1;
+
+          for (const it of chunk) {
+            valueClauses.push(
+              `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`
+            );
+            queryParams.push(
+              distId,
+              it.customerKeyNumber,
+              it.ownUsage,
+              it.shareRatio,
+              it.apportionedDifferenceBill,
+              it.ownBillAmount,
+              it.totalPayable
+            );
+          }
+
+          const insertItemsSql = `
+            INSERT INTO bulk_difference_apportionment_items (
+              distribution_id, individual_customer_id, individual_usage,
+              consumption_share_ratio, apportioned_amount, own_bill_amount, total_due
+            ) VALUES ${valueClauses.join(', ')}
+            ON CONFLICT (distribution_id, individual_customer_id) DO UPDATE SET
+              individual_usage = EXCLUDED.individual_usage,
+              consumption_share_ratio = EXCLUDED.consumption_share_ratio,
+              apportioned_amount = EXCLUDED.apportioned_amount,
+              own_bill_amount = EXCLUDED.own_bill_amount,
+              total_due = EXCLUDED.total_due;
+          `;
+          await client.query(insertItemsSql, queryParams);
+        }
+      }
+
+      await logSecurityEventAction({
+        event: 'Save Difference Distribution',
+        details: { bulkMeterKey, monthYear, distributionId: distId, status, unitsCount: items.length }
+      });
+
+      return {
+        success: true,
+        distributionId: distId,
+        status,
+        unitsCount: items.length,
+        totalAllocated: summary.differenceBillAmount
+      };
+    });
+  });
+}
+
+export async function getSavedDifferenceDistributionAction(params: {
+  bulkMeterKey: string;
+  monthYear: string;
+  customerSessionId?: string;
+}) {
+  return await wrap(async () => {
+    const { bulkMeterKey, monthYear, customerSessionId } = params;
+
+    const staffSession = await getSession();
+    if (!staffSession || !staffSession.id) {
+      await assertCustomerAccess(bulkMeterKey, customerSessionId, 'bulk');
+    }
+
+    const distRows: any[] = await query(
+      `SELECT * FROM bulk_difference_distributions 
+       WHERE bulk_meter_key = $1 AND month_year = $2 LIMIT 1`,
+      [bulkMeterKey, monthYear]
+    );
+
+    if (distRows.length === 0) return null;
+    const dist = distRows[0];
+
+    const itemRows: any[] = await query(
+      `SELECT 
+         i.*,
+         c.name as "customerName",
+         c."meterSize",
+         c."customerType"
+       FROM bulk_difference_apportionment_items i
+       LEFT JOIN individual_customers c ON c."customerKeyNumber" = i.individual_customer_id
+       WHERE i.distribution_id = $1
+       ORDER BY i.individual_usage DESC, i.individual_customer_id ASC`,
+      [dist.id]
+    );
+
+    return {
+      distribution: dist,
+      items: itemRows
+    };
   });
 }
 
@@ -6079,7 +6892,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     }
 
     // 2. Prepare Batch Constants (Tariffs, Dates, etc.)
-    const { calculateDebtAging, normalizeTariff } = await import('./billing-utils');
+    const { calculateDebtAging, normalizeTariff, isPenaltyEngineEnabled } = await import('./billing-utils');
     const {
       dbGetLatestApplicableTariff,
       dbGetCustomersByBulkMeterIds,
@@ -6149,6 +6962,11 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     const billsToInsert: any[] = [];
     let lastId = job.last_processed_id;
     const failedItems: string[] = [];
+
+    const allTariffsForGuard = await getCachedPenaltyGuardFlags(
+      () => query('SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC')
+    );
+    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffsForGuard);
 
     // 3. Process each item using pre-fetched in-memory data (no DB calls inside loop)
     for (const item of items) {
@@ -6227,8 +7045,9 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         }
 
         const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
+        const tariffForAging = globalPenaltyOn ? cachedTariff : ({ ...(cachedTariff || {}), penalty_enabled: false } as any);
         // Pass job.month_year so age is calculated relative to the billing month, not server time
-        const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, undefined, job.month_year);
+        const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, tariffForAging, job.month_year);
 
         const outstandingAmt = Number((debit30 + debit30_60 + debit60).toFixed(2));
         const totalPayable = Number((penaltyAmt + outstandingAmt + billBreakdown.totalBill).toFixed(2));
@@ -6426,10 +7245,14 @@ export async function getUnsettledBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') || perms.includes('bill:view_unpaid') || perms.includes('reports_view');
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
 
-    // If user doesn't have global access, they are strictly restricted to their own branch
-    const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
+    // Only administrators have global access across all branches.
+    // Staff members are strictly restricted to their own assigned branch.
+    const effectiveBranchId = isAdmin
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
@@ -6452,12 +7275,12 @@ export async function getAgingSummaryAction(branchId?: string) {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('*') || perms.includes('all') ||
-      perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') ||
-      perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') ||
-      perms.includes('bill:view_unpaid') || perms.includes('reports_view');
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
 
-    const effectiveBranchId = hasGlobalAccess ? branchId : (session.branchId || branchId);
+    const effectiveBranchId = isAdmin
+      ? (!branchId || branchId === 'all' ? undefined : branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     let sql = `
@@ -6507,10 +7330,14 @@ export async function getPaidBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') || perms.includes('bill:view_paid') || perms.includes('reports_view');
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
 
-    // If user doesn't have global access, they are strictly restricted to their own branch
-    const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
+    // Only administrators have global access across all branches.
+    // Staff members are strictly restricted to their own assigned branch.
+    const effectiveBranchId = isAdmin
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
@@ -6534,10 +7361,14 @@ export async function getAllSentBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes('bill:manage_all') || perms.includes('reports_view');
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
 
-    // If user doesn't have global access, they are strictly restricted to their own branch
-    const effectiveBranchId = hasGlobalAccess ? params.branchId : (session.branchId || params.branchId);
+    // Only administrators have global access across all branches.
+    // Staff members are strictly restricted to their own assigned branch.
+    const effectiveBranchId = isAdmin
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
 
     const offset = params.page * params.limit;
@@ -8193,4 +9024,69 @@ export async function batchSyncAllBulkMetersAction(params?: {
     return { success: false, total: 0, synced: 0, failed: 0, skipped: 0, results: [], durationMs: Date.now() - startTime, error: err.message || String(err) };
   }
 }
+
+export async function getReconciliationAnomaliesAction(params?: {
+  searchTerm?: string;
+  branchId?: string;
+  limit?: number;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const hasGlobalAccess = perms.includes('*') || perms.includes('all') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes('reports_generate_all') || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
+
+    // Non-admin staff must never use client-supplied branchId — always force their session branch.
+    // Fallback to sentinel UUID so zero rows are returned instead of all rows.
+    const effectiveBranchId = hasGlobalAccess
+      ? params?.branchId
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const anomalies = await dbGetReconciliationAnomalies({
+      searchTerm: params?.searchTerm,
+      branchId: normalizedBranchId,
+      limit: params?.limit || 500,
+    });
+
+    return { success: true, anomalies, count: anomalies.length };
+  });
+}
+
+export async function fixReconciliationAnomaliesAction(params: {
+  billIds?: string[];
+  reason?: string;
+}) {
+  return await wrap(async () => {
+    // Reconciliation fixing is a destructive admin-only operation — require admin-level permissions only.
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.REPORTS_GENERATE_ALL,
+      PERMISSIONS.SETTINGS_MANAGE
+    );
+
+    const result = await dbFixReconciliationAnomalies({
+      billIds: params.billIds,
+      reason: params.reason,
+      staffName: session.name || session.email || 'Admin',
+    });
+
+    try {
+      revalidatePath('/admin/reports/paid-bills');
+      revalidatePath('/staff/reports/paid-bills');
+      revalidatePath('/admin/reports');
+      revalidatePath('/admin/bills');
+    } catch (_e) {
+      // ignore
+    }
+
+    return {
+      success: true,
+      count: result.count,
+      message: `Successfully corrected ${result.count} bill(s). Status reverted to 'Not reconciled' and 'Unpaid'.`,
+    };
+  });
+}
+
 

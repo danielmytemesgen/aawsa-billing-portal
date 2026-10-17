@@ -17,7 +17,7 @@ import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-cust
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
 import { getBillKey, getCustomerIdentifier, getCustomerKeyDisplay, getCustomerPhone, getBranchNameDisplay } from "@/lib/export-utils";
-import { getMonthlyBillAmt } from "@/lib/billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue } from "@/lib/billing-utils";
 import { formatNumber } from "@/lib/format";
 import { formatDate } from "@/lib/utils";
 import { format } from "date-fns";
@@ -33,6 +33,8 @@ interface ReportPrintSummaryDialogProps {
   branchFilterName?: string;
   monthYearFilter?: string;
   searchTerm?: string;
+  /** Whether the Penalty Policy Engine is ON (true, default) or OFF (false). */
+  penaltyEnabled?: boolean;
 }
 
 export function ReportPrintSummaryDialog({
@@ -46,6 +48,7 @@ export function ReportPrintSummaryDialog({
   branchFilterName = "All Branches",
   monthYearFilter = "All Months",
   searchTerm = "",
+  penaltyEnabled = true,
 }: ReportPrintSummaryDialogProps) {
   const currentDate = format(new Date(), "MMMM dd, yyyy 'at' HH:mm");
 
@@ -74,7 +77,8 @@ export function ReportPrintSummaryDialog({
 
       const outstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
       const currentBill = getMonthlyBillAmt(bill);
-      const penalty = Number(bill.PENALTYAMT ?? 0);
+      // Clamp penalty to 0 when the Penalty Policy Engine is OFF
+      const penalty = getPenaltyValue(Number(bill.PENALTYAMT ?? 0), penaltyEnabled);
       const totalDue = Number(bill.totalAmountDue ?? bill.TOTALBILLAMOUNT ?? (outstanding + currentBill + penalty));
 
       totalOutstanding += outstanding;
@@ -335,7 +339,8 @@ export function ReportPrintSummaryDialog({
                     const d60 = Number(bill.debit60 ?? bill.debit_60 ?? 0);
 
                     const outstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-                    const penalty = Number(bill.PENALTYAMT ?? 0);
+                    // Clamp penalty to 0 when the Penalty Policy Engine is OFF
+                    const penalty = getPenaltyValue(Number(bill.PENALTYAMT ?? 0), penaltyEnabled);
                     const totalDue = Number(bill.totalAmountDue ?? bill.TOTALBILLAMOUNT ?? (outstanding + currentBill + penalty));
                     const amtPaid = Number(bill.amount_paid ?? bill.amountPaid ?? totalDue);
 

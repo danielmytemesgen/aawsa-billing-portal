@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Droplets, LogOut, FileText, User, LayoutDashboard, Menu, LifeBuoy } from "lucide-react";
+import { Droplets, LogOut, FileText, User, LayoutDashboard, Menu, LifeBuoy, Users } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 
 interface CustomerLayoutProps {
@@ -16,6 +16,7 @@ const PAGE_NAME_MAP: Record<string, string> = {
     '/customer/dashboard': 'Dashboard',
     '/customer/bills': 'Bills',
     '/customer/readings': 'Reading History',
+    '/customer/sub-meters': 'Sub-Meters & Readings',
     '/customer/account': 'Account',
     '/customer/support': 'Customer Support',
     '/customer/support/new': 'Submit Ticket',
@@ -26,6 +27,7 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
     const pathname = usePathname();
     const [customerName, setCustomerName] = useState("");
     const [customerKey, setCustomerKey] = useState("");
+    const [customerType, setCustomerType] = useState("individual");
 
     useEffect(() => {
         // Check if customer is logged in
@@ -39,6 +41,7 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
             const customer = JSON.parse(customerData);
             setCustomerName(customer.name || "Customer");
             setCustomerKey(customer.customerKeyNumber || "");
+            setCustomerType(customer.customerType || "individual");
         } catch (error) {
             router.push("/customer-login");
         }
@@ -147,6 +150,14 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
                                                         Reading History
                                                     </Button>
                                                 </Link>
+                                                {customerType === "bulk" && (
+                                                    <Link href="/customer/sub-meters" className="w-full">
+                                                        <Button variant="ghost" className="w-full justify-start gap-3 text-indigo-700 font-semibold bg-indigo-50/60">
+                                                            <Users className="h-5 w-5 text-indigo-600" />
+                                                            Sub-Meters & Readings
+                                                        </Button>
+                                                    </Link>
+                                                )}
                                                 <Link href="/customer/support" className="w-full">
                                                     <Button variant="ghost" className="w-full justify-start gap-3 text-blue-700 font-semibold bg-blue-50/50">
                                                         <LifeBuoy className="h-5 w-5" />
@@ -233,6 +244,14 @@ export default function CustomerLayout({ children }: CustomerLayoutProps) {
                                 <span className="text-blue-900 font-medium">Reading History</span>
                             </Button>
                         </Link>
+                        {customerType === "bulk" && (
+                            <Link href="/customer/sub-meters">
+                                <Button variant="ghost" className="gap-2 rounded-none border-b-2 border-transparent hover:border-blue-600 hover:bg-blue-100/50">
+                                    <Users className="h-4 w-4 text-indigo-700" />
+                                    <span className="text-indigo-950 font-semibold">Sub-Meters & Readings</span>
+                                </Button>
+                            </Link>
+                        )}
                         <Link href="/customer/support">
                             <Button variant="ghost" className="gap-2 rounded-none border-b-2 border-transparent hover:border-blue-600 hover:bg-blue-100/50">
                                 <LifeBuoy className="h-4 w-4 text-blue-700" />

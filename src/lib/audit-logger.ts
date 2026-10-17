@@ -59,6 +59,8 @@ export const AUDIT_ACTIONS = {
   ROLE_PERMISSIONS_UPDATED: 'ROLE_PERMISSIONS_UPDATED',
   TARIFF_CREATED: 'TARIFF_CREATED',
   TARIFF_UPDATED: 'TARIFF_UPDATED',
+  /** Fired when penalty_enabled flips between true and false on any tariff row */
+  PENALTY_TOGGLE_CHANGED: 'PENALTY_TOGGLE_CHANGED',
 } as const;
 
 export type AuditAction = typeof AUDIT_ACTIONS[keyof typeof AUDIT_ACTIONS];

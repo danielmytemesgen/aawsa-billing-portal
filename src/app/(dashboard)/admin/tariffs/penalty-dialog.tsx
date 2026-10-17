@@ -23,9 +23,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, ShieldAlert, CalendarClock, Activity } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Plus, Trash2, ShieldAlert, CalendarClock, Activity, Power, Ban, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const penaltySchema = z.object({
+    penalty_enabled: z.boolean().default(true),
     penalty_month_threshold: z.number().min(1).max(24),
     bank_lending_rate: z.number().min(0).max(100),
     penalty_tiered_rates: z.array(z.object({
@@ -40,11 +43,13 @@ interface PenaltyDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSubmit: (values: {
+        penalty_enabled: boolean;
         penalty_month_threshold: number;
         bank_lending_rate: number;
         penalty_tiered_rates: { month: number; rate: number }[];
     }) => void;
     defaultValues: {
+        penalty_enabled?: boolean;
         penalty_month_threshold: number;
         bank_lending_rate: number;
         penalty_tiered_rates: { month: number; rate: number }[];
@@ -62,7 +67,8 @@ export function PenaltyDialog({
     const form = useForm<PenaltyFormValues>({
         resolver: zodResolver(penaltySchema),
         defaultValues: {
-            ...defaultValues,
+            penalty_enabled: defaultValues.penalty_enabled !== undefined ? defaultValues.penalty_enabled : true,
+            penalty_month_threshold: defaultValues.penalty_month_threshold,
             bank_lending_rate: defaultValues.bank_lending_rate * 100,
             penalty_tiered_rates: defaultValues.penalty_tiered_rates.map(t => ({
                 ...t,
@@ -71,8 +77,25 @@ export function PenaltyDialog({
         },
     });
 
+    React.useEffect(() => {
+        if (open) {
+            form.reset({
+                penalty_enabled: defaultValues.penalty_enabled !== undefined ? defaultValues.penalty_enabled : true,
+                penalty_month_threshold: defaultValues.penalty_month_threshold,
+                bank_lending_rate: defaultValues.bank_lending_rate * 100,
+                penalty_tiered_rates: defaultValues.penalty_tiered_rates.map(t => ({
+                    ...t,
+                    rate: t.rate * 100
+                }))
+            });
+        }
+    }, [open, defaultValues, form]);
+
+    const isPenaltyEnabled = form.watch("penalty_enabled");
+
     const onFormSubmit = (values: PenaltyFormValues) => {
         onSubmit({
+            penalty_enabled: values.penalty_enabled,
             penalty_month_threshold: values.penalty_month_threshold,
             bank_lending_rate: values.bank_lending_rate / 100,
             penalty_tiered_rates: values.penalty_tiered_rates.map(t => ({
@@ -97,13 +120,26 @@ export function PenaltyDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[550px] p-0 overflow-hidden border-none shadow-2xl rounded-[2.5rem] bg-slate-950">
-                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-red-600 via-rose-600 to-orange-600" />
+            <DialogContent className="sm:max-w-[560px] p-0 overflow-hidden border-none shadow-2xl rounded-[2.5rem] bg-slate-950">
+                <div className={cn(
+                    "absolute top-0 left-0 w-full h-1.5 transition-colors duration-500",
+                    isPenaltyEnabled
+                        ? "bg-gradient-to-r from-red-600 via-rose-600 to-orange-600"
+                        : "bg-gradient-to-r from-slate-600 via-slate-700 to-amber-700"
+                )} />
                 
-                <DialogHeader className="px-10 pt-10 pb-6 relative z-10">
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-rose-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+                <DialogHeader className="px-10 pt-10 pb-5 relative z-10">
+                    <div className={cn(
+                        "absolute top-0 right-0 w-64 h-64 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 transition-colors duration-500",
+                        isPenaltyEnabled ? "bg-rose-500/10" : "bg-amber-500/10"
+                    )} />
                     <div className="flex items-center gap-5 mb-2 relative z-10">
-                        <div className="h-14 w-14 rounded-[1.25rem] bg-rose-950 flex items-center justify-center text-rose-500 shadow-sm border border-rose-900">
+                        <div className={cn(
+                            "h-14 w-14 rounded-[1.25rem] flex items-center justify-center shadow-sm border transition-colors duration-500",
+                            isPenaltyEnabled 
+                                ? "bg-rose-950 text-rose-500 border-rose-900" 
+                                : "bg-slate-900 text-slate-400 border-slate-800"
+                        )}>
                             <ShieldAlert className="h-7 w-7" />
                         </div>
                         <div>
@@ -116,8 +152,77 @@ export function PenaltyDialog({
                 </DialogHeader>
 
                 <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onFormSubmit)} className="px-10 pb-10 space-y-8 relative z-10">
-                        <div className="grid grid-cols-2 gap-6 bg-slate-900/50 p-6 rounded-3xl border border-slate-800">
+                    <form onSubmit={form.handleSubmit(onFormSubmit)} className="px-10 pb-10 space-y-6 relative z-10">
+                        
+                        {/* Master On/Off Switch Card */}
+                        <FormField
+                            control={form.control}
+                            name="penalty_enabled"
+                            render={({ field }) => (
+                                <div className={cn(
+                                    "p-5 rounded-3xl border transition-all duration-300",
+                                    field.value 
+                                        ? "bg-gradient-to-r from-emerald-950/40 via-slate-900/80 to-slate-900/80 border-emerald-500/30 shadow-lg shadow-emerald-950/20" 
+                                        : "bg-gradient-to-r from-amber-950/30 via-slate-900/80 to-slate-900/80 border-amber-500/30"
+                                )}>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className={cn(
+                                                "h-11 w-11 rounded-2xl flex items-center justify-center transition-colors flex-shrink-0",
+                                                field.value 
+                                                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
+                                                    : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                                            )}>
+                                                <Power className="h-5 w-5" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-black uppercase tracking-wider text-slate-300">
+                                                        Penalty Engine
+                                                    </span>
+                                                    <span className={cn(
+                                                        "text-[10px] font-black uppercase px-2 py-0.5 rounded-full border tracking-wide",
+                                                        field.value 
+                                                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" 
+                                                            : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                                                    )}>
+                                                        {field.value ? "ACTIVE (ON)" : "DISABLED (OFF)"}
+                                                    </span>
+                                                </div>
+                                                <p className="text-xs text-slate-400 mt-0.5 font-medium">
+                                                    {field.value 
+                                                        ? "Overdue bills incur late interest and escalation tiers."
+                                                        : "Calculation bypassed. 0.00 ETB penalty applied to bills."}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <FormControl>
+                                            <Switch
+                                                checked={field.value}
+                                                onCheckedChange={field.onChange}
+                                                disabled={!canUpdate}
+                                                className={cn(
+                                                    "data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-700",
+                                                    !canUpdate && "opacity-50 cursor-not-allowed"
+                                                )}
+                                            />
+                                        </FormControl>
+                                    </div>
+                                </div>
+                            )}
+                        />
+
+                        {!isPenaltyEnabled && (
+                            <div className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-medium animate-in fade-in-50 duration-200">
+                                <Ban className="h-4 w-4 flex-shrink-0 text-amber-400" />
+                                <span>Penalty calculation is <strong>suspended</strong>. Generated bills will carry <strong>0.00 ETB</strong> in penalties. Rates below are dormant.</span>
+                            </div>
+                        )}
+
+                        <div className={cn(
+                            "grid grid-cols-2 gap-6 bg-slate-900/50 p-6 rounded-3xl border border-slate-800 transition-opacity",
+                            !isPenaltyEnabled && "opacity-60"
+                        )}>
                             <FormField
                                 control={form.control}
                                 name="penalty_month_threshold"
@@ -133,7 +238,7 @@ export function PenaltyDialog({
                                                     type="number" 
                                                     className="h-14 bg-slate-800 border border-slate-700/50 rounded-2xl font-black text-white focus:ring-4 focus:ring-rose-500/20 px-5 text-lg"
                                                     {...field} 
-                                                    onChange={e => field.onChange(parseInt(e.target.value))} 
+                                                    onChange={e => field.onChange(parseInt(e.target.value) || 0)} 
                                                 />
                                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400 uppercase tracking-tighter bg-slate-900/50 px-2 py-1 rounded-md">
                                                     Months
@@ -159,7 +264,7 @@ export function PenaltyDialog({
                                                     type="number" 
                                                     className="h-14 bg-slate-800 border border-slate-700/50 rounded-2xl font-black text-white focus:ring-4 focus:ring-rose-500/20 px-5 tabular-nums text-xl"
                                                     {...field} 
-                                                    onChange={e => field.onChange(parseFloat(e.target.value))} 
+                                                    onChange={e => field.onChange(parseFloat(e.target.value) || 0)} 
                                                 />
                                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-black text-rose-500 bg-rose-950/80 px-3 py-1 rounded-lg border border-rose-900/50 shadow-lg">
                                                     %
@@ -172,7 +277,10 @@ export function PenaltyDialog({
                             />
                         </div>
 
-                        <div className="space-y-4">
+                        <div className={cn(
+                            "space-y-4 transition-opacity",
+                            !isPenaltyEnabled && "opacity-60"
+                        )}>
                             <div className="flex items-center justify-between px-2">
                                 <FormLabel className="text-sm font-black uppercase tracking-widest text-slate-200">Tiered Penalty Triggers</FormLabel>
                                 {canUpdate && (
@@ -227,7 +335,7 @@ export function PenaltyDialog({
                                 ))}
                             </div>
                             <FormDescription className="text-[11px] font-bold text-slate-500 px-2 leading-relaxed">
-                                Cumulative penalty magnitude is aggregated intrinsically.
+                                Cumulative penalty magnitude is aggregated intrinsically when active.
                             </FormDescription>
                         </div>
 
@@ -236,7 +344,15 @@ export function PenaltyDialog({
                                 Abort
                             </Button>
                             {canUpdate && (
-                                <Button type="submit" className="h-14 rounded-2xl bg-rose-600 hover:bg-rose-700 font-bold px-12 shadow-xl shadow-rose-900/20 text-white transition-all transform hover:-translate-y-0.5 active:translate-y-0">
+                                <Button 
+                                    type="submit" 
+                                    className={cn(
+                                        "h-14 rounded-2xl font-bold px-12 shadow-xl text-white transition-all transform hover:-translate-y-0.5 active:translate-y-0",
+                                        isPenaltyEnabled
+                                            ? "bg-rose-600 hover:bg-rose-700 shadow-rose-900/20"
+                                            : "bg-amber-600 hover:bg-amber-700 shadow-amber-900/20"
+                                    )}
+                                >
                                     save change
                                 </Button>
                             )}

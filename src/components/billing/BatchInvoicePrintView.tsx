@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { getBranchesLookupAction } from "@/lib/actions";
+import { getPenaltyValue } from "@/lib/billing-utils";
 import { PaymentQRCode } from "./PaymentQRCode";
 
 interface BatchInvoicePrintViewProps {
@@ -15,6 +16,7 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
   const [invoiceData, setInvoiceData] = React.useState<{ meter: any; bill: any }[]>([]);
   const [branchMap, setBranchMap] = React.useState<Record<string, string>>({});
   const [currentDateTime, setCurrentDateTime] = React.useState('');
+  const [penaltyEnabled, setPenaltyEnabled] = React.useState(true);
   const [isReady, setIsReady] = React.useState(false);
 
   React.useEffect(() => {
@@ -27,6 +29,17 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
 
       const data = JSON.parse(dataStr);
       setInvoiceData(data);
+
+      const peStr = sessionStorage.getItem('batchInvoicePenaltyEnabled');
+      if (peStr !== null) {
+        try {
+          setPenaltyEnabled(Boolean(JSON.parse(peStr)));
+        } catch {
+          // ignore parsing error
+        }
+      } else if (Array.isArray(data) && data[0]?.bill?.penaltyEnabled !== undefined) {
+        setPenaltyEnabled(Boolean(data[0].bill.penaltyEnabled));
+      }
 
       // Load branch labels via the permission-lite lookup action.
       const branchRes = await getBranchesLookupAction();
@@ -80,7 +93,7 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
       `}</style>
 
       {invoiceData.map(({ meter, bill }) => {
-        const penalty = Number(bill.PENALTYAMT || 0);
+        const penalty = getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
         const outstanding = Number(bill.OUTSTANDINGAMT || 0);
         // Arrears is the debt base BEFORE this month's penalty
         const arrears = Math.max(0, outstanding - penalty);

@@ -11,6 +11,7 @@ import { PERMISSIONS } from '@/lib/constants/auth';
 import { subscribePermissionsSync } from '@/lib/permissions-sync';
 import { useToast } from '@/hooks/use-toast';
 import { getRoutePermissionRule } from '@/lib/route-permissions';
+import { PenaltyEngineBanner } from '@/components/penalty-engine-banner';
 
 interface UserProfile {
     id: string;
@@ -464,6 +465,7 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
     return (
         <PermissionsContext.Provider value={permissionsValue}>
             <AppShell user={user} userRole="admin" sidebar={<SidebarNav items={navItems} />} >
+                <PenaltyEngineBanner />
                 {children}
             </AppShell>
         </PermissionsContext.Provider>

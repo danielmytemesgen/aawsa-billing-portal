@@ -33,16 +33,17 @@ import {
     logSecurityEventAction,
 } from '@/lib/actions';
 import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
-import { initializeTariffs, getTariff } from '@/lib/data-store';
+import { initializeTariffs, getTariff, getTariffs } from '@/lib/data-store';
 
 import { usePermissions } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/constants/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search, ChevronLeft, ChevronRight, ArrowRightLeft, ExternalLink, ShieldCheck, Scale, Info, Check, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
+import { Printer, ArrowLeft, Loader2, Save, X, Edit2, CheckCircle2, RotateCcw, Clock, AlertCircle, FileDown, Upload, Users, UserPlus, UserMinus, Search, ChevronLeft, ChevronRight, ArrowRightLeft, ExternalLink, ShieldCheck, Scale, Info, Check, AlertTriangle, TrendingDown, TrendingUp, DollarSign } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { TablePagination } from '@/components/ui/table-pagination';
+import { EditBillStatusDialog } from '@/components/billing/EditBillStatusDialog';
 
 
 import { cn } from '@/lib/utils';
@@ -55,7 +56,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { getMonthlyBillAmt } from '@/lib/billing-utils';
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from '@/lib/billing-utils';
 
 // Mock types
 type Bill = {
@@ -94,10 +95,11 @@ interface BillDetailsPageProps {
 }
 
 // Sub-component for the printable bill layout
-const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
+const PrintableBill = ({ bill, relatedData, reconstructedAging, penaltyEnabled = true }: {
     bill: Bill,
     relatedData: any,
-    reconstructedAging: { d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null
+    reconstructedAging: { d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null,
+    penaltyEnabled?: boolean
 }) => {
     const [currentDateTime, setCurrentDateTime] = React.useState(new Date().toLocaleString('en-US'));
 
@@ -108,14 +110,18 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
     const d30 = reconstructedAging ? reconstructedAging.d30 : Number(bill.debit30 || bill.debit_30 || 0);
     const d30_60 = reconstructedAging ? reconstructedAging.d30_60 : Number(bill.debit30_60 || bill.debit_30_60 || 0);
     const d60 = reconstructedAging ? reconstructedAging.d60 : Number(bill.debit60 || bill.debit_60 || 0);
-    const penalty = reconstructedAging && reconstructedAging.penalty !== undefined ? reconstructedAging.penalty : Number(bill.PENALTYAMT || 0);
+    const penalty = reconstructedAging && reconstructedAging.penalty !== undefined
+        ? getPenaltyValue(reconstructedAging.penalty, penaltyEnabled)
+        : getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
     const outstanding = reconstructedAging && reconstructedAging.outstanding !== undefined
         ? reconstructedAging.outstanding
         : (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
             ? Number(bill.OUTSTANDINGAMT)
             : (d30 + d30_60 + d60);
     const current = getMonthlyBillAmt(bill);
-    const total = reconstructedAging && reconstructedAging.totalPayable !== undefined ? reconstructedAging.totalPayable : outstanding + current + penalty;
+    const total = reconstructedAging && reconstructedAging.totalPayable !== undefined
+        ? (penaltyEnabled ? reconstructedAging.totalPayable : outstanding + current)
+        : outstanding + current + penalty;
 
     return (
         <div className="printable-bill-card-wrapper border-none shadow-none bg-transparent w-full flex flex-col items-start">
@@ -287,6 +293,10 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
     const [loading, setLoading] = useState(true);
     const [reconstructedAging, setReconstructedAging] = useState<{ d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null>(null);
+    const [penaltyEnabled, setPenaltyEnabled] = useState(true);
+
+    // Payment & Reconciliation edit dialog state
+    const [isEditPaymentDialogOpen, setIsEditPaymentDialogOpen] = useState(false);
 
     // Edit state
     const [isEditing, setIsEditing] = useState(false);
@@ -496,6 +506,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 }
 
                 await initializeTariffs(true);
+                setPenaltyEnabled(isPenaltyEngineEnabled(getTariffs()));
 
                 const logsRes = await getBillWorkflowLogsAction(id);
                 if (logsRes.data) setLogs(logsRes.data);
@@ -559,10 +570,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                             const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
                             if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-                            if (maxAge >= threshold) {
+                            const isPenaltyEnabled = (activeTariff as any)?.penalty_enabled !== false;
+                            if (isPenaltyEnabled && maxAge >= threshold) {
                                 const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
                                 const totalRate = bankRate + Number(applicableTier?.rate || 0);
                                 penalty = arrearsSum * totalRate;
+                            } else {
+                                penalty = 0;
                             }
 
                             const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(h);
@@ -1226,7 +1240,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
     // Special return for Print Mode
     if (isPrintMode) {
-        return <PrintableBill bill={bill} relatedData={relatedData} reconstructedAging={reconstructedAging} />;
+        return <PrintableBill bill={bill} relatedData={relatedData} reconstructedAging={reconstructedAging} penaltyEnabled={penaltyEnabled} />;
     }
 
     const checkBillPermission = (...permissions: string[]) => {
@@ -1827,9 +1841,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 : (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
                                                     ? Number(bill.OUTSTANDINGAMT)
                                                     : (d30 + d30_60 + d60);
-                                            const penalty = reconstructedAging && reconstructedAging.penalty !== undefined ? reconstructedAging.penalty : Number(bill.PENALTYAMT || 0);
+                                            const penalty = reconstructedAging && reconstructedAging.penalty !== undefined
+                                                ? getPenaltyValue(reconstructedAging.penalty, penaltyEnabled)
+                                                : getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
                                             const current = getMonthlyBillAmt(bill);
-                                            const total = reconstructedAging && reconstructedAging.totalPayable !== undefined ? reconstructedAging.totalPayable : outstanding + current + penalty;
+                                            const total = reconstructedAging && reconstructedAging.totalPayable !== undefined
+                                                ? (penaltyEnabled ? reconstructedAging.totalPayable : outstanding + current)
+                                                : outstanding + current + penalty;
 
                                             return (
                                                 <>
@@ -1849,7 +1867,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                             )}
                                                         </div>
                                                     } />
-                                                    <DetailItem label="Penalty (ETB)" value={`ETB ${penalty.toFixed(2)}`} color="text-red-600" />
+                                                    <DetailItem
+                                                        label={penaltyEnabled ? "Penalty (ETB)" : "Penalty (Off) (ETB)"}
+                                                        value={`ETB ${penalty.toFixed(2)}`}
+                                                        color={penaltyEnabled && penalty > 0 ? "text-red-600" : "text-muted-foreground"}
+                                                    />
                                                     <DetailItem label="Total Payable" value={`ETB ${total.toFixed(2)}`} bold color="text-red-700" size="text-base" />
                                                 </>
                                             );
@@ -2049,6 +2071,99 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                     </div>
                                 )}
                             </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Payment & Reconciliation Card */}
+                    <Card className="border-slate-200 shadow-sm">
+                        <CardHeader className="bg-slate-50/50 py-3.5 px-4 border-b flex flex-row items-center justify-between">
+                            <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                                <DollarSign className="h-4 w-4 text-emerald-600" /> Payment & Reconciliation
+                            </CardTitle>
+                            <Badge
+                                variant={String(bill.payment_status || bill.paymentStatus).toLowerCase() === 'paid' ? 'default' : 'outline'}
+                                className={cn(
+                                    "text-[10px] px-2 py-0.5",
+                                    String(bill.payment_status || bill.paymentStatus).toLowerCase() === 'paid'
+                                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                                        : "bg-amber-50 text-amber-800 border-amber-300"
+                                )}
+                            >
+                                {bill.payment_status || bill.paymentStatus || 'Unpaid'}
+                            </Badge>
+                        </CardHeader>
+                        <CardContent className="p-4 space-y-3 text-xs">
+                            <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                                <span className="text-slate-500 font-medium">Reconciliation:</span>
+                                <Badge
+                                    className={cn(
+                                        "text-[10px] px-2 py-0.5 font-medium",
+                                        String(bill.reconciliation_status || (bill as any).reconciliationStatus || '').toLowerCase() === 'reconciled'
+                                            ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                                    )}
+                                >
+                                    {bill.reconciliation_status || (bill as any).reconciliationStatus || 'Not reconciled'}
+                                </Badge>
+                            </div>
+
+                            <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                                <span className="text-slate-500 font-medium">Amount Paid:</span>
+                                <span className={cn(
+                                    "font-mono font-bold",
+                                    Number(bill.amount_paid || bill.amountPaid || 0) > 0 ? "text-emerald-600" : "text-slate-700"
+                                )}>
+                                    ETB {Number(bill.amount_paid || bill.amountPaid || 0).toFixed(2)}
+                                </span>
+                            </div>
+
+                            {(bill.bank_ref || (bill as any).bankRef) && (
+                                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                                    <span className="text-slate-500 font-medium">Bank Ref:</span>
+                                    <span className="font-mono text-indigo-700 font-medium text-[11px]">
+                                        {bill.bank_ref || (bill as any).bankRef}
+                                    </span>
+                                </div>
+                            )}
+
+                            {(bill.payment_channel || (bill as any).paymentChannel) && (
+                                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                                    <span className="text-slate-500 font-medium">Channel:</span>
+                                    <span className="font-medium text-slate-800">
+                                        {bill.payment_channel || (bill as any).paymentChannel}
+                                    </span>
+                                </div>
+                            )}
+
+                            {(bill.last_payment_date || (bill as any).lastPaymentDate) && (
+                                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                                    <span className="text-slate-500 font-medium">Payment Date:</span>
+                                    <span className="text-slate-700 font-mono text-[11px]">
+                                        {format(new Date(bill.last_payment_date || (bill as any).lastPaymentDate), 'yyyy-MM-dd HH:mm')}
+                                    </span>
+                                </div>
+                            )}
+
+                            {checkBillPermission(PERMISSIONS.BILL_UPDATE, PERMISSIONS.BILL_POST, PERMISSIONS.PAYMENTS_CREATE, PERMISSIONS.BILL_VIEW_ALL) && (
+                                <div className="pt-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setIsEditPaymentDialogOpen(true)}
+                                        className={cn(
+                                            "w-full rounded-xl text-xs font-semibold gap-1.5 shadow-sm",
+                                            String(bill.payment_status || bill.paymentStatus).toLowerCase() === 'paid'
+                                                ? "border-destructive/30 text-destructive hover:bg-destructive/10"
+                                                : "border-blue-300 text-blue-700 hover:bg-blue-50"
+                                        )}
+                                    >
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                        {String(bill.payment_status || bill.paymentStatus).toLowerCase() === 'paid'
+                                            ? "Reverse Payment / Mark Unpaid"
+                                            : "Update Payment Status"}
+                                    </Button>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </div>
@@ -2408,6 +2523,18 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {bill && (
+                <EditBillStatusDialog
+                    open={isEditPaymentDialogOpen}
+                    onOpenChange={setIsEditPaymentDialogOpen}
+                    bill={bill as any}
+                    customerKey={bill.CUSTOMERKEY || bill.individual_customer_id || ""}
+                    onSuccess={() => {
+                        loadData();
+                    }}
+                />
+            )}
         </div>
     );
 }

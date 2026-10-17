@@ -12,6 +12,9 @@ import {
   initializeNotifications,
   initializePayments,
   fetchRoutes,
+  hasCustomerListeners,
+  hasReadingListeners,
+  hasBillListeners,
 } from "@/lib/data-store";
 import { useNetworkQuality, type NetworkQuality } from "@/lib/network-quality";
 
@@ -74,18 +77,29 @@ async function refreshAllEntities(): Promise<void> {
     ]);
     return;
   }
-  await Promise.allSettled([
+
+  const tasks: Promise<any>[] = [
     initializeBranches(true),
     initializeNotifications(true),
-    initializeBills(true),
     initializeStaffMembers(true),
-    initializeCustomers(true),
     initializeBulkMeters(true),
     initializePayments(true),
-    initializeIndividualCustomerReadings(true),
     initializeBulkMeterReadings(true),
     fetchRoutes(),
-  ]);
+  ];
+
+  // Only refresh 48k+ customer, reading, and bill collections if active component subscribers are mounted
+  if (hasCustomerListeners()) {
+    tasks.push(initializeCustomers(true));
+  }
+  if (hasReadingListeners()) {
+    tasks.push(initializeIndividualCustomerReadings(true));
+  }
+  if (hasBillListeners()) {
+    tasks.push(initializeBills(true));
+  }
+
+  await Promise.allSettled(tasks);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

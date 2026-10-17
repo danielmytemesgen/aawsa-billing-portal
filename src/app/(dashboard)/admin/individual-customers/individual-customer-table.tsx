@@ -296,18 +296,19 @@ export function IndividualCustomerTable({
                   {/* Actions */}
                   <TableCell className="text-right pr-6 py-4">
                     <div className="flex justify-end gap-1.5">
-                      {/* View Details Sheet */}
-                      {onViewDetails && (
+                      {/* View Details Page */}
+                      <Link
+                        href={`${basePath}/individual-customers/${encodeURIComponent(customer.customerKeyNumber)}`}
+                        title="View Details"
+                      >
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-blue-600 bg-blue-50/80 hover:bg-blue-600 hover:text-white border border-blue-200/80 transition-all rounded-lg shadow-sm"
-                          onClick={() => onViewDetails(customer)}
-                          title="View Details"
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
-                      )}
+                      </Link>
 
                       {/* Approval triggers */}
                       {customer.status === "Pending Approval" && canApprove && (

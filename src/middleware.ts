@@ -13,7 +13,7 @@ async function decrypt(token: string): Promise<any> {
   return payload;
 }
 
-const protectedRoutes = ['/admin', '/staff', '/customer'];
+const protectedRoutes = ['/admin', '/staff', '/customer/'];
 const adminRoutes = ['/admin'];
 const staffRoutes = ['/staff'];
 
@@ -269,6 +269,30 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Customer login route: public, or redirect to dashboard if customer session exists
+  if (path === '/customer-login' || path.startsWith('/customer-login/')) {
+    const customerCookie = request.cookies.get('customer_session')?.value;
+    if (customerCookie) {
+      try {
+        const customerSession = await decrypt(customerCookie);
+        if (customerSession?.customerKeyNumber) {
+          const redirect = NextResponse.redirect(new URL('/customer/dashboard', request.url));
+          return setSecurityHeaders(redirect);
+        }
+      } catch (e) {
+        // invalid cookie, allow to view login page
+      }
+    }
+    const res = NextResponse.next();
+    return setSecurityHeaders(res);
+  }
+
+  // Redirect /customer root path to /customer/dashboard
+  if (path === '/customer') {
+    const redirect = NextResponse.redirect(new URL('/customer/dashboard', request.url));
+    return setSecurityHeaders(redirect);
+  }
+
   const isProtectedRoute = protectedRoutes.some(route => path.startsWith(route));
 
   const cookie = request.cookies.get('session')?.value;
@@ -287,8 +311,8 @@ export async function middleware(request: NextRequest) {
     return setSecurityHeaders(res);
   }
 
-  // Customer Portal Route Protection
-  if (path.startsWith('/customer')) {
+  // Customer Portal Route Protection (/customer/*)
+  if (path.startsWith('/customer/')) {
     const customerCookie = request.cookies.get('customer_session')?.value;
     let customerSession = null;
     if (customerCookie) {

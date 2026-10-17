@@ -67,11 +67,11 @@ export function EditBillStatusDialog({
   const [reversalReason, setReversalReason] = useState("");
   const [notes, setNotes] = useState("");
 
-  const currentStatus = bill?.paymentStatus ?? "Unpaid";
-  const isCurrentlyPaid = currentStatus === "Paid";
-  const totalAmount = Number(bill?.TOTALBILLAMOUNT ?? 0);
-  const outstandingAmt = Number(bill?.OUTSTANDINGAMT ?? 0);
-  const existingPaid = Number(bill?.amountPaid ?? 0);
+  const currentStatus = bill?.paymentStatus ?? (bill as any)?.payment_status ?? "Unpaid";
+  const isCurrentlyPaid = String(currentStatus).trim().toLowerCase() === "paid";
+  const totalAmount = Number(bill?.TOTALBILLAMOUNT ?? (bill as any)?.totalBillAmount ?? 0);
+  const outstandingAmt = Number(bill?.OUTSTANDINGAMT ?? (bill as any)?.outstandingAmt ?? 0);
+  const existingPaid = Number(bill?.amountPaid ?? (bill as any)?.amount_paid ?? 0);
 
   useEffect(() => {
     if (open && bill) {
@@ -99,7 +99,7 @@ export function EditBillStatusDialog({
       const { updateBillPaymentStatus } = await import("@/lib/data-store");
       const result = await updateBillPaymentStatus({
         billId: bill.id,
-        monthYear: bill.monthYear,
+        monthYear: bill.monthYear || (bill as any).month_year || "",
         newStatus: targetStatus,
         amountPaid: targetStatus === "Paid" && amountPaid ? Number(amountPaid) : undefined,
         paymentDate: targetStatus === "Paid" ? paymentDate : undefined,

@@ -1,12 +1,19 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Edit2, Upload, FileDown, X, Save, RefreshCcw } from "lucide-react";
+import { Edit2, Upload, FileDown, X, Save, RefreshCcw, Calendar } from "lucide-react";
 import { format } from "date-fns";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   getBulkAndSubmeterPeriodReadingsAction,
   updateBulkAndAssignedReadingsAction,
@@ -22,6 +29,8 @@ import { useRouter } from "next/navigation";
 interface EditReadingsRecalculateSectionProps {
   bulkMeter: BulkMeter;
   latestBill?: DomainBill | null;
+  bills?: DomainBill[];
+  initialSelectedMonthYear?: string;
   onClose: () => void;
   onSaveSuccess: () => void;
 }
@@ -29,6 +38,8 @@ interface EditReadingsRecalculateSectionProps {
 export function EditReadingsRecalculateSection({
   bulkMeter,
   latestBill,
+  bills = [],
+  initialSelectedMonthYear,
   onClose,
   onSaveSuccess,
 }: EditReadingsRecalculateSectionProps) {
@@ -44,18 +55,86 @@ export function EditReadingsRecalculateSection({
     hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
     hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE);
 
-  const monthYear = (latestBill as any)?.month_year || latestBill?.monthYear || bulkMeter.month || format(new Date(), "yyyy-MM");
-  const dateBilledVal = latestBill?.createdAt || (latestBill as any)?.created_at;
-  const dateBilledStr = dateBilledVal ? format(new Date(dateBilledVal), "PPP") : format(new Date(), "PPP");
+  // Derive all distinct billing cycles available for this bulk meter
+  const availableCycles = useMemo(() => {
+    const map = new Map<string, DomainBill>();
+    if (bills && bills.length > 0) {
+      for (const b of bills) {
+        const m = b.monthYear || (b as any).month_year;
+        if (!m || b.status === 'Deleted') continue;
+        const existing = map.get(m);
+        // Prefer non-reversed bills if multiple bills exist for the same month
+        if (!existing || (existing.status === 'Reversed' && b.status !== 'Reversed')) {
+          map.set(m, b);
+        }
+      }
+    } else if (latestBill && latestBill.status !== 'Deleted') {
+      const m = latestBill.monthYear || (latestBill as any).month_year;
+      if (m) map.set(m, latestBill);
+    }
+    // Also include bulkMeter.month if not yet present in bills
+    if (bulkMeter.month && !map.has(bulkMeter.month)) {
+      map.set(bulkMeter.month, {
+        id: `draft-${bulkMeter.customerKeyNumber}-${bulkMeter.month}`,
+        CUSTOMERKEY: bulkMeter.customerKeyNumber,
+        monthYear: bulkMeter.month,
+        status: 'Draft',
+        PREVREAD: bulkMeter.previousReading ?? 0,
+        CURRREAD: bulkMeter.currentReading ?? 0,
+      } as any);
+    }
+    const cycles = Array.from(map.entries()).map(([m, b]) => ({
+      monthYear: m,
+      bill: b,
+      status: b.status || (b.status === 'Posted' ? 'Posted' : 'Draft'),
+      amount: b.TOTALBILLAMOUNT ?? (b as any).totalBillAmount ?? 0,
+    }));
+    return cycles.sort((a, b) => b.monthYear.localeCompare(a.monthYear));
+  }, [bills, latestBill, bulkMeter.month, bulkMeter.customerKeyNumber, bulkMeter.previousReading, bulkMeter.currentReading]);
+
+  const defaultMonth = useMemo(() => {
+    if (initialSelectedMonthYear && availableCycles.some(c => c.monthYear === initialSelectedMonthYear)) {
+      return initialSelectedMonthYear;
+    }
+    if (availableCycles.length > 0) {
+      return availableCycles[0].monthYear;
+    }
+    return (latestBill as any)?.month_year || latestBill?.monthYear || bulkMeter.month || format(new Date(), "yyyy-MM");
+  }, [initialSelectedMonthYear, availableCycles, latestBill, bulkMeter.month]);
+
+  const [selectedMonthYear, setSelectedMonthYear] = useState<string>(defaultMonth);
+
+  // Synchronize when initialSelectedMonthYear prop changes (e.g. from table row click)
+  useEffect(() => {
+    if (initialSelectedMonthYear && initialSelectedMonthYear !== selectedMonthYear) {
+      setSelectedMonthYear(initialSelectedMonthYear);
+    }
+  }, [initialSelectedMonthYear]);
+
+  const activeBill = useMemo(() => {
+    const cycle = availableCycles.find(c => c.monthYear === selectedMonthYear);
+    return cycle?.bill || (latestBill && ((latestBill as any).month_year === selectedMonthYear || latestBill.monthYear === selectedMonthYear) ? latestBill : null);
+  }, [availableCycles, selectedMonthYear, latestBill]);
+
+  const dateBilledVal = activeBill?.createdAt || (activeBill as any)?.created_at || activeBill?.billPeriodEndDate || (activeBill as any)?.bill_period_end_date;
+  const dateBilledStr = useMemo(() => {
+    if (!dateBilledVal || dateBilledVal === 'N/A') return format(new Date(), "PPP");
+    try {
+      const d = new Date(dateBilledVal);
+      return isNaN(d.getTime()) ? format(new Date(), "PPP") : format(d, "PPP");
+    } catch {
+      return format(new Date(), "PPP");
+    }
+  }, [dateBilledVal]);
 
   const [bulkPrevRead, setBulkPrevRead] = useState<number>(
-    latestBill?.PREVREAD ?? bulkMeter.previousReading ?? 0
+    activeBill?.PREVREAD ?? (activeBill as any)?.prev_read ?? bulkMeter.previousReading ?? 0
   );
   const [bulkCurrRead, setBulkCurrRead] = useState<number>(
-    latestBill?.CURRREAD ?? bulkMeter.currentReading ?? 0
+    activeBill?.CURRREAD ?? (activeBill as any)?.curr_read ?? bulkMeter.currentReading ?? 0
   );
-  const [isPostedBill, setIsPostedBill] = useState<boolean>(latestBill?.status === 'Posted');
-  const [resolvedBillId, setResolvedBillId] = useState<string | null>(latestBill?.id || null);
+  const [isPostedBill, setIsPostedBill] = useState<boolean>(activeBill?.status === 'Posted');
+  const [resolvedBillId, setResolvedBillId] = useState<string | null>(activeBill?.id || null);
 
   const [assignedReadings, setAssignedReadings] = useState<any[]>([]);
   const [assignedReadingEdits, setAssignedReadingEdits] = useState<Record<string, { previous: number; current: number }>>({});
@@ -65,11 +144,21 @@ export function EditReadingsRecalculateSection({
   const [isCalculating, setIsCalculating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Load readings for the selected billing cycle
   useEffect(() => {
     let isMounted = true;
     setIsLoadingAssigned(true);
+    setCalculatedPreview(null);
     const keyToQuery = bulkMeter.customerKeyNumber || (bulkMeter as any).id || (bulkMeter as any).meterNumber;
-    getBulkAndSubmeterPeriodReadingsAction(keyToQuery, monthYear)
+
+    if (activeBill) {
+      setBulkPrevRead(activeBill.PREVREAD ?? (activeBill as any)?.prev_read ?? bulkMeter.previousReading ?? 0);
+      setBulkCurrRead(activeBill.CURRREAD ?? (activeBill as any)?.curr_read ?? bulkMeter.currentReading ?? 0);
+      setIsPostedBill(activeBill.status === 'Posted');
+      setResolvedBillId(activeBill.id || null);
+    }
+
+    getBulkAndSubmeterPeriodReadingsAction(keyToQuery, selectedMonthYear)
       .then((res) => {
         if (!isMounted) return;
         if (res.data) {
@@ -78,7 +167,7 @@ export function EditReadingsRecalculateSection({
             setBulkPrevRead(serverBM.previousReading);
             setBulkCurrRead(serverBM.currentReading);
             setIsPostedBill(serverBM.isPosted);
-            setResolvedBillId(serverBM.billId || latestBill?.id || null);
+            setResolvedBillId(serverBM.billId || activeBill?.id || null);
           }
           if (assignedCustomers && Array.isArray(assignedCustomers)) {
             setAssignedReadings(assignedCustomers);
@@ -98,7 +187,7 @@ export function EditReadingsRecalculateSection({
     return () => {
       isMounted = false;
     };
-  }, [bulkMeter.customerKeyNumber, (bulkMeter as any).id, (bulkMeter as any).meterNumber, monthYear, latestBill?.id]);
+  }, [bulkMeter.customerKeyNumber, (bulkMeter as any).id, (bulkMeter as any).meterNumber, selectedMonthYear, activeBill]);
 
   const handleAssignedReadingChange = (key: string, field: "current" | "previous", value: string) => {
     const num = parseFloat(value) || 0;
@@ -179,14 +268,16 @@ export function EditReadingsRecalculateSection({
   const handleDownloadTemplate = () => {
     const rows = assignedReadings.map((row) => {
       const edits = assignedReadingEdits[row.customerKeyNumber] ?? { previous: row.previous, current: row.current };
-      return [`"${row.customerKeyNumber}"`, `"${row.name}"`, edits.previous, edits.current].join(",");
+      const safeKey = String(row.customerKeyNumber || '').replace(/"/g, '""');
+      const safeName = String(row.name || '').replace(/"/g, '""');
+      return [`"${safeKey}"`, `"${safeName}"`, edits.previous, edits.current].join(",");
     });
     const csvContent = ["Customer Key,Customer Name,Previous Reading,Current Reading", ...rows].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `readings_template_${bulkMeter.customerKeyNumber}_${monthYear}.csv`;
+    a.download = `readings_template_${bulkMeter.customerKeyNumber}_${selectedMonthYear}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast({ title: "Template Downloaded", description: `${assignedReadings.length} customers exported.` });
@@ -200,17 +291,22 @@ export function EditReadingsRecalculateSection({
         (sum, r) => sum + (r.current - r.previous),
         0
       );
-      const effectiveUsage = Math.max(0, bulkUsage - totalSubmeterUsage);
-      const typeParam = (bulkMeter.chargeGroup as any) || "Non-domestic";
-      const sizeParam = bulkMeter.meterSize;
-      const sewerage = bulkMeter.sewerageConnection || "No";
+      const rawDifference = bulkUsage - totalSubmeterUsage;
+      const typeParam = bulkMeter.chargeGroup || (bulkMeter as any).charge_group || (bulkMeter as any).customerType || "Non-domestic";
+      const sizeParam = Number(bulkMeter.meterSize ?? (bulkMeter as any).meter_size ?? 0.5);
+      const sewerage = bulkMeter.sewerageConnection || (bulkMeter as any).sewerage_connection || "No";
+
+      const { getTariff } = await import("@/lib/data-store");
+      const activeTariff = getTariff(typeParam, selectedMonthYear);
+      const ruleOfThreeActive = activeTariff?.use_rule_of_three !== false;
+      const effectiveUsage = (ruleOfThreeActive && rawDifference < 3) ? 3 : Math.max(0, rawDifference);
 
       const calcRes = await calculateBillAction(
         effectiveUsage,
         typeParam,
         sewerage,
         sizeParam,
-        monthYear
+        selectedMonthYear
       );
 
       if (calcRes.data) {
@@ -248,7 +344,7 @@ export function EditReadingsRecalculateSection({
       const res = await updateBulkAndAssignedReadingsAction({
         bulkBillId: resolvedBillId || undefined,
         bulkMeterKey: bulkMeter.customerKeyNumber,
-        monthYear,
+        monthYear: selectedMonthYear,
         bulkCurrRead,
         bulkPrevRead,
         assignedUpdates,
@@ -257,7 +353,7 @@ export function EditReadingsRecalculateSection({
       if (res?.error) {
         toast({ variant: "destructive", title: "Save Failed", description: res.error.message || "An error occurred." });
       } else {
-        toast({ title: "Saved", description: "Bulk meter and assigned customer readings updated and rebilled." });
+        toast({ title: "Saved", description: `Bulk meter and assigned customer readings updated and rebilled for ${selectedMonthYear}.` });
         onSaveSuccess();
         onClose();
       }
@@ -277,6 +373,7 @@ export function EditReadingsRecalculateSection({
 
   return (
     <div className="bg-[#fffdf5] dark:bg-amber-950/20 p-4 sm:p-5 rounded-xl border border-amber-200/80 dark:border-amber-900/40 space-y-4 my-4 shadow-sm">
+      {/* Top Header */}
       <div className="flex items-center justify-between gap-2">
         <h4 className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-2 text-base sm:text-lg">
           <Edit2 className="h-5 w-5 text-amber-600 dark:text-amber-400" /> Edit Readings &amp; Recalculate
@@ -295,13 +392,64 @@ export function EditReadingsRecalculateSection({
         </div>
       </div>
 
+      {/* Month / Billing Cycle Selector Bar */}
+      <div className="bg-white/80 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+          <label className="text-xs font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
+            <Calendar className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            Billing Cycle:
+          </label>
+          <div className="w-full sm:w-64">
+            <Select
+              value={selectedMonthYear}
+              onValueChange={(val) => {
+                setSelectedMonthYear(val);
+              }}
+            >
+              <SelectTrigger className="h-9 text-xs font-semibold bg-white dark:bg-amber-950 border-amber-300 dark:border-amber-700">
+                <SelectValue placeholder="Select billing month" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableCycles.map((cycle) => (
+                  <SelectItem key={cycle.monthYear} value={cycle.monthYear} className="text-xs">
+                    <span className="font-bold">{cycle.monthYear}</span>
+                    <span className="text-muted-foreground ml-2">({cycle.status})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Cycle Status:</span>
+          <Badge
+            variant={isPostedBill ? "outline" : "default"}
+            className={
+              isPostedBill
+                ? "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300"
+                : activeBill?.status === 'Approved'
+                ? "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950 dark:text-blue-300"
+                : "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300"
+            }
+          >
+            {isPostedBill ? "Posted Bill (Locked)" : activeBill?.status || "Draft"}
+          </Badge>
+          {resolvedBillId && (
+            <span className="text-[11px] font-mono text-muted-foreground hidden md:inline">
+              ID: {resolvedBillId.substring(0, 8)}…
+            </span>
+          )}
+        </div>
+      </div>
+
       {isPostedBill && (
         <div className="p-3 bg-amber-100/90 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 dark:text-amber-200">
           <div className="flex items-center gap-2">
             <span className="text-base">🔒</span>
             <div>
               <span className="font-semibold">Posted Bill Notice: </span>
-              This bill for {monthYear} is officially posted. To adjust finalized readings, initiate a formal Bill Correction in Bill Management.
+              This bill for {selectedMonthYear} is officially posted. To adjust finalized readings, initiate a formal Bill Correction in Bill Management.
             </div>
           </div>
           {resolvedBillId && (
@@ -359,7 +507,7 @@ export function EditReadingsRecalculateSection({
             ASSIGNED INDIVIDUAL CUSTOMER READINGS
             {isLoadingAssigned && <span className="text-amber-600 font-normal normal-case">(loading…)</span>}
           </h5>
-          {canSave && (
+          {canSave && !isPostedBill && (
             <label className="cursor-pointer">
               <input type="file" accept=".csv,.txt" onChange={handleFileUploadAssignedReadings} className="hidden" />
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-300 bg-white dark:bg-amber-900/30 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors shadow-sm cursor-pointer">
@@ -371,7 +519,7 @@ export function EditReadingsRecalculateSection({
 
         {!isLoadingAssigned && assignedReadings.length === 0 && (
           <p className="text-xs text-amber-700 dark:text-amber-400 italic py-2">
-            No assigned individual customers found for this bulk meter.
+            No assigned individual customers found for this bulk meter in {selectedMonthYear}.
           </p>
         )}
 
@@ -402,8 +550,8 @@ export function EditReadingsRecalculateSection({
                           type="number"
                           value={edits.previous}
                           onChange={(e) => handleAssignedReadingChange(row.customerKeyNumber, "previous", e.target.value)}
-                          readOnly={!canSave}
-                          disabled={!canSave}
+                          readOnly={!canSave || isPostedBill}
+                          disabled={!canSave || isPostedBill}
                           className="w-24 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1 text-right text-xs bg-white dark:bg-amber-950/60 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-70 disabled:cursor-not-allowed disabled:bg-gray-50"
                         />
                       </td>
@@ -412,8 +560,8 @@ export function EditReadingsRecalculateSection({
                           type="number"
                           value={edits.current}
                           onChange={(e) => handleAssignedReadingChange(row.customerKeyNumber, "current", e.target.value)}
-                          readOnly={!canSave}
-                          disabled={!canSave}
+                          readOnly={!canSave || isPostedBill}
+                          disabled={!canSave || isPostedBill}
                           className="w-24 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1 text-right text-xs bg-white dark:bg-amber-950/60 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-70 disabled:cursor-not-allowed disabled:bg-gray-50"
                         />
                       </td>
@@ -539,7 +687,7 @@ export function EditReadingsRecalculateSection({
       <div className="grid grid-cols-2 gap-4 pt-3 border-t border-amber-200/40 text-xs">
         <div>
           <span className="text-gray-500 dark:text-amber-300/70 font-semibold uppercase tracking-wider block">BILL PERIOD</span>
-          <span className="font-bold text-gray-800 dark:text-gray-200">{monthYear}</span>
+          <span className="font-bold text-gray-800 dark:text-gray-200">{selectedMonthYear}</span>
         </div>
         <div>
           <span className="text-gray-500 dark:text-amber-300/70 font-semibold uppercase tracking-wider block">DATE BILLED</span>

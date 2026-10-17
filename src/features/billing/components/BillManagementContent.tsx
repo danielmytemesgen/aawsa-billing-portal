@@ -47,8 +47,10 @@ import {
 } from '@/lib/actions';
 import type { WaterBalanceMetrics } from '@/lib/db-queries';
 import { PreApprovalAuditDialog } from '@/features/billing/components/PreApprovalAuditDialog';
-import { initializeTariffs, getTariff } from '@/lib/data-store';
+import { EditBillStatusDialog } from '@/components/billing/EditBillStatusDialog';
+import { initializeTariffs, getTariff, getTariffs } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
+import { PERMISSIONS } from '@/lib/constants/auth';
 import { cn, formatDate } from '@/lib/utils';
 import { format, subDays, isBefore } from 'date-fns';
 import { getMonthlyBillAmt } from '@/lib/billing-utils';
@@ -119,6 +121,36 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [branches, setBranches] = useState<any[]>([]);
     const [dismissedAnomalies, setDismissedAnomalies] = useState<Set<string>>(new Set());
 
+    const [currentUserRole, setCurrentUserRole] = useState<string>(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const stored = localStorage.getItem('user');
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    return (parsed.role || '').toLowerCase().trim();
+                }
+            } catch {}
+        }
+        return '';
+    });
+
+    useEffect(() => {
+        try {
+            const stored = localStorage.getItem('user');
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                setCurrentUserRole((parsed.role || '').toLowerCase().trim());
+            }
+        } catch {}
+    }, []);
+
+    const isAdmin = (
+        currentUserRole === 'admin' ||
+        currentUserRole === 'system administrator' ||
+        currentUserRole === 'super admin' ||
+        (basePath.startsWith('/admin') && (hasPermission('*') || hasPermission('admin') || !currentUserRole))
+    );
+
     // Filter states
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -153,6 +185,17 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     // This is the source of truth for the Overdue Aging widget.
     const [agingSummary, setAgingSummary] = useState({ zeroToThirty: 0, thirtyToSixty: 0, sixtyPlus: 0 });
 
+    // Penalty Policy Engine toggle — true = ON (default), false = OFF.
+    // Derived from the active tariff after initializeTariffs() resolves.
+    const [penaltyEnabled, setPenaltyEnabled] = useState<boolean>(true);
+
+    const [editingPaymentBill, setEditingPaymentBill] = useState<any | null>(null);
+    const [isEditPaymentOpen, setIsEditPaymentOpen] = useState(false);
+    const canManagePayment = hasPermission(PERMISSIONS.BILL_UPDATE)
+        || hasPermission(PERMISSIONS.PAYMENTS_CREATE)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL)
+        || hasPermission(PERMISSIONS.BILL_POST);
+
 
     // Bulk Action Confirmation states
     const [pendingBulkAction, setPendingBulkAction] = useState<{
@@ -179,6 +222,25 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             await Promise.allSettled([
                 initializeTariffs()
             ]);
+
+            // Derive penalty_enabled from the first available tariff after initialization.
+            // If no tariff is loaded yet, default to true (safe fallback).
+            try {
+                const loadedTariffs = getTariffs();
+                if (loadedTariffs.length > 0) {
+                    // Use the most recently effective tariff as the system-wide indicator.
+                    const sortedByDate = [...loadedTariffs].sort(
+                        (a, b) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime()
+                    );
+                    const latestTariff = sortedByDate[0];
+                    const isEnabled = latestTariff.penalty_enabled !== undefined && latestTariff.penalty_enabled !== null
+                        ? Boolean(latestTariff.penalty_enabled)
+                        : true;
+                    setPenaltyEnabled(isEnabled);
+                }
+            } catch (tariffErr) {
+                console.warn('Failed to read penalty_enabled from tariffs:', tariffErr);
+            }
 
             if (effectiveMonth === 'all') {
                 const distinctRes = await getDistinctBillingMonthsAction();
@@ -439,10 +501,13 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
                 if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-                if (maxAge >= threshold) {
+                const isPenaltyEnabled = (activeTariff as any)?.penalty_enabled !== false;
+                if (isPenaltyEnabled && maxAge >= threshold) {
                     const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
                     const totalRate = bankRate + Number(applicableTier?.rate || 0);
                     penalty = arrearsSum * totalRate;
+                } else {
+                    penalty = 0;
                 }
 
                 const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
@@ -981,28 +1046,30 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     <p className="text-muted-foreground mt-1">Review, approve and track billing workflow across branches.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button
-                        variant="outline"
-                        className="h-10 border-blue-200 bg-blue-50/60 hover:bg-blue-100/80 text-blue-900 shadow-sm gap-2 font-semibold"
-                        onClick={() => setSmartAuditOpen(true)}
-                    >
-                        <ShieldCheck className="h-4 w-4 text-blue-600" />
-                        Audit & Inspection
-                        {pendingApprovals.length > 0 && (
-                            <Badge className="h-5 px-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold">
-                                {pendingApprovals.length} Pending
-                            </Badge>
-                        )}
-                    </Button>
-                    {(hasPermission('bill:delete') || hasPermission('bill:manage_all')) && (
-                        <Button 
-                            variant="outline" 
-                            className="h-10 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 shadow-sm gap-1.5"
-                            onClick={() => setIsBulkDeleteDialogOpen(true)}
-                        >
-                            <Trash2 className="h-4 w-4" />
-                            Reset / Delete Batch
-                        </Button>
+                    {isAdmin && (
+                        <>
+                            <Button
+                                variant="outline"
+                                className="h-10 border-blue-200 bg-blue-50/60 hover:bg-blue-100/80 text-blue-900 shadow-sm gap-2 font-semibold"
+                                onClick={() => setSmartAuditOpen(true)}
+                            >
+                                <ShieldCheck className="h-4 w-4 text-blue-600" />
+                                Audit & Inspection
+                                {pendingApprovals.length > 0 && (
+                                    <Badge className="h-5 px-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold">
+                                        {pendingApprovals.length} Pending
+                                    </Badge>
+                                )}
+                            </Button>
+                            <Button 
+                                variant="outline" 
+                                className="h-10 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 shadow-sm gap-1.5"
+                                onClick={() => setIsBulkDeleteDialogOpen(true)}
+                            >
+                                <Trash2 className="h-4 w-4" />
+                                Reset / Delete Batch
+                            </Button>
+                        </>
                     )}
                     {hasPermission('billing:close_cycle') && (
                         <Button className="h-10 bg-blue-600 hover:bg-blue-700 shadow-sm" onClick={() => setIsCycleDialogOpen(true)}>
@@ -1269,10 +1336,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                 bills={outstandingBills}
                                 onDelete={handleDelete}
                                 onDispute={handleDisputeClick}
+                                onEditPaymentStatus={canManagePayment ? ((b) => { setEditingPaymentBill(b); setIsEditPaymentOpen(true); }) : undefined}
                                 router={router}
                                 basePath={basePath}
                                 canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
                                 reconstructedHistoryMap={reconstructedHistoryMap}
+                                penaltyEnabled={penaltyEnabled}
                             />
 
                             {/* Pagination Controls */}
@@ -1324,10 +1393,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                 bills={paidBills}
                                 onDelete={handleDelete}
                                 onDispute={handleDisputeClick}
+                                onEditPaymentStatus={canManagePayment ? ((b) => { setEditingPaymentBill(b); setIsEditPaymentOpen(true); }) : undefined}
                                 router={router}
                                 basePath={basePath}
                                 canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
                                 reconstructedHistoryMap={reconstructedHistoryMap}
+                                penaltyEnabled={penaltyEnabled}
                             />
 
                             {/* Pagination Controls for Paid */}
@@ -1365,20 +1436,22 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 }}
             />
 
-            <BulkDeleteBillsDialog
-                open={isBulkDeleteDialogOpen}
-                onOpenChange={setIsBulkDeleteDialogOpen}
-                initialMonthYear={monthFilter !== 'all' ? monthFilter : undefined}
-                initialBranchId={branchFilter !== 'all' ? branchFilter : undefined}
-                branches={branches}
-                onSuccess={() => {
-                    loadData();
-                }}
-                onTriggerRebill={() => {
-                    loadData();
-                    setIsCycleDialogOpen(true);
-                }}
-            />
+            {isAdmin && (
+                <BulkDeleteBillsDialog
+                    open={isBulkDeleteDialogOpen}
+                    onOpenChange={setIsBulkDeleteDialogOpen}
+                    initialMonthYear={monthFilter !== 'all' ? monthFilter : undefined}
+                    initialBranchId={branchFilter !== 'all' ? branchFilter : undefined}
+                    branches={branches}
+                    onSuccess={() => {
+                        loadData();
+                    }}
+                    onTriggerRebill={() => {
+                        loadData();
+                        setIsCycleDialogOpen(true);
+                    }}
+                />
+            )}
 
             {/* Bulk Action Confirmation Dialog */}
             <AlertDialog open={!!pendingBulkAction} onOpenChange={(open) => !open && setPendingBulkAction(null)}>
@@ -1430,15 +1503,17 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             </AlertDialog>
 
             {/* Smart Pre-Approval Audit Dialog */}
-            <PreApprovalAuditDialog
-                open={smartAuditOpen}
-                onOpenChange={setSmartAuditOpen}
-                monthYear={effectiveMonthYear || latestMonth}
-                basePath={basePath}
-                onApproveClean={handleApproveCleanBills}
-                onApproveAll={handleApproveAllFromAudit}
-                onFilterFlagged={handleFilterFlaggedFromAudit}
-            />
+            {isAdmin && (
+                <PreApprovalAuditDialog
+                    open={smartAuditOpen}
+                    onOpenChange={setSmartAuditOpen}
+                    monthYear={effectiveMonthYear || latestMonth}
+                    basePath={basePath}
+                    onApproveClean={handleApproveCleanBills}
+                    onApproveAll={handleApproveAllFromAudit}
+                    onFilterFlagged={handleFilterFlaggedFromAudit}
+                />
+            )}
 
             {/* Bill Dispute Dialog */}
             <Dialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
@@ -1500,12 +1575,27 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            {editingPaymentBill && (
+                <EditBillStatusDialog
+                    open={isEditPaymentOpen}
+                    onOpenChange={(isOpen) => {
+                        setIsEditPaymentOpen(isOpen);
+                        if (!isOpen) setEditingPaymentBill(null);
+                    }}
+                    bill={editingPaymentBill}
+                    customerKey={editingPaymentBill.CUSTOMERKEY || editingPaymentBill.individual_customer_id || editingPaymentBill.customerKey || ""}
+                    onSuccess={() => {
+                        loadData();
+                        setEditingPaymentBill(null);
+                    }}
+                />
+            )}
         </div>
     );
 }
 
 // Sub-components
-function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onDispute }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onDispute?: (bill: any) => void }) {
+function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onDispute, onEditPaymentStatus, penaltyEnabled = true }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onDispute?: (bill: any) => void, onEditPaymentStatus?: (bill: any) => void, penaltyEnabled?: boolean }) {
     if (bills.length === 0) return null;
 
     return (
@@ -1525,7 +1615,9 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             <TableHead className="text-right text-[10px]">Debit_30</TableHead>
                             <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
                             <TableHead className="text-right text-[10px]">Debit_60</TableHead>
-                            <TableHead className="text-right">Penalty</TableHead>
+                            <TableHead className={cn("text-right", penaltyEnabled ? "text-destructive" : "text-muted-foreground")}>
+                                Penalty {!penaltyEnabled && <span className="text-[9px] font-normal ml-0.5">(Off)</span>}
+                            </TableHead>
                             <TableHead className="text-right">Outstanding</TableHead>
                             <TableHead className="text-right">Current Bill</TableHead>
                             <TableHead className="text-right whitespace-nowrap">Total Payable</TableHead>
@@ -1579,7 +1671,15 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                     <TableCell className="text-right text-xs text-muted-foreground">{fmt(d30)}</TableCell>
                                     <TableCell className="text-right text-xs text-muted-foreground">{fmt(d30_60)}</TableCell>
                                     <TableCell className="text-right text-xs text-muted-foreground">{fmt(d60)}</TableCell>
-                                    <TableCell className="text-right text-xs text-destructive font-medium">{fmt(penaltyAmt)}</TableCell>
+                                    <TableCell className={cn(
+                                        "text-right text-xs font-medium",
+                                        penaltyEnabled && penaltyAmt > 0.001
+                                            ? "text-destructive"
+                                            : "text-muted-foreground"
+                                    )}>
+                                        {fmt(penaltyAmt)}
+                                        {!penaltyEnabled && <span className="ml-1 text-[9px] text-muted-foreground font-normal">(Off)</span>}
+                                    </TableCell>
                                     <TableCell className="text-right text-xs font-medium">{currentOutstanding.toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs font-medium">{currentBillAmt.toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">
@@ -1628,6 +1728,15 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                                 <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                                                     <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
                                                 </DropdownMenuItem>
+                                                {onEditPaymentStatus && (
+                                                    <DropdownMenuItem
+                                                        onClick={() => onEditPaymentStatus(bill)}
+                                                        className={cn("cursor-pointer", bill.payment_status === 'Paid' ? "text-destructive font-medium focus:text-destructive" : "text-blue-600 font-medium focus:text-blue-600")}
+                                                    >
+                                                        <RotateCcw className="mr-2 h-4 w-4" />
+                                                        {bill.payment_status === 'Paid' ? 'Reverse Payment' : 'Edit Payment Status'}
+                                                    </DropdownMenuItem>
+                                                )}
                                                 {onDispute && bill.status !== 'Disputed' && (
                                                     <DropdownMenuItem onClick={() => onDispute(bill)} className="text-amber-700 font-medium focus:text-amber-800">
                                                         <AlertTriangle className="mr-2 h-4 w-4 text-amber-600" /> Dispute Invoice

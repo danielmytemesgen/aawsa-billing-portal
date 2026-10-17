@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { getMostRecentBillsForBulkMetersAction } from "@/lib/actions";
+import { initializeTariffs, getTariffs } from "@/lib/data-store";
+import { getPenaltyValue, isPenaltyEngineEnabled } from "@/lib/billing-utils";
 
 interface BatchInvoiceDialogProps {
     open: boolean;
@@ -26,6 +28,7 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
     const [isLoading, setIsLoading] = React.useState(false);
     const [isProcessing, setIsProcessing] = React.useState(false);
     const [invoiceRows, setInvoiceRows] = React.useState<any[]>([]);
+    const [penaltyEnabled, setPenaltyEnabled] = React.useState(true);
 
     React.useEffect(() => {
         if (open && selectedMeterIds.size > 0) {
@@ -38,6 +41,9 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
     async function loadMostRecentBills() {
         setIsLoading(true);
         try {
+            await initializeTariffs().catch(err => console.warn('Tariffs init error:', err));
+            setPenaltyEnabled(isPenaltyEngineEnabled(getTariffs()));
+
             const keys = Array.from(selectedMeterIds);
             const result = await getMostRecentBillsForBulkMetersAction(keys);
             if (result.error) {
@@ -104,7 +110,8 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
                 debit30: Number(row.debit_30 ?? 0),
                 debit30_60: Number(row.debit_30_60 ?? 0),
                 debit60: Number(row.debit_60 ?? 0),
-                PENALTYAMT: Number(row.PENALTYAMT ?? 0),
+                PENALTYAMT: getPenaltyValue(Number(row.PENALTYAMT ?? 0), penaltyEnabled),
+                penaltyEnabled,
                 dueDate: row.due_date,
                 paymentStatus: row.payment_status ?? 'Unpaid',
                 billPeriodStartDate: row.bill_period_start_date,
@@ -114,6 +121,7 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
         }));
 
         sessionStorage.setItem('batchInvoiceData', JSON.stringify(printData));
+        sessionStorage.setItem('batchInvoicePenaltyEnabled', JSON.stringify(penaltyEnabled));
         const isStaffRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/staff');
         const targetUrl = isStaffRoute ? '/staff/bulk-meters/print-invoices' : '/admin/bulk-meters/print-invoices';
         window.open(targetUrl, '_blank');
@@ -133,7 +141,7 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
         const headers = [
             "Meter Name", "Customer Key", "Month", "Previous Reading", "Current Reading",
             "Usage (m³)", "Difference Usage (m³)", "DEBIT_30", "DEBIT_30_60", "DEBIT_>60",
-            "Penalty (ETB)",
+            penaltyEnabled ? "Penalty (ETB)" : "Penalty (Off) (ETB)",
             "Base Water Charge (ETB)", "Maintenance Fee (ETB)", "Sanitation Fee (ETB)",
             "Sewerage Charge (ETB)", "Meter Rent (ETB)", "VAT (ETB)",
             "Current Bill (ETB)", "Outstanding (ETB)", "Total Amount Payable (ETB)", "Payment Status"
@@ -145,7 +153,7 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
             const d60 = Number(row.debit_60 || 0);
             const outstanding = Number(row.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
             const current = Math.max(0, Number(row.THISMONTHBILLAMT ?? (Number(row.TOTALBILLAMOUNT || 0) - outstanding)));
-            const penalty = Number(row.PENALTYAMT || 0);
+            const penalty = getPenaltyValue(Number(row.PENALTYAMT || 0), penaltyEnabled);
             const totalPayable = outstanding + current + penalty;
             return [
                 row.name,

@@ -32,4 +32,38 @@ describe('calculateDebtAging', () => {
     // penalty may be >0 depending on default tier rates
     expect(result.penaltyAmt).toBeGreaterThanOrEqual(0);
   });
+
+  it('strictly returns penaltyAmt = 0 when penalty_enabled is false', () => {
+    const ref = new Date();
+    const older = new Date(ref.getFullYear(), ref.getMonth() - 5, 1);
+    const month = `${older.getFullYear()}-${String(older.getMonth() + 1).padStart(2, '0')}`;
+    const historicalBills = [
+      { month_year: month, THISMONTHBILLAMT: 500, amount_paid: 0 }
+    ];
+    const tariffWithPenaltyOff: any = {
+      penalty_enabled: false,
+      penalty_month_threshold: 3,
+      bank_lending_rate: 0.15,
+      penalty_tiered_rates: [{ month: 3, rate: 0.05 }, { month: 4, rate: 0.10 }]
+    };
+    const result = calculateDebtAging(500, historicalBills, tariffWithPenaltyOff, currentMonthYear());
+    expect(result.penaltyAmt).toBe(0);
+  });
+
+  it('computes positive penaltyAmt when penalty_enabled is true and threshold is exceeded', () => {
+    const ref = new Date();
+    const older = new Date(ref.getFullYear(), ref.getMonth() - 5, 1);
+    const month = `${older.getFullYear()}-${String(older.getMonth() + 1).padStart(2, '0')}`;
+    const historicalBills = [
+      { month_year: month, THISMONTHBILLAMT: 500, amount_paid: 0 }
+    ];
+    const tariffWithPenaltyOn: any = {
+      penalty_enabled: true,
+      penalty_month_threshold: 3,
+      bank_lending_rate: 0.15,
+      penalty_tiered_rates: [{ month: 3, rate: 0.05 }, { month: 4, rate: 0.10 }]
+    };
+    const result = calculateDebtAging(500, historicalBills, tariffWithPenaltyOn, currentMonthYear());
+    expect(result.penaltyAmt).toBeGreaterThan(0);
+  });
 });

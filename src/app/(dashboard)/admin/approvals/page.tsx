@@ -76,18 +76,25 @@ export default function ApprovalsPage() {
 
     setIsLoading(true);
     Promise.all([
-      initializeCustomers(),
-      initializeBulkMeters(),
+      initializeCustomers(true, { status: 'Pending Approval' }),
+      initializeBulkMeters(true, { status: 'Pending Approval' }),
       initializeBranches()
     ]).then(() => {
-      setCustomers(getCustomers());
-      setBulkMeters(getBulkMeters());
+      setCustomers(getCustomers().filter(c => c.status === 'Pending Approval'));
+      setBulkMeters(getBulkMeters().filter(bm => bm.status === 'Pending Approval'));
       setBranches(getBranches());
+      setIsLoading(false);
+    }).catch((err) => {
+      console.error("Failed to load pending approvals:", err);
       setIsLoading(false);
     });
 
-    const unsubscribeCustomers = subscribeToCustomers(setCustomers);
-    const unsubscribeBulkMeters = subscribeToBulkMeters(setBulkMeters);
+    const unsubscribeCustomers = subscribeToCustomers((all) => {
+      setCustomers(all.filter(c => c.status === 'Pending Approval'));
+    });
+    const unsubscribeBulkMeters = subscribeToBulkMeters((all) => {
+      setBulkMeters(all.filter(bm => bm.status === 'Pending Approval'));
+    });
     const unsubscribeBranches = subscribeToBranches(setBranches);
 
     return () => {
@@ -98,11 +105,10 @@ export default function ApprovalsPage() {
   }, []);
 
   // Auto-refresh: read latest store state when DataRefreshProvider signals new data
-  // (store subscribers already handle notifyListeners(); this is a belt-and-suspenders fallback)
   React.useEffect(() => {
     const handleDataRefreshed = () => {
-      setCustomers(getCustomers());
-      setBulkMeters(getBulkMeters());
+      setCustomers(getCustomers().filter(c => c.status === 'Pending Approval'));
+      setBulkMeters(getBulkMeters().filter(bm => bm.status === 'Pending Approval'));
       setBranches(getBranches());
     };
     window.addEventListener('data-refreshed', handleDataRefreshed);

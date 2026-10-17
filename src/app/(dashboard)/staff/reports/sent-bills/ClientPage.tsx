@@ -63,7 +63,7 @@ export default function StaffSentBillsReportPage() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching bill records..." });
     try {
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -105,7 +105,7 @@ export default function StaffSentBillsReportPage() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching records across all pages..." });
     try {
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -173,7 +173,7 @@ export default function StaffSentBillsReportPage() {
 
     const fetchBills = async () => {
       setIsLoading(true);
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -200,7 +200,7 @@ export default function StaffSentBillsReportPage() {
     if (!currentUser) return;
     staffSentBillsRef.current = async () => {
       setIsLoading(true);
-      const normalizedBranchId = getEffectiveBranchId(hasPermission, 'reports', currentUser.branchId);
+      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
       const result = await getAllSentBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
       if (result.success) { setBills(result.bills || []); setTotalBills(result.total || 0); }

@@ -19,11 +19,13 @@ import {
   updateBranchAction,
   deleteBranchAction,
   getAllCustomersAction,
+  getCustomersByBulkMeterIdAction,
   getCustomersCountAction,
   getCustomersSummaryAction,
   createCustomerAction,
   updateCustomerAction,
   deleteCustomerAction,
+  getCustomerByKeyAction,
   getAllBulkMetersAction,
   getBulkMetersCountAction,
   getBulkMetersSummaryAction,
@@ -37,6 +39,7 @@ import {
   deleteStaffMemberAction,
   getStaffMemberForAuthAction,
   getAllBillsAction,
+  getBillsByCustomerKeyAction,
   createBillAction,
   updateBillAction,
   updateBillPaymentStatusAction,
@@ -518,7 +521,7 @@ const mapDomainBranchToUpdate = (branch: Partial<Omit<DomainBranch, 'id'>>): Bra
 };
 
 
-const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<DomainIndividualCustomer> => {
+export const mapDbCustomerToDomain = async (dbCustomer: IndividualCustomer): Promise<DomainIndividualCustomer> => {
   const rawUsage = dbCustomer.currentReading - dbCustomer.previousReading;
   const { totalBill: bill, effectiveUsage } = await computeBillLocal(rawUsage, dbCustomer.customerType, dbCustomer.sewerageConnection, Number(dbCustomer.meterSize), dbCustomer.month);
   return {
@@ -888,56 +891,55 @@ const mapDomainStaffToUpdate = (staff: Partial<Omit<StaffMember, 'id' | 'email'>
 };
 
 
-const mapDbBillToDomain = (dbBill: Bill): DomainBill => ({
+const mapDbBillToDomain = (dbBill: any): DomainBill => ({
   id: dbBill.id,
-  individualCustomerId: dbBill.individual_customer_id,
-  CUSTOMERKEY: dbBill.CUSTOMERKEY,
-  billPeriodStartDate: dbBill.bill_period_start_date,
-  billPeriodEndDate: dbBill.bill_period_end_date,
-  monthYear: dbBill.month_year,
-  PREVREAD: Number(dbBill.PREVREAD),
-  CURRREAD: Number(dbBill.CURRREAD),
-  CONS: dbBill.CONS ? Number(dbBill.CONS) : null,
-  differenceUsage: dbBill.difference_usage !== null && dbBill.difference_usage !== undefined ? Number(dbBill.difference_usage) : null,
-  difference_usage: dbBill.difference_usage !== null && dbBill.difference_usage !== undefined ? Number(dbBill.difference_usage) : null,
-  snapshot_data: dbBill.snapshot_data,
-  baseWaterCharge: Number(dbBill.base_water_charge),
-  sewerageCharge: dbBill.sewerage_charge ? Number(dbBill.sewerage_charge) : null,
-  maintenanceFee: dbBill.maintenance_fee ? Number(dbBill.maintenance_fee) : null,
-  sanitationFee: dbBill.sanitation_fee ? Number(dbBill.sanitation_fee) : null,
-  meterRent: dbBill.meter_rent ? Number(dbBill.meter_rent) : null,
-  vatAmount: dbBill.vat_amount ? Number(dbBill.vat_amount) : null,
-  additionalFeesCharge: dbBill.additional_fees_charge ? Number(dbBill.additional_fees_charge) : null,
-  additionalFeesBreakdown: dbBill.additional_fees_breakdown ? (typeof dbBill.additional_fees_breakdown === 'string' ? JSON.parse(dbBill.additional_fees_breakdown) : dbBill.additional_fees_breakdown) : null,
-  balanceCarriedForward: dbBill.balance_carried_forward ? Number(dbBill.balance_carried_forward) : null,
-  debit30: dbBill.debit_30 ? Number(dbBill.debit_30) : null,
-  debit30_60: dbBill.debit_30_60 ? Number(dbBill.debit_30_60) : null,
-  debit60: dbBill.debit_60 ? Number(dbBill.debit_60) : null,
-  TOTALBILLAMOUNT: Number(dbBill.TOTALBILLAMOUNT),
-  amountPaid: dbBill.amount_paid ? Number(dbBill.amount_paid) : undefined,
-  OUTSTANDINGAMT: dbBill.OUTSTANDINGAMT ? Number(dbBill.OUTSTANDINGAMT) : null,
-  dueDate: dbBill.due_date,
-  paymentStatus: dbBill.payment_status,
-  status: dbBill.status,
-  billNumber: dbBill.bill_number,
-  PENALTYAMT: dbBill.PENALTYAMT ? Number(dbBill.PENALTYAMT) : null,
-  THISMONTHBILLAMT: dbBill.THISMONTHBILLAMT ? Number(dbBill.THISMONTHBILLAMT) : null,
+  individualCustomerId: dbBill.individual_customer_id || dbBill.individualCustomerId,
+  CUSTOMERKEY: dbBill.CUSTOMERKEY || dbBill.customerKey,
+  billPeriodStartDate: dbBill.bill_period_start_date || dbBill.billPeriodStartDate,
+  billPeriodEndDate: dbBill.bill_period_end_date || dbBill.billPeriodEndDate,
+  monthYear: dbBill.month_year || dbBill.monthYear,
+  PREVREAD: Number(dbBill.PREVREAD ?? dbBill.prevRead ?? 0),
+  CURRREAD: Number(dbBill.CURRREAD ?? dbBill.currRead ?? 0),
+  CONS: dbBill.CONS !== null && dbBill.CONS !== undefined ? Number(dbBill.CONS) : (dbBill.cons !== undefined && dbBill.cons !== null ? Number(dbBill.cons) : null),
+  differenceUsage: dbBill.difference_usage !== null && dbBill.difference_usage !== undefined ? Number(dbBill.difference_usage) : (dbBill.differenceUsage !== null && dbBill.differenceUsage !== undefined ? Number(dbBill.differenceUsage) : null),
+  difference_usage: dbBill.difference_usage !== null && dbBill.difference_usage !== undefined ? Number(dbBill.difference_usage) : (dbBill.differenceUsage !== null && dbBill.differenceUsage !== undefined ? Number(dbBill.differenceUsage) : null),
+  snapshot_data: dbBill.snapshot_data || dbBill.snapshotData,
+  baseWaterCharge: Number(dbBill.base_water_charge ?? dbBill.baseWaterCharge ?? 0),
+  sewerageCharge: dbBill.sewerage_charge !== null && dbBill.sewerage_charge !== undefined ? Number(dbBill.sewerage_charge) : (dbBill.sewerageCharge !== null && dbBill.sewerageCharge !== undefined ? Number(dbBill.sewerageCharge) : null),
+  maintenanceFee: dbBill.maintenance_fee !== null && dbBill.maintenance_fee !== undefined ? Number(dbBill.maintenance_fee) : (dbBill.maintenanceFee !== null && dbBill.maintenanceFee !== undefined ? Number(dbBill.maintenanceFee) : null),
+  sanitationFee: dbBill.sanitation_fee !== null && dbBill.sanitation_fee !== undefined ? Number(dbBill.sanitation_fee) : (dbBill.sanitationFee !== null && dbBill.sanitationFee !== undefined ? Number(dbBill.sanitationFee) : null),
+  meterRent: dbBill.meter_rent !== null && dbBill.meter_rent !== undefined ? Number(dbBill.meter_rent) : (dbBill.meterRent !== null && dbBill.meterRent !== undefined ? Number(dbBill.meterRent) : null),
+  vatAmount: dbBill.vat_amount !== null && dbBill.vat_amount !== undefined ? Number(dbBill.vat_amount) : (dbBill.vatAmount !== null && dbBill.vatAmount !== undefined ? Number(dbBill.vatAmount) : null),
+  additionalFeesCharge: dbBill.additional_fees_charge !== null && dbBill.additional_fees_charge !== undefined ? Number(dbBill.additional_fees_charge) : (dbBill.additionalFeesCharge !== null && dbBill.additionalFeesCharge !== undefined ? Number(dbBill.additionalFeesCharge) : null),
+  additionalFeesBreakdown: dbBill.additional_fees_breakdown ? (typeof dbBill.additional_fees_breakdown === 'string' ? JSON.parse(dbBill.additional_fees_breakdown) : dbBill.additional_fees_breakdown) : (dbBill.additionalFeesBreakdown || null),
+  balanceCarriedForward: dbBill.balance_carried_forward !== null && dbBill.balance_carried_forward !== undefined ? Number(dbBill.balance_carried_forward) : (dbBill.balanceCarriedForward !== null && dbBill.balanceCarriedForward !== undefined ? Number(dbBill.balanceCarriedForward) : null),
+  debit30: dbBill.debit_30 !== null && dbBill.debit_30 !== undefined ? Number(dbBill.debit_30) : (dbBill.debit30 !== null && dbBill.debit30 !== undefined ? Number(dbBill.debit30) : null),
+  debit30_60: dbBill.debit_30_60 !== null && dbBill.debit_30_60 !== undefined ? Number(dbBill.debit_30_60) : (dbBill.debit30_60 !== null && dbBill.debit30_60 !== undefined ? Number(dbBill.debit30_60) : null),
+  debit60: dbBill.debit_60 !== null && dbBill.debit_60 !== undefined ? Number(dbBill.debit_60) : (dbBill.debit60 !== null && dbBill.debit60 !== undefined ? Number(dbBill.debit60) : null),
+  TOTALBILLAMOUNT: Number(dbBill.TOTALBILLAMOUNT ?? dbBill.totalBillAmount ?? 0),
+  amountPaid: dbBill.amount_paid !== null && dbBill.amount_paid !== undefined ? Number(dbBill.amount_paid) : (dbBill.amountPaid !== null && dbBill.amountPaid !== undefined ? Number(dbBill.amountPaid) : undefined),
+  OUTSTANDINGAMT: dbBill.OUTSTANDINGAMT !== null && dbBill.OUTSTANDINGAMT !== undefined ? Number(dbBill.OUTSTANDINGAMT) : (dbBill.outstandingAmt !== null && dbBill.outstandingAmt !== undefined ? Number(dbBill.outstandingAmt) : null),
+  dueDate: dbBill.due_date || dbBill.dueDate,
+  paymentStatus: dbBill.payment_status || dbBill.paymentStatus || 'Unpaid',
+  status: dbBill.status || 'Active',
+  billNumber: dbBill.bill_number || dbBill.billNumber,
+  PENALTYAMT: dbBill.PENALTYAMT !== null && dbBill.PENALTYAMT !== undefined ? Number(dbBill.PENALTYAMT) : (dbBill.penaltyAmt !== null && dbBill.penaltyAmt !== undefined ? Number(dbBill.penaltyAmt) : null),
+  THISMONTHBILLAMT: dbBill.THISMONTHBILLAMT !== null && dbBill.THISMONTHBILLAMT !== undefined ? Number(dbBill.THISMONTHBILLAMT) : (dbBill.thisMonthBillAmt !== null && dbBill.thisMonthBillAmt !== undefined ? Number(dbBill.thisMonthBillAmt) : null),
   notes: dbBill.notes,
-  createdAt: dbBill.created_at,
-  updatedAt: dbBill.updated_at,
-  BILLKEY: dbBill.BILLKEY,
-  CUSTOMERNAME: dbBill.CUSTOMERNAME,
-  CUSTOMERTIN: dbBill.CUSTOMERTIN,
-  CUSTOMERBRANCH: dbBill.CUSTOMERBRANCH,
-  REASON: dbBill.REASON,
-  DRACCTNO: dbBill.DRACCTNO,
-  CRACCTNO: dbBill.CRACCTNO,
-  // New Mapping for derived/missing fields
-  totalAmountDue: Number(dbBill.TOTALBILLAMOUNT),
-  usageM3: dbBill.CONS ? Number(dbBill.CONS) : (dbBill.difference_usage ? Number(dbBill.difference_usage) : 0),
-  currentReadingValue: Number(dbBill.CURRREAD),
-  previousReadingValue: Number(dbBill.PREVREAD),
-  bulkMeterId: dbBill.CUSTOMERKEY, // Fallback mapping
+  createdAt: dbBill.created_at || dbBill.createdAt,
+  updatedAt: dbBill.updated_at || dbBill.updatedAt,
+  BILLKEY: dbBill.BILLKEY || dbBill.billKey,
+  CUSTOMERNAME: dbBill.CUSTOMERNAME || dbBill.customerName,
+  CUSTOMERTIN: dbBill.CUSTOMERTIN || dbBill.customerTin,
+  CUSTOMERBRANCH: dbBill.CUSTOMERBRANCH || dbBill.customerBranch,
+  REASON: dbBill.REASON || dbBill.reason,
+  DRACCTNO: dbBill.DRACCTNO || dbBill.drAcctNo,
+  CRACCTNO: dbBill.CRACCTNO || dbBill.crAcctNo,
+  totalAmountDue: Number(dbBill.TOTALBILLAMOUNT ?? dbBill.totalBillAmount ?? 0),
+  usageM3: dbBill.CONS ? Number(dbBill.CONS) : (dbBill.difference_usage ? Number(dbBill.difference_usage) : (dbBill.differenceUsage ? Number(dbBill.differenceUsage) : 0)),
+  currentReadingValue: Number(dbBill.CURRREAD ?? dbBill.currRead ?? 0),
+  previousReadingValue: Number(dbBill.PREVREAD ?? dbBill.prevRead ?? 0),
+  bulkMeterId: dbBill.CUSTOMERKEY || dbBill.customerKey,
 });
 
 const mapDomainBillToDb = (bill: Partial<DomainBill>): Partial<BillInsert | BillUpdate> => {
@@ -1426,7 +1428,7 @@ async function fetchAllBranches() {
 let customersInflight: Promise<any> | null = null;
 let bulkMetersInflight: Promise<any> | null = null;
 
-async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
+async function fetchAllCustomers(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string }) {
   // If no options (full fetch), deduplicate concurrent callers
   if (!options && customersInflight) return customersInflight;
   const run = async () => {
@@ -1463,7 +1465,7 @@ async function fetchAllCustomers(options?: { limit?: number; offset?: number; se
   return run();
 }
 
-async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) {
+async function fetchAllBulkMeters(options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string }) {
   // If no options (full fetch), deduplicate concurrent callers
   if (!options && bulkMetersInflight) return bulkMetersInflight;
   const run = async () => {
@@ -1799,7 +1801,7 @@ export const initializeBranches = async (force: boolean = false) => {
   }
 };
 
-export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) => {
+export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string }) => {
   if (force || !customersFetched || customers.length === 0 || options) {
     // If offline, attempt to load from cache first using fast B-Tree index if routeKey is specified
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
@@ -1867,7 +1869,7 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
   }
 };
 
-export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string }) => {
+export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string }) => {
   if (force || !bulkMetersFetched || bulkMeters.length === 0 || options) {
     // If offline, attempt to load from cache first using fast B-Tree index if routeKey is specified
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
@@ -1967,6 +1969,36 @@ export const fetchBulkMetersPaginated = async (limit: number, offset: number, se
 export const fetchBulkMetersSummary = async () => {
   const { data, error } = await getBulkMetersSummaryAction();
   return { data, error };
+};
+
+export const fetchCustomersForBulkMeter = async (bulkMeterId: string): Promise<DomainIndividualCustomer[]> => {
+  const { data } = await getCustomersByBulkMeterIdAction(bulkMeterId);
+  if (data && Array.isArray(data)) {
+    if (!tariffsFetched) await initializeTariffs();
+    return await Promise.all(data.map(mapDbCustomerToDomain));
+  }
+  return [];
+};
+
+export const fetchCustomerByKey = async (key: string): Promise<DomainIndividualCustomer | null> => {
+  const { data } = await getCustomerByKeyAction(key);
+  if (!data) return null;
+  if (!tariffsFetched) await initializeTariffs();
+  return await mapDbCustomerToDomain(data);
+};
+
+export const fetchBillsForBulkMeter = async (customerKey: string): Promise<DomainBill[]> => {
+  const { data } = await getBillsByCustomerKeyAction(customerKey);
+  const mapped = Array.isArray(data) ? data.map(mapDbBillToDomain) : [];
+  if (mapped.length > 0) {
+    const billMap = new Map(bills.map(b => [b.id, b]));
+    for (const b of mapped) {
+      billMap.set(b.id, b);
+    }
+    bills = Array.from(billMap.values());
+    notifyBillListeners();
+  }
+  return mapped;
 };
 
 export const initializeStaffMembers = async (force: boolean = false) => {
@@ -2161,6 +2193,7 @@ export const getTariff = (customerType: CustomerType, effectiveDate: string): Ta
     penalty_month_threshold: tariff.penalty_month_threshold !== undefined && tariff.penalty_month_threshold !== null ? Number(tariff.penalty_month_threshold) : undefined,
     bank_lending_rate: tariff.bank_lending_rate !== undefined && tariff.bank_lending_rate !== null ? Number(tariff.bank_lending_rate) : undefined,
     penalty_tiered_rates: parseJsonField(tariff.penalty_tiered_rates, 'penalty_tiered_rates'),
+    penalty_enabled: tariff.penalty_enabled !== undefined && tariff.penalty_enabled !== null ? Boolean(tariff.penalty_enabled) : true,
   };
 };
 
@@ -3225,6 +3258,7 @@ export const updateTariff = async (customerType: CustomerType, effectiveDate: st
   if (tariff.penalty_month_threshold !== undefined) (updatePayload as any).penalty_month_threshold = tariff.penalty_month_threshold;
   if (tariff.bank_lending_rate !== undefined) (updatePayload as any).bank_lending_rate = tariff.bank_lending_rate;
   if (tariff.penalty_tiered_rates !== undefined) (updatePayload as any).penalty_tiered_rates = tariff.penalty_tiered_rates;
+  if ((tariff as any).penalty_enabled !== undefined) (updatePayload as any).penalty_enabled = Boolean((tariff as any).penalty_enabled);
 
   // Serialize JSON fields to strings so the DB layer stores valid JSON
   if (updatePayload.tiers && typeof updatePayload.tiers !== 'string') {
@@ -3300,6 +3334,7 @@ export const addTariff = async (tariffData: Omit<TariffInfo, 'id'>): Promise<Sto
     penalty_month_threshold: tariffData.penalty_month_threshold,
     bank_lending_rate: tariffData.bank_lending_rate,
     penalty_tiered_rates: tariffData.penalty_tiered_rates,
+    penalty_enabled: (tariffData as any).penalty_enabled !== undefined ? Boolean((tariffData as any).penalty_enabled) : true,
     additional_fees: tariffData.additional_fees as any,
   };
   // Ensure JSON fields are serialized
@@ -3451,6 +3486,11 @@ export const subscribeToTariffs = (listener: Listener<TariffRow>): (() => void) 
   if (tariffsFetched) listener([...tariffs]); else initializeTariffs().then(() => listener([...tariffs]));
   return () => tariffListeners.delete(listener);
 };
+
+// ── Listener check helpers (prevents unbounded background fetches) ────────────
+export const hasCustomerListeners = () => customerListeners.size > 0;
+export const hasReadingListeners = () => individualCustomerReadingListeners.size > 0;
+export const hasBillListeners = () => billListeners.size > 0;
 
 
 

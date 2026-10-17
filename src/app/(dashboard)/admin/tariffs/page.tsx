@@ -29,6 +29,7 @@ import { AdditionalFeeDialog } from "./additional-fee-dialog";
 import { AdditionalFee } from "@/lib/billing-calculations";
 import { PenaltyDialog } from "./penalty-dialog";
 import { NewVersionDialog, type NewVersionFormValues } from "./new-version-dialog";
+import { cn } from "@/lib/utils";
 
 const mapTariffTierToDisplay = (tier: TariffTier | SewerageTier, index: number, prevTier?: TariffTier | SewerageTier, tierType: 'water' | 'sewerage' = 'water'): DisplayTariffRate => {
   // Coerce tier.limit to a numeric value or numeric Infinity for display logic.
@@ -496,6 +497,7 @@ export default function TariffManagementPage() {
   };
 
   const handleUpdatePenalty = async (values: {
+    penalty_enabled: boolean;
     penalty_month_threshold: number;
     bank_lending_rate: number;
     penalty_tiered_rates: { month: number; rate: number }[];
@@ -505,7 +507,12 @@ export default function TariffManagementPage() {
     const result = await updateTariff(activeTariffInfo.customer_type, activeTariffInfo.effective_date!, values as any, allowHistoricalEdit);
 
     if (result.success) {
-      toast({ title: "Penalty Configuration Updated", description: "The new penalty rates have been saved successfully." });
+      toast({ 
+        title: values.penalty_enabled ? "Penalty Configuration Updated" : "Penalty Calculation Disabled", 
+        description: values.penalty_enabled 
+          ? "The new penalty rates have been saved successfully and are now active."
+          : "Penalty calculation is turned OFF. Generated bills will carry 0.00 ETB in penalties." 
+      });
       setIsPenaltyDialogOpen(false);
     } else {
       toast({ variant: "destructive", title: "Update Failed", description: result.message });
@@ -1002,11 +1009,26 @@ export default function TariffManagementPage() {
                       {/* Penalty Special Item */}
                       <div className="flex items-center justify-between p-5 rounded-3xl bg-amber-50 border border-amber-200 hover:bg-white hover:shadow-lg transition-all group">
                         <div className="flex items-center gap-5">
-                          <div className="h-12 w-12 rounded-xl bg-amber-200 flex items-center justify-center text-amber-800 group-hover:scale-110 transition-transform shadow-sm">
+                          <div className={cn(
+                            "h-12 w-12 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-sm",
+                            (activeTariffInfo.penalty_enabled ?? true)
+                              ? "bg-amber-200 text-amber-800"
+                              : "bg-slate-200 text-slate-700"
+                          )}>
                             <Info className="h-6 w-6" />
                           </div>
                           <div>
-                            <p className="text-sm font-bold text-slate-600 uppercase mb-1">Penalty Logic</p>
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="text-sm font-bold text-slate-600 uppercase">Penalty Logic</p>
+                              <Badge className={cn(
+                                "text-[10px] font-black uppercase px-2 py-0.5 rounded-full border shadow-none",
+                                (activeTariffInfo.penalty_enabled ?? true)
+                                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                  : "bg-slate-200 text-slate-700 border-slate-300"
+                              )}>
+                                {(activeTariffInfo.penalty_enabled ?? true) ? "● Active (ON)" : "○ Disabled (OFF - 0 ETB)"}
+                              </Badge>
+                            </div>
                             <p className="text-base font-bold text-amber-900 leading-tight">Threshold: <span className="font-black text-amber-600">Month {activeTariffInfo.penalty_month_threshold || 3}</span></p>
                             <p className="text-xs font-bold text-amber-600 uppercase mt-1 tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-md inline-block">Bank Rate + Tiered Matrix</p>
                           </div>
@@ -1247,6 +1269,7 @@ export default function TariffManagementPage() {
             onOpenChange={setIsPenaltyDialogOpen}
             onSubmit={handleUpdatePenalty}
             defaultValues={{
+              penalty_enabled: activeTariffInfo.penalty_enabled !== undefined ? activeTariffInfo.penalty_enabled : true,
               penalty_month_threshold: activeTariffInfo.penalty_month_threshold || 3,
               bank_lending_rate: activeTariffInfo.bank_lending_rate || 0.15,
               penalty_tiered_rates: activeTariffInfo.penalty_tiered_rates || [

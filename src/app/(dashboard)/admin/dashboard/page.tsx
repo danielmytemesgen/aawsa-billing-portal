@@ -528,31 +528,12 @@ export default function AdminDashboardPage() {
         // Metrics loaded, we can now display the dashboard layout & charts immediately!
         if (isMounted) setIsLoading(false);
 
-        // Pre-warm/initialize data-store for detailed views in the background (non-blocking)
+        // Pre-warm lightweight branch and meter lookups in background (non-blocking)
         Promise.all([
           initializeBranches(),
           initializeBulkMeters(),
-          initializeCustomers(),
-          initializeBills()
-        ]).then(async () => {
-          if (isMounted) {
-            await processDashboardData();
-
-            // Today's activity — compute after store is warm
-            const todayStr = new Date().toISOString().slice(0, 10);
-            const meters = getBulkMeters();
-            const customers = getCustomers();
-            const todayBillsCount = meters.filter((m: any) => m.billDate && String(m.billDate).startsWith(todayStr)).length;
-            const todayReadingsCount = [...meters, ...customers].filter((m: any) => m.readingDate && String(m.readingDate).startsWith(todayStr)).length;
-            const todayCustomersCount = customers.filter((c: any) => c.createdAt && String(c.createdAt).startsWith(todayStr)).length;
-            if (isMounted) {
-              setTodayBills(todayBillsCount);
-              setTodayReadings(todayReadingsCount);
-              setTodayCustomers(todayCustomersCount);
-            }
-          }
-        }).catch((err) => {
-          console.error("Background data-store initialization failed:", err);
+        ]).catch((err) => {
+          console.warn("Background branch/meter initialization notice:", err);
         });
 
       } catch (err) {

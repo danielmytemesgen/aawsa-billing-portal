@@ -27,11 +27,11 @@ import {
     postBillAction,
     getBranchesLookupAction
 } from '@/lib/actions';
-import { getBulkMeters, getCustomers, initializeBulkMeters, initializeCustomers, initializeTariffs, getTariff } from '@/lib/data-store';
+import { getBulkMeters, getCustomers, initializeBulkMeters, initializeCustomers, initializeTariffs, getTariff, getTariffs } from '@/lib/data-store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
 import { format, subDays, isBefore } from 'date-fns';
-import { getMonthlyBillAmt } from '@/lib/billing-utils';
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from '@/lib/billing-utils';
 import {
     Loader2,
     Filter,
@@ -91,6 +91,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const [loading, setLoading] = useState(true);
     const [isCycleDialogOpen, setIsCycleDialogOpen] = useState(false);
     const [branches, setBranches] = useState<any[]>([]);
+    const [penaltyEnabled, setPenaltyEnabled] = useState(true);
 
     // AAWSA Sync Payment dialog state
     const [syncDialogKey, setSyncDialogKey] = useState(0);
@@ -140,6 +141,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 initializeCustomers(),
                 initializeTariffs()
             ]);
+
+            setPenaltyEnabled(isPenaltyEngineEnabled(getTariffs()));
 
             const res = await getAllBillsAction();
             if (res.data) {
@@ -318,10 +321,13 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
                 if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-                if (maxAge >= threshold) {
+                const isPenaltyEnabled = (activeTariff as any)?.penalty_enabled !== false;
+                if (isPenaltyEnabled && maxAge >= threshold) {
                     const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
                     const totalRate = bankRate + Number(applicableTier?.rate || 0);
                     penalty = arrearsSum * totalRate;
+                } else {
+                    penalty = 0;
                 }
 
                 const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(bill);
@@ -453,7 +459,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
         const d60 = Number(b.debit60 || b.debit_60 || 0);
         const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-        const penalty = Number(b.PENALTYAMT || 0);
+        const penalty = getPenaltyValue(Number(b.PENALTYAMT || 0), penaltyEnabled);
         // Outstanding = all unpaid debt + current penalty
         const outstanding = totalUnpaidDebt + penalty;
         const current = getMonthlyBillAmt(b);
@@ -749,6 +755,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
                         reconstructedHistoryMap={reconstructedHistoryMap}
                         onSyncPayment={handleOpenSyncDialog}
+                        penaltyEnabled={penaltyEnabled}
                     />
 
                     {/* Pagination Controls */}
@@ -796,6 +803,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         canDelete={hasPermission('bill:delete') || hasPermission('bill:manage_all')}
                         reconstructedHistoryMap={reconstructedHistoryMap}
                         onSyncPayment={handleOpenSyncDialog}
+                        penaltyEnabled={penaltyEnabled}
                     />
 
                     {/* Pagination Controls for Paid */}
@@ -868,7 +876,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 }
 
 // Sub-components
-function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onSyncPayment }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onSyncPayment?: (customerKey: string) => void }) {
+function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onSyncPayment, penaltyEnabled = true }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onSyncPayment?: (customerKey: string) => void, penaltyEnabled?: boolean }) {
     if (bills.length === 0) return null;
 
     return (
@@ -888,7 +896,9 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             <TableHead className="text-right text-[10px]">Debit_30</TableHead>
                             <TableHead className="text-right text-[10px]">Debit_30_60</TableHead>
                             <TableHead className="text-right text-[10px]">Debit_60</TableHead>
-                            <TableHead className="text-right">Penalty</TableHead>
+                            <TableHead className={cn("text-right", penaltyEnabled ? "text-destructive" : "text-muted-foreground")}>
+                                Penalty {!penaltyEnabled && <span className="text-[9px] font-normal ml-0.5">(Off)</span>}
+                            </TableHead>
                             <TableHead className="text-right">Outstanding</TableHead>
                             <TableHead className="text-right">Current Bill</TableHead>
                             <TableHead className="text-right whitespace-nowrap">Total Payable</TableHead>
@@ -905,7 +915,7 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             const d30 = recon ? recon.d30 : Number(bill.debit_30 || bill.debit30 || 0);
                             const d30_60 = recon ? recon.d30_60 : Number(bill.debit_30_60 || bill.debit30_60 || 0);
                             const d60 = recon ? recon.d60 : Number(bill.debit_60 || bill.debit60 || 0);
-                            const penaltyAmt = recon ? recon.penalty : Number(bill.PENALTYAMT || 0);
+                            const penaltyAmt = recon ? recon.penalty : getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
 
                             const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penaltyAmt;
                             const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
@@ -935,7 +945,15 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d30).toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d30_60).toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d60).toFixed(2)}</TableCell>
-                                    <TableCell className="text-right text-xs text-destructive font-medium">{Number(penaltyAmt).toFixed(2)}</TableCell>
+                                    <TableCell className={cn(
+                                        "text-right text-xs font-medium",
+                                        penaltyEnabled && penaltyAmt > 0.001
+                                            ? "text-destructive"
+                                            : "text-muted-foreground"
+                                    )}>
+                                        {Number(penaltyAmt).toFixed(2)}
+                                        {!penaltyEnabled && <span className="ml-1 text-[9px] text-muted-foreground font-normal">(Off)</span>}
+                                    </TableCell>
                                     <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs font-bold whitespace-nowrap text-primary">

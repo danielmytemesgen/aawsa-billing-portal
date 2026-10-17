@@ -227,6 +227,9 @@ export function SyncPaymentStatusDialog({
           title: "Sync Applied Successfully",
           description: `Payment: ${res.endpointData?.paymentStatus}. Reconciled: Yes.`,
         });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("data-refreshed"));
+        }
         router.refresh();
       }
     } catch (err: any) {

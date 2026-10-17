@@ -41,6 +41,14 @@ const STYLE_BLOCK = `
     .manual-section-card { page-break-inside: avoid !important; break-inside: avoid !important; margin-bottom: 12pt !important; box-shadow: none !important; }
     .manual-group-heading { page-break-after: avoid !important; break-after: avoid !important; }
     table { page-break-inside: avoid !important; width: 100% !important; }
+    img { max-width: 100% !important; height: auto !important; page-break-inside: avoid !important; break-inside: avoid !important; }
+    img[src*="/images/manual/"] {
+      height: auto !important;
+      max-height: none !important;
+      object-fit: contain !important;
+      display: block !important;
+      page-break-inside: avoid !important;
+    }
     .print-hidden { display: none !important; }
     .print-block { display: block !important; }
   }
@@ -400,20 +408,35 @@ export default function UserManualPage() {
     } catch {}
   };
 
-  const handleDownloadPdf = (mode: "all" | "filtered" = "all") => {
+  const handleDownloadPdf = async (mode: "all" | "filtered" = "all") => {
     const prevGroup = activeGroup, prevSearch = search;
     if (mode === "all" && (activeGroup || search)) { setActiveGroup(null); setSearch(""); }
     const prevTitle = document.title;
     document.title = mode === "filtered" && activeGroup
       ? `AAWSA_User_Manual_${activeGroup.replace(/\s+/g, "_")}`
       : "AAWSA_Bulk_Billing_Portal_User_Manual";
+
+    // Preload & decode all images on the page before print to prevent missing screenshots
+    try {
+      const imgs = Array.from(document.querySelectorAll("img")) as HTMLImageElement[];
+      await Promise.all(
+        imgs.map((img) => {
+          if (img.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          });
+        })
+      );
+    } catch {}
+
     setTimeout(() => {
       window.print();
       setTimeout(() => {
         document.title = prevTitle;
         if (mode === "all" && (prevGroup || prevSearch)) { setActiveGroup(prevGroup); setSearch(prevSearch); }
       }, 1000);
-    }, mode === "all" && (prevGroup || prevSearch) ? 150 : 50);
+    }, mode === "all" && (prevGroup || prevSearch) ? 200 : 100);
   };
 
   const filtered = SECTIONS.filter((s) => {

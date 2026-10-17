@@ -1,8 +1,9 @@
-﻿import { query, withTransaction } from './db';
+import { query, withTransaction } from './db';
 import { randomUUID } from 'crypto';
 import { buildUserSessionsFilters, USER_SESSION_STATUS_SQL } from './session-monitoring';
 import { computeCreditForBill, roundMoney, type ComputeCreditForBillOutput } from './credit-utils';
 import { normalizeBillingPeriod } from './period-utils';
+import { getCachedTariffs, invalidateTariffsCache, invalidatePenaltyGuardCache } from './server-cache';
 
 // Postgres-backed implementations for common DB operations.
 // These functions keep `any` shapes to match the existing codebase.
@@ -2772,7 +2773,10 @@ export const dbRpcUpdateRolePermissions = async (roleId: number, permissionIds: 
     });
 };
 
-export const dbGetAllTariffs = async () => await query('SELECT * FROM tariffs');
+/** Fetches all tariff rows, served from a 10-minute server-side cache. */
+export const dbGetAllTariffs = async () =>
+  getCachedTariffs(() => query('SELECT * FROM tariffs ORDER BY effective_date DESC'));
+
 
 export const dbGetTariffByTypeAndDate = async (customerType: string, date: string) => {
     // Standardize date: if YYYY-MM is provided, use the last day of that month.
@@ -4407,12 +4411,7 @@ export const dbGetPaidBillsPaginated = async (params: {
         LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
         LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.deleted_at IS NULL
-          AND (
-            LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
-            OR COALESCE(b.amount_paid, 0) > 0
-            OR LOWER(TRIM(COALESCE(b.reconciliation_status, ''))) = 'reconciled'
-            OR (b.bank_ref IS NOT NULL AND b.bank_ref <> '' AND b.bank_ref <> '-')
-          )
+          AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
@@ -4457,12 +4456,7 @@ export const dbGetPaidBillsCount = async (params: {
         LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
         LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.deleted_at IS NULL
-          AND (
-            LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
-            OR COALESCE(b.amount_paid, 0) > 0
-            OR LOWER(TRIM(COALESCE(b.reconciliation_status, ''))) = 'reconciled'
-            OR (b.bank_ref IS NOT NULL AND b.bank_ref <> '' AND b.bank_ref <> '-')
-          )
+          AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
@@ -4490,6 +4484,112 @@ export const dbGetPaidBillsCount = async (params: {
 
     const rows: any = await query(sql, queryParams);
     return parseInt(rows[0]?.count || '0', 10);
+};
+
+export const dbGetReconciliationAnomalies = async (params?: {
+    searchTerm?: string;
+    branchId?: string;
+    limit?: number;
+}): Promise<any[]> => {
+    let sql = `
+        SELECT 
+            b.id,
+            b."BILLKEY" as "billKey",
+            b.bill_number,
+            b.individual_customer_id,
+            b."CUSTOMERKEY" as "customerKey",
+            b."CUSTOMERNAME" as "customerName",
+            b."CUSTOMERBRANCH" as "customerBranch",
+            b.payment_status as "paymentStatus",
+            COALESCE(b.reconciliation_status, 'Not reconciled') as "reconciliationStatus",
+            COALESCE(b.amount_paid, 0) as "amountPaid",
+            COALESCE(b."TOTALBILLAMOUNT", 0) as "totalBillAmount",
+            b.bank_ref as "bankRef",
+            b.payment_channel as "paymentChannel",
+            b.month_year as "monthYear",
+            b.last_payment_date as "lastPaymentDate",
+            b.created_at as "createdAt"
+        FROM bills b
+        WHERE b.deleted_at IS NULL
+          AND (
+            (LOWER(COALESCE(b.reconciliation_status, '')) = 'reconciled' AND (LOWER(COALESCE(b.payment_status::text, '')) = 'unpaid' OR COALESCE(b.amount_paid, 0) = 0))
+            OR (LOWER(COALESCE(b.payment_status::text, '')) = 'paid' AND COALESCE(b.amount_paid, 0) = 0)
+          )
+    `;
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (params?.branchId && params.branchId !== 'all') {
+        sql += ` AND b.branch_id = $${paramIndex++}`;
+        queryParams.push(params.branchId);
+    }
+
+    if (params?.searchTerm && params.searchTerm.trim() !== '') {
+        sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex})`;
+        queryParams.push(`%${params.searchTerm.trim()}%`);
+        paramIndex++;
+    }
+
+    sql += ` ORDER BY b.created_at DESC LIMIT $${paramIndex++}`;
+    queryParams.push(params?.limit || 500);
+
+    return await query(sql, queryParams);
+};
+
+export const dbFixReconciliationAnomalies = async (params: {
+    billIds?: string[];
+    reason?: string;
+    staffName?: string;
+}): Promise<{ count: number; affectedCustomerKeys: string[] }> => {
+    const reason = params.reason?.trim() || 'Corrected via UI: Reverted false Reconciled/Paid status (amount was 0 or unpaid)';
+    const auditNote = `[Reconciliation Audit: ${new Date().toISOString().slice(0, 10)}] ${reason} by ${params.staffName || 'Admin'}`;
+
+    let targetIds = params.billIds;
+    if (!targetIds || targetIds.length === 0) {
+        const rows = await query(`
+            SELECT id
+            FROM bills
+            WHERE deleted_at IS NULL
+              AND (
+                (LOWER(COALESCE(reconciliation_status, '')) = 'reconciled' AND (LOWER(COALESCE(payment_status::text, '')) = 'unpaid' OR COALESCE(amount_paid, 0) = 0))
+                OR (LOWER(COALESCE(payment_status::text, '')) = 'paid' AND COALESCE(amount_paid, 0) = 0)
+              )
+        `);
+        targetIds = rows.map((r: any) => r.id);
+    }
+
+    if (!targetIds || targetIds.length === 0) {
+        return { count: 0, affectedCustomerKeys: [] };
+    }
+
+    const updatedRows = await query(`
+        UPDATE bills
+        SET reconciliation_status = 'Not reconciled',
+            payment_status = 'Unpaid',
+            amount_paid = 0.00,
+            bank_ref = NULL,
+            notes = CASE 
+                WHEN notes IS NOT NULL AND notes != '' THEN notes || E'\n' || $1 
+                ELSE $1 
+            END,
+            updated_at = NOW()
+        WHERE id = ANY($2::uuid[])
+        RETURNING id, "CUSTOMERKEY", individual_customer_id
+    `, [auditNote, targetIds]);
+
+    const affectedKeys = Array.from(new Set(
+        updatedRows.map((r: any) => r.CUSTOMERKEY || r.individual_customer_id).filter(Boolean)
+    )) as string[];
+
+    for (const key of affectedKeys) {
+        try {
+            await dbSyncAgingForCustomer(key);
+        } catch (err) {
+            console.error(`Failed to sync aging for customer ${key}:`, err);
+        }
+    }
+
+    return { count: updatedRows.length, affectedCustomerKeys: affectedKeys };
 };
 
 export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
@@ -5730,6 +5830,13 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     );
     const tariffs = client ? tariffsRes.rows : tariffsRes;
 
+    const allTariffsRes = await qFunc(
+        `SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC`
+    );
+    const allTariffs = client ? allTariffsRes.rows : allTariffsRes;
+    const { isPenaltyEngineEnabled } = await import('./billing-utils');
+    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffs);
+
     const findActiveTariff = (dateStr: string) => {
         let lookupDate = dateStr;
         if (dateStr && dateStr.length === 7 && dateStr.includes('-')) {
@@ -5804,10 +5911,13 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
         if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-        if (maxAge >= threshold) {
+        const isPenaltyEnabled = globalPenaltyOn && (activeTariff?.penalty_enabled !== false);
+        if (isPenaltyEnabled && maxAge >= threshold) {
             const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
             const totalRate = bankRate + Number(applicableTier?.rate || 0);
             penalty = arrearsSum * totalRate;
+        } else {
+            penalty = 0;
         }
 
         const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmtLocal(bill);

@@ -219,6 +219,16 @@ export function CustomerAuthForm() {
                         or by contacting support.
                     </p>
                 </div>
+                <div className="text-center w-full pt-2">
+                    <p className="text-sm text-white/70 mb-2">Are you a staff member or admin?</p>
+                    <button
+                        type="button"
+                        onClick={() => router.push("/")}
+                        className="customer-link text-base font-medium tracking-wide underline-offset-4 text-blue-300 hover:text-white transition-colors cursor-pointer"
+                    >
+                        Go to Staff Portal
+                    </button>
+                </div>
             </CardFooter>
         </Card>
     );

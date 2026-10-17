@@ -28,7 +28,6 @@ import { Lock } from 'lucide-react';
 
 export default function UnsettledBillsReportPage() {
   const { hasPermission } = usePermissions();
-  const canViewAllBranches = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) || hasPermission('reports_generate_all') || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
   const canAccess = hasPermission(PERMISSIONS.REPORT_LIST_OF_UNSETTLED_BILLS)
     || hasPermission('report:list_of_unsettled_bills')
@@ -56,6 +55,16 @@ export default function UnsettledBillsReportPage() {
   }
 
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
+
+  const isAdmin = (
+    ((currentUser as any)?.role || '').toLowerCase().trim() === 'admin' ||
+    ((currentUser as any)?.role || '').toLowerCase().trim() === 'system administrator' ||
+    ((currentUser as any)?.role || '').toLowerCase().trim() === 'super admin' ||
+    hasPermission('*') ||
+    hasPermission('admin')
+  );
+
+  const canViewAllBranches = isAdmin;
 
   const [bills, setBills] = React.useState<DomainBill[]>([]);
   const [totalBills, setTotalBills] = React.useState(0);
@@ -85,7 +94,14 @@ export default function UnsettledBillsReportPage() {
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      if (parsedUser.branchId && !hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) && !hasPermission('reports_generate_all')) {
+      const userIsAdmin = (
+        ((parsedUser as any)?.role || '').toLowerCase().trim() === 'admin' ||
+        ((parsedUser as any)?.role || '').toLowerCase().trim() === 'system administrator' ||
+        ((parsedUser as any)?.role || '').toLowerCase().trim() === 'super admin' ||
+        hasPermission('*') ||
+        hasPermission('admin')
+      );
+      if (parsedUser.branchId && !userIsAdmin) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }
@@ -115,6 +131,7 @@ export default function UnsettledBillsReportPage() {
 
   // Fetch paginated bills from server
   React.useEffect(() => {
+    if (!currentUser) return;
     const fetchBills = async () => {
       setIsLoading(true);
       const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;

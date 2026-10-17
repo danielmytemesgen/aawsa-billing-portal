@@ -269,57 +269,26 @@ export function AuthForm() {
             router.push("/admin/dashboard");
           }
         } else {
-          if (hasFieldReaderPerms) {
-            try {
-              setSyncState("caching_routes");
-              await fetchRoutes(true);
-              
-              setSyncState("caching_meters");
-              await initializeBulkMeters(true);
-              
-              setSyncState("caching_customers");
-              await initializeCustomers(true);
-              
-              setSyncState("caching_readings");
-              await Promise.all([
-                initializeIndividualCustomerReadings(true),
-                initializeBulkMeterReadings(true)
-              ]);
-              
-              setSyncState("caching_faults");
-              await Promise.all([
-                initializeFaultCodes(true),
-                initializeBranches(true)
-              ]);
-              
-              // Cache HTML and RSC pages for offline use
-              try {
-                await Promise.all([
-                  fetch('/staff/dashboard').catch(() => {}),
-                  fetch('/staff/meter-readings').catch(() => {}),
-                  fetch('/staff/my-routes').catch(() => {}),
-                ]);
-                router.prefetch('/staff/dashboard');
-                router.prefetch('/staff/meter-readings');
-                router.prefetch('/staff/my-routes');
-              } catch (prefErr) {
-                console.warn("Offline page/router prefetch failed:", prefErr);
-              }
-              
-              setSyncState("completed");
-            } catch (initErr) {
-              console.error("Offline prefetch during login failed:", initErr);
-              toast({
-                variant: "destructive",
-                title: "Offline Sync Alert",
-                description: "Some modules failed to cache. Proceeding to dashboard.",
-              });
-            }
-          }
+          // Immediately redirect to staff dashboard without blocking the login experience
           if (role.includes('management') || role.includes('manager')) {
             router.push("/staff/staff-management-dashboard");
           } else {
             router.push("/staff/dashboard");
+          }
+
+          // Asynchronously prime reader cache in background if applicable
+          if (hasFieldReaderPerms) {
+            (async () => {
+              try {
+                await fetchRoutes(true);
+                await Promise.all([
+                  initializeFaultCodes(true).catch(() => {}),
+                  initializeBranches(true).catch(() => {}),
+                ]);
+              } catch (initErr) {
+                console.warn("Background cache priming completed with warnings:", initErr);
+              }
+            })().catch(() => {});
           }
         }
 

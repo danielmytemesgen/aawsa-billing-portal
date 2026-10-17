@@ -27,7 +27,7 @@ import {
 } from '@/lib/actions';
 import { generateSingleBillPdfAction } from '@/lib/pdf-actions';
 import { SyncPaymentStatusDialog } from '@/components/billing/SyncPaymentStatusDialog';
-import { initializeTariffs, getTariff } from '@/lib/data-store';
+import { initializeTariffs, getTariff, getTariffs } from '@/lib/data-store';
 
 import { usePermissions } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/constants/auth';
@@ -45,7 +45,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { getMonthlyBillAmt } from '@/lib/billing-utils';
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from '@/lib/billing-utils';
 
 // Mock types
 type Bill = {
@@ -84,10 +84,11 @@ interface BillDetailsPageProps {
 }
 
 // Sub-component for the printable bill layout
-const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
+const PrintableBill = ({ bill, relatedData, reconstructedAging, penaltyEnabled = true }: {
     bill: Bill,
     relatedData: any,
-    reconstructedAging: { d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null
+    reconstructedAging: { d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null,
+    penaltyEnabled?: boolean
 }) => {
     const [currentDateTime, setCurrentDateTime] = React.useState(new Date().toLocaleString('en-US'));
 
@@ -98,14 +99,18 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging }: {
     const d30 = reconstructedAging ? reconstructedAging.d30 : Number(bill.debit30 || bill.debit_30 || 0);
     const d30_60 = reconstructedAging ? reconstructedAging.d30_60 : Number(bill.debit30_60 || bill.debit_30_60 || 0);
     const d60 = reconstructedAging ? reconstructedAging.d60 : Number(bill.debit60 || bill.debit_60 || 0);
-    const penalty = reconstructedAging && reconstructedAging.penalty !== undefined ? reconstructedAging.penalty : Number(bill.PENALTYAMT || 0);
+    const penalty = reconstructedAging && reconstructedAging.penalty !== undefined
+        ? getPenaltyValue(reconstructedAging.penalty, penaltyEnabled)
+        : getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
     const outstanding = reconstructedAging && reconstructedAging.outstanding !== undefined
         ? reconstructedAging.outstanding
         : (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
             ? Number(bill.OUTSTANDINGAMT)
             : (d30 + d30_60 + d60);
     const current = getMonthlyBillAmt(bill);
-    const total = reconstructedAging && reconstructedAging.totalPayable !== undefined ? reconstructedAging.totalPayable : outstanding + current + penalty;
+    const total = reconstructedAging && reconstructedAging.totalPayable !== undefined
+        ? (penaltyEnabled ? reconstructedAging.totalPayable : outstanding + current)
+        : outstanding + current + penalty;
 
     return (
         <div className="printable-bill-card-wrapper border-none shadow-none bg-transparent w-full flex flex-col items-start">
@@ -271,12 +276,43 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     const searchParams = useSearchParams();
     const isPrintMode = searchParams?.get('print') === 'true';
 
+    // ── Admin-only role check ─────────────────────────────────────────────────
+    const [currentUserRole, setCurrentUserRole] = useState<string>(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const stored = localStorage.getItem('user');
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    return (parsed.role || '').toLowerCase().trim();
+                }
+            } catch {}
+        }
+        return '';
+    });
+    useEffect(() => {
+        try {
+            const stored = localStorage.getItem('user');
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                setCurrentUserRole((parsed.role || '').toLowerCase().trim());
+            }
+        } catch {}
+    }, []);
+    const isAdmin = (
+        currentUserRole === 'admin' ||
+        currentUserRole === 'system administrator' ||
+        currentUserRole === 'super admin' ||
+        hasPermission('*') ||
+        hasPermission('admin')
+    );
+
     const [bill, setBill] = useState<Bill | null>(null);
     const [relatedData, setRelatedData] = useState<any>(null);
     const [logs, setLogs] = useState<any[]>([]);
 
     const [loading, setLoading] = useState(true);
     const [reconstructedAging, setReconstructedAging] = useState<{ d30: number, d30_60: number, d60: number, penalty?: number, outstanding?: number, totalPayable?: number } | null>(null);
+    const [penaltyEnabled, setPenaltyEnabled] = useState(true);
 
     // Edit state
     const [isEditing, setIsEditing] = useState(false);
@@ -392,6 +428,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 }
 
                 await initializeTariffs(true);
+                setPenaltyEnabled(isPenaltyEngineEnabled(getTariffs()));
 
                 const logsRes = await getBillWorkflowLogsAction(id);
                 if (logsRes.data) setLogs(logsRes.data);
@@ -444,10 +481,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                             const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
                             if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-                            if (maxAge >= threshold) {
+                            const isPenaltyEnabled = (activeTariff as any)?.penalty_enabled !== false;
+                            if (isPenaltyEnabled && maxAge >= threshold) {
                                 const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
                                 const totalRate = bankRate + Number(applicableTier?.rate || 0);
                                 penalty = arrearsSum * totalRate;
+                            } else {
+                                penalty = 0;
                             }
 
                             const currentMonthlyCharge = isVoided ? 0 : getMonthlyBillAmt(h);
@@ -812,7 +852,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
     // Special return for Print Mode
     if (isPrintMode) {
-        return <PrintableBill bill={bill} relatedData={relatedData} reconstructedAging={reconstructedAging} />;
+        return <PrintableBill bill={bill} relatedData={relatedData} reconstructedAging={reconstructedAging} penaltyEnabled={penaltyEnabled} />;
     }
 
     const checkBillPermission = (...permissions: string[]) => {
@@ -846,15 +886,17 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     <Button variant="outline" onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
                         <Printer className="mr-2 h-4 w-4" /> Print Bill
                     </Button>
-                    <SyncPaymentStatusDialog
-                        initialCustomerKey={bill.CUSTOMERKEY || bill.individual_customer_id || ''}
-                        triggerButton={
-                            <Button variant="outline" className="gap-2 text-blue-600 border-blue-200 hover:bg-blue-50">
-                                <RefreshCw className="h-4 w-4" />
-                                Sync AAWSA Payment
-                            </Button>
-                        }
-                    />
+                    {isAdmin && (
+                        <SyncPaymentStatusDialog
+                            initialCustomerKey={bill.CUSTOMERKEY || bill.individual_customer_id || ''}
+                            triggerButton={
+                                <Button variant="outline" className="gap-2 text-blue-600 border-blue-200 hover:bg-blue-50">
+                                    <RefreshCw className="h-4 w-4" />
+                                    Sync AAWSA Payment
+                                </Button>
+                            }
+                        />
+                    )}
                 </div>
 
             </div>
@@ -1049,9 +1091,13 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                 : (bill.OUTSTANDINGAMT !== undefined && bill.OUTSTANDINGAMT !== null && bill.OUTSTANDINGAMT !== 0)
                                                     ? Number(bill.OUTSTANDINGAMT)
                                                     : (d30 + d30_60 + d60);
-                                            const penalty = reconstructedAging && reconstructedAging.penalty !== undefined ? reconstructedAging.penalty : Number(bill.PENALTYAMT || 0);
+                                            const penalty = reconstructedAging && reconstructedAging.penalty !== undefined
+                                                ? getPenaltyValue(reconstructedAging.penalty, penaltyEnabled)
+                                                : getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
                                             const current = getMonthlyBillAmt(bill);
-                                            const total = reconstructedAging && reconstructedAging.totalPayable !== undefined ? reconstructedAging.totalPayable : outstanding + current + penalty;
+                                            const total = reconstructedAging && reconstructedAging.totalPayable !== undefined
+                                                ? (penaltyEnabled ? reconstructedAging.totalPayable : outstanding + current)
+                                                : outstanding + current + penalty;
 
                                             return (
                                                 <>
@@ -1071,7 +1117,11 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                                                             )}
                                                         </div>
                                                     } />
-                                                    <DetailItem label="Penalty (ETB)" value={`ETB ${penalty.toFixed(2)}`} color="text-red-600" />
+                                                    <DetailItem
+                                                        label={penaltyEnabled ? "Penalty (ETB)" : "Penalty (Off) (ETB)"}
+                                                        value={`ETB ${penalty.toFixed(2)}`}
+                                                        color={penaltyEnabled && penalty > 0 ? "text-red-600" : "text-muted-foreground"}
+                                                    />
                                                     <DetailItem label="Total Payable" value={`ETB ${total.toFixed(2)}`} bold color="text-red-700" size="text-base" />
                                                 </>
                                             );
