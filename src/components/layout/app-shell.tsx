@@ -83,6 +83,8 @@ const STAFF_PAGE_NAME_MAP: Record<string, string> = {
   '/admin/reports/paid-bills': 'List Of Paid Bills',
   '/admin/reports/sent-bills': 'List Of Sent Bills',
   '/admin/reports/unsettled-bills': 'List of Unsettled Bills',
+  '/admin/reports/corrected-bills': 'Corrected Bills',
+  '/admin/reports/gl-audit': 'GL Financial & Audit Report',
   '/admin/settings': 'Settings',
   '/admin/settings/promotions': 'Promotions',
   '/admin/security-logs': 'Security Logs',
@@ -110,6 +112,8 @@ const STAFF_PAGE_NAME_MAP: Record<string, string> = {
   '/staff/reports/paid-bills': 'List Of Paid Bills',
   '/staff/reports/sent-bills': 'List Of Sent Bills',
   '/staff/reports/unsettled-bills': 'List of Unsettled Bills',
+  '/staff/reports/corrected-bills': 'Corrected Bills',
+  '/staff/reports/gl-audit': 'GL Financial & Audit Report',
   '/staff/settings': 'Settings',
 };
 

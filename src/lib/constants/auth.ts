@@ -73,6 +73,7 @@ export const PERMISSIONS = {
     REPORT_GL_FINANCE_YEARLY: 'report:gl_finance_yearly',
     REPORT_GL_MONTHLY_SUMMARY_BY_CODE: 'report:gl_monthly_summary_by_code',
     REPORT_MONTHLY_BILL_EXPORT: 'report:monthly_bill_export',
+    REPORT_LIST_OF_CORRECTED_BILLS: 'report:list_of_corrected_bills',
     // Branch-scoped report permissions
     REPORT_BRANCH_CUSTOMER_DATA_EXPORT: 'report:branch_customer_data_export',
     REPORT_BRANCH_BULK_METER_DATA_EXPORT: 'report:branch_bulk_meter_data_export',
@@ -80,6 +81,7 @@ export const PERMISSIONS = {
     REPORT_BRANCH_LIST_OF_PAID_BILLS: 'report:branch_list_of_paid_bills',
     REPORT_BRANCH_LIST_OF_SENT_BILLS: 'report:branch_list_of_sent_bills',
     REPORT_BRANCH_LIST_OF_UNSETTLED_BILLS: 'report:branch_list_of_unsettled_bills',
+    REPORT_BRANCH_LIST_OF_CORRECTED_BILLS: 'report:branch_list_of_corrected_bills',
     REPORT_BRANCH_WATER_USAGE: 'report:branch_water_usage',
     REPORT_BRANCH_PAYMENT_HISTORY: 'report:branch_payment_history',
     REPORT_BRANCH_METER_READING_ACCURACY: 'report:branch_meter_reading_accuracy',
@@ -92,6 +94,8 @@ export const PERMISSIONS = {
     // Billing
     BILL_VIEW_ALL: 'bill:manage_all',
     BILL_VIEW_BRANCH: 'bill:view_branch',
+    BILL_CORRECT: 'bill:correct',
+    BILL_CORRECT_VIEW: 'bill:correct_view',
     BILL_VIEW_DRAFTS: 'bill:view_drafts',
     BILL_VIEW_PENDING: 'bill:view_pending',
     BILL_VIEW_APPROVED: 'bill:view_approved',

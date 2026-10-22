@@ -11,7 +11,7 @@ export default function StaffBillManagementCatchAll() {
     
     // If idArray exists and has at least one element, show details
     if (Array.isArray(idArray) && idArray.length > 0) {
-        return <BillDetailsContent basePath="/staff/bill-management" />;
+        return <BillDetailsContent key={idArray[0]} basePath="/staff/bill-management" />;
     }
 
     // Otherwise show the list

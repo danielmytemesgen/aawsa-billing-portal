@@ -4,7 +4,7 @@ import {
   UserCog, UserCheck, ShieldCheck, Bell, LibraryBig, Map,
   BookText, FileText, AlertOctagon, LifeBuoy, Gauge, Users,
   FileDown, BarChart3, CheckCircle2, Send, FileClock, Settings,
-  Megaphone, Shield, Trash2, Database,
+  Megaphone, Shield, Trash2, Database, Scale,
 } from "lucide-react";
 
 export type LanguageMode = "en" | "am" | "both";
@@ -1744,6 +1744,35 @@ export const SECTIONS: Section[] = [
         ],
       },
     ],
+  },
+  {
+    id: "gl-audit", icon: Scale, title: "GL Reports & Audit", amharicTitle: "የጠቅላላ ሂሳብ (GL) ሪፖርቶችና ኦዲት",
+    badge: "Admin / Finance", amharicBadge: "አድሚን / ፋይናንስ",
+    group: "Data & Reports", color: "bg-indigo-600", gradient: "from-indigo-50 to-blue-50", accentLight: "border-indigo-200 bg-indigo-50",
+    content: [
+      {
+        heading: "General Ledger Financial Summary & Audit Workspace",
+        amharicHeading: "የጠቅላላ ሂሳብ የፋይናንስ ማጠቃለያ እና የኦዲት መስሪያ ገጽ",
+        body: "The GL Reports & Audit module provides real-time financial tracking across all 9 AAWSA GL codes (WDGL, WNDGL, WBORGL, WPFNTGL, SEWERGL, SNTGL, MTRRNTGL, MNTGL, FIREGL), automatic arithmetic sum validation, and instant bill-level audit drill-down.",
+        amharicBody: "ይህ ሞጁል በሁሉም 9 የደብተር ኮዶች ላይ የፋይናንስ ክትትል፣ አውቶማቲክ የሒሳብ ትክክለኛነት ማረጋገጫ እና የእያንዳንዱን ቢል ዝርዝር ኦዲት ያቀርባል።",
+        steps: [
+          "Navigate to 'GL Reports & Audit' under Data & Reports in the sidebar.",
+          "Review the top KPI cards: Gross Billed GL Total, Net Revenue Excl. VAT, VAT (15%) Collected, Audited Bills Count, and Audit Health Status.",
+          "Use the filters (Branch, Period, Charge Group, GL Code) to narrow down records.",
+          "Click any GL Summary row to open the Audit Drill-Down Drawer and inspect all individual bills contributing to that balance.",
+          "Switch to 'Component Breakdown Matrix' for customer-level component breakdown, or 'Audit & Anomaly Inspector' for automated discrepancy detection.",
+          "Click 'Export XLSX' or 'CSV' for financial accounting integration, or 'Print PDF' for executive audit printing."
+        ],
+        amharicSteps: [
+          "በጎን አሞሌው ስር 'የጠቅላላ ሂሳብ (GL) ሪፖርቶችና ኦዲት' የሚለውን ይምረጡ።",
+          "ዋና ዋና የፋይናንስ አመልካቾችን (ጠቅላላ የተጠየቀ ገቢ፣ የተጣራ ገቢ፣ የተሰበሰበ 15% ቫት፣ እና የኦዲት ጤና ሁኔታ) ይመልከቱ።",
+          "በቅርንጫፍ፣ በጊዜ ገደብ፣ በክፍያ ምድብ፣ ወይም በኮድ ያጣሩ።",
+          "የማንኛውንም ረድፍ ቢሎች በዝርዝር ለመመርመር ረድፉን ይጫኑ።",
+          "ለዝርዝር አካላት ወይም ለአውቶማቲክ የልዩነት ፍተሻ ተዛማጅ ትሮችን ይጠቀሙ።",
+          "ሪፖርቱን በኤክሴል ወይም ፒዲኤፍ አውርደው ይጠቀሙበት።"
+        ]
+      }
+    ]
   },
 
   // ── SYSTEM ──────────────────────────────────────────────────────────────────

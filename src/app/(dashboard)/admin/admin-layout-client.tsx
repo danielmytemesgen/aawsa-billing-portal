@@ -288,6 +288,32 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         dataReportsItems.push({ title: "List of Unsettled Bills", href: isAdmin ? "/admin/reports/unsettled-bills" : "/staff/reports/unsettled-bills", iconName: "FileClock" });
     }
 
+    const canViewCorrectedBillsReport = hasPermission(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
+        || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_CORRECTED_BILLS)
+        || hasPermission(PERMISSIONS.BILL_CORRECT_VIEW)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (canViewCorrectedBillsReport) {
+        dataReportsItems.push({ title: "Corrected Bills", href: isAdmin ? "/admin/reports/corrected-bills" : "/staff/reports/corrected-bills", iconName: "FileDiff" });
+    }
+
+    const canViewGLReports = hasPermission(PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE)
+        || hasPermission(PERMISSIONS.REPORT_GL_FINANCE_MONTHLY)
+        || hasPermission(PERMISSIONS.REPORT_GL_FINANCE_YEARLY)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (canViewGLReports) {
+        dataReportsItems.push({ 
+            title: "GL Reports & Audit", 
+            href: isAdmin ? "/admin/reports/gl-audit" : "/staff/reports/gl-audit", 
+            iconName: "Scale" 
+        });
+    }
+
     if (dataReportsItems.length > 0) {
         navItems.push({ title: "Data & Reports", items: dataReportsItems });
     }

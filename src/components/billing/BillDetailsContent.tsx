@@ -397,6 +397,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
 
     async function loadData() {
+        setLoading(true);
         try {
             const billRes = await getBillByIdAction(id);
             if (billRes.data) {
@@ -817,25 +818,29 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
 
     const handleRejectConfirm = async () => {
         if (!bill || !rejectReason.trim()) return;
-        setRejectDialog({ open: false, action: 'reject' });
+        const currentAction = rejectDialog.action;
+        const reason = rejectReason.trim();
+        setRejectDialog(prev => ({ ...prev, open: false }));
         setLoading(true);
         try {
             let res: any;
-            if (rejectDialog.action === 'reject') res = await rejectBillAction(bill.id, rejectReason);
-            if (rejectDialog.action === 'correct') res = await correctBillAction(bill.id, rejectReason);
+            if (currentAction === 'reject') res = await rejectBillAction(bill.id, reason);
+            if (currentAction === 'correct') res = await correctBillAction(bill.id, reason);
 
             if (res?.error) {
                 toast({ title: "Action Failed", description: res.error.message || "An unexpected error occurred.", variant: "destructive" });
             } else {
-                if (rejectDialog.action === 'correct' && res?.data?.replacementBillId) {
+                const replacementId = res?.data?.replacementBillId || res?.replacementBillId;
+                if (currentAction === 'correct' && replacementId) {
                     toast({
                         title: "Correction Initiated",
                         description: `Original bill reversed. Redirecting to draft for correction...`,
                     });
-                    // Navigate to the new replacement draft bill
-                    setTimeout(() => router.push(`${basePath}/${res.data.replacementBillId}`), 1500);
+                    setRejectReason('');
+                    router.push(`${basePath}/${replacementId}`);
+                    return;
                 } else {
-                    toast({ title: "Success", description: `Bill ${rejectDialog.action}ed successfully.` });
+                    toast({ title: "Success", description: `Bill ${currentAction}ed successfully.` });
                     await loadData();
                 }
             }

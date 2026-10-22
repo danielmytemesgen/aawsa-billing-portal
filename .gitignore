@@ -72,3 +72,5 @@ server-error.log
 
 # PM2 runtime dir (accidentally created in project root)
 /y/
+
+scratch/

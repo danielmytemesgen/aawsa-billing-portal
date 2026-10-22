@@ -555,6 +555,11 @@ export async function checkPermissionAny(...permissions: string[]) {
   }
   const perms = await dbGetStaffPermissions(session.id);
 
+  // Bypass if wildcard, admin, or 'all'
+  if (perms.includes('*') || perms.includes('all') || perms.includes('admin')) {
+    return { ...session, permissions: perms };
+  }
+
   // bill:manage_all bypasses any bill: permission in the list
   if (perms.includes('bill:manage_all') && permissions.some(p => p.startsWith('bill:'))) {
     return { ...session, permissions: perms };
@@ -2416,6 +2421,27 @@ export async function postBillAction(id: string) {
         await dbSyncAgingForCustomer(customerKey, client);
       }
 
+      // If this is a correction replacement bill (CORR- prefix), update bill_correct with after-state
+      if (billRes?.bill_number && typeof billRes.bill_number === 'string' && billRes.bill_number.startsWith('CORR-')) {
+        try {
+          const { dbUpdateBillCorrectionOnRebill } = await import('./db-queries');
+          const newConsumption = billRes.CONS ?? ((billRes.CURRREAD ?? 0) - (billRes.PREVREAD ?? 0));
+          await dbUpdateBillCorrectionOnRebill(id, {
+            new_prev_read: billRes.PREVREAD ?? null,
+            new_curr_read: billRes.CURRREAD ?? null,
+            new_consumption: newConsumption,
+            new_base_charge: billRes.base_water_charge ?? null,
+            new_sewerage_charge: billRes.sewerage_charge ?? null,
+            new_penalty_amount: billRes.PENALTYAMT ?? null,
+            new_bill_amount: billRes.TOTALBILLAMOUNT ?? null,
+            status: 'Posted'
+          }, client);
+        } catch (corrErr) {
+          // Non-fatal: log but don't abort
+          console.error('[postBillAction] Failed to update bill_correct delta:', corrErr);
+        }
+      }
+
       await logSecurityEventAction({
         event: 'Post Bill',
         details: { id }
@@ -2464,7 +2490,12 @@ export async function disputeBillAction(id: string, reason: string, requestedAdj
 
 export async function correctBillAction(id: string, reason: string) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL); // Core management needed
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_VIEW_ALL,
+      PERMISSIONS.BILL_CORRECT,
+      'bill:correct',
+      'bill:manage_all'
+    );
     await verifyBillBranchAccess(id, session);
 
       const { 
@@ -2472,12 +2503,14 @@ export async function correctBillAction(id: string, reason: string) {
       dbUpdateBillStatus, 
       dbCreateBillWorkflowLog,
       dbCreateBill, 
+      dbUpdateBill,
       dbUpdateBulkMeter, 
       dbUpdateCustomer,
-      dbSyncAgingForCustomer
+      dbSyncAgingForCustomer,
+      dbInsertBillCorrection
     } = await import('./db-queries');
 
-    return await withTransaction(async (client) => {
+    const result = await withTransaction(async (client) => {
       const originalBill = await dbGetBillById(id);
       if (!originalBill) throw new Error("Original bill not found");
       if (originalBill.status !== 'Posted') throw new Error("Only posted bills can be corrected");
@@ -2591,17 +2624,71 @@ export async function correctBillAction(id: string, reason: string) {
         reason: `Correction draft created from reversed bill ${originalBill.bill_number}. Reason: ${reason}`
       }, client);
 
-      await logSecurityEventAction({
-        event: 'Correct Bill',
-        severity: 'warning',
-        details: { id, replacementBillId: replacementBill.id }
-      });
+      // 5. Record correction event in bill_correct for reporting & audit trail
+      try {
+        const branchRes: any = originalBill.branch_id
+          ? await client.query(`SELECT name FROM branches WHERE id = $1 LIMIT 1`, [originalBill.branch_id])
+          : null;
+        const branchName = branchRes?.rows?.[0]?.name || originalBill.CUSTOMERBRANCH || null;
+
+        const staffRes: any = session.id
+          ? await client.query(`SELECT name, email FROM staff_members WHERE id = $1 LIMIT 1`, [session.id]).catch(() => null)
+          : null;
+        const staffName = staffRes?.rows?.[0]?.name || session.name || session.email || 'System';
+
+        const customerType = originalBill.CUSTOMERKEY ? 'bulk_meter' : 'individual';
+        const customerKey = originalBill.CUSTOMERKEY || originalBill.individual_customer_id || '';
+
+        await dbInsertBillCorrection({
+          original_bill_id: id,
+          original_bill_number: originalBill.bill_number || id,
+          replacement_bill_id: replacementBill?.id || null,
+          replacement_bill_number: replacementBill?.bill_number || null,
+          bill_key: originalBill.BILLKEY || null,
+          month_year: originalBill.month_year || '',
+          customer_key: customerKey,
+          customer_name: originalBill.CUSTOMERNAME || null,
+          customer_type: customerType,
+          branch_id: originalBill.branch_id || null,
+          branch_name: branchName,
+          meter_number: originalBill.METER_KEY || null,
+          contract_number: originalBill.BILLKEY || null,
+          reason,
+          reason_category: 'meter_reading_error',
+          corrected_by: session.id || null,
+          corrected_by_name: staffName,
+          original_prev_read: originalBill.PREVREAD ?? null,
+          original_curr_read: originalBill.CURRREAD ?? null,
+          original_consumption: originalBill.CONS ?? null,
+          original_base_charge: originalBill.base_water_charge ?? 0,
+          original_sewerage_charge: originalBill.sewerage_charge ?? 0,
+          original_penalty_amount: originalBill.PENALTYAMT ?? 0,
+          original_bill_amount: originalBill.TOTALBILLAMOUNT ?? 0,
+          status: 'Draft_Replacement',
+          notes: `Correction initiated. Replacement: ${replacementBill?.bill_number || 'N/A'}`
+        }, client);
+      } catch (corrErr) {
+        // Non-fatal: log but don't abort the transaction
+        console.error('[correctBillAction] Failed to insert bill_correct record:', corrErr);
+      }
 
       return {
         success: true,
         replacementBillId: replacementBill.id
       };
     });
+
+    try {
+      await logSecurityEventAction({
+        event: 'Correct Bill',
+        severity: 'warning',
+        details: { id, replacementBillId: result.replacementBillId }
+      });
+    } catch (_logErr) {
+      // Non-fatal
+    }
+
+    return result;
   });
 }
 
@@ -7349,6 +7436,83 @@ export async function getPaidBillsAction(params: {
   });
 }
 
+export async function getCorrectedBillsAction(params: {
+  page: number;
+  limit: number;
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  status?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin'
+      || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+
+    const canView = isAdmin
+      || perms.includes(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
+      || perms.includes(PERMISSIONS.REPORT_BRANCH_LIST_OF_CORRECTED_BILLS)
+      || perms.includes(PERMISSIONS.BILL_CORRECT_VIEW)
+      || perms.includes(PERMISSIONS.BILL_VIEW_ALL)
+      || perms.includes(PERMISSIONS.BILL_VIEW_BRANCH);
+
+    if (!canView) throw new Error('Forbidden: Missing corrected bills report permission');
+
+    const effectiveBranchId = isAdmin
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const {
+      dbGetBillCorrectionsPaginated,
+      dbGetBillCorrectionsCount
+    } = await import('./db-queries');
+
+    const offset = params.page * params.limit;
+    const [corrections, total] = await Promise.all([
+      dbGetBillCorrectionsPaginated({ ...params, offset, branchId: normalizedBranchId }),
+      dbGetBillCorrectionsCount({ ...params, branchId: normalizedBranchId })
+    ]);
+    return { success: true, corrections, total };
+  });
+}
+
+export async function getCorrectedBillsKPIsAction(params: {
+  branchId?: string;
+  monthYear?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin'
+      || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+
+    const canView = isAdmin
+      || perms.includes(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
+      || perms.includes(PERMISSIONS.REPORT_BRANCH_LIST_OF_CORRECTED_BILLS)
+      || perms.includes(PERMISSIONS.BILL_CORRECT_VIEW)
+      || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (!canView) throw new Error('Forbidden');
+
+    const effectiveBranchId = isAdmin
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const { dbGetBillCorrectionsKPIs } = await import('./db-queries');
+    const kpis = await dbGetBillCorrectionsKPIs({ branchId: normalizedBranchId, monthYear: params.monthYear });
+    return { success: true, kpis };
+  });
+}
+
 export async function getAllSentBillsAction(params: {
   page: number;
   limit: number;
@@ -7356,6 +7520,7 @@ export async function getAllSentBillsAction(params: {
   branchId?: string;
   monthYear?: string;
 }) {
+
   return await wrap(async () => {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');

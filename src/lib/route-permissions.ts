@@ -63,6 +63,9 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.BILL_VIEW_UNPAID,
         PERMISSIONS.BILL_VIEW_OVERDUE,
         PERMISSIONS.BILL_VIEW_ALL,
+        PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE,
+        PERMISSIONS.REPORT_GL_FINANCE_MONTHLY,
+        PERMISSIONS.REPORT_GL_FINANCE_YEARLY,
       ],
     },
     {

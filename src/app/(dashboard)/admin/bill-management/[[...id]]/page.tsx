@@ -11,7 +11,7 @@ export default function AdminBillManagementCatchAll() {
     
     // If idArray exists and has at least one element, show details
     if (Array.isArray(idArray) && idArray.length > 0) {
-        return <BillDetailsContent basePath="/admin/bill-management" />;
+        return <BillDetailsContent key={idArray[0]} basePath="/admin/bill-management" />;
     }
 
     // Otherwise show the list

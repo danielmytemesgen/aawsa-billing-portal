@@ -1537,12 +1537,12 @@ export const dbGetBillById = async (id: string, branchId?: string | any, client?
             FROM bills b
             LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
             LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
-            WHERE b.id = $1 AND b.deleted_at IS NULL
-            AND (bm.branch_id = $2 OR ic.branch_id = $2)
+            WHERE b.id = $1 AND (b.deleted_at IS NULL OR b.status = 'Reversed')
+            AND (b.branch_id = $2 OR bm.branch_id = $2 OR ic.branch_id = $2)
         `, [id, actualBranchId]);
         return (actualClient ? res.rows : res)[0] ?? null;
     }
-    const res: any = await qFunc('SELECT * FROM bills WHERE id = $1 AND deleted_at IS NULL', [id]);
+    const res: any = await qFunc('SELECT * FROM bills WHERE id = $1 AND (deleted_at IS NULL OR status = \'Reversed\')', [id]);
     return (actualClient ? res.rows : res)[0] ?? null;
 };
 
@@ -7702,3 +7702,293 @@ export const dbCountBulkMetersForSync = async (filters?: SyncJobFilters): Promis
     const rows: any = await query(sql, params);
     return Number(rows[0]?.total || 0);
 };
+
+/**
+ * =========================================================================
+ * BILL CORRECTION TRACKING & REPORTING QUERIES (Migration 034)
+ * =========================================================================
+ */
+
+export const dbInsertBillCorrection = async (data: {
+    original_bill_id: string;
+    original_bill_number: string;
+    replacement_bill_id?: string | null;
+    replacement_bill_number?: string | null;
+    bill_key?: string | null;
+    month_year: string;
+    customer_key: string;
+    customer_name?: string | null;
+    customer_type?: 'individual' | 'bulk_meter';
+    branch_id?: string | null;
+    branch_name?: string | null;
+    meter_number?: string | null;
+    contract_number?: string | null;
+    reason: string;
+    reason_category?: string;
+    corrected_by?: string | null;
+    corrected_by_name?: string | null;
+    original_prev_read?: number | null;
+    original_curr_read?: number | null;
+    original_consumption?: number | null;
+    original_base_charge?: number | null;
+    original_sewerage_charge?: number | null;
+    original_penalty_amount?: number | null;
+    original_bill_amount: number;
+    status?: string;
+    notes?: string | null;
+    metadata?: any;
+}, client?: any) => {
+    const sql = `
+        INSERT INTO bill_correct (
+            original_bill_id, original_bill_number, replacement_bill_id, replacement_bill_number,
+            bill_key, month_year, customer_key, customer_name, customer_type,
+            branch_id, branch_name, meter_number, contract_number, reason, reason_category,
+            corrected_by, corrected_by_name, original_prev_read, original_curr_read,
+            original_consumption, original_base_charge, original_sewerage_charge, original_penalty_amount,
+            original_bill_amount, status, notes, metadata
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+        )
+        RETURNING *
+    `;
+    const params = [
+        data.original_bill_id,
+        data.original_bill_number,
+        data.replacement_bill_id || null,
+        data.replacement_bill_number || null,
+        data.bill_key || null,
+        data.month_year,
+        data.customer_key,
+        data.customer_name || null,
+        data.customer_type || 'individual',
+        data.branch_id || null,
+        data.branch_name || null,
+        data.meter_number || null,
+        data.contract_number || null,
+        data.reason,
+        data.reason_category || 'meter_reading_error',
+        data.corrected_by || null,
+        data.corrected_by_name || null,
+        data.original_prev_read ?? null,
+        data.original_curr_read ?? null,
+        data.original_consumption ?? null,
+        data.original_base_charge ?? 0,
+        data.original_sewerage_charge ?? 0,
+        data.original_penalty_amount ?? 0,
+        data.original_bill_amount,
+        data.status || 'Draft_Replacement',
+        data.notes || null,
+        JSON.stringify(data.metadata || {})
+    ];
+
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0];
+    }
+    const res: any = await query(sql, params);
+    return res[0];
+};
+
+export const dbUpdateBillCorrectionOnRebill = async (
+    replacementBillId: string,
+    data: {
+        new_prev_read?: number | null;
+        new_curr_read?: number | null;
+        new_consumption?: number | null;
+        new_base_charge?: number | null;
+        new_sewerage_charge?: number | null;
+        new_penalty_amount?: number | null;
+        new_bill_amount?: number | null;
+        status?: string;
+    },
+    client?: any
+) => {
+    const sql = `
+        UPDATE bill_correct
+        SET new_prev_read = COALESCE($1, new_prev_read),
+            new_curr_read = COALESCE($2, new_curr_read),
+            new_consumption = COALESCE($3, new_consumption),
+            new_base_charge = COALESCE($4, new_base_charge),
+            new_sewerage_charge = COALESCE($5, new_sewerage_charge),
+            new_penalty_amount = COALESCE($6, new_penalty_amount),
+            new_bill_amount = COALESCE($7, new_bill_amount),
+            consumption_difference = (COALESCE($3, new_consumption, 0) - COALESCE(original_consumption, 0)),
+            amount_difference = (COALESCE($7, new_bill_amount, 0) - COALESCE(original_bill_amount, 0)),
+            status = COALESCE($8, status),
+            updated_at = NOW()
+        WHERE replacement_bill_id = $9
+        RETURNING *
+    `;
+    const params = [
+        data.new_prev_read ?? null,
+        data.new_curr_read ?? null,
+        data.new_consumption ?? null,
+        data.new_base_charge ?? null,
+        data.new_sewerage_charge ?? null,
+        data.new_penalty_amount ?? null,
+        data.new_bill_amount ?? null,
+        data.status || 'Posted',
+        replacementBillId
+    ];
+
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0];
+    }
+    const res: any = await query(sql, params);
+    return res[0];
+};
+
+export const dbGetBillCorrectionsPaginated = async (params: {
+    limit: number;
+    offset: number;
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    status?: string;
+}) => {
+    let sql = `
+        SELECT bc.*,
+               br.name as branch_name_computed
+        FROM bill_correct bc
+        LEFT JOIN branches br ON bc.branch_id = br.id
+        WHERE 1=1
+    `;
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (params.branchId && params.branchId !== 'all') {
+        sql += ` AND (bc.branch_id::text ILIKE $${paramIndex} OR bc.branch_name ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
+        queryParams.push(params.branchId);
+        paramIndex++;
+    }
+
+    if (params.monthYear && params.monthYear !== 'all') {
+        sql += ` AND bc.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    if (params.status && params.status !== 'all') {
+        sql += ` AND bc.status = $${paramIndex++}`;
+        queryParams.push(params.status);
+    }
+
+    if (params.searchTerm) {
+        sql += ` AND (
+            bc.original_bill_number ILIKE $${paramIndex} OR
+            bc.replacement_bill_number ILIKE $${paramIndex} OR
+            bc.bill_key ILIKE $${paramIndex} OR
+            bc.customer_key ILIKE $${paramIndex} OR
+            bc.customer_name ILIKE $${paramIndex} OR
+            bc.corrected_by_name ILIKE $${paramIndex} OR
+            bc.reason ILIKE $${paramIndex}
+        )`;
+        queryParams.push(`%${params.searchTerm}%`);
+        paramIndex++;
+    }
+
+    sql += ` ORDER BY bc.corrected_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    queryParams.push(params.limit, params.offset);
+
+    return await query(sql, queryParams);
+};
+
+export const dbGetBillCorrectionsCount = async (params: {
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    status?: string;
+}) => {
+    let sql = `
+        SELECT COUNT(*) as count
+        FROM bill_correct bc
+        LEFT JOIN branches br ON bc.branch_id = br.id
+        WHERE 1=1
+    `;
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (params.branchId && params.branchId !== 'all') {
+        sql += ` AND (bc.branch_id::text ILIKE $${paramIndex} OR bc.branch_name ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
+        queryParams.push(params.branchId);
+        paramIndex++;
+    }
+
+    if (params.monthYear && params.monthYear !== 'all') {
+        sql += ` AND bc.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    if (params.status && params.status !== 'all') {
+        sql += ` AND bc.status = $${paramIndex++}`;
+        queryParams.push(params.status);
+    }
+
+    if (params.searchTerm) {
+        sql += ` AND (
+            bc.original_bill_number ILIKE $${paramIndex} OR
+            bc.replacement_bill_number ILIKE $${paramIndex} OR
+            bc.bill_key ILIKE $${paramIndex} OR
+            bc.customer_key ILIKE $${paramIndex} OR
+            bc.customer_name ILIKE $${paramIndex} OR
+            bc.corrected_by_name ILIKE $${paramIndex} OR
+            bc.reason ILIKE $${paramIndex}
+        )`;
+        queryParams.push(`%${params.searchTerm}%`);
+        paramIndex++;
+    }
+
+    const rows: any = await query(sql, queryParams);
+    return Number(rows[0]?.count || 0);
+};
+
+export const dbGetBillCorrectionsKPIs = async (params: {
+    branchId?: string;
+    monthYear?: string;
+}) => {
+    let whereClause = `WHERE 1=1`;
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (params.branchId && params.branchId !== 'all') {
+        whereClause += ` AND (branch_id::text ILIKE $${paramIndex} OR branch_name ILIKE $${paramIndex})`;
+        queryParams.push(params.branchId);
+        paramIndex++;
+    }
+
+    if (params.monthYear && params.monthYear !== 'all') {
+        whereClause += ` AND month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    const sql = `
+        SELECT
+            COUNT(*)::int as total_corrections,
+            COUNT(*) FILTER (WHERE status = 'Draft_Replacement')::int as pending_drafts,
+            COUNT(*) FILTER (WHERE status = 'Posted')::int as posted_corrections,
+            COALESCE(SUM(amount_difference), 0)::numeric as net_financial_adjustment,
+            COALESCE(SUM(consumption_difference), 0)::numeric as net_volume_adjustment,
+            COALESCE(SUM(original_bill_amount), 0)::numeric as total_original_amount,
+            COALESCE(SUM(new_bill_amount), 0)::numeric as total_new_amount
+        FROM bill_correct
+        ${whereClause}
+    `;
+
+    const rows: any = await query(sql, queryParams);
+    return rows[0] || {
+        total_corrections: 0,
+        pending_drafts: 0,
+        posted_corrections: 0,
+        net_financial_adjustment: 0,
+        net_volume_adjustment: 0,
+        total_original_amount: 0,
+        total_new_amount: 0
+    };
+};
+
+export const dbGetBillCorrectionById = async (id: string) => {
+    const sql = `SELECT * FROM bill_correct WHERE id = $1 LIMIT 1`;
+    const rows: any = await query(sql, [id]);
+    return rows[0] || null;
+};
+
