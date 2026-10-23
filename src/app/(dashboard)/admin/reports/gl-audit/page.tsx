@@ -54,6 +54,7 @@ export default function GLReportsAuditPage() {
   const [years, setYears] = useState<string[]>([]);
   const [selectedChargeGroup, setSelectedChargeGroup] = useState<string>("all");
   const [selectedGlCode, setSelectedGlCode] = useState<string>("all");
+  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<string>("summary");
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -64,6 +65,10 @@ export default function GLReportsAuditPage() {
     totalGrossBilled: 0,
     totalNetRevenue: 0,
     totalVat: 0,
+    totalPaidAmount: 0,
+    totalUnpaidAmount: 0,
+    paidCount: 0,
+    unpaidCount: 0,
     totalAuditedBills: 0,
     totalCleanBills: 0,
     totalAnomalies: 0,
@@ -109,12 +114,14 @@ export default function GLReportsAuditPage() {
           year: periodType === "yearly" && selectedYear !== "all" ? selectedYear : undefined,
           chargeGroup: selectedChargeGroup !== "all" ? selectedChargeGroup : undefined,
           glCode: selectedGlCode !== "all" ? selectedGlCode : undefined,
+          paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
         }),
         getGLAuditAnomaliesAction({
           branchId: selectedBranchId !== "all" ? selectedBranchId : undefined,
           periodType,
           monthYear: periodType === "monthly" && selectedMonthYear !== "all" ? selectedMonthYear : undefined,
           year: periodType === "yearly" && selectedYear !== "all" ? selectedYear : undefined,
+          paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
         }),
       ]);
 
@@ -143,7 +150,7 @@ export default function GLReportsAuditPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBranchId, periodType, selectedMonthYear, selectedYear, selectedChargeGroup, selectedGlCode, toast]);
+  }, [selectedBranchId, periodType, selectedMonthYear, selectedYear, selectedChargeGroup, selectedGlCode, selectedPaymentStatus, toast]);
 
   useEffect(() => {
     loadGLData();
@@ -169,6 +176,7 @@ export default function GLReportsAuditPage() {
         "Branch Code":          String(r.branchCode || r.branch  || ""),
         "Branch Name":          String(r.branchName || ""),
         "Charge Group":         String(r.chargeGroup || ""),
+        "Payment Status":       String(r.paymentStatus || ""),
         "GL Code":              String(r.glCode      || ""),
         "GL Description":       String(r.glName      || ""),
         "Bills Count":          r.count      ?? 0,
@@ -205,6 +213,7 @@ export default function GLReportsAuditPage() {
         "BRANCH_CODE":   String(r.branchCode  || r.branch  || ""),
         "BRANCH_NAME":   String(r.branchName  || ""),
         "CHARGE_GROUP":  String(r.chargeGroup || ""),
+        "PAYMENT_STATUS": String(r.paymentStatus || ""),
         "GL_CODE":       String(r.glCode      || ""),
         "GL_DESC":       String(r.glName      || ""),
         "COUNT":         r.count       ?? 0,
@@ -412,7 +421,7 @@ export default function GLReportsAuditPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             {/* Branch Filter */}
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Branch</label>
@@ -480,6 +489,21 @@ export default function GLReportsAuditPage() {
                   <SelectItem value="Non-domestic">Non-domestic (Commercial / Gov)</SelectItem>
                   <SelectItem value="Borehole">Borehole</SelectItem>
                   <SelectItem value="Public Fountain">Public Fountain</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Payment Status Filter */}
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Payment Status</label>
+              <Select value={selectedPaymentStatus} onValueChange={setSelectedPaymentStatus}>
+                <SelectTrigger className="h-9 rounded-xl border-slate-200 text-xs">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses (Consolidated)</SelectItem>
+                  <SelectItem value="Paid and Reconciled">Paid and Reconciled</SelectItem>
+                  <SelectItem value="Unpaid">Unpaid Only</SelectItem>
                 </SelectContent>
               </Select>
             </div>

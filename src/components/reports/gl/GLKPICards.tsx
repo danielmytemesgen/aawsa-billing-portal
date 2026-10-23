@@ -40,9 +40,11 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
           <div className="text-2xl font-black text-slate-900 tracking-tight">
             {isLoading ? "—" : `${formatNumber(kpis.totalGrossBilled)} ETB`}
           </div>
-          <p className="text-xs text-slate-500 mt-1 font-medium">
-            Total ledger debit & credit volume
-          </p>
+          <div className="flex items-center gap-1.5 mt-1 text-[11px] font-medium">
+            <span className="text-emerald-700 font-semibold">{formatNumber(kpis.totalPaidAmount || 0)} Paid &amp; Reconciled</span>
+            <span className="text-slate-300">·</span>
+            <span className="text-amber-700 font-semibold">{formatNumber(kpis.totalUnpaidAmount || 0)} Unpaid</span>
+          </div>
         </CardContent>
       </Card>
 
@@ -103,8 +105,10 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
           <div className="text-2xl font-black text-slate-900 tracking-tight">
             {isLoading ? "—" : formatNumber(kpis.totalAuditedBills)}
           </div>
-          <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 font-medium">
-            <span className="text-emerald-600 font-semibold">{kpis.totalCleanBills} clean</span>
+          <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 font-medium flex-wrap">
+            <span className="text-emerald-600 font-semibold">{kpis.paidCount || 0} paid &amp; reconciled</span>
+            <span>·</span>
+            <span className="text-amber-600 font-semibold">{kpis.unpaidCount || 0} unpaid</span>
             <span>·</span>
             <span className={kpis.totalAnomalies > 0 ? "text-red-500 font-semibold" : "text-slate-400"}>
               {kpis.totalAnomalies} flagged

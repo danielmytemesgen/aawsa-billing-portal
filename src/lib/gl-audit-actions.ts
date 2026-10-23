@@ -17,6 +17,7 @@ export interface GLSummaryRow {
   chargeGroup: string;  // Domestic, Non-domestic, Borehole, Public Fountain
   glCode: string;       // WDGL, WNDGL, WBORGL, WPFNTGL, SEWERGL, SNTGL, MTRRNTGL, MNTGL, FIREGL
   glName: string;
+  paymentStatus: 'Paid and Reconciled' | 'Unpaid';
   count: number;
   totalAmount: number;
   vatAmount: number;
@@ -34,6 +35,7 @@ export interface GLComponentMatrixRow {
   branchName: string;
   branchCode: string;
   chargeGroup: string;
+  paymentStatus: 'Paid and Reconciled' | 'Unpaid';
   baseWater: number;
   sewerage: number;
   sanitation: number;
@@ -55,6 +57,10 @@ export interface GLKPIs {
   totalGrossBilled: number;
   totalNetRevenue: number;
   totalVat: number;
+  totalPaidAmount: number;
+  totalUnpaidAmount: number;
+  paidCount: number;
+  unpaidCount: number;
   totalAuditedBills: number;
   totalCleanBills: number;
   totalAnomalies: number;
@@ -217,6 +223,7 @@ export async function getGLSummaryReportAction(params: {
   year?: string;
   chargeGroup?: string;
   glCode?: string;
+  paymentStatus?: string;
 }) {
   try {
     const auth = await authorizeGLReport();
@@ -244,6 +251,15 @@ export async function getGLSummaryReportAction(params: {
       }
     }
 
+    if (params.paymentStatus && params.paymentStatus !== 'all') {
+      const psLower = params.paymentStatus.toLowerCase();
+      if (psLower === 'unpaid') {
+        whereClauses.push(`((b.payment_status IS NULL OR LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid') AND (b.status IS NULL OR LOWER(TRIM(COALESCE(b.status::text, ''))) != 'paid'))`);
+      } else if (psLower.includes('paid')) {
+        whereClauses.push(`(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid')`);
+      }
+    }
+
     const sql = `
       SELECT 
         b.id,
@@ -264,7 +280,7 @@ export async function getGLSummaryReportAction(params: {
         COALESCE(b."TOTALBILLAMOUNT", 0)::numeric as total_bill_amount,
         COALESCE(b."DRACCTNO", '') as dr_acct_no,
         COALESCE(b."CRACCTNO", '') as cr_acct_no,
-        COALESCE(b.payment_status, 'Unpaid') as payment_status,
+        CASE WHEN LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' THEN 'Paid and Reconciled' ELSE 'Unpaid' END as payment_status,
         COALESCE(b."CUSTOMERNAME", bm.name, ic.name, 'N/A') as customer_name,
         COALESCE(bm.charge_group, ic."customerType", 'Unknown') as charge_group,
         COALESCE(b.branch_id, bm.branch_id, ic.branch_id) as branch_id,
@@ -287,6 +303,10 @@ export async function getGLSummaryReportAction(params: {
     let totalGrossBilled = 0;
     let totalNetRevenue = 0;
     let totalVat = 0;
+    let totalPaidAmount = 0;
+    let totalUnpaidAmount = 0;
+    let paidCount = 0;
+    let unpaidCount = 0;
     let totalAnomalies = 0;
     let totalCleanBills = 0;
 
@@ -297,6 +317,11 @@ export async function getGLSummaryReportAction(params: {
       const rawPeriod = isYearly ? billYear : rawMonth;
       const rawBranchName = b.branch_name || 'Addis Ababa';
       const branchCode = getBranchCode(rawBranchName);
+
+      // Determine payment status
+      // SQL already normalizes payment_status to 'Paid and Reconciled' or 'Unpaid'
+      const payStatus: 'Paid and Reconciled' | 'Unpaid' =
+        String(b.payment_status || '').trim() === 'Paid and Reconciled' ? 'Paid and Reconciled' : 'Unpaid';
 
       // Determine charge group label
       let cGroup = (b.charge_group || '').trim();
@@ -358,12 +383,18 @@ export async function getGLSummaryReportAction(params: {
       else if (!hasConfigGap) totalCleanBills++;
       else totalCleanBills++; // config gaps don't reduce clean count
 
-      // Use thisMonth (THISMONTHBILLAMT) for GL revenue — this is the current-period charge.
-      // TOTALBILLAMOUNT = THISMONTHBILLAMT + OUTSTANDINGAMT (prior-period carryover).
-      // GL revenue should only recognise new charges, not re-post already-recognized outstanding.
+      // Track revenue & collections
       totalGrossBilled += thisMonth;
       totalNetRevenue  += (thisMonth - vat);
       totalVat         += vat;
+
+      if (payStatus === 'Paid and Reconciled') {
+        paidCount++;
+        totalPaidAmount += thisMonth;
+      } else {
+        unpaidCount++;
+        totalUnpaidAmount += thisMonth;
+      }
 
       // Component Matrix Row
       componentMatrixRows.push({
@@ -374,6 +405,7 @@ export async function getGLSummaryReportAction(params: {
         branchName: rawBranchName,
         branchCode,
         chargeGroup: cGroup,
+        paymentStatus: payStatus,
         baseWater: parseFloat(baseWater.toFixed(2)),
         sewerage: parseFloat(sewerage.toFixed(2)),
         sanitation: parseFloat(sanitation.toFixed(2)),
@@ -391,12 +423,12 @@ export async function getGLSummaryReportAction(params: {
         auditStatus: hasAnomaly ? (isMathMismatch || isNegative ? 'Error' : 'Warning') : 'Clean',
       });
 
-      // Helper to add into GL summary map
+      // Helper to add into GL summary map (separated by period, branch, chargeGroup, glCode, and paymentStatus)
       const addGlItem = (code: string, amount: number, vatAmt: number = 0) => {
         if (amount <= 0 && vatAmt <= 0) return;
         if (params.glCode && params.glCode !== 'all' && params.glCode !== code) return;
 
-        const summaryKey = `${periodStr}|${branchCode}|${cGroup}|${code}`;
+        const summaryKey = `${periodStr}|${branchCode}|${cGroup}|${code}|${payStatus}`;
         if (!glSummaryMap[summaryKey]) {
           glSummaryMap[summaryKey] = {
             key: summaryKey,
@@ -409,6 +441,7 @@ export async function getGLSummaryReportAction(params: {
             chargeGroup: cGroup,
             glCode: code,
             glName: GL_NAMES[code] || code,
+            paymentStatus: payStatus,
             count: 0,
             totalAmount: 0,
             vatAmount: 0,
@@ -463,13 +496,19 @@ export async function getGLSummaryReportAction(params: {
         if (bd !== 0) return bd;
         const cg = String(a.chargeGroup || '').localeCompare(String(b.chargeGroup || ''));
         if (cg !== 0) return cg;
-        return String(a.glCode || '').localeCompare(String(b.glCode || ''));
+        const gc = String(a.glCode || '').localeCompare(String(b.glCode || ''));
+        if (gc !== 0) return gc;
+        return String(a.paymentStatus || '').localeCompare(String(b.paymentStatus || ''));
       });
 
     const kpis: GLKPIs = {
       totalGrossBilled: parseFloat(totalGrossBilled.toFixed(2)),
       totalNetRevenue: parseFloat(totalNetRevenue.toFixed(2)),
       totalVat: parseFloat(totalVat.toFixed(2)),
+      totalPaidAmount: parseFloat(totalPaidAmount.toFixed(2)),
+      totalUnpaidAmount: parseFloat(totalUnpaidAmount.toFixed(2)),
+      paidCount,
+      unpaidCount,
       totalAuditedBills: bills.length,
       totalCleanBills,
       totalAnomalies,
@@ -498,6 +537,7 @@ export async function getGLBillsDrillDownAction(params: {
   period?: string;
   chargeGroup?: string;
   glCode?: string;
+  paymentStatus?: string;
   searchTerm?: string;
   auditFilter?: 'all' | 'clean' | 'flagged';
   page?: number;
@@ -514,6 +554,15 @@ export async function getGLBillsDrillDownAction(params: {
     if (auth.lockedBranchId) {
       sqlParams.push(auth.lockedBranchId);
       whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length})`);
+    }
+
+    if (params.paymentStatus && params.paymentStatus !== 'all') {
+      const psLower = params.paymentStatus.toLowerCase();
+      if (psLower === 'unpaid') {
+        whereClauses.push(`((b.payment_status IS NULL OR LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid') AND (b.status IS NULL OR LOWER(TRIM(COALESCE(b.status::text, ''))) != 'paid'))`);
+      } else if (psLower.includes('paid')) {
+        whereClauses.push(`(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid')`);
+      }
     }
 
     if (params.period && params.period !== 'all') {
@@ -563,7 +612,7 @@ export async function getGLBillsDrillDownAction(params: {
         COALESCE(b."TOTALBILLAMOUNT", 0)::numeric as total_bill_amount,
         COALESCE(b."DRACCTNO", '') as dr_acct_no,
         COALESCE(b."CRACCTNO", '') as cr_acct_no,
-        COALESCE(b.payment_status, 'Unpaid') as payment_status,
+        CASE WHEN LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' THEN 'Paid and Reconciled' ELSE 'Unpaid' END as payment_status,
         COALESCE(b."CUSTOMERNAME", bm.name, ic.name, 'N/A') as customer_name,
         COALESCE(bm.charge_group, ic."customerType", 'Unknown') as charge_group,
         COALESCE(b.branch_id, bm.branch_id, ic.branch_id) as branch_id,
@@ -724,6 +773,7 @@ export async function getGLAuditAnomaliesAction(params: {
   periodType?: 'monthly' | 'yearly';
   monthYear?: string;
   year?: string;
+  paymentStatus?: string;
 }) {
   try {
     const auth = await authorizeGLReport();
@@ -747,6 +797,15 @@ export async function getGLAuditAnomaliesAction(params: {
       if (params.monthYear && params.monthYear !== 'all') {
         sqlParams.push(params.monthYear);
         whereClauses.push(`b.month_year = $${sqlParams.length}`);
+      }
+    }
+
+    if (params.paymentStatus && params.paymentStatus !== 'all') {
+      const psLower = params.paymentStatus.toLowerCase();
+      if (psLower === 'unpaid') {
+        whereClauses.push(`((b.payment_status IS NULL OR LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid') AND (b.status IS NULL OR LOWER(TRIM(COALESCE(b.status::text, ''))) != 'paid'))`);
+      } else if (psLower.includes('paid')) {
+        whereClauses.push(`(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid')`);
       }
     }
 

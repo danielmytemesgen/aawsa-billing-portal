@@ -35,15 +35,29 @@ interface GLSummaryTableProps {
 export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [glFilter, setGlFilter] = useState("all");
+  const [paymentFilter, setPaymentFilter] = useState<"all" | "Paid and Reconciled" | "Unpaid">("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(15);
   const [sortField, setSortField] = useState<keyof GLSummaryRow>("totalAmount");
   const [sortAsc, setSortAsc] = useState(false);
 
+  // Counts for pills
+  const paidCount = useMemo(() => rows.filter((r) => r.paymentStatus === "Paid and Reconciled").length, [rows]);
+  const unpaidCount = useMemo(() => rows.filter((r) => r.paymentStatus === "Unpaid").length, [rows]);
+
   // Filtered rows
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
+      // Payment status filter
+      if (paymentFilter !== "all") {
+        if (paymentFilter === "Paid and Reconciled") {
+          if (r.paymentStatus !== "Paid and Reconciled") return false;
+        } else if (r.paymentStatus !== paymentFilter) {
+          return false;
+        }
+      }
+
       // GL code filter
       if (glFilter !== "all" && r.glCode !== glFilter) return false;
 
@@ -61,13 +75,14 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
           r.branchName.toLowerCase().includes(q) ||
           r.chargeGroup.toLowerCase().includes(q) ||
           r.glCode.toLowerCase().includes(q) ||
-          r.glName.toLowerCase().includes(q)
+          r.glName.toLowerCase().includes(q) ||
+          (r.paymentStatus && r.paymentStatus.toLowerCase().includes(q))
         );
       }
 
       return true;
     });
-  }, [rows, glFilter, statusFilter, searchTerm]);
+  }, [rows, glFilter, paymentFilter, statusFilter, searchTerm]);
 
   // Sorted rows
   const sortedRows = useMemo(() => {
@@ -106,11 +121,11 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
   return (
     <div className="space-y-4">
       {/* Controls: Search + Filter Pills */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
-            placeholder="Search GL codes, branches, periods, charge groups..."
+            placeholder="Search GL codes, branches, periods, payment status..."
             value={searchTerm}
             onChange={(e) => {
               setSearchTerm(e.target.value);
@@ -120,48 +135,97 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Button
-            size="sm"
-            variant={glFilter === "all" ? "default" : "outline"}
-            onClick={() => setGlFilter("all")}
-            className="h-8 text-xs rounded-lg px-2.5"
-          >
-            All Codes ({rows.length})
-          </Button>
-          {availableGlCodes.slice(0, 5).map((code) => (
-            <Button
-              key={code}
-              size="sm"
-              variant={glFilter === code ? "default" : "outline"}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Payment Status Segmented Control */}
+          <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
               onClick={() => {
-                setGlFilter(code);
+                setPaymentFilter("all");
                 setPage(0);
               }}
-              className="h-8 text-xs rounded-lg px-2.5 font-mono"
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                paymentFilter === "all"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              {code}
+              All Status ({rows.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentFilter("Paid and Reconciled");
+                setPage(0);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                paymentFilter === "Paid and Reconciled"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "text-emerald-700 hover:text-emerald-900"
+              }`}
+            >
+              Paid and Reconciled ({paidCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentFilter("Unpaid");
+                setPage(0);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                paymentFilter === "Unpaid"
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "text-amber-700 hover:text-amber-900"
+              }`}
+            >
+              Unpaid ({unpaidCount})
+            </button>
+          </div>
+
+          {/* GL Code Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button
+              size="sm"
+              variant={glFilter === "all" ? "default" : "outline"}
+              onClick={() => setGlFilter("all")}
+              className="h-8 text-xs rounded-lg px-2.5"
+            >
+              All Codes
             </Button>
-          ))}
-          {availableGlCodes.length > 5 && (
-            <select
-              value={availableGlCodes.includes(glFilter) ? glFilter : "more"}
-              onChange={(e) => {
-                setGlFilter(e.target.value);
-                setPage(0);
-              }}
-              className="h-8 text-xs rounded-lg border border-slate-200 px-2 bg-white text-slate-700 outline-none"
-            >
-              <option value="more" disabled>
-                More Codes...
-              </option>
-              {availableGlCodes.slice(5).map((code) => (
-                <option key={code} value={code}>
-                  {code}
+            {availableGlCodes.slice(0, 4).map((code) => (
+              <Button
+                key={code}
+                size="sm"
+                variant={glFilter === code ? "default" : "outline"}
+                onClick={() => {
+                  setGlFilter(code);
+                  setPage(0);
+                }}
+                className="h-8 text-xs rounded-lg px-2 font-mono"
+              >
+                {code}
+              </Button>
+            ))}
+            {availableGlCodes.length > 4 && (
+              <select
+                value={availableGlCodes.includes(glFilter) ? glFilter : "more"}
+                onChange={(e) => {
+                  setGlFilter(e.target.value);
+                  setPage(0);
+                }}
+                className="h-8 text-xs rounded-lg border border-slate-200 px-2 bg-white text-slate-700 outline-none"
+              >
+                <option value="more" disabled>
+                  More Codes...
                 </option>
-              ))}
-            </select>
-          )}
+                {availableGlCodes.slice(4).map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
       </div>
 
@@ -192,6 +256,12 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
                 <TableHead className="font-bold text-xs uppercase text-slate-600 cursor-pointer" onClick={() => toggleSort("glCode")}>
                   <div className="flex items-center gap-1">
                     <span>GL Code</span>
+                    <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                  </div>
+                </TableHead>
+                <TableHead className="font-bold text-xs uppercase text-slate-600 cursor-pointer text-center" onClick={() => toggleSort("paymentStatus")}>
+                  <div className="flex items-center justify-center gap-1">
+                    <span>Payment Status</span>
                     <ArrowUpDown className="h-3 w-3 text-slate-400" />
                   </div>
                 </TableHead>
@@ -230,13 +300,13 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={11} className="h-40 text-center text-slate-400">
                     Loading GL ledger records...
                   </TableCell>
                 </TableRow>
               ) : pagedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={11} className="h-40 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center">
                       <FileSpreadsheet className="h-8 w-8 mb-2 opacity-30" />
                       <p className="text-sm font-medium">No GL summary records match the selected filters.</p>
@@ -277,6 +347,17 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
                           {row.glName}
                         </span>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {row.paymentStatus === "Paid and Reconciled" ? (
+                        <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-200 text-[10px] font-bold px-2 py-0.5 whitespace-nowrap">
+                          Paid and Reconciled
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200 text-[10px] font-bold px-2 py-0.5">
+                          Unpaid
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs font-medium text-slate-700">
                       {formatNumber(row.count)}

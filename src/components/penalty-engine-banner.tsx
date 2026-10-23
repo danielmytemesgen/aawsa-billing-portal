@@ -1,20 +1,27 @@
-﻿"use client";
+"use client";
 
 import * as React from "react";
 import { AlertTriangle, Settings } from "lucide-react";
 import { usePenaltyEngineStatus } from "@/hooks/usePenaltyEngineStatus";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 
 /**
  * PenaltyEngineBanner
  *
- * Shows a sticky top-of-page warning banner when the penalty engine is OFF.
- * Renders nothing when the engine is ON - zero visual overhead in normal operation.
- *
- * Placement: admin layout (admin-layout-client.tsx) so it appears on every admin page.
+ * Shows a sticky warning banner when the penalty engine is OFF.
+ * Renders ONLY on the admin Tariff Management page (/admin/tariffs).
+ * Renders nothing when the engine is ON or on other pages — zero visual overhead elsewhere.
  */
 export function PenaltyEngineBanner() {
+  const pathname = usePathname();
   const penaltyEnabled = usePenaltyEngineStatus();
+
+  // Display ONLY in admin's Tariff Management page (/admin/tariffs)
+  const isTariffPage = pathname === "/admin/tariffs" || pathname?.startsWith("/admin/tariffs/");
+  if (!isTariffPage) {
+    return null;
+  }
 
   // Engine is ON — render nothing
   if (penaltyEnabled) return null;

@@ -69,6 +69,7 @@ export function GLBillDrillDownDrawer({
         period: selectedRow.rawPeriod,
         chargeGroup: selectedRow.chargeGroup,
         glCode: selectedRow.glCode,
+        paymentStatus: selectedRow.paymentStatus,
         searchTerm: searchTerm.trim() || undefined,
         auditFilter,
         page,
@@ -151,19 +152,28 @@ export function GLBillDrillDownDrawer({
         <div className="p-6 border-b border-slate-200 bg-gradient-to-r from-slate-900 to-indigo-950 text-white shrink-0">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 mb-1.5">
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                 <span className="font-mono text-xs px-2.5 py-0.5 rounded-full bg-white/20 font-bold tracking-wider">
                   GL AUDIT DRILL-DOWN
                 </span>
                 <Badge variant="outline" className="border-indigo-400 text-indigo-200 text-xs font-mono">
                   {selectedRow.glCode} · {selectedRow.glName}
                 </Badge>
+                {selectedRow.paymentStatus.toLowerCase().includes("paid") ? (
+                  <Badge className="bg-emerald-500 text-white border-0 text-xs font-bold px-2 py-0.5 whitespace-nowrap">
+                    Paid and Reconciled
+                  </Badge>
+                ) : (
+                  <Badge className="bg-amber-500 text-white border-0 text-xs font-bold px-2 py-0.5">
+                    Unpaid
+                  </Badge>
+                )}
               </div>
               <h2 className="text-xl font-black tracking-tight">
                 {selectedRow.chargeGroup} ({selectedRow.branchName} — {selectedRow.period})
               </h2>
               <p className="text-xs text-slate-300 mt-1">
-                Displaying individual customer bills composing the {formatNumber(selectedRow.totalAmount)} ETB General Ledger balance.
+                Displaying individual customer bills ({selectedRow.paymentStatus.toLowerCase()}) composing the {formatNumber(selectedRow.totalAmount)} ETB General Ledger balance.
               </p>
             </div>
 

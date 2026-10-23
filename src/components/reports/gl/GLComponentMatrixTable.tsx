@@ -26,23 +26,37 @@ interface GLComponentMatrixTableProps {
 
 export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState<"all" | "Paid and Reconciled" | "Unpaid">("all");
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(15);
   const [sortField, setSortField] = useState<keyof GLComponentMatrixRow>("totalAmount");
   const [sortAsc, setSortAsc] = useState(false);
 
+  const paidCount = useMemo(() => rows.filter((r) => r.paymentStatus === "Paid and Reconciled").length, [rows]);
+  const unpaidCount = useMemo(() => rows.filter((r) => r.paymentStatus === "Unpaid").length, [rows]);
+
   const filteredRows = useMemo(() => {
-    if (!searchTerm.trim()) return rows;
-    const q = searchTerm.toLowerCase();
-    return rows.filter(
-      (r) =>
+    return rows.filter((r) => {
+      if (paymentFilter !== "all") {
+        if (paymentFilter === "Paid and Reconciled") {
+          if (r.paymentStatus !== "Paid and Reconciled") return false;
+        } else if (r.paymentStatus !== paymentFilter) {
+          return false;
+        }
+      }
+
+      if (!searchTerm.trim()) return true;
+      const q = searchTerm.toLowerCase();
+      return (
         r.period.toLowerCase().includes(q) ||
         r.customerKey.toLowerCase().includes(q) ||
         r.customerName.toLowerCase().includes(q) ||
         r.branchName.toLowerCase().includes(q) ||
-        r.chargeGroup.toLowerCase().includes(q)
-    );
-  }, [rows, searchTerm]);
+        r.chargeGroup.toLowerCase().includes(q) ||
+        (r.paymentStatus && r.paymentStatus.toLowerCase().includes(q))
+      );
+    });
+  }, [rows, paymentFilter, searchTerm]);
 
   const sortedRows = useMemo(() => {
     return [...filteredRows].sort((a, b) => {
@@ -79,6 +93,7 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
       "Branch Code":          String(r.branchCode || ""),
       "Branch Name":          String(r.branchName || ""),
       "Charge Group":         String(r.chargeGroup || ""),
+      "Payment Status":       r.paymentStatus === "Paid and Reconciled" ? "Paid and Reconciled" : "Unpaid",
       "Base Water Charge":    r.baseWater ?? 0,
       "Sewerage Charge":      r.sewerage ?? 0,
       "Sanitation Fee":       r.sanitation ?? 0,
@@ -98,20 +113,69 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
 
   return (
     <div className="space-y-4">
-      {/* Search Bar + Export */}
+      {/* Search Bar + Payment Status Filter + Export */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input
-            placeholder="Search customer key, name, branch, period..."
-            value={searchTerm}
-            onChange={(e) => {
-              setSearchTerm(e.target.value);
-              setPage(0);
-            }}
-            className="pl-9 h-9 rounded-xl border-slate-200 text-xs"
-          />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-2xl">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
+              placeholder="Search customer key, name, branch, payment status..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setPage(0);
+              }}
+              className="pl-9 h-9 rounded-xl border-slate-200 text-xs"
+            />
+          </div>
+
+          {/* Payment Status Segmented Filter */}
+          <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200/80 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentFilter("all");
+                setPage(0);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                paymentFilter === "all"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              All ({rows.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentFilter("Paid and Reconciled");
+                setPage(0);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                paymentFilter === "Paid and Reconciled"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "text-emerald-700 hover:text-emerald-900"
+              }`}
+            >
+              Paid and Reconciled ({paidCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentFilter("Unpaid");
+                setPage(0);
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                paymentFilter === "Unpaid"
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "text-amber-700 hover:text-amber-900"
+              }`}
+            >
+              Unpaid ({unpaidCount})
+            </button>
+          </div>
         </div>
+
         <div className="flex items-center gap-3 self-end sm:self-auto">
           <span className="text-xs text-slate-500 font-medium">
             Showing {filteredRows.length} bill component records
@@ -154,6 +218,12 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                     <ArrowUpDown className="h-3 w-3 text-slate-400" />
                   </div>
                 </TableHead>
+                <TableHead className="font-bold text-xs uppercase text-slate-600 cursor-pointer text-center whitespace-nowrap" onClick={() => toggleSort("paymentStatus")}>
+                  <div className="flex items-center justify-center gap-1">
+                    <span>Payment Status</span>
+                    <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                  </div>
+                </TableHead>
                 <TableHead className="font-bold text-xs uppercase text-slate-600 text-right whitespace-nowrap" onClick={() => toggleSort("baseWater")}>
                   Base Water
                 </TableHead>
@@ -192,13 +262,13 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={13} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={14} className="h-40 text-center text-slate-400">
                     Loading component breakdown...
                   </TableCell>
                 </TableRow>
               ) : pagedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={13} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={14} className="h-40 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center">
                       <FileSpreadsheet className="h-8 w-8 mb-2 opacity-30" />
                       <p className="text-sm font-medium">No component breakdown records found.</p>
@@ -225,6 +295,17 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                       <Badge variant="outline" className="text-[10px] bg-slate-50 font-medium">
                         {r.chargeGroup}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-center whitespace-nowrap">
+                      {r.paymentStatus === "Paid and Reconciled" ? (
+                        <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-200 text-[10px] font-bold px-2 py-0.5 whitespace-nowrap">
+                          Paid and Reconciled
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200 text-[10px] font-bold px-2 py-0.5">
+                          Unpaid
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs text-slate-800 font-medium whitespace-nowrap">
                       {formatNumber(r.baseWater)}
