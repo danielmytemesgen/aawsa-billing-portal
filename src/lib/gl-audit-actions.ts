@@ -59,6 +59,8 @@ export interface GLKPIs {
   totalVat: number;
   totalPaidAmount: number;
   totalUnpaidAmount: number;
+  /** Sum of all prior-period arrears carried into each bill (TOTALBILLAMOUNT - THISMONTHBILLAMT) */
+  totalOutstandingCarryover: number;
   paidCount: number;
   unpaidCount: number;
   totalAuditedBills: number;
@@ -281,6 +283,7 @@ export async function getGLSummaryReportAction(params: {
         COALESCE(b."THISMONTHBILLAMT", 0)::numeric as this_month_bill_amt,
         COALESCE(b."OUTSTANDINGAMT", 0)::numeric as outstanding_amt,
         COALESCE(b."TOTALBILLAMOUNT", 0)::numeric as total_bill_amount,
+        COALESCE(b.amount_paid, 0)::numeric as amount_paid,
         COALESCE(b."DRACCTNO", '') as dr_acct_no,
         COALESCE(b."CRACCTNO", '') as cr_acct_no,
         CASE WHEN LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' THEN 'Paid and Reconciled' ELSE 'Unpaid' END as payment_status,
@@ -308,6 +311,7 @@ export async function getGLSummaryReportAction(params: {
     let totalVat = 0;
     let totalPaidAmount = 0;
     let totalUnpaidAmount = 0;
+    let totalOutstandingCarryover = 0;
     let paidCount = 0;
     let unpaidCount = 0;
     let totalAnomalies = 0;
@@ -397,12 +401,20 @@ export async function getGLSummaryReportAction(params: {
       totalNetRevenue  += (thisMonth - vat);
       totalVat         += vat;
 
-      if (payStatus === 'Paid and Reconciled') {
+      // Outstanding carryover = prior-period arrears baked into TOTALBILLAMOUNT
+      const carryover = Math.max(0, total - thisMonth);
+      totalOutstandingCarryover += carryover;
+
+      // Use live amount_paid vs TOTALBILLAMOUNT for accurate paid/unpaid split
+      // (payment_status column can lag behind actual payments between aging syncs)
+      const amountPaid = Number(b.amount_paid || 0);
+      const isPaidBill = total > 0 && amountPaid >= total - 0.01;
+      if (isPaidBill) {
         paidCount++;
-        totalPaidAmount += thisMonth;
+        totalPaidAmount += total;
       } else {
         unpaidCount++;
-        totalUnpaidAmount += thisMonth;
+        totalUnpaidAmount += total;
       }
 
       // Component Matrix Row
@@ -516,6 +528,7 @@ export async function getGLSummaryReportAction(params: {
       totalVat: parseFloat(totalVat.toFixed(2)),
       totalPaidAmount: parseFloat(totalPaidAmount.toFixed(2)),
       totalUnpaidAmount: parseFloat(totalUnpaidAmount.toFixed(2)),
+      totalOutstandingCarryover: parseFloat(totalOutstandingCarryover.toFixed(2)),
       paidCount,
       unpaidCount,
       totalAuditedBills: bills.length,
@@ -620,7 +633,8 @@ export async function getGLBillsDrillDownAction(params: {
         COALESCE(b."PENALTYAMT", 0)::numeric as penalty_amt,
         COALESCE(b.vat_amount, 0)::numeric as vat_amount,
         COALESCE(b."THISMONTHBILLAMT", 0)::numeric as this_month_bill_amt,
-        COALESCE(b."OUTSTANDINGAMT", 0)::numeric as outstanding_amt,
+        -- Compute outstanding live: total owed minus actual payments (not stale OUTSTANDINGAMT)
+        GREATEST(0, COALESCE(b."TOTALBILLAMOUNT",0) - COALESCE(b.amount_paid,0))::numeric as outstanding_amt,
         COALESCE(b."TOTALBILLAMOUNT", 0)::numeric as total_bill_amount,
         COALESCE(b."DRACCTNO", '') as dr_acct_no,
         COALESCE(b."CRACCTNO", '') as cr_acct_no,

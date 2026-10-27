@@ -24,7 +24,7 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
   const isClean = kpis.totalAnomalies === 0;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
       {/* Gross Billed Total */}
       <Card className="rounded-2xl border-slate-200/80 shadow-sm bg-gradient-to-br from-white to-indigo-50/30 overflow-hidden relative group hover:shadow-md transition-shadow">
         <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500" />
@@ -45,6 +45,7 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
             <span className="text-slate-300">·</span>
             <span className="text-amber-700 font-semibold">{formatNumber(kpis.totalUnpaidAmount || 0)} Unpaid</span>
           </div>
+          <p className="text-[10px] text-slate-400 mt-0.5">Total bill amounts incl. arrears</p>
         </CardContent>
       </Card>
 
@@ -139,6 +140,27 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
           </div>
           <p className="text-xs text-slate-500 mt-2 font-medium">
             {isClean ? "No arithmetic or account mismatches" : "Action required on flagged items"}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Total Arrears Carryover */}
+      <Card className="rounded-2xl border-slate-200/80 shadow-sm bg-gradient-to-br from-white to-rose-50/30 overflow-hidden relative group hover:shadow-md transition-shadow">
+        <div className="absolute top-0 left-0 w-full h-1 bg-rose-500" />
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              Arrears Carried
+            </span>
+            <div className="h-8 w-8 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shadow-sm">
+              <Scale className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 tracking-tight">
+            {isLoading ? "—" : `${formatNumber(kpis.totalOutstandingCarryover ?? 0)} ETB`}
+          </div>
+          <p className="text-xs text-slate-500 mt-1 font-medium">
+            Prior-period debt included in bills
           </p>
         </CardContent>
       </Card>

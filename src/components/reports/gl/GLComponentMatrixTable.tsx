@@ -104,6 +104,7 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
       "VAT Amount":           r.vat ?? 0,
       "Total Excl VAT":       r.totalExclVat ?? 0,
       "Total Amount":         r.totalAmount ?? 0,
+      "Outstanding Carryover": r.outstandingCarryover ?? 0,
       "Audit Status":         String(r.auditStatus || "Clean"),
     }));
     const headers = Object.keys(exportData[0]);
@@ -254,6 +255,12 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                     <ArrowUpDown className="h-3 w-3 text-slate-400" />
                   </div>
                 </TableHead>
+                <TableHead className="font-bold text-xs uppercase text-slate-600 text-right whitespace-nowrap" onClick={() => toggleSort("outstandingCarryover")}>
+                  <div className="flex items-center justify-end gap-1" title="Prior-period arrears carried forward into this bill">
+                    <span>Arrears</span>
+                    <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                  </div>
+                </TableHead>
                 <TableHead className="font-bold text-xs uppercase text-slate-600 text-center whitespace-nowrap">
                   Audit
                 </TableHead>
@@ -262,13 +269,13 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={14} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={15} className="h-40 text-center text-slate-400">
                     Loading component breakdown...
                   </TableCell>
                 </TableRow>
               ) : pagedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={14} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={15} className="h-40 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center">
                       <FileSpreadsheet className="h-8 w-8 mb-2 opacity-30" />
                       <p className="text-sm font-medium">No component breakdown records found.</p>
@@ -333,6 +340,11 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs font-bold text-slate-900 whitespace-nowrap">
                       {formatNumber(r.totalAmount)}
+                    </TableCell>
+                    <TableCell className={`text-right font-mono text-xs whitespace-nowrap font-semibold ${
+                      (r.outstandingCarryover ?? 0) > 0.01 ? 'text-rose-600' : 'text-slate-400'
+                    }`} title="Prior-period arrears carried into this bill">
+                      {(r.outstandingCarryover ?? 0) > 0.01 ? formatNumber(r.outstandingCarryover) : '—'}
                     </TableCell>
                     <TableCell className="text-center whitespace-nowrap">
                       {r.auditStatus === "Clean" ? (

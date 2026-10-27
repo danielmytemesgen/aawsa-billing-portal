@@ -67,6 +67,7 @@ export default function GLReportsAuditPage() {
     totalVat: 0,
     totalPaidAmount: 0,
     totalUnpaidAmount: 0,
+    totalOutstandingCarryover: 0,
     paidCount: 0,
     unpaidCount: 0,
     totalAuditedBills: 0,
