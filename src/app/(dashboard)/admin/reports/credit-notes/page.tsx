@@ -161,8 +161,9 @@ export default function CreditNoteReportPage() {
   // Fetch KPIs
   const fetchKPIs = useCallback(async () => {
     try {
+      const effBranch = activeTab === "meters" ? meterBranchId : selectedBranchId;
       const res = await getCreditNotesKPIsAction({
-        branchId: selectedBranchId,
+        branchId: effBranch,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
       });
@@ -172,7 +173,7 @@ export default function CreditNoteReportPage() {
     } catch (err) {
       console.error("Failed to fetch credit note KPIs:", err);
     }
-  }, [selectedBranchId, startDate, endDate]);
+  }, [activeTab, meterBranchId, selectedBranchId, startDate, endDate]);
 
   // Fetch Transactions
   const fetchTransactions = useCallback(async () => {
@@ -395,35 +396,83 @@ export default function CreditNoteReportPage() {
       </div>
 
       {/* ── KPI Summary Cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         {/* Total Active Deposit Balance */}
         <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-50/80 via-white to-emerald-50/20 dark:from-emerald-950/20 dark:via-transparent dark:to-emerald-950/10 shadow-sm">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between text-muted-foreground text-xs font-semibold uppercase tracking-wider">
-              <span>Total Active Deposit Balance</span>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between text-muted-foreground text-[11px] font-semibold uppercase tracking-wider">
+              <span>Active Deposit</span>
               <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
             </div>
-            <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400 mt-3 tabular-nums">
+            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-2 tabular-nums">
               {formatETB(kpis?.totalActiveBalance)}
             </div>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Live balance held as credit deposit across all bulk meters
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {kpis?.metersWithActiveBalanceCount?.toLocaleString() ?? 0} bulk meters holding deposit
             </p>
           </CardContent>
         </Card>
 
-        {/* Meters with Active Balance */}
+        {/* Total Credit Created */}
         <Card className="border-slate-200 dark:border-slate-800 shadow-sm bg-gradient-to-br from-slate-50/60 via-white to-transparent dark:from-slate-900/20">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between text-muted-foreground text-xs font-semibold uppercase tracking-wider">
-              <span>Meters with Active Deposit</span>
-              <Building2 className="h-4 w-4 text-slate-500" />
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between text-muted-foreground text-[11px] font-semibold uppercase tracking-wider">
+              <span>Total Deposits Added</span>
+              <TrendingUp className="h-4 w-4 text-emerald-500" />
             </div>
-            <div className="text-3xl font-bold text-slate-900 dark:text-slate-100 mt-3 tabular-nums">
-              {kpis?.metersWithActiveBalanceCount?.toLocaleString() ?? 0}
+            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-2 tabular-nums">
+              {formatETB(kpis?.totalCreditCreated)}
             </div>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Bulk meters currently holding a deposit credit balance
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Authorized manual credit deposits
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Total Credit Applied */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm bg-gradient-to-br from-slate-50/60 via-white to-transparent dark:from-slate-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between text-muted-foreground text-[11px] font-semibold uppercase tracking-wider">
+              <span>Total Offsets Applied</span>
+              <TrendingDown className="h-4 w-4 text-blue-500" />
+            </div>
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-2 tabular-nums">
+              {formatETB(kpis?.totalCreditApplied)}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Credit offsets deducted from bill debts
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Total Credit Voided */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm bg-gradient-to-br from-slate-50/60 via-white to-transparent dark:from-slate-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between text-muted-foreground text-[11px] font-semibold uppercase tracking-wider">
+              <span>Total Voided (Reversed)</span>
+              <AlertCircle className="h-4 w-4 text-rose-500" />
+            </div>
+            <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-2 tabular-nums">
+              {formatETB(kpis?.totalCreditVoided)}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Cancelled / voided credit operations
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Total Transactions */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm bg-gradient-to-br from-slate-50/60 via-white to-transparent dark:from-slate-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between text-muted-foreground text-[11px] font-semibold uppercase tracking-wider">
+              <span>Ledger Events</span>
+              <Layers className="h-4 w-4 text-slate-500" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-2 tabular-nums">
+              {kpis?.totalTransactionsCount?.toLocaleString() ?? 0}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Total recorded credit actions
             </p>
           </CardContent>
         </Card>

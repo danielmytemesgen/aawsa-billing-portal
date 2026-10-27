@@ -42,10 +42,8 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
           </div>
           <div className="flex items-center gap-1.5 mt-1 text-[11px] font-medium">
             <span className="text-emerald-700 font-semibold">{formatNumber(kpis.totalPaidAmount || 0)} Paid &amp; Reconciled</span>
-            <span className="text-slate-300">·</span>
-            <span className="text-amber-700 font-semibold">{formatNumber(kpis.totalUnpaidAmount || 0)} Unpaid</span>
           </div>
-          <p className="text-[10px] text-slate-400 mt-0.5">Total bill amounts incl. arrears</p>
+          <p className="text-[10px] text-slate-400 mt-0.5">Recognized revenue incl. arrears</p>
         </CardContent>
       </Card>
 
@@ -108,8 +106,6 @@ export function GLKPICards({ kpis, isLoading }: GLKPICardsProps) {
           </div>
           <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 font-medium flex-wrap">
             <span className="text-emerald-600 font-semibold">{kpis.paidCount || 0} paid &amp; reconciled</span>
-            <span>·</span>
-            <span className="text-amber-600 font-semibold">{kpis.unpaidCount || 0} unpaid</span>
             <span>·</span>
             <span className={kpis.totalAnomalies > 0 ? "text-red-500 font-semibold" : "text-slate-400"}>
               {kpis.totalAnomalies} flagged

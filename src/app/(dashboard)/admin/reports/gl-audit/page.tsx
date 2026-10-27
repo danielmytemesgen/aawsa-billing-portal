@@ -27,6 +27,7 @@ import {
 import {
   getGLSummaryReportAction,
   getGLAuditAnomaliesAction,
+  getAvailableGLPeriodsAction,
   getAvailableGLYearsAction,
   type GLSummaryRow,
   type GLComponentMatrixRow,
@@ -49,12 +50,15 @@ export default function GLReportsAuditPage() {
   const [branches, setBranches] = useState<any[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>("all");
   const [periodType, setPeriodType] = useState<"monthly" | "yearly">("monthly");
-  const [selectedMonthYear, setSelectedMonthYear] = useState<string>("all");
+  const [latestMonth, setLatestMonth] = useState<string>("");
+  const [dbMonths, setDbMonths] = useState<string[]>([]);
+  const [isPeriodInitialized, setIsPeriodInitialized] = useState<boolean>(false);
+  const [selectedMonthYear, setSelectedMonthYear] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<string>("all");
   const [years, setYears] = useState<string[]>([]);
   const [selectedChargeGroup, setSelectedChargeGroup] = useState<string>("all");
   const [selectedGlCode, setSelectedGlCode] = useState<string>("all");
-  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<string>("all");
+  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<string>("Paid and Reconciled");
   const [activeTab, setActiveTab] = useState<string>("summary");
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -83,28 +87,56 @@ export default function GLReportsAuditPage() {
   const [inspectRow, setInspectRow] = useState<GLSummaryRow | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
 
-  // Month-year options
+  // Month-year options (combines generator with database distinct billing periods)
   const monthOptions = React.useMemo(() => {
-    return getAvailableMonthYearOptions();
-  }, []);
+    const baseOptions = getAvailableMonthYearOptions();
+    const existingValues = new Set(baseOptions.map((o) => o.value));
+    const extras = dbMonths
+      .filter((m) => !existingValues.has(m) && m !== "all")
+      .map((m) => {
+        const [yr, mo] = m.split("-").map(Number);
+        const d = new Date(yr, mo - 1, 1);
+        const label = isNaN(d.getTime())
+          ? m
+          : d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+        return { value: m, label };
+      });
+    return [...baseOptions, ...extras];
+  }, [dbMonths]);
 
-  // Fetch branches and available years on mount
+  // Fetch branches, available years, and default to the latest month on mount
   useEffect(() => {
-    getAllBranchesAction()
-      .then((res: any) => {
-        if (res?.data) setBranches(res.data);
+    let isMounted = true;
+    Promise.all([
+      getAllBranchesAction(),
+      getAvailableGLPeriodsAction(),
+    ])
+      .then(([branchRes, periodRes]: [any, any]) => {
+        if (!isMounted) return;
+        if (branchRes?.data) setBranches(branchRes.data);
+        if (periodRes?.years) setYears(periodRes.years);
+        if (periodRes?.availableMonths) setDbMonths(periodRes.availableMonths);
+        if (periodRes?.latestMonth) {
+          setLatestMonth(periodRes.latestMonth);
+          setSelectedMonthYear(periodRes.latestMonth);
+        } else {
+          setSelectedMonthYear("all");
+        }
+        setIsPeriodInitialized(true);
       })
-      .catch((err) => console.error("Failed to load branches:", err));
+      .catch((err) => {
+        console.error("Failed to load initial GL period setup:", err);
+        setIsPeriodInitialized(true);
+      });
 
-    getAvailableGLYearsAction()
-      .then((res: any) => {
-        if (res?.years) setYears(res.years);
-      })
-      .catch((err) => console.error("Failed to load available GL years:", err));
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Main data loader
   const loadGLData = useCallback(async () => {
+    if (!isPeriodInitialized) return;
     setIsLoading(true);
     try {
       const [summaryRes, anomaliesRes] = await Promise.all([
@@ -151,11 +183,23 @@ export default function GLReportsAuditPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBranchId, periodType, selectedMonthYear, selectedYear, selectedChargeGroup, selectedGlCode, selectedPaymentStatus, toast]);
+  }, [
+    isPeriodInitialized,
+    selectedBranchId,
+    periodType,
+    selectedMonthYear,
+    selectedYear,
+    selectedChargeGroup,
+    selectedGlCode,
+    selectedPaymentStatus,
+    toast,
+  ]);
 
   useEffect(() => {
-    loadGLData();
-  }, [loadGLData]);
+    if (isPeriodInitialized) {
+      loadGLData();
+    }
+  }, [isPeriodInitialized, loadGLData]);
 
   // Handle drill-down
   const handleInspectRow = (row: GLSummaryRow) => {
@@ -181,6 +225,8 @@ export default function GLReportsAuditPage() {
         "GL Code":              String(r.glCode      || ""),
         "GL Description":       String(r.glName      || ""),
         "Bills Count":          r.count      ?? 0,
+        "Current Bill (ETB)":   r.currentAmount ?? 0,
+        "Arrears Carried (ETB)": r.arrearsAmount ?? 0,
         "Net Amount (Excl VAT)": r.withoutVat ?? 0,
         "VAT Amount":           r.vatAmount  ?? 0,
         "Total Billed Amount":  r.totalAmount ?? 0,
@@ -217,8 +263,10 @@ export default function GLReportsAuditPage() {
         "PAYMENT_STATUS": String(r.paymentStatus || ""),
         "GL_CODE":       String(r.glCode      || ""),
         "GL_DESC":       String(r.glName      || ""),
-        "COUNT":         r.count       ?? 0,
-        "WITHOUT_VAT":   r.withoutVat  ?? 0,
+        "COUNT":           r.count       ?? 0,
+        "CURRENT_BILL":    r.currentAmount ?? 0,
+        "ARREARS_CARRIED": r.arrearsAmount ?? 0,
+        "WITHOUT_VAT":     r.withoutVat  ?? 0,
         "VAT_AMOUNT":    r.vatAmount   ?? 0,
         "TOTAL_AMOUNT":  r.totalAmount ?? 0,
         "AUDIT_STATUS":  String(r.auditStatus || "Clean"),
@@ -313,9 +361,16 @@ export default function GLReportsAuditPage() {
             <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white">
               GL Financial &amp; Audit Report
             </h1>
-            <p className="mt-2 text-indigo-200 text-sm max-w-2xl leading-relaxed">
-              Official General Ledger accounting summary, revenue reconciliation by branch and charge group, with bill-level audit drill-down and anomaly verification.
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-indigo-200 text-sm max-w-2xl leading-relaxed">
+                Official General Ledger accounting summary, revenue reconciliation by branch and charge group, with bill-level audit drill-down and anomaly verification.
+              </p>
+              {periodType === "monthly" && selectedMonthYear === latestMonth && latestMonth && (
+                <Badge className="bg-emerald-500/20 text-emerald-200 border-emerald-400/40 text-[11px] font-bold px-2 py-0.5">
+                  ● Defaulting to Latest Month ({latestMonth})
+                </Badge>
+              )}
+            </div>
           </div>
 
           {/* Action Button Bar */}
@@ -443,9 +498,26 @@ export default function GLReportsAuditPage() {
 
             {/* Period Filter (Monthly vs Yearly) */}
             <div>
-              <label className="text-xs font-semibold text-slate-600 mb-1 block">
-                {periodType === "yearly" ? "Fiscal / Calendar Year" : "Billing Period (Month)"}
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-600 block">
+                  {periodType === "yearly" ? "Fiscal / Calendar Year" : "Billing Period (Month)"}
+                </label>
+                {periodType === "monthly" && latestMonth && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMonthYear(latestMonth)}
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-all flex items-center gap-1 ${
+                      selectedMonthYear === latestMonth
+                        ? "bg-indigo-100 text-indigo-700 border border-indigo-200"
+                        : "text-slate-400 hover:text-indigo-600 hover:bg-slate-100"
+                    }`}
+                    title="Default to latest month data"
+                  >
+                    <span>Latest:</span>
+                    <span className="font-mono">{latestMonth}</span>
+                  </button>
+                )}
+              </div>
               {periodType === "yearly" ? (
                 <Select value={selectedYear} onValueChange={setSelectedYear}>
                   <SelectTrigger className="h-9 rounded-xl border-slate-200 text-xs font-medium">
@@ -461,17 +533,29 @@ export default function GLReportsAuditPage() {
                   </SelectContent>
                 </Select>
               ) : (
-                <Select value={selectedMonthYear} onValueChange={setSelectedMonthYear}>
+                <Select value={selectedMonthYear || "all"} onValueChange={setSelectedMonthYear}>
                   <SelectTrigger className="h-9 rounded-xl border-slate-200 text-xs">
-                    <SelectValue placeholder="All Periods" />
+                    <SelectValue placeholder="Select Period" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Available Periods</SelectItem>
-                    {monthOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="all">All Available Periods (Consolidated)</SelectItem>
+                    {monthOptions
+                      .filter((opt) => opt.value !== "all")
+                      .map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          <div className="flex items-center justify-between gap-3 w-full">
+                            <span>{opt.label}</span>
+                            {opt.value === latestMonth && (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200 px-1 py-0 font-bold ml-2"
+                              >
+                                Latest
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               )}
@@ -497,16 +581,15 @@ export default function GLReportsAuditPage() {
             {/* Payment Status Filter */}
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Payment Status</label>
-              <Select value={selectedPaymentStatus} onValueChange={setSelectedPaymentStatus}>
-                <SelectTrigger className="h-9 rounded-xl border-slate-200 text-xs">
-                  <SelectValue placeholder="All Statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses (Consolidated)</SelectItem>
-                  <SelectItem value="Paid and Reconciled">Paid and Reconciled</SelectItem>
-                  <SelectItem value="Unpaid">Unpaid Only</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="h-9 px-3 rounded-xl border border-emerald-200 bg-emerald-50/70 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                  <span className="text-xs font-semibold text-emerald-800">Paid and Reconciled</span>
+                </div>
+                <Badge variant="outline" className="text-[10px] bg-white text-emerald-700 border-emerald-200 font-bold px-1.5 py-0">
+                  GL Recognized
+                </Badge>
+              </div>
             </div>
 
             {/* GL Code Filter */}

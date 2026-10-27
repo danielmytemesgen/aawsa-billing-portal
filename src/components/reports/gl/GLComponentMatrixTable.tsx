@@ -130,50 +130,10 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
             />
           </div>
 
-          {/* Payment Status Segmented Filter */}
-          <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200/80 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentFilter("all");
-                setPage(0);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                paymentFilter === "all"
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              All ({rows.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentFilter("Paid and Reconciled");
-                setPage(0);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                paymentFilter === "Paid and Reconciled"
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "text-emerald-700 hover:text-emerald-900"
-              }`}
-            >
-              Paid and Reconciled ({paidCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentFilter("Unpaid");
-                setPage(0);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                paymentFilter === "Unpaid"
-                  ? "bg-amber-600 text-white shadow-sm"
-                  : "text-amber-700 hover:text-amber-900"
-              }`}
-            >
-              Unpaid ({unpaidCount})
-            </button>
+          {/* Payment Status Indicator */}
+          <div className="flex items-center px-3 py-1 bg-emerald-50 rounded-xl border border-emerald-200/80 gap-2 shrink-0">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <span className="text-xs font-semibold text-emerald-800">Paid &amp; Reconciled ({filteredRows.length})</span>
           </div>
         </div>
 

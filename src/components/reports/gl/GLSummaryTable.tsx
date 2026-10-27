@@ -23,8 +23,10 @@ import {
   AlertCircle,
   Eye,
   FileSpreadsheet,
+  Download,
 } from "lucide-react";
 import type { GLSummaryRow } from "@/lib/gl-audit-actions";
+import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 
 interface GLSummaryTableProps {
   rows: GLSummaryRow[];
@@ -118,6 +120,28 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
     return Array.from(new Set(rows.map((r) => r.glCode))).sort();
   }, [rows]);
 
+  const handleExport = () => {
+    if (filteredRows.length === 0) return;
+    const exportData = filteredRows.map((r) => ({
+      "Period":                String(r.rawPeriod || r.period || ""),
+      "Branch":                String(r.branchName || r.branch || ""),
+      "Charge Group":          String(r.chargeGroup || ""),
+      "GL Code":               String(r.glCode || ""),
+      "GL Description":        String(r.glName || ""),
+      "Payment Status":        String(r.paymentStatus || ""),
+      "Bills Count":           r.count ?? 0,
+      "Current Bill (ETB)":    r.currentAmount ?? 0,
+      "Arrears Carried (ETB)": r.arrearsAmount ?? 0,
+      "Net Excl. VAT (ETB)":   r.withoutVat ?? 0,
+      "VAT (15%)":             r.vatAmount ?? 0,
+      "Total Amount (ETB)":    r.totalAmount ?? 0,
+      "Audit Status":          String(r.auditStatus || "Clean"),
+    }));
+    const headers = Object.keys(exportData[0]);
+    const blob = arrayToXlsxBlob(exportData, headers, "GL Code Summary");
+    downloadFile(blob, `GL_Code_Summary_${new Date().toISOString().split("T")[0]}.xlsx`);
+  };
+
   return (
     <div className="space-y-4">
       {/* Controls: Search + Filter Pills */}
@@ -136,50 +160,10 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Payment Status Segmented Control */}
-          <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200/80">
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentFilter("all");
-                setPage(0);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                paymentFilter === "all"
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              All Status ({rows.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentFilter("Paid and Reconciled");
-                setPage(0);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                paymentFilter === "Paid and Reconciled"
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "text-emerald-700 hover:text-emerald-900"
-              }`}
-            >
-              Paid and Reconciled ({paidCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentFilter("Unpaid");
-                setPage(0);
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                paymentFilter === "Unpaid"
-                  ? "bg-amber-600 text-white shadow-sm"
-                  : "text-amber-700 hover:text-amber-900"
-              }`}
-            >
-              Unpaid ({unpaidCount})
-            </button>
+          {/* Payment Status Indicator */}
+          <div className="flex items-center px-3 py-1 bg-emerald-50 rounded-xl border border-emerald-200/80 gap-2 shrink-0">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-semibold text-emerald-800">Paid &amp; Reconciled ({filteredRows.length})</span>
           </div>
 
           {/* GL Code Filter Pills */}
@@ -226,6 +210,18 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
               </select>
             )}
           </div>
+
+          {/* Export Button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExport}
+            disabled={filteredRows.length === 0}
+            className="h-8 text-xs rounded-xl border-slate-200 text-slate-700 hover:bg-slate-50 gap-1.5 shrink-0"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Export XLSX</span>
+          </Button>
         </div>
       </div>
 
@@ -271,6 +267,18 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
                     <ArrowUpDown className="h-3 w-3 text-slate-400" />
                   </div>
                 </TableHead>
+                <TableHead className="font-bold text-xs uppercase text-slate-600 cursor-pointer text-right" onClick={() => toggleSort("currentAmount")}>
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Current Bill</span>
+                    <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                  </div>
+                </TableHead>
+                <TableHead className="font-bold text-xs uppercase text-rose-700 cursor-pointer text-right" onClick={() => toggleSort("arrearsAmount")}>
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Arrears Carried</span>
+                    <ArrowUpDown className="h-3 w-3 text-rose-400" />
+                  </div>
+                </TableHead>
                 <TableHead className="font-bold text-xs uppercase text-slate-600 cursor-pointer text-right" onClick={() => toggleSort("withoutVat")}>
                   <div className="flex items-center justify-end gap-1">
                     <span>Net Excl. VAT</span>
@@ -300,13 +308,13 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={13} className="h-40 text-center text-slate-400">
                     Loading GL ledger records...
                   </TableCell>
                 </TableRow>
               ) : pagedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-40 text-center text-slate-400">
+                  <TableCell colSpan={13} className="h-40 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center">
                       <FileSpreadsheet className="h-8 w-8 mb-2 opacity-30" />
                       <p className="text-sm font-medium">No GL summary records match the selected filters.</p>
@@ -361,6 +369,12 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs font-medium text-slate-700">
                       {formatNumber(row.count)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs text-slate-700">
+                      {formatNumber(row.currentAmount)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs text-rose-700 font-semibold">
+                      {row.arrearsAmount > 0 ? formatNumber(row.arrearsAmount) : "—"}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs text-slate-600">
                       {formatNumber(row.withoutVat)}

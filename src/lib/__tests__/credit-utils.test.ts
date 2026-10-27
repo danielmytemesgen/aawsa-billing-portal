@@ -9,22 +9,22 @@ describe('roundMoney', () => {
     });
 });
 
-describe('computeCreditForBill — overpayment becomes a deposit', () => {
-    it('creates a credit from the excess when payment exceeds the debt', () => {
+describe('computeCreditForBill — overpayment does not auto-create deposits', () => {
+    it('does not create credit from excess when payment exceeds the debt', () => {
         const r = computeCreditForBill({ debtForNextMonth: 500, amtPaid: 1000, creditBalance: 0 });
-        expect(r.creditCreated).toBe(500);
+        expect(r.creditCreated).toBe(0);
         expect(r.creditCreatedAdjustment).toBe(0);
         expect(r.creditVoided).toBe(0);
         expect(r.creditApplied).toBe(0);
         expect(r.carriedForwardUnpaid).toBe(0);
-        expect(r.newCreditBalance).toBe(500);
+        expect(r.newCreditBalance).toBe(0);
     });
 
-    it('is idempotent: re-running with the existing created row produces no new events', () => {
+    it('preserves created deposit balance and never auto-voids manual credits', () => {
         const r = computeCreditForBill({
             debtForNextMonth: 500,
             amtPaid: 1000,
-            creditBalance: 500, // already includes the earlier credit
+            creditBalance: 500,
             existingCreated: { id: 'c1', amount: 500 },
         });
         expect(r.creditCreated).toBe(0);
@@ -34,29 +34,18 @@ describe('computeCreditForBill — overpayment becomes a deposit', () => {
         expect(r.carriedForwardUnpaid).toBe(0);
     });
 
-    it('adjusts an existing created row when the excess changes (bill correction)', () => {
-        // Old excess was 500; the bill now generates an excess of 600.
-        const r = computeCreditForBill({
-            debtForNextMonth: 400,
-            amtPaid: 1000,
-            creditBalance: 500,
-            existingCreated: { id: 'c1', amount: 500 },
-        });
-        expect(r.creditCreated).toBe(0);
-        expect(r.creditCreatedAdjustment).toBe(100);
-        expect(r.newCreditBalance).toBe(600);
-    });
-
-    it('voids an existing created row when the bill no longer overpays', () => {
+    it('does not auto-void created deposit when bill does not overpay', () => {
         const r = computeCreditForBill({
             debtForNextMonth: 300,
-            amtPaid: 200, // no longer overpays
+            amtPaid: 200,
             creditBalance: 500,
             existingCreated: { id: 'c1', amount: 500 },
         });
-        expect(r.creditVoided).toBe(500);
-        expect(r.newCreditBalance).toBe(0);
-        expect(r.carriedForwardUnpaid).toBe(100); // 300 - 200
+        expect(r.creditVoided).toBe(0);
+        // It applies the 100 unpaid from the 500 credit balance!
+        expect(r.creditApplied).toBe(100);
+        expect(r.newCreditBalance).toBe(400);
+        expect(r.carriedForwardUnpaid).toBe(0);
     });
 
     it('ignores sub-cent excesses (rounding tolerance)', () => {

@@ -5247,14 +5247,6 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     } catch (linkErr) {
         console.error('[CSV] Credit source-payment linking failed:', linkErr);
     }
-    if (affectedBulkKeys.size > 0) {
-        try {
-            const backfilled = await dbLinkCreditsToOverpaidBills([...affectedBulkKeys]);
-            if (backfilled > 0) console.log(`[CSV] âœ… Backfilled source bill on ${backfilled} credit(s)`);
-        } catch (backfillErr) {
-            console.error('[CSV] Credit source-bill backfill failed:', backfillErr);
-        }
-    }
 
     return { success: true, updatedCount, errors };
 };
@@ -5786,7 +5778,6 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     //     legacy clamp behaviour until the schema is extended.
     let creditEnabled = isBulk;
     let creditBalance = 0;
-    let createdByBill: Map<string, { id: string; amount: number }> = new Map();
     let appliedByBill: Map<string, { id: string; amount: number }> = new Map();
 
     if (creditEnabled) {
@@ -5806,7 +5797,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         );
         const ledgerRows = client ? ledgerRes.rows : ledgerRes;
 
-        // A created/applied row is voided when a 'voided' row references it.
+        // An applied row is voided when a 'voided' row references it.
         const voidedIds = new Set<string>();
         for (const row of ledgerRows) {
             if (row.event_type === 'voided' && row.voided_ledger_id) {
@@ -5814,9 +5805,6 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
             }
         }
         for (const row of ledgerRows) {
-            if (row.event_type === 'created' && row.source_bill_id && !voidedIds.has(row.id)) {
-                createdByBill.set(String(row.source_bill_id), { id: row.id, amount: Number(row.amount || 0) });
-            }
             if (row.event_type === 'applied' && row.source_bill_id && !voidedIds.has(row.id)) {
                 appliedByBill.set(String(row.source_bill_id), { id: row.id, amount: Number(row.amount || 0) });
             }
@@ -5825,18 +5813,6 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
 
     if (bills.length === 0) {
         if (isBulk) {
-            // Void auto-created credits whose bill no longer exists; manual deposits survive.
-            if (creditEnabled) {
-                for (const [billId, created] of createdByBill) {
-                    creditBalance = Math.max(0, roundMoney(creditBalance - created.amount));
-                    await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'voided', created.amount, 'bill_removed', null, null, created.id, creditBalance, null);
-                    void billId;
-                }
-                await qFunc(
-                    `UPDATE bulk_meters SET "creditBalance" = $1 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2))`,
-                    [roundMoney(creditBalance), customerKey]
-                );
-            }
             await qFunc(
                 `UPDATE bulk_meters SET "outStandingbill" = 0, "paymentStatus" = 'Paid' WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
                 [customerKey]
@@ -5969,42 +5945,24 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
 
         const amtPaid = isVoided ? 0 : Number(bill.amount_paid || bill.amountPaid || bill.AMOUNTPAID || 0);
 
-        // Credit-aware carry-forward (bulk meters). Overpayments become a deposit
-        // (credit_ledger 'created') that discounts future bills until consumed.
+        // Credit-aware carry-forward (bulk meters). Credits are ONLY applied to bills
+        // when a manual operator deposit exists (credit_ledger 'created').
+        // Overpayments do NOT auto-generate credits — excess payment simply satisfies the debt.
         const debtForNextMonth = d30_bucket + d30_60_bucket + totalD60AndLegacy + currentMonthlyCharge + penalty;
         let creditApplied = 0;
         let creditResult: ComputeCreditForBillOutput | null = null;
 
         if (creditEnabled) {
-            const existingCreated = createdByBill.get(String(bill.id)) ?? null;
             const existingApplied = appliedByBill.get(String(bill.id)) ?? null;
 
             creditResult = computeCreditForBill({
                 debtForNextMonth,
                 amtPaid,
                 creditBalance,
-                existingCreated,
                 existingApplied,
             });
             creditBalance = creditResult.newCreditBalance;
 
-            // Persist credit events for this bill
-            if (creditResult.creditCreated > 0) {
-                const row = await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'created', creditResult.creditCreated, 'bill_correction', bill.id, null, null, creditBalance, null);
-                createdByBill.set(String(bill.id), { id: row.id, amount: creditResult.creditCreated });
-            } else if (creditResult.creditCreatedAdjustment !== 0 && existingCreated) {
-                const newAmount = roundMoney(existingCreated.amount + creditResult.creditCreatedAdjustment);
-                await qFunc(
-                    `UPDATE credit_ledger SET amount = $1, balance_after = $2 WHERE id = $3`,
-                    [newAmount, creditBalance, existingCreated.id]
-                );
-                createdByBill.set(String(bill.id), { id: existingCreated.id, amount: newAmount });
-            }
-
-            if (creditResult.creditVoided > 0 && existingCreated) {
-                await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'voided', creditResult.creditVoided, 'bill_correction', bill.id, null, existingCreated.id, creditBalance, null);
-                createdByBill.delete(String(bill.id));
-            }
 
             if (creditResult.creditApplied > 0) {
                 if (existingApplied) {
@@ -6028,9 +5986,10 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
             carriedForwardUnpaid = Math.max(0, debtForNextMonth - amtPaid);
         }
 
-        const billUnpaid = Math.max(0, derivedTotalPayable - amtPaid - creditApplied);
-        // A bill is only Paid if actual money or credit was paid/applied
-        const billPaymentStatus = (amtPaid > 0 && billUnpaid <= 0.01) ? 'Paid' : 'Unpaid';
+        const totalPaidOrCredited = roundMoney(amtPaid + creditApplied);
+        const billUnpaid = Math.max(0, derivedTotalPayable - totalPaidOrCredited);
+        // A bill is only Paid if actual money or credit was paid/applied and unpaid balance is <= 0
+        const billPaymentStatus = (totalPaidOrCredited > 0 && billUnpaid <= 0.01) ? 'Paid' : 'Unpaid';
 
         // Preserve any bills already manually marked as 'Paid'.
         // Include month_year in the WHERE clause so PostgreSQL can route the UPDATE
@@ -6045,16 +6004,16 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                  "THISMONTHBILLAMT" = $6, 
                  "TOTALBILLAMOUNT" = $7,
                  payment_status = CASE
-                     -- 1. Bill is fully paid (amount_paid >= bill total AND amount_paid > 0): always Paid
-                     WHEN COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01
-                          AND COALESCE(amount_paid, 0) > 0
+                     -- 1. Bill is fully paid (amount_paid + credit offset >= bill total): always Paid
+                     WHEN (COALESCE(amount_paid, 0) + $11) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01
+                          AND (COALESCE(amount_paid, 0) + $11) > 0
                          THEN 'Paid'::payment_status
-                     -- 2. Draft / Pending / Unposted / Correction bills or bills with 0 paid amount: ALWAYS Unpaid
+                     -- 2. Draft / Pending / Unposted / Correction bills or bills with 0 paid/credited: ALWAYS Unpaid
                      WHEN status IN ('Draft', 'Pending', 'Pending Approval', 'Pending_Approval', 'Rework')
-                          OR COALESCE(amount_paid, 0) <= 0
+                          OR (COALESCE(amount_paid, 0) + $11) <= 0
                          THEN 'Unpaid'::payment_status
-                     -- 3. Preserve manually-set 'Paid' on non-draft bills only if amount_paid > 0
-                     WHEN payment_status = 'Paid' AND COALESCE(amount_paid, 0) > 0
+                     -- 3. Preserve manually-set 'Paid' on non-draft bills only if amount_paid + credit > 0
+                     WHEN payment_status = 'Paid' AND (COALESCE(amount_paid, 0) + $11) > 0
                          THEN 'Paid'::payment_status
                      -- 4. Use aging-engine computed status
                      ELSE $8::payment_status
@@ -6070,7 +6029,8 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
                 totalPayable_rounded,
                 billPaymentStatus,
                 bill.id,
-                billMonth
+                billMonth,
+                creditApplied
             ]
         );
 
@@ -6107,16 +6067,6 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         }
     }
 
-    // Void auto-created credits whose bill was deleted/removed since the last sync.
-    if (creditEnabled) {
-        const liveBillIds = new Set(bills.map((b: any) => String(b.id)));
-        for (const [billId, created] of createdByBill) {
-            if (!liveBillIds.has(billId)) {
-                creditBalance = Math.max(0, roundMoney(creditBalance - created.amount));
-                await dbInsertCreditLedgerRow(qFunc, client, customerKey, 'voided', created.amount, 'bill_removed', null, null, created.id, creditBalance, null);
-            }
-        }
-    }
 
     const finalOutstandingBalance = Number(carriedForwardUnpaid.toFixed(2));
     const finalStatus = finalOutstandingBalance > 0.01 ? 'Unpaid' : 'Paid';
@@ -6307,11 +6257,7 @@ export const dbCreateCredit = async (
 ): Promise<CreditLedgerEntry> => {
     const amt = roundMoney(Number(amount) || 0);
     if (amt <= 0) throw new Error('Credit amount must be greater than zero.');
-    let linkedBillId = sourceBillId || null;
-    if (!linkedBillId && reason === 'duplicate_transaction') {
-        const overpaid = await dbGetMostRecentOverpaidBill(customerKey);
-        if (overpaid) linkedBillId = overpaid.id;
-    }
+    const linkedBillId = sourceBillId || null;
     const rows = await query(
         `WITH upd AS (
             UPDATE bulk_meters
@@ -6475,16 +6421,6 @@ export const dbDeleteCredit = async (
     );
     const currentBalance = roundMoney(Number(balRows[0]?.creditBalance || 0));
 
-    // If this credit was generated from an overpaid bill, clamp the bill's amount_paid
-    // to TOTALBILLAMOUNT so aging sync does not immediately re-create the credit!
-    if (target.source_bill_id) {
-        await query(
-            `UPDATE bills 
-             SET amount_paid = LEAST(COALESCE(amount_paid, 0), COALESCE("TOTALBILLAMOUNT", 0))
-             WHERE id = $1`,
-            [target.source_bill_id]
-        );
-    }
 
     // Delete paired void row if any, and target row
     if (voidRow) {
@@ -6525,14 +6461,6 @@ export const dbClearAllCreditHistory = async (
     customerKey: string,
     deletedBy?: string | null
 ): Promise<{ deletedCount: number; remainingBalance: number }> => {
-    // Clamp all overpaid bills for this customer so aging sync does not immediately recreate credit
-    await query(
-        `UPDATE bills 
-         SET amount_paid = "TOTALBILLAMOUNT"
-         WHERE (LOWER(TRIM("CUSTOMERKEY")) = LOWER(TRIM($1)) OR LOWER(TRIM(individual_customer_id)) = LOWER(TRIM($1)))
-           AND COALESCE(amount_paid, 0) > COALESCE("TOTALBILLAMOUNT", 0)`,
-        [customerKey]
-    );
 
     const res = await query(
         `DELETE FROM credit_ledger WHERE LOWER(TRIM(bulk_meter_id)) = LOWER(TRIM($1)) RETURNING id`,

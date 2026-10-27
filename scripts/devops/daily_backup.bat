@@ -7,12 +7,18 @@ SETLOCAL
 :: ====================================================================
 
 :: Set Database Connection Variables
-:: Note: Replace these with your actual production database credentials if different
-SET PG_USER=postgres
-SET PG_PASSWORD=Da@121212
-SET PG_DATABASE=aawsa_billing
-SET PG_HOST=localhost
-SET PG_PORT=5432
+:: IMPORTANT: Do NOT hardcode credentials here.
+:: Set POSTGRES_PASSWORD in your system environment variables or Windows secrets vault.
+:: Example: set POSTGRES_PASSWORD in System Properties > Environment Variables before running.
+SET PG_USER=%POSTGRES_USER%
+IF "%PG_USER%"=="" SET PG_USER=postgres
+SET PG_PASSWORD=%POSTGRES_PASSWORD%
+SET PG_DATABASE=%POSTGRES_DB%
+IF "%PG_DATABASE%"=="" SET PG_DATABASE=aawsa_billing
+SET PG_HOST=%POSTGRES_HOST%
+IF "%PG_HOST%"=="" SET PG_HOST=localhost
+SET PG_PORT=%POSTGRES_PORT%
+IF "%PG_PORT%"=="" SET PG_PORT=5432
 
 :: Set Path to pg_dump executable (Update if PostgreSQL is installed elsewhere)
 SET PGDUMP_EXE="C:\Program Files\PostgreSQL\17\bin\pg_dump.exe"

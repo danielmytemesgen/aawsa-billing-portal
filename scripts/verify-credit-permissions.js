@@ -7,7 +7,7 @@ dotenv.config({ path: path.join(__dirname, '../.env.local') });
 const client = new Client({
   host: process.env.POSTGRES_HOST || 'localhost',
   user: process.env.POSTGRES_USER || 'postgres',
-  password: process.env.POSTGRES_PASSWORD || 'Da@121212',
+  password: process.env.POSTGRES_PASSWORD || '',
   database: process.env.POSTGRES_DB || 'aawsa_billing',
   port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
 });

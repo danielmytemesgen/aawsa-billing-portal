@@ -270,11 +270,6 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
     return ids;
   }, [data, voidedIds]);
 
-  const suggestedBill = useMemo(() => {
-    if (reason !== "duplicate_transaction" || sourceBillId) return null;
-    return (overpaidBills ?? []).find((b) => !linkedBillIds.has(b.id)) ?? null;
-  }, [reason, sourceBillId, overpaidBills, linkedBillIds]);
-
   const balance = data?.creditBalance ?? initialBalance ?? 0;
 
   // #5 – filtered ledger
@@ -324,7 +319,8 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
     }
     setSubmitting(true);
     try {
-      const res = await addMeterCreditAction(bulkMeterKey, amt, reason, notes || undefined, sourceBillId || undefined);
+      const effectiveBillId = (sourceBillId && sourceBillId !== "none") ? sourceBillId : undefined;
+      const res = await addMeterCreditAction(bulkMeterKey, amt, reason, notes || undefined, effectiveBillId);
       if (res.error) {
         if (handleAuthFailure(res.error.message)) return;
         toast({ variant: "destructive", title: "Failed to add credit", description: res.error.message });
@@ -647,29 +643,6 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
                 </SelectContent>
               </Select>
             </div>
-            {suggestedBill ? (
-              <div className="rounded-md border border-amber-400/40 bg-amber-50 dark:bg-amber-950/40 p-3 space-y-2">
-                <div className="flex items-start gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                  <div className="text-xs space-y-0.5">
-                    <p className="font-semibold text-amber-900 dark:text-amber-200">Overpayment detected</p>
-                    <p className="text-amber-800/90 dark:text-amber-300/80">
-                      {suggestedBill.billKey || suggestedBill.id.slice(0, 8)} ({suggestedBill.monthYear}) — paid ETB{" "}
-                      {(suggestedBill.amountPaid ?? suggestedBill.total).toFixed(2)} against ETB {suggestedBill.total.toFixed(2)}.
-                      Link this deposit to the overpaid bill?
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 border-amber-500/40 text-amber-900 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50"
-                  onClick={() => setSourceBillId(suggestedBill.id)}
-                >
-                  Link this bill
-                </Button>
-              </div>
-            ) : null}
             {(bills?.length ?? 0) > 0 && (
               <div className="space-y-2">
                 <Label>Source Bill (optional)</Label>
@@ -678,7 +651,7 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
                     <SelectValue placeholder="Select a bill" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— No bill (standalone deposit)</SelectItem>
+                    <SelectItem value="none">— No bill (standalone deposit)</SelectItem>
                     {bills!.map((b) => (
                       <SelectItem key={b.id} value={b.id}>
                         {b.billKey || b.id.slice(0, 8)} · {b.monthYear} · ETB {b.total.toFixed(2)}

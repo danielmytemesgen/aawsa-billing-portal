@@ -6,11 +6,14 @@
 # ====================================================================
 
 # Set Database Connection Variables
-PG_USER="postgres"
-PG_PASSWORD="Da@121212"
-PG_DATABASE="aawsa_billing"
-PG_HOST="localhost"
-PG_PORT="5432"
+# IMPORTANT: Do NOT hardcode credentials here.
+# Set PG_PASSWORD via the system environment or a secrets manager before running this script.
+# Example: export PG_PASSWORD="<your_db_password>" in /etc/environment or a .pgpass file.
+PG_USER="${POSTGRES_USER:-postgres}"
+PG_PASSWORD="${POSTGRES_PASSWORD:-}"
+PG_DATABASE="${POSTGRES_DB:-aawsa_billing}"
+PG_HOST="${POSTGRES_HOST:-localhost}"
+PG_PORT="${POSTGRES_PORT:-5432}"
 
 # Determine Backups Directory (Relative to script)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"

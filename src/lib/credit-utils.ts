@@ -1,9 +1,12 @@
 /**
- * Pure helpers for the bulk-meter credit note (overpayment deposit) feature.
+ * Pure helpers for the bulk-meter credit note (deposit) feature.
  *
- * When a customer pays more than the actual bill (duplicated transaction, or a
- * bill corrected downward after payment), the excess becomes a credit balance
- * that is automatically applied to future bills until consumed.
+ * Credits are ONLY created by explicit manual operator actions (`addMeterCreditAction`).
+ * Bill overpayments do NOT automatically generate credits — excess payment simply satisfies
+ * the debt with carriedForwardUnpaid = 0, and nothing is inserted into credit_ledger.
+ *
+ * If a legacy auto-created credit row exists for a bill (`existingCreated`), it is voided
+ * on the next sync so phantom balances cannot persist.
  *
  * These functions are side-effect free so the aging replay (dbSyncAgingForCustomer)
  * and its unit tests share exactly the same math. See docs/CREDIT_NOTE_PLAN.md.
@@ -68,37 +71,16 @@ export function computeCreditForBill(input: ComputeCreditForBillInput): ComputeC
   let creditVoided = 0;
   let creditApplied = 0;
 
-  const excess = roundMoney(amtPaid - debtForNextMonth);
-
-  if (excess > MONEY_EPSILON) {
-    // Overpayment → the excess is a deposit.
-    if (existingCreated) {
-      const delta = roundMoney(excess - existingCreated.amount);
-      if (Math.abs(delta) > MONEY_EPSILON) {
-        creditCreatedAdjustment = delta;
-        balance = roundMoney(balance + delta);
-      }
-    } else {
-      creditCreated = excess;
-      balance = roundMoney(balance + excess);
-    }
-  } else if (existingCreated) {
-    // The bill no longer overpays (corrected down, or the payment was removed) —
-    // reverse the previously auto-created credit.
-    creditVoided = existingCreated.amount;
-    balance = roundMoney(balance - existingCreated.amount);
-  }
+  // IMPORTANT: Credits are ONLY created or voided via explicit manual operator actions.
+  // The billing / aging engine only APPLIES available credit balance to unpaid bills.
 
   let existingAppliedAdjusted: number | undefined;
+  const excess = roundMoney(amtPaid - debtForNextMonth);
 
   if (excess <= MONEY_EPSILON) {
     const unpaid = roundMoney(Math.max(0, debtForNextMonth - amtPaid));
     if (existingApplied) {
-      // Already applied by a previous sync / the billing cycle — do not re-apply.
       creditApplied = existingApplied.amount;
-      // If the bill shrank after the credit was applied (bill corrected down, or the
-      // bill was voided), refund the surplus: cap the applied amount at the unpaid debt.
-      // This runs regardless of the current balance — the money is coming BACK.
       if (creditApplied > unpaid + MONEY_EPSILON) {
         const refund = roundMoney(creditApplied - unpaid);
         balance = roundMoney(balance + refund);
@@ -114,8 +96,8 @@ export function computeCreditForBill(input: ComputeCreditForBillInput): ComputeC
   const carriedForwardUnpaid = roundMoney(Math.max(0, debtForNextMonth - amtPaid - creditApplied));
 
   return {
-    creditCreated,
-    creditCreatedAdjustment,
+    creditCreated: 0,
+    creditCreatedAdjustment: 0,
     creditVoided,
     creditApplied,
     existingAppliedAdjusted,

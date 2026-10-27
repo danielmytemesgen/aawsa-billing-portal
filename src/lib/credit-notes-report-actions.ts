@@ -42,6 +42,10 @@ export interface CreditNoteMeterSummary {
 export interface CreditNoteKPIs {
   totalActiveBalance: number;
   metersWithActiveBalanceCount: number;
+  totalCreditCreated: number;
+  totalCreditApplied: number;
+  totalCreditVoided: number;
+  totalTransactionsCount: number;
 }
 
 export interface CreditNotesFilterOptions {
@@ -95,7 +99,7 @@ export async function getCreditNotesKPIsAction(filters: {
     const auth = await authorizeCreditNoteReport();
     const effectiveBranchId = auth.lockedBranchId || (filters.branchId && filters.branchId !== 'all' ? filters.branchId : null);
 
-    // Query live bulk_meters only — credit_ledger is populated going forward
+    // 1. Live bulk_meters metrics
     const bmWhere: string[] = ['bm.deleted_at IS NULL', 'COALESCE(bm."creditBalance", 0) > 0.005'];
     const bmParams: any[] = [];
 
@@ -113,9 +117,44 @@ export async function getCreditNotesKPIsAction(filters: {
     `;
     const bmRows: any = await query(bmSql, bmParams);
 
+    // 2. Live credit_ledger metrics (period & branch filtered)
+    const clWhere: string[] = ['1=1'];
+    const clParams: any[] = [];
+
+    if (effectiveBranchId) {
+      clParams.push(effectiveBranchId);
+      clWhere.push(`bm.branch_id::text = $${clParams.length}`);
+    }
+
+    if (filters.startDate) {
+      clParams.push(filters.startDate);
+      clWhere.push(`cl.created_at >= $${clParams.length}`);
+    }
+
+    if (filters.endDate) {
+      clParams.push(`${filters.endDate} 23:59:59.999`);
+      clWhere.push(`cl.created_at <= $${clParams.length}`);
+    }
+
+    const clSql = `
+      SELECT
+        COUNT(*) AS total_transactions,
+        COALESCE(SUM(CASE WHEN cl.event_type = 'created' THEN cl.amount ELSE 0 END), 0) AS total_created,
+        COALESCE(SUM(CASE WHEN cl.event_type = 'applied' THEN cl.amount ELSE 0 END), 0) AS total_applied,
+        COALESCE(SUM(CASE WHEN cl.event_type = 'voided' THEN cl.amount ELSE 0 END), 0) AS total_voided
+      FROM credit_ledger cl
+      LEFT JOIN bulk_meters bm ON LOWER(TRIM(bm."customerKeyNumber")) = LOWER(TRIM(cl.bulk_meter_id))
+      WHERE ${clWhere.join(' AND ')}
+    `;
+    const clRows: any = await query(clSql, clParams);
+
     const kpis: CreditNoteKPIs = {
       totalActiveBalance: Number(bmRows[0]?.total_active_balance || 0),
       metersWithActiveBalanceCount: Number(bmRows[0]?.meters_with_active_balance || 0),
+      totalCreditCreated: Number(clRows[0]?.total_created || 0),
+      totalCreditApplied: Number(clRows[0]?.total_applied || 0),
+      totalCreditVoided: Number(clRows[0]?.total_voided || 0),
+      totalTransactionsCount: Number(clRows[0]?.total_transactions || 0),
     };
 
     return { success: true, data: kpis };

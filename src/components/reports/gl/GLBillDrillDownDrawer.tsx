@@ -188,10 +188,14 @@ export function GLBillDrillDownDrawer({
           </div>
 
           {/* Quick Metrics Bar */}
-          <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-white/10 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 pt-4 border-t border-white/10 text-center">
             <div>
-              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Total Billed</span>
-              <span className="text-sm font-bold font-mono text-emerald-400">{formatNumber(selectedRow.totalAmount)} ETB</span>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Current Bill</span>
+              <span className="text-sm font-bold font-mono text-slate-200">{formatNumber(selectedRow.currentAmount)} ETB</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Arrears Carried</span>
+              <span className="text-sm font-bold font-mono text-rose-300">{selectedRow.arrearsAmount > 0 ? `${formatNumber(selectedRow.arrearsAmount)} ETB` : "—"}</span>
             </div>
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">Net Excl. VAT</span>
@@ -199,11 +203,11 @@ export function GLBillDrillDownDrawer({
             </div>
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">VAT (15%)</span>
-              <span className="text-sm font-bold font-mono text-amber-400">{formatNumber(selectedRow.vatAmount)} ETB</span>
+              <span className="text-sm font-bold font-mono text-amber-400">{selectedRow.vatAmount > 0 ? `${formatNumber(selectedRow.vatAmount)} ETB` : "—"}</span>
             </div>
             <div>
-              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Bills Contributing</span>
-              <span className="text-sm font-bold font-mono text-indigo-300">{formatNumber(total)} bills</span>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Total Line Amount</span>
+              <span className="text-sm font-bold font-mono text-emerald-400">{formatNumber(selectedRow.totalAmount)} ETB</span>
             </div>
           </div>
         </div>
