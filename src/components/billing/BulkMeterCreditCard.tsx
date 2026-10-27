@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { getMeterCreditAction, addMeterCreditAction, voidMeterCreditAction, deleteMeterCreditAction } from "@/lib/actions";
+import { getMeterCreditAction, addMeterCreditAction, voidMeterCreditAction, deleteMeterCreditAction, clearMeterCreditHistoryAction } from "@/lib/actions";
 import type { CreditLedgerEntry } from "@/lib/db-queries";
 import { format, formatDistanceToNow, differenceInMonths } from "date-fns";
 
@@ -213,6 +213,8 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
 
   const [deleteTarget, setDeleteTarget] = useState<CreditLedgerEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [isClearAllOpen, setIsClearAllOpen] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
 
   const [detailEntry, setDetailEntry] = useState<CreditLedgerEntry | null>(null);
 
@@ -366,7 +368,7 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await deleteMeterCreditAction(bulkMeterKey, deleteTarget.id);
+      const res = await deleteMeterCreditAction(bulkMeterKey, deleteTarget.id, true);
       if (res.error) {
         if (handleAuthFailure(res.error.message)) { setDeleteTarget(null); return; }
         toast({ variant: "destructive", title: "Failed to delete credit", description: res.error.message });
@@ -374,7 +376,7 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
         return;
       }
       toast({
-        title: "Credit deleted",
+        title: "Credit entry deleted",
         description: `Credit entry of ETB ${res.data.deletedAmount.toFixed(2)} was permanently removed.`
       });
       setDeleteTarget(null);
@@ -383,6 +385,30 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
       toast({ variant: "destructive", title: "Error", description: e?.message || "Failed to delete credit" });
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleClearAll = async () => {
+    setClearingAll(true);
+    try {
+      const res = await clearMeterCreditHistoryAction(bulkMeterKey);
+      if (res.error) {
+        if (handleAuthFailure(res.error.message)) { setIsClearAllOpen(false); return; }
+        toast({ variant: "destructive", title: "Failed to clear credit history", description: res.error.message });
+        setIsClearAllOpen(false);
+        return;
+      }
+      toast({
+        title: "Credit history cleared",
+        description: `All ${res.data.deletedCount} credit ledger entries were permanently deleted and balance was reset.`
+      });
+      setIsClearAllOpen(false);
+      setPage(0);
+      await refresh();
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e?.message || "Failed to clear credit history" });
+    } finally {
+      setClearingAll(false);
     }
   };
 
@@ -425,13 +451,22 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
               <Info className="h-3 w-3" /> Add a deposit (e.g. duplicate payment) or adjust a recorded credit.
             </span>
           </div>
-          {/* #4 – CSV Export */}
-          {(data?.ledger?.length ?? 0) > 0 && (
-            <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
-              onClick={() => exportToCsv(data!.ledger, bulkMeterKey)}>
-              <Download className="h-3.5 w-3.5" /> Export CSV
-            </Button>
-          )}
+          {/* #4 – CSV Export & Clear History */}
+          <div className="flex items-center gap-2">
+            {allowDelete && (data?.ledger?.length ?? 0) > 0 && (
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
+                onClick={() => setIsClearAllOpen(true)}
+                title="Permanently clear all credit history (created, applied, voided) for this meter">
+                <Trash2 className="h-3.5 w-3.5" /> Clear History
+              </Button>
+            )}
+            {(data?.ledger?.length ?? 0) > 0 && (
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
+                onClick={() => exportToCsv(data!.ledger, bulkMeterKey)}>
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -552,8 +587,8 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
                               <Undo2 className="h-3.5 w-3.5" />
                             </Button>
                           ) : null}
-                          {allowDelete && entry.event_type === "created" ? (
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" title="Delete this credit permanently"
+                          {allowDelete ? (
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" title={`Delete this ${entry.event_type} entry permanently`}
                               onClick={(e) => { e.stopPropagation(); setDeleteTarget(entry); }}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -893,19 +928,57 @@ export function BulkMeterCreditCard({ bulkMeterKey, initialBalance, canManage = 
         <AlertDialogContent className="sm:max-w-[420px]">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <Trash2 className="h-4 w-4" /> Delete this credit?
+              <Trash2 className="h-4 w-4" /> Delete this credit entry?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the <span className="font-semibold text-foreground">ETB {deleteTarget ? deleteTarget.amount.toFixed(2) : "0.00"}</span> credit
-              created on <span className="font-semibold text-foreground">{deleteTarget ? formatDate(deleteTarget.created_at) : ""}</span>.
-              The ledger entry will be removed and the meter balance will be adjusted.
+              {deleteTarget?.event_type === "created" && (
+                <>
+                  This permanently deletes the <span className="font-semibold text-foreground">ETB {deleteTarget.amount.toFixed(2)}</span> credit created on <span className="font-semibold text-foreground">{formatDate(deleteTarget.created_at)}</span>. Dependent applied records will also be cleaned up to prevent negative balances.
+                </>
+              )}
+              {deleteTarget?.event_type === "applied" && (
+                <>
+                  This permanently removes the <span className="font-semibold text-foreground">ETB {deleteTarget.amount.toFixed(2)}</span> applied deduction{deleteTarget.source_bill_key ? ` from bill ${deleteTarget.source_bill_key}` : ""}. The bill's payment balance will be recalculated and the meter credit balance will be restored.
+                </>
+              )}
+              {deleteTarget?.event_type === "voided" && (
+                <>
+                  This permanently deletes the void record of <span className="font-semibold text-foreground">ETB {deleteTarget.amount.toFixed(2)}</span> and restores the credit balance.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction className="bg-destructive hover:bg-destructive/90" disabled={deleting} onClick={(e) => { e.preventDefault(); handleDelete(); }}>
               {deleting ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
-              Delete Credit
+              Delete Entry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear All History confirmation dialog */}
+      <AlertDialog open={isClearAllOpen} onOpenChange={(open) => { if (!open) setIsClearAllOpen(false); }}>
+        <AlertDialogContent className="sm:max-w-[440px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-4 w-4" /> Clear All Credit History?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>
+                This will permanently delete <span className="font-semibold text-foreground">all {data?.ledger?.length ?? 0}</span> credit ledger entries (<span className="text-foreground">created, applied, and voided</span>) for this meter.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                The meter credit balance will be reset to ETB 0.00 and customer billing history will be cleanly re-synchronized.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearingAll}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" disabled={clearingAll} onClick={(e) => { e.preventDefault(); handleClearAll(); }}>
+              {clearingAll ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
+              Clear All History
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

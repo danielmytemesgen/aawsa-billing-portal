@@ -160,6 +160,7 @@ import {
   dbCreateCredit,
   dbVoidCredit,
   dbDeleteCredit,
+  dbClearAllCreditHistory,
   ensureReadingPartitionExists,
   dbPreviewShiftReadingMonth,
   dbExecuteShiftReadingMonth,
@@ -1836,19 +1837,39 @@ export async function voidMeterCreditAction(bulkMeterId: string, ledgerId: strin
 }
 
 /**
- * Permanently delete a specific added credit entry from credit_ledger.
- * Removes the entry (and any associated void record) and updates the meter balance.
+/**
+ * Permanently delete any credit entry (created, applied, or voided).
+ * Removes the entry (and any associated void or applied records if cascading) and updates the meter balance.
  */
-export async function deleteMeterCreditAction(bulkMeterId: string, ledgerId: string) {
+export async function deleteMeterCreditAction(bulkMeterId: string, ledgerId: string, cascade: boolean = true) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CREDIT_DELETE);
     await assertMeterWriteAccess(bulkMeterId, session);
-    const result = await dbDeleteCredit(bulkMeterId, ledgerId, session.id);
+    const result = await dbDeleteCredit(bulkMeterId, ledgerId, session.id, cascade);
     await logSecurityEventAction({
       event: 'Bulk Meter Credit Deleted',
       customerKeyNumber: bulkMeterId,
       severity: 'warning',
-      details: { deletedAmount: result.deletedAmount, remainingBalance: result.remainingBalance, ledgerId } as any
+      details: { deletedAmount: result.deletedAmount, remainingBalance: result.remainingBalance, ledgerId, cascade } as any
+    });
+    return result;
+  });
+}
+
+/**
+ * Permanently clear ALL credit history (created, applied, voided) for a meter,
+ * reset balance to 0, and re-sync aging.
+ */
+export async function clearMeterCreditHistoryAction(bulkMeterId: string) {
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.CREDIT_DELETE);
+    await assertMeterWriteAccess(bulkMeterId, session);
+    const result = await dbClearAllCreditHistory(bulkMeterId, session.id);
+    await logSecurityEventAction({
+      event: 'Bulk Meter Credit History Cleared',
+      customerKeyNumber: bulkMeterId,
+      severity: 'warning',
+      details: { deletedCount: result.deletedCount, remainingBalance: 0 } as any
     });
     return result;
   });

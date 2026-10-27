@@ -6407,14 +6407,14 @@ export const dbRecalculateCreditLedgerBalances = async (customerKey: string): Pr
         if (r.event_type === 'created') {
             running = roundMoney(running + amt);
         } else {
-            running = roundMoney(running - amt);
+            running = Math.max(0, roundMoney(running - amt));
         }
         await query(
             `UPDATE credit_ledger SET balance_after = $1 WHERE id = $2`,
             [running, r.id]
         );
     }
-    const finalBalance = roundMoney(running);
+    const finalBalance = Math.max(0, roundMoney(running));
     await query(
         `UPDATE bulk_meters SET "creditBalance" = $1 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2))`,
         [finalBalance, customerKey]
@@ -6423,15 +6423,17 @@ export const dbRecalculateCreditLedgerBalances = async (customerKey: string): Pr
 };
 
 /**
- * Permanently delete a specific added credit entry from credit_ledger.
- * Also removes any void entry that referenced it, verifies that removing it
- * does not result in a negative meter balance (i.e. not consumed by applied bills),
- * recalculates running ledger balances and updates the bulk meter balance.
+ * Permanently delete any specific credit ledger entry (created, applied, or voided).
+ * - If deleting an applied entry: removes the credit deduction and re-syncs the bill aging.
+ * - If deleting a voided entry: removes the void record and recalculates the balance.
+ * - If deleting a created entry: optionally cascades to clean up downstream applied records
+ *   so the balance does not become negative, and re-syncs aging.
  */
 export const dbDeleteCredit = async (
     customerKey: string,
     ledgerId: string,
-    deletedBy?: string | null
+    deletedBy?: string | null,
+    cascade: boolean = true
 ): Promise<{ deletedAmount: number; remainingBalance: number }> => {
     const targetRows = await query(
         `SELECT id, event_type, amount, balance_after, source_bill_id
@@ -6441,12 +6443,23 @@ export const dbDeleteCredit = async (
     );
     const target = targetRows[0];
     if (!target) throw new Error('Credit entry not found.');
-    if (target.event_type !== 'created') {
-        throw new Error('Only added (created) credit entries can be deleted.');
-    }
 
     const deletedAmount = roundMoney(Number(target.amount) || 0);
 
+    if (target.event_type === 'applied') {
+        await query(`DELETE FROM credit_ledger WHERE id = $1`, [ledgerId]);
+        const remainingBalance = await dbRecalculateCreditLedgerBalances(customerKey);
+        await dbSyncAgingForCustomer(customerKey);
+        return { deletedAmount, remainingBalance };
+    }
+
+    if (target.event_type === 'voided') {
+        await query(`DELETE FROM credit_ledger WHERE id = $1`, [ledgerId]);
+        const remainingBalance = await dbRecalculateCreditLedgerBalances(customerKey);
+        return { deletedAmount, remainingBalance };
+    }
+
+    // event_type === 'created'
     // Check if target has a void row referencing it
     const voidRows = await query(
         `SELECT id, amount FROM credit_ledger WHERE voided_ledger_id = $1 AND event_type = 'voided'`,
@@ -6462,9 +6475,14 @@ export const dbDeleteCredit = async (
     );
     const currentBalance = roundMoney(Number(balRows[0]?.creditBalance || 0));
 
-    if (netActiveAmount > 0 && currentBalance < netActiveAmount - 0.005) {
-        throw new Error(
-            `Cannot delete this credit: ETB ${roundMoney(netActiveAmount - currentBalance).toFixed(2)} of it has already been applied to bills. Reversing or deleting it would result in a negative credit balance.`
+    // If this credit was generated from an overpaid bill, clamp the bill's amount_paid
+    // to TOTALBILLAMOUNT so aging sync does not immediately re-create the credit!
+    if (target.source_bill_id) {
+        await query(
+            `UPDATE bills 
+             SET amount_paid = LEAST(COALESCE(amount_paid, 0), COALESCE("TOTALBILLAMOUNT", 0))
+             WHERE id = $1`,
+            [target.source_bill_id]
         );
     }
 
@@ -6474,10 +6492,58 @@ export const dbDeleteCredit = async (
     }
     await query(`DELETE FROM credit_ledger WHERE id = $1`, [ledgerId]);
 
+    // If cascade is requested or deleting this would leave balance negative:
+    // clean up any applied rows that depended on this credit
+    if (cascade || (netActiveAmount > 0 && currentBalance < netActiveAmount - 0.005)) {
+        await query(
+            `DELETE FROM credit_ledger WHERE LOWER(TRIM(bulk_meter_id)) = LOWER(TRIM($1)) AND event_type = 'applied'`,
+            [customerKey]
+        );
+        await query(
+            `UPDATE bulk_meters SET "creditBalance" = 0 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
+            [customerKey]
+        );
+        await dbSyncAgingForCustomer(customerKey);
+        const finalBalRows = await query(
+            `SELECT "creditBalance" FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
+            [customerKey]
+        );
+        const remainingBalance = roundMoney(Number(finalBalRows[0]?.creditBalance || 0));
+        return { deletedAmount, remainingBalance };
+    }
+
     // Recalculate remaining ledger and sync bulk meter's creditBalance
     const remainingBalance = await dbRecalculateCreditLedgerBalances(customerKey);
-
     return { deletedAmount, remainingBalance };
+};
+
+/**
+ * Permanently delete ALL credit ledger records (created, applied, voided) for a meter,
+ * reset creditBalance to 0, and re-sync aging history.
+ */
+export const dbClearAllCreditHistory = async (
+    customerKey: string,
+    deletedBy?: string | null
+): Promise<{ deletedCount: number; remainingBalance: number }> => {
+    // Clamp all overpaid bills for this customer so aging sync does not immediately recreate credit
+    await query(
+        `UPDATE bills 
+         SET amount_paid = "TOTALBILLAMOUNT"
+         WHERE (LOWER(TRIM("CUSTOMERKEY")) = LOWER(TRIM($1)) OR LOWER(TRIM(individual_customer_id)) = LOWER(TRIM($1)))
+           AND COALESCE(amount_paid, 0) > COALESCE("TOTALBILLAMOUNT", 0)`,
+        [customerKey]
+    );
+
+    const res = await query(
+        `DELETE FROM credit_ledger WHERE LOWER(TRIM(bulk_meter_id)) = LOWER(TRIM($1)) RETURNING id`,
+        [customerKey]
+    );
+    await query(
+        `UPDATE bulk_meters SET "creditBalance" = 0 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1))`,
+        [customerKey]
+    );
+    await dbSyncAgingForCustomer(customerKey);
+    return { deletedCount: res.length, remainingBalance: 0 };
 };
 
 export const dbPreviewShiftReadingMonth = async (
