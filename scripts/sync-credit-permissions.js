@@ -17,6 +17,7 @@ const PERMISSIONS = [
   { name: 'credit_view_branch', category: 'Credit & Deposit', description: 'View credit / deposit ledger within assigned branch' },
   { name: 'credit_create', category: 'Credit & Deposit', description: 'Add credit / deposit on bulk meters' },
   { name: 'credit_void', category: 'Credit & Deposit', description: 'Void recorded credit / deposit on bulk meters' },
+  { name: 'credit_delete', category: 'Credit & Deposit', description: 'Delete recorded credit / deposit on bulk meters' },
 ];
 
 async function run() {

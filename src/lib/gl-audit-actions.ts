@@ -231,7 +231,10 @@ export async function getGLSummaryReportAction(params: {
     const isYearly = params.periodType === 'yearly';
 
     // Build SQL with joins to bulk_meters, individual_customers, and branches
-    const whereClauses: string[] = ['b.deleted_at IS NULL'];
+    const whereClauses: string[] = [
+      'b.deleted_at IS NULL',
+      "COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')",
+    ];
     const sqlParams: any[] = [];
 
     if (effectiveBranchId) {
@@ -353,7 +356,8 @@ export async function getGLSummaryReportAction(params: {
       const sanitation = Number(b.sanitation_fee || 0);
       const meterRent = Number(b.meter_rent || 0);
       const maintenance = Number(b.maintenance_fee || 0);
-      const additional = Number(b.additional_fees_charge || 0) + Number(b.penalty_amt || 0);
+      const additional = Number(b.additional_fees_charge || 0);
+      const penalty = Number(b.penalty_amt || 0);
       const vat = Number(b.vat_amount || 0);
       const thisMonth = Number(b.this_month_bill_amt || 0);
       const total = Number(b.total_bill_amount || 0);
@@ -364,11 +368,16 @@ export async function getGLSummaryReportAction(params: {
       }
 
       // Audit checks
-      // IMPORTANT: THISMONTHBILLAMT includes VAT, so we must compare (componentSum + vat) vs thisMonth.
+      // IMPORTANT: THISMONTHBILLAMT includes VAT — compare (componentSum + vat) vs thisMonth.
       // Tolerance of 0.50 ETB covers legitimate floating-point rounding across charge components.
+      // Note: penalty_amt is an overdue debt finance charge (TOTALBILLAMOUNT), but in some legacy bills
+      // was stored within thisMonth. We verify either formulation matches.
       const componentSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional;
       const componentSumWithVat = componentSum + vat;
-      const isMathMismatch = thisMonth > 0 && Math.abs(componentSumWithVat - thisMonth) > 0.50;
+      const mathDiffNoPen = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
+      const mathDiffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + penalty - thisMonth) : 0;
+      const mathDiff = Math.min(mathDiffNoPen, mathDiffWithPen);
+      const isMathMismatch = thisMonth > 0 && mathDiff > 0.50;
       // isMissingDrCr is a config-level gap (DR/CR accounts not set up system-wide).
       // It is shown in the Anomaly Inspector but does NOT affect the KPI Audit Health score.
       const isMissingDrCr = (!b.dr_acct_no || b.dr_acct_no === '' || b.dr_acct_no === '0000000000')
@@ -478,7 +487,7 @@ export async function getGLSummaryReportAction(params: {
       addGlItem('SNTGL', sanitation, 0);
       addGlItem('MTRRNTGL', meterRent, 0);
       addGlItem('MNTGL', maintenance, 0);
-      addGlItem('FIREGL', additional, 0);
+      addGlItem('FIREGL', additional + penalty, 0);
     }
 
     // Format summary rows
@@ -548,7 +557,10 @@ export async function getGLBillsDrillDownAction(params: {
     const page = params.page || 0;
     const limit = params.limit || 20;
 
-    const whereClauses: string[] = ['b.deleted_at IS NULL'];
+    const whereClauses: string[] = [
+      'b.deleted_at IS NULL',
+      "COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')",
+    ];
     const sqlParams: any[] = [];
 
     if (auth.lockedBranchId) {
@@ -663,15 +675,21 @@ export async function getGLBillsDrillDownAction(params: {
       }
 
       // Check whether this bill has charges for the requested glCode
-      const baseWater = Number(b.base_water_charge || 0);
+      let baseWater = Number(b.base_water_charge || 0);
       const sewerage = Number(b.sewerage_charge || 0);
       const sanitation = Number(b.sanitation_fee || 0);
       const meterRent = Number(b.meter_rent || 0);
       const maintenance = Number(b.maintenance_fee || 0);
-      const additional = Number(b.additional_fees_charge || 0) + Number(b.penalty_amt || 0);
+      const additional = Number(b.additional_fees_charge || 0);
+      const penalty = Number(b.penalty_amt || 0);
       const vat = Number(b.vat_amount || 0);
       const thisMonth = Number(b.this_month_bill_amt || 0);
       const total = Number(b.total_bill_amount || 0);
+
+      // Safe fallback for un-itemized bills
+      if (baseWater === 0 && thisMonth > 0 && sewerage === 0 && sanitation === 0 && meterRent === 0 && maintenance === 0) {
+        baseWater = Math.max(0, thisMonth - vat);
+      }
 
       if (params.glCode && params.glCode !== 'all') {
         let hasCharge = false;
@@ -680,7 +698,7 @@ export async function getGLBillsDrillDownAction(params: {
         if (params.glCode === 'SNTGL' && sanitation > 0) hasCharge = true;
         if (params.glCode === 'MTRRNTGL' && meterRent > 0) hasCharge = true;
         if (params.glCode === 'MNTGL' && maintenance > 0) hasCharge = true;
-        if (params.glCode === 'FIREGL' && additional > 0) hasCharge = true;
+        if (params.glCode === 'FIREGL' && (additional > 0 || penalty > 0)) hasCharge = true;
 
         if (!hasCharge) continue;
       }
@@ -690,7 +708,9 @@ export async function getGLBillsDrillDownAction(params: {
       const auditFlags: string[] = [];
       const componentSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional;
       const componentSumWithVat = componentSum + vat;
-      const diff = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
+      const diffNoPen = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
+      const diffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + penalty - thisMonth) : 0;
+      const diff = Math.min(diffNoPen, diffWithPen);
       if (diff > 0.50) {
         auditFlags.push(`Arithmetic Sum Mismatch (Components+VAT: ${componentSumWithVat.toFixed(2)} vs ThisMonth: ${thisMonth.toFixed(2)}, Δ ${diff.toFixed(2)} ETB)`);
       }
@@ -780,7 +800,10 @@ export async function getGLAuditAnomaliesAction(params: {
     const effectiveBranchId = auth.lockedBranchId || (params.branchId && params.branchId !== 'all' ? params.branchId : null);
     const isYearly = params.periodType === 'yearly';
 
-    const whereClauses: string[] = ['b.deleted_at IS NULL'];
+    const whereClauses: string[] = [
+      'b.deleted_at IS NULL',
+      "COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')",
+    ];
     const sqlParams: any[] = [];
 
     if (effectiveBranchId) {
@@ -847,20 +870,28 @@ export async function getGLAuditAnomaliesAction(params: {
       const bCode = getBranchCode(rawBranchName);
       const rawPeriod = (b.month_year || '').substring(0, 7) || '2026-10';
 
-      const baseWater = Number(b.base_water_charge || 0);
+      let baseWater = Number(b.base_water_charge || 0);
       const sewerage = Number(b.sewerage_charge || 0);
       const sanitation = Number(b.sanitation_fee || 0);
       const meterRent = Number(b.meter_rent || 0);
       const maintenance = Number(b.maintenance_fee || 0);
-      const additional = Number(b.additional_fees_charge || 0) + Number(b.penalty_amt || 0);
+      const additional = Number(b.additional_fees_charge || 0);
+      const penalty = Number(b.penalty_amt || 0);
       const vat = Number(b.vat_amount || 0);
       const thisMonth = Number(b.this_month_bill_amt || 0);
       const total = Number(b.total_bill_amount || 0);
 
+      // Safe fallback for un-itemized legacy bills
+      if (baseWater === 0 && thisMonth > 0 && sewerage === 0 && sanitation === 0 && meterRent === 0 && maintenance === 0) {
+        baseWater = Math.max(0, thisMonth - vat);
+      }
+
       // THISMONTHBILLAMT includes VAT — compare (componentSum + vat) vs thisMonth
       const componentSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional;
       const componentSumWithVat = componentSum + vat;
-      const mathDiff = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
+      const mathDiffNoPen = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
+      const mathDiffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + penalty - thisMonth) : 0;
+      const mathDiff = Math.min(mathDiffNoPen, mathDiffWithPen);
 
       // Check 1: Math Sum Mismatch (tolerance 0.50 ETB for rounding)
       if (mathDiff > 0.50) {

@@ -136,6 +136,7 @@ export default function BulkMeterDetailsPage() {
     hasPermission(PERMISSIONS.CREDIT_VIEW_BRANCH);
   const canAddCredit = hasPermission(PERMISSIONS.CREDIT_CREATE);
   const canVoidCredit = hasPermission(PERMISSIONS.CREDIT_VOID);
+  const canDeleteCredit = hasPermission(PERMISSIONS.CREDIT_DELETE);
   const canEditReadings =
     hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
     hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
@@ -1886,6 +1887,7 @@ export default function BulkMeterDetailsPage() {
                 canManage={canManageCustomers}
                 canAdd={canAddCredit}
                 canVoid={canVoidCredit}
+                canDelete={canDeleteCredit}
                 bills={billingHistory.map((b) => ({
                   id: b.id,
                   billKey: b.BILLKEY || "",

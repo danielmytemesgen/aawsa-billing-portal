@@ -159,6 +159,7 @@ import {
   dbGetMeterCredit,
   dbCreateCredit,
   dbVoidCredit,
+  dbDeleteCredit,
   ensureReadingPartitionExists,
   dbPreviewShiftReadingMonth,
   dbExecuteShiftReadingMonth,
@@ -1829,6 +1830,25 @@ export async function voidMeterCreditAction(bulkMeterId: string, ledgerId: strin
       customerKeyNumber: bulkMeterId,
       severity: 'warning',
       details: { voidedAmount: result.voidedAmount, remainingBalance: result.remainingBalance, ledgerId } as any
+    });
+    return result;
+  });
+}
+
+/**
+ * Permanently delete a specific added credit entry from credit_ledger.
+ * Removes the entry (and any associated void record) and updates the meter balance.
+ */
+export async function deleteMeterCreditAction(bulkMeterId: string, ledgerId: string) {
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.CREDIT_DELETE);
+    await assertMeterWriteAccess(bulkMeterId, session);
+    const result = await dbDeleteCredit(bulkMeterId, ledgerId, session.id);
+    await logSecurityEventAction({
+      event: 'Bulk Meter Credit Deleted',
+      customerKeyNumber: bulkMeterId,
+      severity: 'warning',
+      details: { deletedAmount: result.deletedAmount, remainingBalance: result.remainingBalance, ledgerId } as any
     });
     return result;
   });

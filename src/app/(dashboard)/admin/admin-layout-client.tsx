@@ -314,6 +314,20 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         });
     }
 
+    const canViewCreditReports = hasPermission(PERMISSIONS.CREDIT_VIEW_ALL)
+        || hasPermission(PERMISSIONS.CREDIT_VIEW_BRANCH)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (canViewCreditReports) {
+        dataReportsItems.push({ 
+            title: "Credit Note Report", 
+            href: isAdmin ? "/admin/reports/credit-notes" : "/staff/reports/credit-notes", 
+            iconName: "Wallet" 
+        });
+    }
+
     if (dataReportsItems.length > 0) {
         navItems.push({ title: "Data & Reports", items: dataReportsItems });
     }

@@ -3547,19 +3547,28 @@ export const dbDeleteRoute = async (routeKey: string, deletedBy?: string) => {
 };
 
 export const dbGetDashboardMetrics = async (branchId?: string) => {
-    // â”€â”€ Step 1: Resolve latestMonth first (needed by most queries) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 1: Resolve latestMonth first (scoped to branch if branchId is provided) ──
     let latestMonth = new Date().toISOString().substring(0, 7);
     try {
+        const branchMonthClause = branchId ? 'AND branch_id = $1' : '';
+        const branchMonthParams = branchId ? [branchId] : [];
         const [postedRes, anyRes]: any[] = await Promise.all([
-            query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL`),
-            query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND deleted_at IS NULL`),
+            query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL ${branchMonthClause}`, branchMonthParams),
+            query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND deleted_at IS NULL ${branchMonthClause}`, branchMonthParams),
         ]);
-        latestMonth = postedRes[0]?.latest_month || anyRes[0]?.latest_month || latestMonth;
+        latestMonth = postedRes[0]?.latest_month || anyRes[0]?.latest_month;
+
+        // If the branch has no bills yet, fallback to the latest global posted month
+        if (!latestMonth && branchId) {
+            const [globalRes]: any[] = await query(`SELECT MAX(month_year) as latest_month FROM bills WHERE month_year IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL`);
+            latestMonth = globalRes[0]?.latest_month;
+        }
+        latestMonth = latestMonth || new Date().toISOString().substring(0, 7);
     } catch (err) {
         console.warn('Failed to fetch latest bill month_year, falling back to current calendar month:', err);
     }
 
-    // â”€â”€ Step 2: Build shared filter fragments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 2: Build shared filter fragments ──────────────────────────────────
     const params = [latestMonth];
     let branchFilter = '';
     if (branchId) {
@@ -3575,20 +3584,21 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
 
     const usageBranchFilter = branchId ? 'AND branch_id = $1' : '';
 
-    let individualFilter = "WHERE status != 'Pending Approval'";
+    let individualFilter = "WHERE status != 'Pending Approval' AND deleted_at IS NULL";
     if (branchId) individualFilter += ' AND branch_id = $1';
 
-    const todayIso = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    // Addis Ababa local time (UTC+3)
+    const todayIso = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Addis_Ababa' }).format(new Date()); // 'YYYY-MM-DD'
     let todayBillsFilter = branchId ? 'AND branch_id = $2' : '';
     let todayReadingsBranchJoin = branchId
-        ? 'JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber" WHERE DATE(bmr."READING_DATE") = $1 AND bm.branch_id = $2'
-        : 'WHERE DATE(bmr."READING_DATE") = $1';
+        ? 'JOIN bulk_meters bm ON bmr."CUST_KEY" = bm."customerKeyNumber" WHERE DATE(bmr."READING_DATE" AT TIME ZONE \'Africa/Addis_Ababa\') = $1 AND bm.branch_id = $2'
+        : 'WHERE DATE(bmr."READING_DATE" AT TIME ZONE \'Africa/Addis_Ababa\') = $1';
     let todayIndReadingsBranchJoin = branchId
-        ? 'JOIN individual_customers ic ON imr."CUST_KEY" = ic."customerKeyNumber" WHERE (DATE(imr."READING_DATE") = $1 OR DATE(imr.created_at) = $1) AND ic.branch_id = $2'
-        : 'WHERE DATE(imr."READING_DATE") = $1 OR DATE(imr.created_at) = $1';
+        ? 'JOIN individual_customers ic ON imr."CUST_KEY" = ic."customerKeyNumber" WHERE (DATE(imr."READING_DATE" AT TIME ZONE \'Africa/Addis_Ababa\') = $1 OR DATE(imr.created_at AT TIME ZONE \'Africa/Addis_Ababa\') = $1) AND ic.branch_id = $2'
+        : 'WHERE DATE(imr."READING_DATE" AT TIME ZONE \'Africa/Addis_Ababa\') = $1 OR DATE(imr.created_at AT TIME ZONE \'Africa/Addis_Ababa\') = $1';
     let todayCustFilter = branchId ? 'AND branch_id = $2' : '';
 
-    // â”€â”€ Step 3: Run all independent queries in parallel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 3: Run all independent queries in parallel ────────────────────────
     const [
         billStatuses,
         revenueData,
@@ -3597,6 +3607,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         bulkMeterCountData,
         individualCustomerCountData,
         branchCountData,
+        overdueAccountsCountData,
         topDelinquent,
         branchPerformance,
         usageTrend,
@@ -3614,11 +3625,17 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             params
         ),
 
-        // 2. Revenue aggregation
+        // 2. Revenue aggregation (includes actual amount_paid or full bill total if marked Paid)
         query(
             `SELECT
                 SUM(COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))) as total_billed,
-                SUM(CASE WHEN payment_status = 'Paid' THEN COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) ELSE 0 END) as total_collected
+                SUM(
+                    CASE 
+                        WHEN COALESCE(amount_paid, 0) > 0 THEN amount_paid
+                        WHEN payment_status = 'Paid' THEN COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))
+                        ELSE 0
+                    END
+                ) as total_collected
              FROM bills
              WHERE status = 'Posted' AND month_year = $1 AND deleted_at IS NULL ${branchFilter}`,
             params
@@ -3626,7 +3643,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
 
         // 3a. Total active bulk meters (for reading progress denominator)
         query(
-            `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + " AND status = 'Active'" : "WHERE status = 'Active'"}`,
+            `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + " AND status = 'Active' AND deleted_at IS NULL" : "WHERE status = 'Active' AND deleted_at IS NULL"}`,
             branchId ? [branchId] : []
         ),
 
@@ -3643,7 +3660,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
 
         // 4a. Total bulk meters count
         query(
-            `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + " AND status != 'Pending Approval'" : "WHERE status != 'Pending Approval'"}`,
+            `SELECT COUNT(*) as count FROM bulk_meters ${meterFilter ? meterFilter + " AND status != 'Pending Approval' AND deleted_at IS NULL" : "WHERE status != 'Pending Approval' AND deleted_at IS NULL"}`,
             branchId ? [branchId] : []
         ),
 
@@ -3656,7 +3673,18 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         // 4c. Branch count
         query('SELECT COUNT(*) as count FROM branches'),
 
-        // 5. Top delinquent accounts
+        // 5a. Total Overdue Accounts Count (all posted bills with unpaid balances)
+        query(
+            `SELECT COUNT(DISTINCT COALESCE("CUSTOMERKEY", individual_customer_id)) as count
+             FROM bills
+             WHERE (payment_status != 'Paid' OR payment_status IS NULL)
+               AND status = 'Posted'
+               AND deleted_at IS NULL
+               ${branchId ? 'AND branch_id = $1' : ''}`,
+            branchId ? [branchId] : []
+        ),
+
+        // 5b. Top delinquent accounts (highest outstanding debt across all posted unpaid bills)
         query(
             `SELECT
                 COALESCE("CUSTOMERKEY", individual_customer_id) as key,
@@ -3668,10 +3696,13 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
                 COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) as outstanding,
                 CASE WHEN "CUSTOMERKEY" IS NOT NULL THEN 'Bulk' ELSE 'Individual' END as type
              FROM bills
-             WHERE month_year = $1 AND payment_status = 'Unpaid' AND status = 'Posted' ${branchFilter}
+             WHERE (payment_status != 'Paid' OR payment_status IS NULL)
+               AND status = 'Posted'
+               AND deleted_at IS NULL
+               ${branchId ? 'AND branch_id = $1' : ''}
              ORDER BY COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0)))) DESC
              LIMIT 5`,
-            params
+            branchId ? [branchId] : []
         ),
 
         // 6. Branch performance breakdown
@@ -3702,42 +3733,43 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         query(
             `SELECT "month_year" as month, SUM("CONS") as usage
              FROM bills
-             WHERE "CONS" IS NOT NULL AND status = 'Posted' ${usageBranchFilter}
+             WHERE "CONS" IS NOT NULL AND status = 'Posted' AND deleted_at IS NULL ${usageBranchFilter}
              GROUP BY month
              ORDER BY month DESC
              LIMIT 6`,
             branchId ? [branchId] : []
         ),
 
-        // 8a. Bills created today
+        // 8a. Bills created today (Addis Ababa timezone)
         query(
-            `SELECT COUNT(*) as count FROM bills WHERE DATE(created_at) = $1 AND deleted_at IS NULL ${todayBillsFilter}`,
+            `SELECT COUNT(*) as count FROM bills WHERE DATE(created_at AT TIME ZONE 'Africa/Addis_Ababa') = $1 AND deleted_at IS NULL ${todayBillsFilter}`,
             branchId ? [todayIso, branchId] : [todayIso]
         ).catch(() => [{ count: 0 }]),
 
-        // 8b. Bulk meter readings today
+        // 8b. Bulk meter readings today (Addis Ababa timezone)
         query(
             `SELECT COUNT(*) as count FROM bulk_meter_readings bmr ${todayReadingsBranchJoin}`,
             branchId ? [todayIso, branchId] : [todayIso]
         ).catch(() => [{ count: 0 }]),
 
-        // 8c. Individual meter readings today
+        // 8c. Individual meter readings today (Addis Ababa timezone)
         query(
             `SELECT COUNT(*) as count FROM individual_customer_readings imr ${todayIndReadingsBranchJoin}`,
             branchId ? [todayIso, branchId] : [todayIso]
         ).catch(() => [{ count: 0 }]),
 
-        // 8d. New customers today
+        // 8d. New customers today (Addis Ababa timezone)
         query(
-            `SELECT COUNT(*) as count FROM individual_customers WHERE DATE(created_at) = $1 AND deleted_at IS NULL ${todayCustFilter}`,
+            `SELECT COUNT(*) as count FROM individual_customers WHERE DATE(created_at AT TIME ZONE 'Africa/Addis_Ababa') = $1 AND deleted_at IS NULL ${todayCustFilter}`,
             branchId ? [todayIso, branchId] : [todayIso]
         ).catch(() => [{ count: 0 }]),
     ]);
 
-    // â”€â”€ Step 4: Assemble result â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Step 4: Assemble result ────────────────────────────────────────────────
     const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
     const totalCustomers = parseInt(totalCustomersData[0]?.count || 0);
     const currentReadings = parseInt(currentReadingsData[0]?.count || 0);
+    const totalOverdueCount = parseInt(overdueAccountsCountData[0]?.count || 0);
 
     return {
         latestMonth,
@@ -3765,6 +3797,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             customers: parseInt(todayCustomersData[0]?.count || 0),
         },
         delinquent: {
+            totalCount: totalOverdueCount,
             combined: topDelinquent,
         },
         branchPerformance: branchPerformance.map((bp: any) => ({
@@ -6354,6 +6387,97 @@ export const dbVoidCredit = async (
         [newBalance, customerKey]
     );
     return { voidedAmount, remainingBalance: newBalance };
+};
+
+/**
+ * Recompute running balance_after for all ledger rows of a meter in chronological order,
+ * update the rows and sync the meter's creditBalance.
+ */
+export const dbRecalculateCreditLedgerBalances = async (customerKey: string): Promise<number> => {
+    const rows = await query(
+        `SELECT id, event_type, amount 
+         FROM credit_ledger 
+         WHERE LOWER(TRIM(bulk_meter_id)) = LOWER(TRIM($1))
+         ORDER BY created_at ASC, id ASC`,
+        [customerKey]
+    );
+    let running = 0;
+    for (const r of rows) {
+        const amt = roundMoney(Number(r.amount) || 0);
+        if (r.event_type === 'created') {
+            running = roundMoney(running + amt);
+        } else {
+            running = roundMoney(running - amt);
+        }
+        await query(
+            `UPDATE credit_ledger SET balance_after = $1 WHERE id = $2`,
+            [running, r.id]
+        );
+    }
+    const finalBalance = roundMoney(running);
+    await query(
+        `UPDATE bulk_meters SET "creditBalance" = $1 WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($2))`,
+        [finalBalance, customerKey]
+    );
+    return finalBalance;
+};
+
+/**
+ * Permanently delete a specific added credit entry from credit_ledger.
+ * Also removes any void entry that referenced it, verifies that removing it
+ * does not result in a negative meter balance (i.e. not consumed by applied bills),
+ * recalculates running ledger balances and updates the bulk meter balance.
+ */
+export const dbDeleteCredit = async (
+    customerKey: string,
+    ledgerId: string,
+    deletedBy?: string | null
+): Promise<{ deletedAmount: number; remainingBalance: number }> => {
+    const targetRows = await query(
+        `SELECT id, event_type, amount, balance_after, source_bill_id
+         FROM credit_ledger
+         WHERE id = $1 AND LOWER(TRIM(bulk_meter_id)) = LOWER(TRIM($2))`,
+        [ledgerId, customerKey]
+    );
+    const target = targetRows[0];
+    if (!target) throw new Error('Credit entry not found.');
+    if (target.event_type !== 'created') {
+        throw new Error('Only added (created) credit entries can be deleted.');
+    }
+
+    const deletedAmount = roundMoney(Number(target.amount) || 0);
+
+    // Check if target has a void row referencing it
+    const voidRows = await query(
+        `SELECT id, amount FROM credit_ledger WHERE voided_ledger_id = $1 AND event_type = 'voided'`,
+        [ledgerId]
+    );
+    const voidRow = voidRows[0];
+    const voidedAmt = voidRow ? roundMoney(Number(voidRow.amount) || 0) : 0;
+    const netActiveAmount = roundMoney(deletedAmount - voidedAmt);
+
+    const balRows = await query(
+        `SELECT "creditBalance" FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($1)) AND deleted_at IS NULL`,
+        [customerKey]
+    );
+    const currentBalance = roundMoney(Number(balRows[0]?.creditBalance || 0));
+
+    if (netActiveAmount > 0 && currentBalance < netActiveAmount - 0.005) {
+        throw new Error(
+            `Cannot delete this credit: ETB ${roundMoney(netActiveAmount - currentBalance).toFixed(2)} of it has already been applied to bills. Reversing or deleting it would result in a negative credit balance.`
+        );
+    }
+
+    // Delete paired void row if any, and target row
+    if (voidRow) {
+        await query(`DELETE FROM credit_ledger WHERE id = $1`, [voidRow.id]);
+    }
+    await query(`DELETE FROM credit_ledger WHERE id = $1`, [ledgerId]);
+
+    // Recalculate remaining ledger and sync bulk meter's creditBalance
+    const remainingBalance = await dbRecalculateCreditLedgerBalances(customerKey);
+
+    return { deletedAmount, remainingBalance };
 };
 
 export const dbPreviewShiftReadingMonth = async (

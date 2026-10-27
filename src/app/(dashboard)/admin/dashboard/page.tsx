@@ -297,6 +297,7 @@ export default function AdminDashboardPage() {
   const [revenueEfficiency, setRevenueEfficiency] = React.useState({ billed: 0, collected: 0, efficiency: 0 });
   const [readingProgress, setReadingProgress] = React.useState({ total: 0, read: 0, percentage: 0 });
   const [topDelinquentCustomers, setTopDelinquentCustomers] = React.useState<{ name: string; balance: number; type: string }[]>([]);
+  const [totalOverdueAccountsCount, setTotalOverdueAccountsCount] = React.useState<number>(0);
 
   // State for toggling views
   const [branchPerformanceView, setBranchPerformanceView] = React.useState<'chart' | 'table'>('chart');
@@ -431,13 +432,18 @@ export default function AdminDashboardPage() {
       });
 
       // 5. Delinquent
-      if (metrics.delinquent.combined) {
-        const delinquent = metrics.delinquent.combined.map((m: any) => ({
-          name: m.name,
-          balance: Number(m.outstanding),
-          type: m.type
-        }));
-        setTopDelinquentCustomers(delinquent);
+      if (metrics.delinquent) {
+        if (typeof metrics.delinquent.totalCount === 'number') {
+          setTotalOverdueAccountsCount(metrics.delinquent.totalCount);
+        }
+        if (metrics.delinquent.combined) {
+          const delinquent = metrics.delinquent.combined.map((m: any) => ({
+            name: m.name,
+            balance: Number(m.outstanding),
+            type: m.type
+          }));
+          setTopDelinquentCustomers(delinquent);
+        }
       }
 
       // 6. Branch Performance (Server Side)
@@ -824,7 +830,7 @@ export default function AdminDashboardPage() {
               {readingProgress.percentage.toFixed(1)}<span className="text-3xl text-cyan-500/50">%</span>
             </div>
             <p className="text-sm text-slate-600 font-semibold mb-8">
-              <span className="text-cyan-600 font-bold">{readingProgress.read}</span> of <span className="text-slate-500">{readingProgress.total}</span> meters read
+              <span className="text-cyan-600 font-bold">{readingProgress.read}</span> of <span className="text-slate-500">{readingProgress.total}</span> bulk meters read
             </p>
             
             <div className="mt-4 pt-2">
@@ -889,7 +895,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* ── Overdue Bills Alert Card ── */}
-      {topDelinquentCustomers.length > 0 && (
+      {(totalOverdueAccountsCount > 0 || topDelinquentCustomers.length > 0) && (
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl px-5 py-4 shadow-sm">
             <div className="h-12 w-12 rounded-2xl bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -897,7 +903,7 @@ export default function AdminDashboardPage() {
             </div>
             <div className="flex-1">
               <p className="text-xs uppercase font-bold text-red-400 tracking-wider">Overdue Accounts</p>
-              <p className="text-3xl font-black text-red-700">{topDelinquentCustomers.length}</p>
+              <p className="text-3xl font-black text-red-700">{(totalOverdueAccountsCount || topDelinquentCustomers.length).toLocaleString()}</p>
               <p className="text-xs text-red-500 font-semibold">With outstanding balances</p>
             </div>
             <Link href="/admin/bill-management" passHref>

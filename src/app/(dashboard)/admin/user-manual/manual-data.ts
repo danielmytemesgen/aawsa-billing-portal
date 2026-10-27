@@ -4,7 +4,7 @@ import {
   UserCog, UserCheck, ShieldCheck, Bell, LibraryBig, Map,
   BookText, FileText, AlertOctagon, LifeBuoy, Gauge, Users,
   FileDown, BarChart3, CheckCircle2, Send, FileClock, Settings,
-  Megaphone, Shield, Trash2, Database, Scale,
+  Megaphone, Shield, Trash2, Database, Scale, Wallet,
 } from "lucide-react";
 
 export type LanguageMode = "en" | "am" | "both";
@@ -1770,6 +1770,35 @@ export const SECTIONS: Section[] = [
           "የማንኛውንም ረድፍ ቢሎች በዝርዝር ለመመርመር ረድፉን ይጫኑ።",
           "ለዝርዝር አካላት ወይም ለአውቶማቲክ የልዩነት ፍተሻ ተዛማጅ ትሮችን ይጠቀሙ።",
           "ሪፖርቱን በኤክሴል ወይም ፒዲኤፍ አውርደው ይጠቀሙበት።"
+        ]
+      }
+    ]
+  },
+  {
+    id: "credit-notes-report", icon: Wallet, title: "Credit Note Report", amharicTitle: "የክሬዲት ኖትና ተቀማጭ ሂሳብ ሪፖርት",
+    badge: "Billing / Audit", amharicBadge: "ቢሊንግ / ኦዲት",
+    group: "Data & Reports", color: "bg-emerald-600", gradient: "from-emerald-50 to-green-50", accentLight: "border-emerald-200 bg-emerald-50",
+    content: [
+      {
+        heading: "Credit Note & Deposit Financial Tracking",
+        amharicHeading: "የክሬዲት ኖትና ተቀማጭ የፋይናንስ ክትትል",
+        body: "Track all bulk meter overpayments, customer deposit notes, billing cycle offsets, and void reversals across all AAWSA branches.",
+        amharicBody: "በሁሉም የአዲስ አበባ ውሃና ፍሳሽ ባለስልጣን ቅርንጫፎች ላይ የተመዘገቡ የደንበኞች ተቀማጭ ገንዘቦች፣ ከመጠን በላይ ክፍያዎች፣ ለቢል የተካካሱ እና የተሰረዙ ክሬዲቶችን ይከታተሉ።",
+        steps: [
+          "Navigate to 'Credit Note Report' under Data & Reports in the sidebar.",
+          "Inspect the top KPI cards: Active Deposit Balance, Total Credit Created, Applied to Bills, Voided/Reversed, and Total Transactions.",
+          "Switch between the 'Credit Ledger Journal' for individual event audit trails, and 'Active Deposit Meters' for meters currently holding positive balances.",
+          "Filter by Branch, Event Type (Created, Applied, Voided), Reason, Date range, or keyword search.",
+          "Click the inspect eye icon on any entry to see full technical ledger metadata (Entry ID, Source Bill, Created By, Notes).",
+          "Click 'Export Report' to download full reports in Excel (.xlsx) or CSV format, or 'Print' for physical audit records."
+        ],
+        amharicSteps: [
+          "በጎን አሞሌው ስር 'የክሬዲት ኖትና ተቀማጭ ሂሳብ ሪፖርት' የሚለውን ይምረጡ።",
+          "ዋና ዋና አመልካቾችን (የተቀማጭ ቀሪ ሂሳብ፣ የተመዘገበ ክሬዲት፣ ለቢል የተካካሰ እና የተሰረዘ ሂሳብ) ይመልከቱ።",
+          "በ'የክሬዲት ሌጀር ጆርናል' (ዝርዝር ክስተቶች) እና 'ተቀማጭ ያላቸው ቆጣሪዎች' ትሮች መካከል ይቀያይሩ።",
+          "በቅርንጫፍ፣ በክስተት ዓይነት፣ በምክንያት ወይም በጊዜ ገደብ ያጣሩ።",
+          "የማንኛውንም ግብይት ዝርዝር መረጃ ለማየት የአይን ምልክቱን ይጫኑ።",
+          "ሪፖርቱን በኤክሴል ወይም ሲኤስቪ ለማውረድ 'Export Report' የሚለውን ይጫኑ።"
         ]
       }
     ]

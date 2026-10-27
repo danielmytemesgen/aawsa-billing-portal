@@ -500,6 +500,9 @@ export default function StaffManagementDashboardPage() {
       balance: Number(bill.outstanding || 0),
       type: bill.type || 'Bulk'
     })) ?? [];
+    const totalOverdueCount = typeof metrics?.delinquent?.totalCount === 'number'
+      ? metrics.delinquent.totalCount
+      : topDelinquentAccounts.length;
 
     return {
       totalBulkMeters: branchBMs.length,
@@ -512,6 +515,7 @@ export default function StaffManagementDashboardPage() {
       readingProgress,
       todayActivity,
       topDelinquentAccounts,
+      totalOverdueCount,
       branchPerformanceData,
       waterUsageTrendData,
       paidPercentage,
@@ -761,7 +765,7 @@ export default function StaffManagementDashboardPage() {
               {processedStats.readingProgress.percentage.toFixed(1)}<span className="text-3xl text-cyan-500/50">%</span>
             </div>
             <p className="text-sm text-slate-600 font-semibold mb-8">
-              <span className="text-cyan-600 font-bold">{processedStats.readingProgress.read}</span> of <span className="text-slate-500">{processedStats.readingProgress.total}</span> meters read
+              <span className="text-cyan-600 font-bold">{processedStats.readingProgress.read}</span> of <span className="text-slate-500">{processedStats.readingProgress.total}</span> bulk meters read
             </p>
             
             <div className="mt-4 pt-2">
@@ -827,7 +831,7 @@ export default function StaffManagementDashboardPage() {
       </div>
 
       {/* ── Overdue Bills Alert Card ── */}
-      {processedStats.topDelinquentAccounts.length > 0 && (
+      {(processedStats.totalOverdueCount > 0 || processedStats.topDelinquentAccounts.length > 0) && (
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl px-5 py-4 shadow-sm">
             <div className="h-12 w-12 rounded-2xl bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -835,7 +839,7 @@ export default function StaffManagementDashboardPage() {
             </div>
             <div className="flex-1">
               <p className="text-xs uppercase font-bold text-red-400 tracking-wider">Overdue Accounts</p>
-              <p className="text-3xl font-black text-red-700">{processedStats.topDelinquentAccounts.length}</p>
+              <p className="text-3xl font-black text-red-700">{(processedStats.totalOverdueCount || processedStats.topDelinquentAccounts.length).toLocaleString()}</p>
               <p className="text-xs text-red-500 font-semibold">With outstanding balances</p>
             </div>
             <Link href="/staff/bill-management" passHref>

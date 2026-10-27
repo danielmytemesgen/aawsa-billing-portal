@@ -174,6 +174,7 @@ export const PERMISSIONS = {
     CREDIT_VIEW_BRANCH: 'credit_view_branch',
     CREDIT_CREATE: 'credit_create',
     CREDIT_VOID: 'credit_void',
+    CREDIT_DELETE: 'credit_delete',
 
     // Customer Support & Help Desk
     SUPPORT_VIEW_ALL: 'support:view_all',

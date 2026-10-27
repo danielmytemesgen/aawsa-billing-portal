@@ -91,7 +91,8 @@ const PERMISSIONS = [
     { name: 'credit_view_all', category: 'Credit & Deposit' },
     { name: 'credit_view_branch', category: 'Credit & Deposit' },
     { name: 'credit_create', category: 'Credit & Deposit' },
-    { name: 'credit_void', category: 'Credit & Deposit' }
+    { name: 'credit_void', category: 'Credit & Deposit' },
+    { name: 'credit_delete', category: 'Credit & Deposit' }
 ];
 
 async function sync() {
