@@ -72,6 +72,10 @@ export const PERMISSIONS = {
     REPORT_GL_FINANCE_MONTHLY: 'report:gl_finance_monthly',
     REPORT_GL_FINANCE_YEARLY: 'report:gl_finance_yearly',
     REPORT_GL_MONTHLY_SUMMARY_BY_CODE: 'report:gl_monthly_summary_by_code',
+    REPORT_GL_AUDIT_VIEW: 'report:gl_audit_view',
+    REPORT_GL_AUDIT_VIEW_ALL: 'report:gl_audit_view_all',
+    REPORT_GL_AUDIT_VIEW_MATRIX: 'report:gl_audit_view_matrix',
+    REPORT_GL_AUDIT_VIEW_ANOMALY: 'report:gl_audit_view_anomaly',
     REPORT_MONTHLY_BILL_EXPORT: 'report:monthly_bill_export',
     REPORT_LIST_OF_CORRECTED_BILLS: 'report:list_of_corrected_bills',
     // Branch-scoped report permissions
@@ -89,6 +93,7 @@ export const PERMISSIONS = {
     REPORT_BRANCH_STAFF_DATA_EXPORT: 'report:branch_staff_data_export',
     REPORT_BRANCH_GL_FINANCE_MONTHLY: 'report:branch_gl_finance_monthly',
     REPORT_BRANCH_GL_FINANCE_YEARLY: 'report:branch_gl_finance_yearly',
+    REPORT_GL_AUDIT_VIEW_BRANCH: 'report:gl_audit_view_branch',
     REPORT_BRANCH_MONTHLY_BILL_EXPORT: 'report:branch_monthly_bill_export',
 
     // Billing

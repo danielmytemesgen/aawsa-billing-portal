@@ -10,11 +10,14 @@ import {
   getBulkMeters, initializeBulkMeters, subscribeToBulkMeters,
   getBranches, initializeBranches, subscribeToBranches
 } from "@/lib/data-store";
-import { getUnsettledBillsAction } from "@/lib/actions";
+import { getUnsettledBillsAction, getUnsettledBillsBranchSummaryAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
+import type { BillsBranchSummaryRow } from "@/lib/db-queries";
+import { BillsBranchSummaryCard } from "@/components/reports/BillsBranchSummaryCard";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
-import { FileClock, Search } from "lucide-react";
+import { FileClock, Search, Calendar } from "lucide-react";
+import { getAvailableMonthYearOptions } from "@/lib/export-utils";
 import { Input } from "@/components/ui/input";
 import type { StaffMember } from "@/app/(dashboard)/admin/staff-management/staff-types";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
@@ -75,6 +78,11 @@ export default function UnsettledBillsReportPage() {
   const [searchTerm, setSearchTerm] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [selectedBranchId, setSelectedBranchId] = React.useState("all");
+  const [selectedMonthYear, setSelectedMonthYear] = React.useState("all");
+  const monthOptions = React.useMemo(() => getAvailableMonthYearOptions(), []);
+
+  const [branchSummary, setBranchSummary] = React.useState<BillsBranchSummaryRow[]>([]);
+  const [isSummaryLoading, setIsSummaryLoading] = React.useState(true);
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -136,12 +144,14 @@ export default function UnsettledBillsReportPage() {
       setIsLoading(true);
       const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
       const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getUnsettledBillsAction({
         page,
         limit: rowsPerPage,
         searchTerm: debouncedSearch,
-        branchId: normalizedBranchId
+        branchId: normalizedBranchId,
+        monthYear: normalizedMonthYear,
       });
 
       if (result?.success && result?.bills) {
@@ -158,7 +168,41 @@ export default function UnsettledBillsReportPage() {
     };
 
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser, canViewAllBranches]);
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+
+  // Fetch branch summary
+  const fetchSummaryRef = React.useRef<() => void>(() => {});
+  React.useEffect(() => {
+    fetchSummaryRef.current = async () => {
+      setIsSummaryLoading(true);
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+
+      try {
+        const res = await getUnsettledBillsBranchSummaryAction({
+          searchTerm: debouncedSearch,
+          branchId: normalizedBranchId,
+          monthYear: normalizedMonthYear,
+        });
+        if (res.success && res.summary) {
+          setBranchSummary(res.summary);
+        } else {
+          setBranchSummary([]);
+        }
+      } catch (err) {
+        console.error("Error loading unsettled bills summary:", err);
+        setBranchSummary([]);
+      } finally {
+        setIsSummaryLoading(false);
+      }
+    };
+  }, [debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+
+  React.useEffect(() => {
+    if (!currentUser) return;
+    fetchSummaryRef.current();
+  }, [debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
 
   // Auto-refresh: re-fetch unsettled bills when DataRefreshProvider signals new data
   const fetchUnsettledRef = React.useRef<() => void>(() => {});
@@ -167,15 +211,20 @@ export default function UnsettledBillsReportPage() {
       setIsLoading(true);
       const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
       const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
-      const result = await getUnsettledBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId });
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+      const result = await getUnsettledBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
       if (result?.success && result?.bills) { setBills(result.bills); setTotalBills(result.total || 0); }
       else if (result?.data?.bills) { setBills(result.data.bills); setTotalBills(result.data.total || 0); }
       else { setBills([]); setTotalBills(0); }
       setIsLoading(false);
     };
-  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, currentUser, canViewAllBranches]);
+  }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+
   React.useEffect(() => {
-    const handleDataRefreshed = () => { fetchUnsettledRef.current(); };
+    const handleDataRefreshed = () => {
+      fetchUnsettledRef.current();
+      fetchSummaryRef.current();
+    };
     window.addEventListener('data-refreshed', handleDataRefreshed);
     return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
   }, []);
@@ -191,6 +240,19 @@ export default function UnsettledBillsReportPage() {
         </div>
       </div>
 
+      {/* ── Unsettled Bills Branch Summary Report ── */}
+      <BillsBranchSummaryCard
+        type="unsettled"
+        summary={branchSummary}
+        isLoading={isSummaryLoading}
+        selectedMonthYear={selectedMonthYear}
+        onMonthYearChange={(val) => {
+          setSelectedMonthYear(val);
+          setPage(0);
+        }}
+        monthOptions={monthOptions}
+      />
+
       <Card className="shadow-md border-slate-200/60 overflow-hidden rounded-3xl">
         <CardHeader className="bg-slate-50/50 border-b pb-6 pt-6 px-6">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
@@ -204,7 +266,7 @@ export default function UnsettledBillsReportPage() {
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-              <div className="relative flex-grow sm:w-[300px]">
+              <div className="relative flex-grow sm:w-[260px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   type="search"
@@ -214,9 +276,22 @@ export default function UnsettledBillsReportPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+
+              <Select value={selectedMonthYear} onValueChange={(val) => { setSelectedMonthYear(val); setPage(0); }}>
+                <SelectTrigger className="w-full sm:w-[180px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                  <Calendar className="h-4 w-4 mr-2 text-slate-500" />
+                  <SelectValue placeholder="All Months" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl max-h-[300px]">
+                  {monthOptions.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               {canViewAllBranches ? (
-                <Select value={selectedBranchId || undefined} onValueChange={setSelectedBranchId}>
-                  <SelectTrigger className="w-full sm:w-[220px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
+                <Select value={selectedBranchId || undefined} onValueChange={(val) => { setSelectedBranchId(val); setPage(0); }}>
+                  <SelectTrigger className="w-full sm:w-[180px] h-11 bg-white rounded-xl border-slate-200 shadow-sm">
                     <SelectValue placeholder="All Branches" />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl">

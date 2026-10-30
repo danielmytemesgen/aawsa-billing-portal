@@ -101,6 +101,31 @@ export function ReportPrintSummaryDialog({
     };
   }, [bills, type]);
 
+  // Branch Summary Breakdown
+  const branchBreakdown = React.useMemo(() => {
+    const map = new Map<string, { branchName: string; count: number; totalAmount: number }>();
+    bills.forEach((bill: any) => {
+      const bName = getBranchNameDisplay(bill, customers, bulkMeters, branches) || "Head Office / Unassigned";
+      const d30 = Number(bill.debit30 ?? bill.debit_30 ?? 0);
+      const d30_60 = Number(bill.debit30_60 ?? bill.debit_30_60 ?? 0);
+      const d60 = Number(bill.debit60 ?? bill.debit_60 ?? 0);
+      const outstanding = Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
+      const currentBill = getMonthlyBillAmt(bill);
+      const penalty = getPenaltyValue(Number(bill.PENALTYAMT ?? 0), penaltyEnabled);
+      const totalDue = Number(bill.totalAmountDue ?? bill.TOTALBILLAMOUNT ?? (outstanding + currentBill + penalty));
+      const amt = type === 'paid' ? Number(bill.amount_paid ?? bill.amountPaid ?? totalDue) : totalDue;
+
+      if (!map.has(bName)) {
+        map.set(bName, { branchName: bName, count: 0, totalAmount: 0 });
+      }
+      const item = map.get(bName)!;
+      item.count += 1;
+      item.totalAmount += amt;
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+  }, [bills, customers, bulkMeters, branches, type, penaltyEnabled]);
+
   const handlePrint = () => {
     window.print();
   };
@@ -284,6 +309,56 @@ export function ReportPrintSummaryDialog({
                 </div>
               </>
             )}
+          </div>
+
+          {/* Branch Summary Table */}
+          {branchBreakdown.length > 0 && (
+            <div className="border border-slate-200 rounded-2xl overflow-hidden">
+              <div className="bg-slate-100/80 px-4 py-2 border-b border-slate-200 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wide">
+                  Branch Summary Breakdown
+                </span>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {branchBreakdown.length} {branchBreakdown.length === 1 ? "Branch" : "Branches"}
+                </span>
+              </div>
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Branch</th>
+                    <th className="py-2.5 px-3 text-right">Number of Bills (Count)</th>
+                    <th className="py-2.5 px-3 text-right">Total Amount (ETB)</th>
+                    <th className="py-2.5 px-3 text-right">Share (%)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {branchBreakdown.map((item) => {
+                    const share = metrics.totalAmount > 0 ? (item.totalAmount / metrics.totalAmount) * 100 : 0;
+                    return (
+                      <tr key={item.branchName} className="hover:bg-slate-50/60 font-mono text-xs">
+                        <td className="py-2 px-3 font-semibold font-sans text-slate-900">{item.branchName}</td>
+                        <td className="py-2 px-3 text-right font-bold text-slate-800">{formatNumber(item.count)}</td>
+                        <td className="py-2 px-3 text-right font-bold text-slate-900">ETB {formatNumber(item.totalAmount)}</td>
+                        <td className="py-2 px-3 text-right text-slate-600">{share.toFixed(1)}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-slate-100 font-bold font-mono text-xs border-t-2 border-slate-300">
+                    <td className="py-2.5 px-3 font-sans font-black text-slate-900">TOTAL</td>
+                    <td className="py-2.5 px-3 text-right font-black text-slate-900">{formatNumber(metrics.totalCount)}</td>
+                    <td className="py-2.5 px-3 text-right font-black text-slate-900">ETB {formatNumber(metrics.totalAmount)}</td>
+                    <td className="py-2.5 px-3 text-right font-black text-slate-900">100.0%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          {/* Detailed Bill Records Header */}
+          <div className="pt-2">
+            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Detailed Bill Records</h2>
           </div>
 
           {/* Report Data Table */}

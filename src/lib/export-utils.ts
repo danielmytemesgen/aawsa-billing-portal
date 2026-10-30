@@ -11,7 +11,7 @@ export const getAvailableMonthYearOptions = (): { value: string; label: string }
   const options: { value: string; label: string }[] = [
     { value: "all", label: "All Months" }
   ];
-  
+
   const now = new Date();
   for (let i = 0; i < 24; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -289,7 +289,8 @@ export const exportPaidBillsToCsv = (
     "Customer Key",
     "Customer Name",
     "Branch",
-    "Amount Paid (ETB)",
+    "Billed Amount (ETB)",
+    "Actual Paid (ETB)",
     "Payment Date",
     "Reconciliation Status",
     "Payment Channel",
@@ -306,8 +307,13 @@ export const exportPaidBillsToCsv = (
     const custName = getCustomerIdentifier(bill, customers, bulkMeters);
     const branchName = getBranchNameDisplay(bill, customers, bulkMeters, branches);
 
-    const amt = bill.amount_paid ?? bill.amountPaid ?? bill.TOTALBILLAMOUNT ?? bill.totalBillAmount ?? 0;
-    const amountPaidStr = parseNumber(amt)?.toFixed(2) || "0.00";
+    const billedAmt = parseNumber(
+      (bill as any).TOTALBILLAMOUNT ?? (bill as any).totalBillAmount ?? (bill as any).total_bill_amount
+    )?.toFixed(2) || "0.00";
+    const actualPaid = parseNumber(
+      (bill as any).amount_paid ?? (bill as any).amountPaid
+    );
+    const actualPaidStr = actualPaid !== undefined ? actualPaid.toFixed(2) : "-";
 
     const dateVal = bill.last_payment_date || bill.payment_date || bill.paymentDate || bill.updated_at || bill.created_at;
     let paymentDateStr = "-";
@@ -346,7 +352,8 @@ export const exportPaidBillsToCsv = (
       "Customer Key": custKey,
       "Customer Name": custName,
       "Branch": branchName,
-      "Amount Paid (ETB)": amountPaidStr,
+      "Billed Amount (ETB)": billedAmt,
+      "Actual Paid (ETB)": actualPaidStr,
       "Payment Date": paymentDateStr,
       "Reconciliation Status": reconStatus,
       "Payment Channel": paymentChannel,
@@ -375,7 +382,8 @@ export const exportPaidBillsToXlsx = (
     "Customer Key",
     "Customer Name",
     "Branch",
-    "Amount Paid (ETB)",
+    "Billed Amount (ETB)",
+    "Actual Paid (ETB)",
     "Payment Date",
     "Reconciliation Status",
     "Payment Channel",
@@ -392,8 +400,13 @@ export const exportPaidBillsToXlsx = (
     const custName = getCustomerIdentifier(bill, customers, bulkMeters);
     const branchName = getBranchNameDisplay(bill, customers, bulkMeters, branches);
 
-    const amt = bill.amount_paid ?? bill.amountPaid ?? bill.TOTALBILLAMOUNT ?? bill.totalBillAmount ?? 0;
-    const amountPaidStr = parseNumber(amt)?.toFixed(2) || "0.00";
+    const billedAmtX = parseNumber(
+      (bill as any).TOTALBILLAMOUNT ?? (bill as any).totalBillAmount ?? (bill as any).total_bill_amount
+    )?.toFixed(2) || "0.00";
+    const actualPaidX = parseNumber(
+      (bill as any).amount_paid ?? (bill as any).amountPaid
+    );
+    const actualPaidStrX = actualPaidX !== undefined ? actualPaidX.toFixed(2) : "-";
 
     const dateVal = bill.last_payment_date || bill.payment_date || bill.paymentDate || bill.updated_at || bill.created_at;
     let paymentDateStr = "-";
@@ -432,7 +445,8 @@ export const exportPaidBillsToXlsx = (
       "Customer Key": custKey,
       "Customer Name": custName,
       "Branch": branchName,
-      "Amount Paid (ETB)": amountPaidStr,
+      "Billed Amount (ETB)": billedAmtX,
+      "Actual Paid (ETB)": actualPaidStrX,
       "Payment Date": paymentDateStr,
       "Reconciliation Status": reconStatus,
       "Payment Channel": paymentChannel,

@@ -153,12 +153,60 @@ export default function RolesAndPermissionsPage() {
 
   const handlePermissionToggle = (permissionId: number, checked: boolean | "indeterminate") => {
     const isChecked = checked === true;
+    const toggledPerm = permissions.find(p => p.id === permissionId);
+
     setSelectedPermissions(prev => {
       const newSet = new Set(prev);
       if (isChecked) {
         newSet.add(permissionId);
+
+        // Dynamic flipping for GL Financial & Audit Report permissions:
+        // Checking any tab/scope permission automatically activates the base view permission
+        const GL_TAB_PERMS = [
+          'report:gl_audit_view_all',
+          'report:gl_audit_view_branch',
+          'report:gl_audit_view_matrix',
+          'report:gl_audit_view_anomaly',
+        ];
+        if (toggledPerm?.name && GL_TAB_PERMS.includes(toggledPerm.name)) {
+          const baseViewPerm = permissions.find(p => p.name === 'report:gl_audit_view');
+          if (baseViewPerm) newSet.add(baseViewPerm.id);
+
+          // Mutually exclusive scope: view_all and view_branch cannot coexist
+          if (toggledPerm.name === 'report:gl_audit_view_all') {
+            const branchPerm = permissions.find(p => p.name === 'report:gl_audit_view_branch');
+            if (branchPerm) newSet.delete(branchPerm.id);
+          } else if (toggledPerm.name === 'report:gl_audit_view_branch') {
+            const allPerm = permissions.find(p => p.name === 'report:gl_audit_view_all');
+            if (allPerm) newSet.delete(allPerm.id);
+          }
+        }
       } else {
         newSet.delete(permissionId);
+
+        // If unchecking the base GL view permission, also remove all dependent tab/scope perms
+        if (toggledPerm?.name === 'report:gl_audit_view') {
+          ['report:gl_audit_view_all', 'report:gl_audit_view_branch',
+           'report:gl_audit_view_matrix', 'report:gl_audit_view_anomaly'].forEach(name => {
+            const p = permissions.find(x => x.name === name);
+            if (p) newSet.delete(p.id);
+          });
+        }
+
+        // Keep system-wide and branch-scoped period toggles in sync when unchecking
+        if (toggledPerm?.name === 'report:gl_finance_yearly') {
+          const b = permissions.find(x => x.name === 'report:branch_gl_finance_yearly');
+          if (b) newSet.delete(b.id);
+        } else if (toggledPerm?.name === 'report:branch_gl_finance_yearly') {
+          const g = permissions.find(x => x.name === 'report:gl_finance_yearly');
+          if (g) newSet.delete(g.id);
+        } else if (toggledPerm?.name === 'report:gl_finance_monthly') {
+          const b = permissions.find(x => x.name === 'report:branch_gl_finance_monthly');
+          if (b) newSet.delete(b.id);
+        } else if (toggledPerm?.name === 'report:branch_gl_finance_monthly') {
+          const g = permissions.find(x => x.name === 'report:gl_finance_monthly');
+          if (g) newSet.delete(g.id);
+        }
       }
       return newSet;
     });
@@ -222,6 +270,20 @@ export default function RolesAndPermissionsPage() {
   const totalPages = Math.ceil(permissions.length / rowsPerPage);
 
   const formatPermissionName = (name: string) => {
+    const specialLabels: Record<string, string> = {
+      'report:gl_audit_view': 'GL Financial & Audit: View Report',
+      'report:gl_audit_view_all': 'GL Financial & Audit: All Branch Monthly GL Tab',
+      'report:gl_audit_view_branch': 'GL Financial & Audit: View Assigned Branch (Branch-Specific)',
+      'report:gl_audit_view_matrix': 'GL Financial & Audit: Component Breakdown Matrix Tab',
+      'report:gl_audit_view_anomaly': 'GL Financial & Audit: Audit & Anomaly Inspector Tab',
+      'report:gl_monthly_summary_by_code': 'GL Monthly Summary by Account Code',
+      'report:gl_finance_monthly': 'GL Finance Monthly Report',
+      'report:gl_finance_yearly': 'GL Finance Yearly / Annual Report',
+      'report:branch_gl_finance_monthly': 'Branch GL Finance Monthly Report',
+      'report:branch_gl_finance_yearly': 'Branch GL Finance Yearly Report',
+    };
+    if (specialLabels[name]) return specialLabels[name];
+
     return name
       .replace(/:/g, ': ')
       .replace(/_/g, ' ')
@@ -237,6 +299,9 @@ export default function RolesAndPermissionsPage() {
       'Bulk Meters': 'bg-indigo-100 text-indigo-700 border-indigo-200',
       'Customer Support': 'bg-teal-100 text-teal-800 border-teal-200',
       'Systems': 'bg-slate-100 text-slate-700 border-slate-200',
+      'Finance': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'Branch Report': 'bg-sky-100 text-sky-800 border-sky-200',
+      'Reporting': 'bg-cyan-100 text-cyan-800 border-cyan-200',
       'General': 'bg-gray-100 text-gray-700 border-gray-200'
     };
     return cats[category] || cats['General'];
@@ -362,19 +427,26 @@ export default function RolesAndPermissionsPage() {
                           <AccordionContent className="pt-2 pb-4">
                             <div className="grid grid-cols-1 gap-3">
                               {perms.map(perm => (
-                                <div key={perm.id} className="flex items-center space-x-3 p-2 rounded hover:bg-slate-100/50 transition-colors group">
-                                  <Checkbox
-                                    id={`perm-${perm.id}`}
-                                    checked={selectedPermissions.has(perm.id)}
-                                    onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked as boolean)}
-                                    className="h-5 w-5 data-[state=checked]:bg-primary"
-                                  />
-                                  <label
-                                    htmlFor={`perm-${perm.id}`}
-                                    className="text-sm font-medium leading-none cursor-pointer group-hover:text-primary transition-colors text-slate-700"
-                                  >
-                                    {formatPermissionName(perm.name)}
-                                  </label>
+                                <div key={perm.id} className="flex flex-col p-2.5 rounded-lg hover:bg-slate-50 transition-colors group border border-transparent hover:border-slate-200">
+                                  <div className="flex items-center space-x-3">
+                                    <Checkbox
+                                      id={`perm-${perm.id}`}
+                                      checked={selectedPermissions.has(perm.id)}
+                                      onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked as boolean)}
+                                      className="h-5 w-5 data-[state=checked]:bg-primary"
+                                    />
+                                    <label
+                                      htmlFor={`perm-${perm.id}`}
+                                      className="text-sm font-semibold leading-none cursor-pointer group-hover:text-primary transition-colors text-slate-800"
+                                    >
+                                      {formatPermissionName(perm.name)}
+                                    </label>
+                                  </div>
+                                  {perm.description && (
+                                    <p className="text-xs text-slate-500 mt-1 pl-8">
+                                      {perm.description}
+                                    </p>
+                                  )}
                                 </div>
                               ))}
                             </div>

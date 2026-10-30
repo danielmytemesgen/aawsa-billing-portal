@@ -145,6 +145,15 @@ import {
   dbGetCustomerCurrentStateForDoubleCheck,
   dbGetAllSentBillsPaginated,
   dbGetAllSentBillsCount,
+  dbGetBillsBranchSummary,
+  dbGetSentBillsBranchSummary,
+  dbGetPaidBillsBranchSummary,
+  dbGetUnsettledBillsBranchSummary,
+  dbGetDeliverySummary,
+  dbGetDeliverySummaryPeriods,
+  type BillsBranchSummaryRow,
+  type SentBillsBranchSummaryRow,
+  type DeliverySummaryRow,
   dbArchiveOldRecords,
   dbGetSystemStats,
   dbRunDataAudit,
@@ -7568,11 +7577,9 @@ export async function getAllSentBillsAction(params: {
 
     const perms = session.permissions || [];
     const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
 
-    // Only administrators have global access across all branches.
-    // Staff members are strictly restricted to their own assigned branch.
-    const effectiveBranchId = isAdmin
+    const effectiveBranchId = canSelectBranch
       ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
       : (session.branchId || '00000000-0000-0000-0000-000000000000');
     const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
@@ -7585,6 +7592,110 @@ export async function getAllSentBillsAction(params: {
     return { success: true, bills, total };
   });
 }
+
+export async function getBillsBranchSummaryAction(params: {
+  type?: 'sent' | 'paid' | 'unsettled';
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  groupByPeriod?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+
+    const effectiveBranchId = canSelectBranch
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const summary = await dbGetBillsBranchSummary({
+      ...params,
+      branchId: normalizedBranchId,
+    });
+
+    return { success: true, summary };
+  });
+}
+
+export async function getSentBillsBranchSummaryAction(params: {
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  groupByPeriod?: boolean;
+}) {
+  return getBillsBranchSummaryAction({ ...params, type: 'sent' });
+}
+
+export async function getPaidBillsBranchSummaryAction(params: {
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  groupByPeriod?: boolean;
+}) {
+  return getBillsBranchSummaryAction({ ...params, type: 'paid' });
+}
+
+export async function getUnsettledBillsBranchSummaryAction(params: {
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  groupByPeriod?: boolean;
+}) {
+  return getBillsBranchSummaryAction({ ...params, type: 'unsettled' });
+}
+
+export async function getDeliverySummaryReportAction(params: {
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  chargeGroup?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+
+    const effectiveBranchId = canSelectBranch
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const summary = await dbGetDeliverySummary({
+      ...params,
+      branchId: normalizedBranchId,
+    });
+
+    return { success: true, summary };
+  });
+}
+
+export async function getDeliverySummaryPeriodsAction(branchId?: string) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+
+    const effectiveBranchId = canSelectBranch
+      ? (!branchId || branchId === 'all' ? undefined : branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const res = await dbGetDeliverySummaryPeriods(normalizedBranchId);
+    return { success: true, ...res };
+  });
+}
+
 
 export async function archiveOldRecordsAction(monthsThreshold: number = 36) {
   try {
@@ -8642,42 +8753,6 @@ export async function updatePaymentsFromCsvAction(records: Array<{
     console.log(`[CSV UPLOAD] 🏢 Branch: ${session.branchId}`);
     console.log(`[CSV UPLOAD] 🌐 Environment: ${process.env.NODE_ENV}`);
     console.log(`[CSV UPLOAD] 🗄️  Database Host: ${process.env.POSTGRES_HOST}`);
-    
-    try {
-      // Verify database connection and schema
-      const testQuery = await query('SELECT 1 as connection_test');
-      console.log(`[CSV UPLOAD] ✅ Database connection verified`);
-      
-      // Check if payment columns exist
-      const columnsCheck = await query(`
-        SELECT column_name FROM information_schema.columns 
-        WHERE table_name = 'bills' 
-        AND column_name IN ('reconciliation_status', 'payment_channel', 'bank_ref', 'last_payment_date')
-        LIMIT 1
-      `);
-      
-      if (!columnsCheck || columnsCheck.length === 0) {
-        console.error(`[CSV UPLOAD] ❌ Payment columns DO NOT EXIST on bills table! Schema not initialized.`);
-        throw new Error('Database schema not initialized. Please run migrations: database/migrations/050_payment_infrastructure_csv.sql');
-      }
-      
-      console.log(`[CSV UPLOAD] ✅ Database schema verified - payment columns exist`);
-      
-      // Diagnostic: Count total bills in database
-      const billCountResult = await query('SELECT COUNT(*) as count FROM bills');
-      const totalBills = billCountResult?.[0]?.count || 0;
-      console.log(`[CSV UPLOAD] 📊 Total bills in database: ${totalBills}`);
-      
-      // Diagnostic: Check payment_status column type
-      const statusTypeResult = await query(`
-        SELECT data_type FROM information_schema.columns 
-        WHERE table_name='bills' AND column_name='payment_status'
-      `);
-      console.log(`[CSV UPLOAD] 📋 payment_status column type:`, statusTypeResult?.[0]?.data_type || 'UNKNOWN');
-    } catch (checkErr) {
-      console.error(`[CSV UPLOAD] ❌ Pre-flight check failed:`, checkErr);
-      throw checkErr;
-    }
     
     const result = await dbBatchUpdatePaymentsFromCsv(records, session.id);
     

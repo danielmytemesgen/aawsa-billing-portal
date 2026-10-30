@@ -214,7 +214,7 @@ export function AuthForm() {
     try {
       const result = await loginAction(formData);
 
-      if (result.success && result.user) {
+      if (result?.success && result?.user) {
         // Cache credentials AND user profile for offline login
         const passwordHash = await hashPassword(values.password);
         localStorage.setItem("offline_creds", JSON.stringify({
@@ -296,7 +296,7 @@ export function AuthForm() {
         toast({
           variant: "destructive",
           title: "Login Failed",
-          description: result.message || "Invalid email or password.",
+          description: result?.message || "Invalid email or password.",
         });
         setSyncState("idle");
       }

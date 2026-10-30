@@ -366,13 +366,13 @@ const availableStaffReports: ReportType[] = [
         const v = val.trim().toUpperCase();
         if (['AD', 'AK', 'AR', 'GS', 'GU', 'KO', 'LK', 'MG', 'MK', 'NS'].includes(v)) return v;
 
-        if (v.includes('ADDIS')) return 'AD';
         if (v.includes('AKAKI')) return 'AK';
+        if (v.includes('ADDIS') || v.includes('KETEMA') || v.includes('HEAD')) return 'AD';
         if (v.includes('ARADA')) return 'AR';
-        if (v.includes('GERD') || v.includes('SHOLA')) return 'GS';
+        if (v.includes('GURD') || v.includes('GERD') || v.includes('SHOLA')) return 'GS';
         if (v.includes('GULLELE') || v.includes('GULELE')) return 'GU';
-        if (v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
-        if (v.includes('LIDETA')) return 'LK';
+        if (v.includes('KOLEFE') || v.includes('KOLFE') || v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
+        if (v.includes('LEMI') || v.includes('KURA') || v.includes('LIDETA')) return 'LK';
         if (v.includes('MEGENAGNA')) return 'MG';
         if (v.includes('MEKANISA')) return 'MK';
         if (v.includes('NIFAS') || v.includes('NEFAS')) return 'NS';

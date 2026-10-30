@@ -1277,12 +1277,12 @@ const availableReports: ReportType[] = [
   },
   {
     id: "gl-monthly-summary-by-code",
-    name: "GL Monthly Summary by GL Code (XLSX)",
-    description: "Monthly summary of billing amounts broken down and grouped by Branch and GL Code (WNDGL, WDGL, WBORGL, SNTGL, SEWERGL, WPFNTGL, MTRRNTGL, MNTGL, FIREGL). Shows COUNT, TOTAL_AMOUNT, VAT_AMOUNT and WITHOUT_VAT per GL code per period.",
+    name: "All Branch Monthly GL Report (XLSX)",
+    description: "Official All-Branch Monthly General Ledger summary grouped by Branch and GL Code (WNDGL, WDGL, WBORGL, SNTGL, SEWERGL, WPFNTGL, MTRRNTGL, MNTGL, FIREGL). Shows COUNT, BRANCH, GL_CODE, TOTAL_AMOUNT, VAT_AMOUNT, WITH_OUT_VAT, and PERIOD.",
     category: 'Finance',
     requiredPermission: PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE,
     headers: [
-      "COUNT", "BRANCH", "CHARGE_GROUP", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"
+      "COUNT", "BRANCH", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate } = filters;
@@ -1356,13 +1356,13 @@ const availableReports: ReportType[] = [
         const v = val.trim().toUpperCase();
         if (['AD', 'AK', 'AR', 'GS', 'GU', 'KO', 'LK', 'MG', 'MK', 'NS'].includes(v)) return v;
 
-        if (v.includes('ADDIS')) return 'AD';
         if (v.includes('AKAKI')) return 'AK';
+        if (v.includes('ADDIS') || v.includes('KETEMA') || v.includes('HEAD')) return 'AD';
         if (v.includes('ARADA')) return 'AR';
-        if (v.includes('GERD') || v.includes('SHOLA')) return 'GS';
+        if (v.includes('GURD') || v.includes('GERD') || v.includes('SHOLA')) return 'GS';
         if (v.includes('GULLELE') || v.includes('GULELE')) return 'GU';
-        if (v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
-        if (v.includes('LIDETA')) return 'LK';
+        if (v.includes('KOLEFE') || v.includes('KOLFE') || v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
+        if (v.includes('LEMI') || v.includes('KURA') || v.includes('LIDETA')) return 'LK';
         if (v.includes('MEGENAGNA')) return 'MG';
         if (v.includes('MEKANISA')) return 'MK';
         if (v.includes('NIFAS') || v.includes('NEFAS')) return 'NS';
@@ -1425,7 +1425,7 @@ const availableReports: ReportType[] = [
 
         const addItem = (glCode: string, amount: number, vatAmt: number = 0) => {
           if (amount <= 0 && vatAmt <= 0) return;
-          const key = `${periodStr}|${branchCode}|${chargeGroupLabel}|${glCode}`;
+          const key = `${periodStr}|${branchCode}|${glCode}`;
           if (!grouped[key]) {
             grouped[key] = {
               count: 0,
@@ -1452,12 +1452,11 @@ const availableReports: ReportType[] = [
         addItem('FIREGL', additional, 0);
       }
 
-      // Convert to flat rows and sort by PERIOD desc, then BRANCH, then CHARGE_GROUP, then GL_CODE
+      // Convert to flat rows matching the exact All Branch Monthly GL format
       return Object.values(grouped)
         .map(row => ({
           "COUNT":        row.count,
           "BRANCH":       row.branch,
-          "CHARGE_GROUP": row.chargeGroup,
           "GL_CODE":      row.glCode,
           "TOTAL_AMOUNT": parseFloat(row.totalAmount.toFixed(2)),
           "VAT_AMOUNT":   parseFloat(row.vatAmount.toFixed(2)),
@@ -1469,8 +1468,6 @@ const availableReports: ReportType[] = [
           if (pd !== 0) return pd;
           const bd = (a.BRANCH || '').localeCompare(b.BRANCH || '');
           if (bd !== 0) return bd;
-          const cg = (a.CHARGE_GROUP || '').localeCompare(b.CHARGE_GROUP || '');
-          if (cg !== 0) return cg;
           return (a.GL_CODE || '').localeCompare(b.GL_CODE || '');
         });
     },

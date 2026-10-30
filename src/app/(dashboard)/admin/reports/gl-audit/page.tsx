@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PERMISSIONS } from "@/lib/constants/auth";
+import { subscribePermissionsSync } from "@/lib/permissions-sync";
 import { useToast } from "@/hooks/use-toast";
 import {
   Scale,
@@ -23,20 +24,26 @@ import {
   Layers,
   Calendar,
   CalendarDays,
+  Building2,
+  Lock,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   getGLSummaryReportAction,
   getGLAuditAnomaliesAction,
   getAvailableGLPeriodsAction,
   getAvailableGLYearsAction,
+  getGLUserPermissionsAction,
   type GLSummaryRow,
   type GLComponentMatrixRow,
+  type GLAllBranchMonthlyRow,
   type GLKPIs,
   type GLAnomalyItem,
 } from "@/lib/gl-audit-actions";
 import { getAllBranchesAction } from "@/lib/actions";
 import { GLKPICards } from "@/components/reports/gl/GLKPICards";
 import { GLSummaryTable } from "@/components/reports/gl/GLSummaryTable";
+import { GLAllBranchMonthlyTable } from "@/components/reports/gl/GLAllBranchMonthlyTable";
 import { GLComponentMatrixTable } from "@/components/reports/gl/GLComponentMatrixTable";
 import { GLAnomalyInspector } from "@/components/reports/gl/GLAnomalyInspector";
 import { GLBillDrillDownDrawer } from "@/components/reports/gl/GLBillDrillDownDrawer";
@@ -44,6 +51,7 @@ import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from "@/lib/xlsx";
 import { getAvailableMonthYearOptions } from "@/lib/export-utils";
 
 export default function GLReportsAuditPage() {
+  const router = useRouter();
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
 
@@ -64,6 +72,38 @@ export default function GLReportsAuditPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
+  // ── Permission capabilities from server ───────────────────────────────────
+  const [glPerms, setGlPerms] = useState<{
+    canAccess: boolean;
+    isAdmin: boolean;
+    canViewSummary: boolean;
+    canViewAllBranches: boolean;
+    lockedBranchId: string | null;
+    branchName?: string | null;
+    canViewMonthly: boolean;
+    canViewYearly: boolean;
+    canExport: boolean;
+    canViewMatrix: boolean;
+    canViewAnomalies: boolean;
+    canViewAnomalyTab: boolean;
+    canDrillDown: boolean;
+  }>({
+    canAccess: false,
+    isAdmin: false,
+    canViewSummary: false,
+    canViewAllBranches: false,
+    lockedBranchId: null,
+    branchName: null,
+    canViewMonthly: false,
+    canViewYearly: false,
+    canExport: false,
+    canViewMatrix: false,
+    canViewAnomalies: false,
+    canViewAnomalyTab: false,
+    canDrillDown: false,
+  });
+  const [isPermsLoaded, setIsPermsLoaded] = useState<boolean>(false);
+
   // Data states
   const [kpis, setKpis] = useState<GLKPIs>({
     totalGrossBilled: 0,
@@ -80,6 +120,7 @@ export default function GLReportsAuditPage() {
     glCodeBreakdown: {},
   });
   const [summaryRows, setSummaryRows] = useState<GLSummaryRow[]>([]);
+  const [allBranchMonthlyRows, setAllBranchMonthlyRows] = useState<GLAllBranchMonthlyRow[]>([]);
   const [matrixRows, setMatrixRows] = useState<GLComponentMatrixRow[]>([]);
   const [anomalies, setAnomalies] = useState<GLAnomalyItem[]>([]);
 
@@ -104,15 +145,74 @@ export default function GLReportsAuditPage() {
     return [...baseOptions, ...extras];
   }, [dbMonths]);
 
-  // Fetch branches, available years, and default to the latest month on mount
+  // Centralized permission evaluator for mount & live reactive updates
+  const refreshGLCapabilities = useCallback(async () => {
+    try {
+      const permsRes = await getGLUserPermissionsAction();
+      if (permsRes?.data) {
+        const p = permsRes.data;
+        setGlPerms(p);
+
+        // Dynamic flipping of branch filter based on updated role permissions
+        if (p.lockedBranchId) {
+          setSelectedBranchId(p.lockedBranchId);
+        } else if (!p.canViewAllBranches) {
+          setSelectedBranchId((prev) => (prev === "all" ? "" : prev));
+        }
+
+        // Dynamically adjust activeTab based on available tabs
+        const allowedTabs: string[] = [];
+        if (p.canViewSummary) allowedTabs.push("summary");
+        if (p.canViewAllBranches) allowedTabs.push("all-branch-monthly");
+        if (p.canViewMatrix) allowedTabs.push("matrix");
+        if (p.canViewAnomalyTab) allowedTabs.push("anomalies");
+
+        setActiveTab((prev) => (allowedTabs.includes(prev) ? prev : (allowedTabs[0] || "summary")));
+
+        // Adjust periodType if user lacks yearly
+        if (p.canViewYearly && !p.canViewMonthly) {
+          setPeriodType("yearly");
+        } else if (!p.canViewYearly) {
+          setPeriodType("monthly");
+        }
+      }
+      setIsPermsLoaded(true);
+    } catch (err) {
+      console.error("Failed to refresh GL permissions:", err);
+      setIsPermsLoaded(true);
+    }
+  }, []);
+
+  // Fetch permissions + branches + periods on mount
   useEffect(() => {
     let isMounted = true;
     Promise.all([
+      getGLUserPermissionsAction(),
       getAllBranchesAction(),
       getAvailableGLPeriodsAction(),
     ])
-      .then(([branchRes, periodRes]: [any, any]) => {
+      .then(([permsRes, branchRes, periodRes]: [any, any, any]) => {
         if (!isMounted) return;
+        if (permsRes?.data) {
+          const p = permsRes.data;
+          setGlPerms(p);
+          if (p.lockedBranchId) {
+            setSelectedBranchId(p.lockedBranchId);
+          }
+          const allowedTabs: string[] = [];
+          if (p.canViewSummary) allowedTabs.push("summary");
+          if (p.canViewAllBranches) allowedTabs.push("all-branch-monthly");
+          if (p.canViewMatrix) allowedTabs.push("matrix");
+          if (p.canViewAnomalyTab) allowedTabs.push("anomalies");
+          setActiveTab((prev) => (allowedTabs.includes(prev) ? prev : (allowedTabs[0] || "summary")));
+
+          if (p.canViewYearly && !p.canViewMonthly) {
+            setPeriodType("yearly");
+          } else if (!p.canViewYearly) {
+            setPeriodType("monthly");
+          }
+        }
+        setIsPermsLoaded(true);
         if (branchRes?.data) setBranches(branchRes.data);
         if (periodRes?.years) setYears(periodRes.years);
         if (periodRes?.availableMonths) setDbMonths(periodRes.availableMonths);
@@ -125,7 +225,8 @@ export default function GLReportsAuditPage() {
         setIsPeriodInitialized(true);
       })
       .catch((err) => {
-        console.error("Failed to load initial GL period setup:", err);
+        console.error("Failed to load initial GL setup:", err);
+        setIsPermsLoaded(true);
         setIsPeriodInitialized(true);
       });
 
@@ -134,9 +235,30 @@ export default function GLReportsAuditPage() {
     };
   }, []);
 
+  // Real-time listener: dynamic UI flips when role permissions are assigned / unassigned
+  useEffect(() => {
+    const handlePermissionsUpdated = () => {
+      refreshGLCapabilities();
+    };
+
+    window.addEventListener("user-permissions-updated", handlePermissionsUpdated);
+    window.addEventListener("storage", handlePermissionsUpdated);
+    window.addEventListener("visibilitychange", handlePermissionsUpdated);
+    window.addEventListener("focus", handlePermissionsUpdated);
+    const unsubscribeSync = subscribePermissionsSync(handlePermissionsUpdated);
+
+    return () => {
+      window.removeEventListener("user-permissions-updated", handlePermissionsUpdated);
+      window.removeEventListener("storage", handlePermissionsUpdated);
+      window.removeEventListener("visibilitychange", handlePermissionsUpdated);
+      window.removeEventListener("focus", handlePermissionsUpdated);
+      unsubscribeSync();
+    };
+  }, [refreshGLCapabilities]);
+
   // Main data loader
   const loadGLData = useCallback(async () => {
-    if (!isPeriodInitialized) return;
+    if (!isPeriodInitialized || !isPermsLoaded) return;
     setIsLoading(true);
     try {
       const [summaryRes, anomaliesRes] = await Promise.all([
@@ -149,18 +271,21 @@ export default function GLReportsAuditPage() {
           glCode: selectedGlCode !== "all" ? selectedGlCode : undefined,
           paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
         }),
-        getGLAuditAnomaliesAction({
-          branchId: selectedBranchId !== "all" ? selectedBranchId : undefined,
-          periodType,
-          monthYear: periodType === "monthly" && selectedMonthYear !== "all" ? selectedMonthYear : undefined,
-          year: periodType === "yearly" && selectedYear !== "all" ? selectedYear : undefined,
-          paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
-        }),
+        glPerms.canViewAnomalyTab
+          ? getGLAuditAnomaliesAction({
+              branchId: selectedBranchId !== "all" ? selectedBranchId : undefined,
+              periodType,
+              monthYear: periodType === "monthly" && selectedMonthYear !== "all" ? selectedMonthYear : undefined,
+              year: periodType === "yearly" && selectedYear !== "all" ? selectedYear : undefined,
+              paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
+            })
+          : Promise.resolve({ success: true, anomalies: [] }),
       ]);
 
-      if (summaryRes.success && summaryRes.kpis && summaryRes.summaryRows) {
+      if (summaryRes.success && summaryRes.kpis) {
         setKpis(summaryRes.kpis);
-        setSummaryRows(summaryRes.summaryRows);
+        setSummaryRows(summaryRes.summaryRows || []);
+        setAllBranchMonthlyRows(summaryRes.allBranchMonthlyRows || []);
         setMatrixRows(summaryRes.componentMatrixRows || []);
       } else {
         toast({
@@ -185,6 +310,7 @@ export default function GLReportsAuditPage() {
     }
   }, [
     isPeriodInitialized,
+    isPermsLoaded,
     selectedBranchId,
     periodType,
     selectedMonthYear,
@@ -192,23 +318,74 @@ export default function GLReportsAuditPage() {
     selectedChargeGroup,
     selectedGlCode,
     selectedPaymentStatus,
+    glPerms.canViewSummary,
+    glPerms.canViewAllBranches,
+    glPerms.canViewMatrix,
+    glPerms.canViewAnomalyTab,
+    glPerms.canViewMonthly,
+    glPerms.canViewYearly,
     toast,
   ]);
 
   useEffect(() => {
-    if (isPeriodInitialized) {
+    if (isPeriodInitialized && isPermsLoaded) {
       loadGLData();
     }
-  }, [isPeriodInitialized, loadGLData]);
+  }, [isPeriodInitialized, isPermsLoaded, loadGLData]);
 
-  // Handle drill-down
+  // Handle drill-down (only if permitted)
   const handleInspectRow = (row: GLSummaryRow) => {
+    if (!glPerms.canDrillDown) {
+      toast({
+        title: "Access Restricted",
+        description: "You do not have permission to drill down into individual bills.",
+        variant: "destructive",
+      });
+      return;
+    }
     setInspectRow(row);
     setIsDrawerOpen(true);
   };
 
   // Export XLSX
   const handleExportXLSX = () => {
+    if (!glPerms.canExport) {
+      toast({ title: "Access Restricted", description: "You do not have permission to export GL reports.", variant: "destructive" });
+      return;
+    }
+
+    if (activeTab === "all-branch-monthly") {
+      if (allBranchMonthlyRows.length === 0) {
+        toast({ title: "No Data", description: "No records to export." });
+        return;
+      }
+      setIsExporting(true);
+      try {
+        const exportSummary = allBranchMonthlyRows.map((r) => ({
+          "COUNT":        r.count,
+          "BRANCH":       r.branch,
+          "GL_CODE":      r.glCode,
+          "TOTAL_AMOUNT": r.totalAmount,
+          "VAT_AMOUNT":   r.vatAmount,
+          "WITH_OUT_VAT": r.withoutVat,
+          "PERIOD":       r.period,
+        }));
+        const headers = ["COUNT", "BRANCH", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"];
+        const periodLabel = periodType === 'yearly'
+          ? (selectedYear !== 'all' ? `Year_${selectedYear}` : 'All_Years')
+          : (selectedMonthYear !== 'all' ? selectedMonthYear : 'All_Months');
+        const blob = arrayToXlsxBlob(exportSummary, headers, 'All Branch Monthly GL');
+        const filename = `AAWSA_All_Branch_Monthly_GL_Report_${periodLabel}_${new Date().toISOString().split("T")[0]}.xlsx`;
+        downloadFile(blob, filename);
+        toast({ title: "Export Complete", description: `${exportSummary.length} All Branch Monthly GL rows downloaded.` });
+      } catch (err: any) {
+        toast({ title: "Export Error", description: err.message, variant: "destructive" });
+      } finally {
+        setIsExporting(false);
+      }
+      return;
+    }
+
     if (summaryRows.length === 0) {
       toast({ title: "No Data", description: "No records to export." });
       return;
@@ -253,6 +430,35 @@ export default function GLReportsAuditPage() {
 
   // Export CSV
   const handleExportCSV = () => {
+    if (!glPerms.canExport) {
+      toast({ title: "Access Restricted", description: "You do not have permission to export GL reports.", variant: "destructive" });
+      return;
+    }
+
+    if (activeTab === "all-branch-monthly") {
+      if (allBranchMonthlyRows.length === 0) return;
+      try {
+        const exportSummary = allBranchMonthlyRows.map((r) => ({
+          "COUNT":        r.count,
+          "BRANCH":       r.branch,
+          "GL_CODE":      r.glCode,
+          "TOTAL_AMOUNT": r.totalAmount,
+          "VAT_AMOUNT":   r.vatAmount,
+          "WITH_OUT_VAT": r.withoutVat,
+          "PERIOD":       r.period,
+        }));
+        const periodLabel = periodType === 'yearly'
+          ? (selectedYear !== 'all' ? `year_${selectedYear}` : 'all_years')
+          : (selectedMonthYear !== 'all' ? selectedMonthYear : 'all_months');
+        const blob = arrayToCsvBlob(exportSummary, ["COUNT", "BRANCH", "GL_CODE", "TOTAL_AMOUNT", "VAT_AMOUNT", "WITH_OUT_VAT", "PERIOD"]);
+        downloadFile(blob, `all_branch_monthly_gl_report_${periodLabel}_${new Date().toISOString().split("T")[0]}.csv`);
+        toast({ title: "CSV Downloaded", description: `${exportSummary.length} All Branch Monthly GL rows exported.` });
+      } catch (err: any) {
+        toast({ title: "Export Error", description: err.message, variant: "destructive" });
+      }
+      return;
+    }
+
     if (summaryRows.length === 0) return;
     try {
       const exportSummary = summaryRows.map((r) => ({
@@ -294,6 +500,66 @@ export default function GLReportsAuditPage() {
       document.title = prevTitle;
     }, 1000);
   };
+
+  // Show clean spinner while verifying permissions to prevent any UI flashing
+  if (!isPermsLoaded) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="h-8 w-8 animate-spin text-indigo-600" />
+          <p className="text-xs font-semibold text-slate-500">Checking GL permissions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Reactive Access Control Gate: Flip UI if user lacks view permission
+  if (isPermsLoaded && !glPerms.canAccess) {
+    return (
+      <div className="space-y-6 max-w-4xl mx-auto py-12 px-4 no-print">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="h-12 w-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shadow-inner">
+            <Lock className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">Access Restricted</h1>
+            <p className="text-sm text-slate-500 font-medium">GL Financial &amp; Audit Report</p>
+          </div>
+        </div>
+        <Card className="border-red-200/80 shadow-lg bg-gradient-to-br from-red-50/60 via-white to-white rounded-3xl overflow-hidden">
+          <CardHeader className="p-6 sm:p-8">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className="text-xs bg-red-100 text-red-700 border-red-300 font-bold px-2.5 py-0.5">
+                Permission Required
+              </Badge>
+            </div>
+            <CardTitle className="text-xl font-bold text-slate-900">
+              You do not have permission to view the General Ledger Financial &amp; Audit Report.
+            </CardTitle>
+            <CardDescription className="text-slate-600 mt-2 text-sm leading-relaxed">
+              Access to this ledger module requires an assigned <strong>View GL Financial &amp; Audit Report</strong> permission, 
+              or branch-specific view access granted by a system administrator.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-8 sm:px-8 flex items-center gap-3">
+            <Button
+              variant="outline"
+              onClick={() => router.back()}
+              className="rounded-xl border-slate-300 text-xs font-semibold h-9 px-4"
+            >
+              Go Back
+            </Button>
+            <Button
+              onClick={() => router.push('/staff/dashboard')}
+              className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold h-9 px-4 shadow-sm"
+            >
+              Return to Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-16 min-h-screen">
@@ -385,6 +651,7 @@ export default function GLReportsAuditPage() {
             >
               <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isLoading ? "animate-spin" : ""}`} /> Refresh
             </Button>
+            {/* Print: available to everyone who can view the page */}
             <Button
               onClick={handlePrint}
               variant="ghost"
@@ -394,25 +661,31 @@ export default function GLReportsAuditPage() {
             >
               <Printer className="h-3.5 w-3.5 mr-1.5" /> Print PDF
             </Button>
-            <Button
-              onClick={handleExportCSV}
-              variant="ghost"
-              size="sm"
-              disabled={isExporting}
-              className="rounded-xl border border-white/25 bg-white/10 hover:bg-white/20 text-white hover:text-white text-xs font-semibold h-9 shadow-sm"
-              title="Export flat ledger CSV for ERP"
-            >
-              <FileText className="h-3.5 w-3.5 mr-1.5" /> CSV
-            </Button>
-            <Button
-              onClick={handleExportXLSX}
-              size="sm"
-              disabled={isExporting}
-              className="rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-md font-bold text-xs h-9"
-              title="Download full multi-sheet audit Excel workbook"
-            >
-              <Download className="h-3.5 w-3.5 mr-1.5" /> Export XLSX
-            </Button>
+            {/* CSV export — only if canExport */}
+            {glPerms.canExport && (
+              <Button
+                onClick={handleExportCSV}
+                variant="ghost"
+                size="sm"
+                disabled={isExporting}
+                className="rounded-xl border border-white/25 bg-white/10 hover:bg-white/20 text-white hover:text-white text-xs font-semibold h-9 shadow-sm"
+                title="Export flat ledger CSV for ERP"
+              >
+                <FileText className="h-3.5 w-3.5 mr-1.5" /> CSV
+              </Button>
+            )}
+            {/* XLSX export — only if canExport */}
+            {glPerms.canExport && (
+              <Button
+                onClick={handleExportXLSX}
+                size="sm"
+                disabled={isExporting}
+                className="rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-md font-bold text-xs h-9"
+                title="Download full multi-sheet audit Excel workbook"
+              >
+                <Download className="h-3.5 w-3.5 mr-1.5" /> Export XLSX
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -448,52 +721,71 @@ export default function GLReportsAuditPage() {
               <span>Audit &amp; Ledger Filters</span>
             </div>
 
-            {/* Monthly vs Yearly Period Toggle */}
-            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/60 shadow-inner">
-              <button
-                type="button"
-                onClick={() => setPeriodType("monthly")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  periodType === "monthly"
-                    ? "bg-white text-indigo-700 shadow-sm"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                <Calendar className="h-3.5 w-3.5" />
-                <span>Monthly Breakdown</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPeriodType("yearly")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  periodType === "yearly"
-                    ? "bg-white text-indigo-700 shadow-sm"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-              >
-                <CalendarDays className="h-3.5 w-3.5" />
-                <span>Yearly / Annual Report</span>
-              </button>
-            </div>
+            {/* Monthly vs Yearly Period Toggle — strictly show only assigned buttons */}
+            {(glPerms.canViewMonthly || glPerms.canViewYearly) && (
+              <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/60 shadow-inner">
+                {glPerms.canViewMonthly && (
+                  <button
+                    type="button"
+                    onClick={() => setPeriodType("monthly")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      periodType === "monthly"
+                        ? "bg-white text-indigo-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <Calendar className="h-3.5 w-3.5" />
+                    <span>Monthly Breakdown</span>
+                  </button>
+                )}
+                {/* Yearly toggle only shown if user has yearly permission */}
+                {glPerms.canViewYearly && (
+                  <button
+                    type="button"
+                    onClick={() => setPeriodType("yearly")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      periodType === "yearly"
+                        ? "bg-white text-indigo-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    <span>Yearly / Annual Report</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-            {/* Branch Filter */}
+            {/* Branch Filter — locked for branch-scoped users */}
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Branch</label>
-              <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
-                <SelectTrigger className="h-9 rounded-xl border-slate-200 text-xs">
-                  <SelectValue placeholder="All Branches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches (System-Wide)</SelectItem>
-                  {branches.map((b) => (
-                    <SelectItem key={b.id} value={b.id}>
-                      {b.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {glPerms.canViewAllBranches ? (
+                <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
+                  <SelectTrigger className="h-9 rounded-xl border-slate-200 text-xs">
+                    <SelectValue placeholder="All Branches" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Branches (System-Wide)</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="h-9 px-3 rounded-xl border border-amber-200 bg-amber-50/70 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
+                  <span className="text-xs font-semibold text-amber-800 truncate">
+                    {glPerms.branchName || "Your Branch Only"}
+                  </span>
+                  <Badge variant="outline" className="text-[10px] bg-white text-amber-700 border-amber-200 font-bold px-1.5 py-0 ml-auto">
+                    Restricted
+                  </Badge>
+                </div>
+              )}
             </div>
 
             {/* Period Filter (Monthly vs Yearly) */}
@@ -624,43 +916,65 @@ export default function GLReportsAuditPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-2 no-print">
           <TabsList className="bg-slate-100 p-1 rounded-xl">
-            <TabsTrigger
-              value="summary"
-              className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-              <span>GL Code Summary</span>
-              <Badge variant="secondary" className="text-[10px] ml-1 px-1.5 py-0">
-                {summaryRows.length}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger
-              value="matrix"
-              className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
-            >
-              <Layers className="h-3.5 w-3.5" />
-              <span>Component Breakdown Matrix</span>
-              <Badge variant="secondary" className="text-[10px] ml-1 px-1.5 py-0">
-                {matrixRows.length}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger
-              value="anomalies"
-              className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
-            >
-              {anomalies.length === 0 ? (
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-              ) : (
-                <ShieldAlert className="h-3.5 w-3.5 text-red-500" />
-              )}
-              <span>Audit &amp; Anomaly Inspector</span>
-              <Badge
-                variant={anomalies.length > 0 ? "destructive" : "secondary"}
-                className="text-[10px] ml-1 px-1.5 py-0"
+            {/* Tab 1: GL Code Summary — gated by canViewSummary */}
+            {glPerms.canViewSummary && (
+              <TabsTrigger
+                value="summary"
+                className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
               >
-                {anomalies.length}
-              </Badge>
-            </TabsTrigger>
+                <BarChart3 className="h-3.5 w-3.5" />
+                <span>GL Code Summary</span>
+                <Badge variant="secondary" className="text-[10px] ml-1 px-1.5 py-0">
+                  {summaryRows.length}
+                </Badge>
+              </TabsTrigger>
+            )}
+            {/* All Branch Monthly GL tab — only accessible with view_all permission */}
+            {glPerms.canViewAllBranches && (
+              <TabsTrigger
+                value="all-branch-monthly"
+                className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
+              >
+                <Building2 className="h-3.5 w-3.5 text-indigo-600" />
+                <span>All Branch Monthly GL</span>
+                <Badge variant="secondary" className="text-[10px] ml-1 px-1.5 py-0 bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  {allBranchMonthlyRows.length}
+                </Badge>
+              </TabsTrigger>
+            )}
+            {/* Component Breakdown Matrix tab — gated by canViewMatrix permission */}
+            {glPerms.canViewMatrix && (
+              <TabsTrigger
+                value="matrix"
+                className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>Component Breakdown Matrix</span>
+                <Badge variant="secondary" className="text-[10px] ml-1 px-1.5 py-0">
+                  {matrixRows.length}
+                </Badge>
+              </TabsTrigger>
+            )}
+            {/* Anomaly Inspector tab — gated by canViewAnomalyTab (report:gl_audit_view_anomaly) */}
+            {glPerms.canViewAnomalyTab && (
+              <TabsTrigger
+                value="anomalies"
+                className="rounded-lg text-xs font-semibold data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5"
+              >
+                {anomalies.length === 0 ? (
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                ) : (
+                  <ShieldAlert className="h-3.5 w-3.5 text-red-500" />
+                )}
+                <span>Audit &amp; Anomaly Inspector</span>
+                <Badge
+                  variant={anomalies.length > 0 ? "destructive" : "secondary"}
+                  className="text-[10px] ml-1 px-1.5 py-0"
+                >
+                  {anomalies.length}
+                </Badge>
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <span className="text-xs text-slate-500 font-medium">
@@ -668,39 +982,58 @@ export default function GLReportsAuditPage() {
           </span>
         </div>
 
-        {/* Tab 1: GL Code Summary */}
-        <TabsContent value="summary" className="space-y-4 pt-1">
-          <GLSummaryTable
-            rows={summaryRows}
-            onInspectRow={handleInspectRow}
-            isLoading={isLoading}
-          />
-        </TabsContent>
+        {/* Tab 1: GL Code Summary — gated by canViewSummary */}
+        {glPerms.canViewSummary && (
+          <TabsContent value="summary" className="space-y-4 pt-1">
+            <GLSummaryTable
+              rows={summaryRows}
+              onInspectRow={handleInspectRow}
+              isLoading={isLoading}
+            />
+          </TabsContent>
+        )}
 
-        {/* Tab 2: Component Breakdown Matrix */}
-        <TabsContent value="matrix" className="space-y-4 pt-1">
-          <GLComponentMatrixTable
-            rows={matrixRows}
-            isLoading={isLoading}
-          />
-        </TabsContent>
+        {/* Tab 2: All Branch Monthly GL Report — gated by canViewAllBranches */}
+        {glPerms.canViewAllBranches && (
+          <TabsContent value="all-branch-monthly" className="space-y-4 pt-1">
+            <GLAllBranchMonthlyTable
+              rows={allBranchMonthlyRows}
+              isLoading={isLoading}
+              canExport={glPerms.canExport}
+            />
+          </TabsContent>
+        )}
 
-        {/* Tab 3: Audit & Anomaly Inspector */}
-        <TabsContent value="anomalies" className="space-y-4 pt-1">
-          <GLAnomalyInspector
-            anomalies={anomalies}
-            isLoading={isLoading}
-            onRefresh={loadGLData}
-          />
-        </TabsContent>
+        {/* Tab 3: Component Breakdown Matrix — gated by canViewMatrix */}
+        {glPerms.canViewMatrix && (
+          <TabsContent value="matrix" className="space-y-4 pt-1">
+            <GLComponentMatrixTable
+              rows={matrixRows}
+              isLoading={isLoading}
+            />
+          </TabsContent>
+        )}
+
+        {/* Tab 4: Audit & Anomaly Inspector — gated by canViewAnomalyTab */}
+        {glPerms.canViewAnomalyTab && (
+          <TabsContent value="anomalies" className="space-y-4 pt-1">
+            <GLAnomalyInspector
+              anomalies={anomalies}
+              isLoading={isLoading}
+              onRefresh={loadGLData}
+            />
+          </TabsContent>
+        )}
       </Tabs>
 
-      {/* ── Audit Drill-Down Drawer ── */}
-      <GLBillDrillDownDrawer
-        selectedRow={inspectRow}
-        open={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
-      />
+      {/* ── Audit Drill-Down Drawer — only if canDrillDown ── */}
+      {glPerms.canDrillDown && (
+        <GLBillDrillDownDrawer
+          selectedRow={inspectRow}
+          open={isDrawerOpen}
+          onClose={() => setIsDrawerOpen(false)}
+        />
+      )}
     </div>
   );
 }

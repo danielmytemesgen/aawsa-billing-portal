@@ -95,10 +95,19 @@ export function PaidBillsTable({
     return found ? found.name : "Unknown";
   };
 
-  const getAmountDisplay = (bill: any): string => {
-    const amt = bill.amount_paid ?? bill.amountPaid ?? bill.TOTALBILLAMOUNT ?? bill.totalBillAmount ?? 0;
+  // The billed amount — always TOTALBILLAMOUNT, matching the GL Report exactly.
+  const getBilledAmountDisplay = (bill: any): string => {
+    const amt = bill.TOTALBILLAMOUNT ?? bill.totalBillAmount ?? bill.total_bill_amount ?? 0;
     return formatAmt(amt);
   };
+
+  // The actual amount received from the customer (may differ for partial payments).
+  const getAmountPaidDisplay = (bill: any): string => {
+    const paid = bill.amount_paid ?? bill.amountPaid;
+    if (paid === undefined || paid === null) return "-";
+    return formatAmt(paid);
+  };
+
 
   const getPaymentDateDisplay = (bill: any): string => {
     const dateVal = bill.last_payment_date || bill.payment_date || bill.paymentDate || bill.updated_at || bill.created_at;
@@ -190,7 +199,8 @@ export function PaidBillsTable({
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Customer Key</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Customer Name</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Branch</TableHead>
-            <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Amount</TableHead>
+            <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Billed Amount (ETB)</TableHead>
+            <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Actual Paid (ETB)</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Payment Date</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Reconciliation Status</TableHead>
             <TableHead className="font-bold text-slate-700 py-3.5 px-3 uppercase tracking-wider text-[11px]">Payment Channel</TableHead>
@@ -236,9 +246,14 @@ export function PaidBillsTable({
                     </span>
                   </TableCell>
 
-                  {/* Amount */}
-                  <TableCell className="py-3 px-3 font-bold text-emerald-600 whitespace-nowrap">
-                    {getAmountDisplay(bill)}
+                  {/* Billed Amount — matches GL Report exactly */}
+                  <TableCell className="py-3 px-3 font-bold text-emerald-700 whitespace-nowrap">
+                    {getBilledAmountDisplay(bill)}
+                  </TableCell>
+
+                  {/* Actual Paid — may differ for partial payments */}
+                  <TableCell className="py-3 px-3 font-bold text-emerald-500 whitespace-nowrap">
+                    {getAmountPaidDisplay(bill)}
                   </TableCell>
 
                   {/* Payment Date */}

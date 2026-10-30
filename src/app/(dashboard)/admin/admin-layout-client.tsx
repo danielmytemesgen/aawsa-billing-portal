@@ -299,12 +299,13 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         dataReportsItems.push({ title: "Corrected Bills", href: isAdmin ? "/admin/reports/corrected-bills" : "/staff/reports/corrected-bills", iconName: "FileDiff" });
     }
 
-    const canViewGLReports = hasPermission(PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE)
-        || hasPermission(PERMISSIONS.REPORT_GL_FINANCE_MONTHLY)
-        || hasPermission(PERMISSIONS.REPORT_GL_FINANCE_YEARLY)
-        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
-        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
-        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+    // Strictly check assigned GL Financial & Audit Report permissions only
+    const canViewGLReports = hasPermission(PERMISSIONS.REPORT_GL_AUDIT_VIEW)
+        || hasPermission(PERMISSIONS.REPORT_GL_AUDIT_VIEW_ALL)
+        || hasPermission(PERMISSIONS.REPORT_GL_AUDIT_VIEW_BRANCH)
+        || hasPermission('report:gl_audit_view')
+        || hasPermission('report:gl_audit_view_all')
+        || hasPermission('report:gl_audit_view_branch');
 
     if (canViewGLReports) {
         dataReportsItems.push({ 
@@ -325,6 +326,20 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
             title: "Credit Note Report", 
             href: isAdmin ? "/admin/reports/credit-notes" : "/staff/reports/credit-notes", 
             iconName: "Wallet" 
+        });
+    }
+
+    const canViewDeliverySummaryReport = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+        || hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS)
+        || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_SENT_BILLS)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (canViewDeliverySummaryReport) {
+        dataReportsItems.push({
+            title: "Delivery Summary Report",
+            href: isAdmin ? "/admin/reports/delivery-summary" : "/staff/reports/delivery-summary",
+            iconName: "Truck"
         });
     }
 

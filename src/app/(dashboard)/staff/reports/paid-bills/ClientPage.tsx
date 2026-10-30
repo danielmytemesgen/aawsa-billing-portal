@@ -13,8 +13,10 @@ import {
   getBranches, initializeBranches, subscribeToBranches
 } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
-import { getPaidBillsAction } from "@/lib/actions";
+import { getPaidBillsAction, getPaidBillsBranchSummaryAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
+import type { BillsBranchSummaryRow } from "@/lib/db-queries";
+import { BillsBranchSummaryCard } from "@/components/reports/BillsBranchSummaryCard";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { CheckCircle2, Search, FileSpreadsheet, Lock, Download, Loader2, Calendar, ChevronDown, FileText, Printer, RefreshCw, ShieldAlert } from "lucide-react";
@@ -60,6 +62,9 @@ export default function StaffPaidBillsReportPage() {
   const [isPrintSummaryOpen, setIsPrintSummaryOpen] = React.useState(false);
   const [printBills, setPrintBills] = React.useState<DomainBill[]>([]);
   const [isFetchingPrintData, setIsFetchingPrintData] = React.useState(false);
+
+  const [branchSummary, setBranchSummary] = React.useState<BillsBranchSummaryRow[]>([]);
+  const [isSummaryLoading, setIsSummaryLoading] = React.useState(true);
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -231,8 +236,44 @@ export default function StaffPaidBillsReportPage() {
       setIsLoading(false);
     };
   }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
+  // Fetch branch summary
+  const fetchSummaryRef = React.useRef<() => void>(() => {});
   React.useEffect(() => {
-    const handleDataRefreshed = () => { staffPaidBillsRef.current(); };
+    fetchSummaryRef.current = async () => {
+      setIsSummaryLoading(true);
+      const normalizedBranchId = currentUser?.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+
+      try {
+        const res = await getPaidBillsBranchSummaryAction({
+          searchTerm: debouncedSearch,
+          branchId: normalizedBranchId,
+          monthYear: normalizedMonthYear,
+        });
+        if (res.success && res.summary) {
+          setBranchSummary(res.summary);
+        } else {
+          setBranchSummary([]);
+        }
+      } catch (err) {
+        console.error("Error loading staff paid bills summary:", err);
+        setBranchSummary([]);
+      } finally {
+        setIsSummaryLoading(false);
+      }
+    };
+  }, [debouncedSearch, selectedMonthYear, currentUser]);
+
+  React.useEffect(() => {
+    if (!currentUser) return;
+    fetchSummaryRef.current();
+  }, [debouncedSearch, selectedMonthYear, refreshTrigger, currentUser]);
+
+  React.useEffect(() => {
+    const handleDataRefreshed = () => {
+      staffPaidBillsRef.current();
+      fetchSummaryRef.current();
+    };
     window.addEventListener('data-refreshed', handleDataRefreshed);
     return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
   }, []);
@@ -304,6 +345,19 @@ export default function StaffPaidBillsReportPage() {
           )}
         </div>
       </div>
+
+      {/* ── Paid Bills Branch Summary Report ── */}
+      <BillsBranchSummaryCard
+        type="paid"
+        summary={branchSummary}
+        isLoading={isSummaryLoading}
+        selectedMonthYear={selectedMonthYear}
+        onMonthYearChange={(val) => {
+          setSelectedMonthYear(val);
+          setPage(0);
+        }}
+        monthOptions={monthOptions}
+      />
 
       <Card className="shadow-lg">
         <CardHeader>

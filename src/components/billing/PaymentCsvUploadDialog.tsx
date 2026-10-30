@@ -169,12 +169,19 @@ export function PaymentCsvUploadDialog({ openTrigger }: PaymentCsvUploadDialogPr
             continue;
           }
 
+          const parseAmount = (val: string) => {
+            if (!val) return undefined;
+            const clean = val.replace(/[^0-9.-]/g, "");
+            const num = Number(clean);
+            return isNaN(num) ? undefined : num;
+          };
+
           rows.push({
             billKey,
             customerKey,
             customerName: getVal(idxCustName),
             branch: getVal(idxBranch),
-            amount: getVal(idxAmount) ? Number(getVal(idxAmount)) : undefined,
+            amount: parseAmount(getVal(idxAmount)),
             paymentDate: getVal(idxPaymentDate),
             reconciliationStatus: getVal(idxReconStatus),
             paymentChannel: getVal(idxChannel),
@@ -344,7 +351,7 @@ export function PaymentCsvUploadDialog({ openTrigger }: PaymentCsvUploadDialogPr
           </div>
 
           {/* Success Summary */}
-          {successCount !== null && (
+          {successCount !== null && successCount > 0 && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-3.5 flex items-center gap-3 text-xs">
               <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
               <div>
@@ -354,11 +361,22 @@ export function PaymentCsvUploadDialog({ openTrigger }: PaymentCsvUploadDialogPr
             </div>
           )}
 
+          {/* Zero Records Updated Warning */}
+          {successCount === 0 && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-3.5 flex items-center gap-3 text-xs">
+              <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0" />
+              <div>
+                <p className="font-bold">0 Payment Records Updated</p>
+                <p className="text-amber-700 mt-0.5">None of the {parsedRows.length} rows could be applied. Please review the validation messages below.</p>
+              </div>
+            </div>
+          )}
+
           {/* Errors List */}
           {errors.length > 0 && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3.5 text-xs space-y-1.5 max-h-40 overflow-y-auto">
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3.5 text-xs space-y-1.5 max-h-48 overflow-y-auto">
               <div className="flex items-center gap-2 font-bold text-rose-900">
-                <AlertCircle className="h-4 w-4 text-rose-600" /> Validation Messages / Errors:
+                <AlertCircle className="h-4 w-4 text-rose-600" /> Validation Messages / Errors ({errors.length}):
               </div>
               <ul className="list-disc list-inside space-y-0.5 text-rose-700">
                 {errors.map((err, idx) => (

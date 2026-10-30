@@ -10,10 +10,11 @@ import {
   getBranches, initializeBranches, subscribeToBranches
 } from "@/lib/data-store";
 import type { Branch } from "@/app/(dashboard)/admin/branches/branch-types";
-import { getAllSentBillsAction } from "@/lib/actions";
+import { getAllSentBillsAction, getSentBillsBranchSummaryAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
+import type { SentBillsBranchSummaryRow } from "@/lib/db-queries";
 import { Send, Search, Lock, Download, Loader2, Calendar, ChevronDown, FileSpreadsheet, FileText, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportSentBillsToCsv, exportSentBillsToXlsx, getAvailableMonthYearOptions } from "@/lib/export-utils";
@@ -26,6 +27,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { ReportPrintSummaryDialog } from "@/components/reports/ReportPrintSummaryDialog";
+import { SentBillsBranchSummaryCard } from "@/components/reports/SentBillsBranchSummaryCard";
 
 interface UserProfile {
   id: string;
@@ -53,6 +55,9 @@ export default function StaffSentBillsReportClient() {
   const [isPrintSummaryOpen, setIsPrintSummaryOpen] = React.useState(false);
   const [printBills, setPrintBills] = React.useState<DomainBill[]>([]);
   const [isFetchingPrintData, setIsFetchingPrintData] = React.useState(false);
+
+  const [branchSummary, setBranchSummary] = React.useState<SentBillsBranchSummaryRow[]>([]);
+  const [isSummaryLoading, setIsSummaryLoading] = React.useState(true);
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -210,10 +215,44 @@ export default function StaffSentBillsReportClient() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
 
+  // Fetch branch summary
+  const fetchSummaryRef = React.useRef<() => void>(() => {});
+  React.useEffect(() => {
+    fetchSummaryRef.current = async () => {
+      if (!currentUser) return;
+      setIsSummaryLoading(true);
+      try {
+        const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+        const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+
+        const res = await getSentBillsBranchSummaryAction({
+          searchTerm: debouncedSearch,
+          branchId: normalizedBranchId,
+          monthYear: normalizedMonthYear,
+        });
+        if (res.success && res.summary) {
+          setBranchSummary(res.summary);
+        } else {
+          setBranchSummary([]);
+        }
+      } catch (err) {
+        setBranchSummary([]);
+      } finally {
+        setIsSummaryLoading(false);
+      }
+    };
+  }, [debouncedSearch, selectedMonthYear, currentUser]);
+
+  React.useEffect(() => {
+    if (!currentUser) return;
+    fetchSummaryRef.current();
+  }, [debouncedSearch, selectedMonthYear, currentUser]);
+
   // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
   React.useEffect(() => {
     const handleDataRefreshed = () => {
       fetchBillsRef.current();
+      fetchSummaryRef.current();
     };
     window.addEventListener('data-refreshed', handleDataRefreshed);
     return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
@@ -241,6 +280,18 @@ export default function StaffSentBillsReportClient() {
 
   return (
     <div className="space-y-6 p-4 rounded-3xl bg-gradient-to-b from-slate-100/70 via-slate-50/40 to-white">
+      {/* ── Branch Summary Report ── */}
+      <SentBillsBranchSummaryCard
+        summary={branchSummary}
+        isLoading={isSummaryLoading}
+        selectedMonthYear={selectedMonthYear}
+        onMonthYearChange={(val) => {
+          setSelectedMonthYear(val);
+          setPage(0);
+        }}
+        monthOptions={monthOptions}
+      />
+
       <Card className="shadow-lg">
         <CardHeader className="bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-slate-50/40">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

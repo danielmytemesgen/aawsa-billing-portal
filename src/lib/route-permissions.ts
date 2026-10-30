@@ -47,6 +47,17 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       anyOf: [PERMISSIONS.TARIFFS_VIEW, PERMISSIONS.TARIFFS_MANAGE],
     },
     {
+      match: (currentPath) => currentPath === '/admin/reports/gl-audit' || currentPath === '/staff/reports/gl-audit',
+      anyOf: [
+        PERMISSIONS.REPORT_GL_AUDIT_VIEW,
+        PERMISSIONS.REPORT_GL_AUDIT_VIEW_ALL,
+        PERMISSIONS.REPORT_GL_AUDIT_VIEW_BRANCH,
+        'report:gl_audit_view',
+        'report:gl_audit_view_all',
+        'report:gl_audit_view_branch',
+      ],
+    },
+    {
       match: (currentPath) => currentPath.startsWith('/admin/reports') || currentPath.startsWith('/staff/reports'),
       anyOf: [
         PERMISSIONS.REPORTS_GENERATE_ALL,

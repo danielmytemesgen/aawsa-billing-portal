@@ -29,6 +29,21 @@ export interface GLSummaryRow {
   auditStatus: 'Clean' | 'Warning' | 'Error';
 }
 
+export interface GLAllBranchMonthlyRow {
+  key: string;
+  count: number;
+  branch: string;       // e.g. "AD"
+  branchName: string;   // e.g. "Addis Ababa"
+  branchId?: string;
+  glCode: string;       // e.g. "WNDGL"
+  glName: string;       // e.g. "Water Non-Domestic GL"
+  totalAmount: number;
+  vatAmount: number;
+  withoutVat: number;
+  period: string;       // e.g. "26-Jun"
+  rawPeriod: string;    // e.g. "2026-06"
+}
+
 export interface GLComponentMatrixRow {
   period: string;
   rawPeriod: string;
@@ -147,13 +162,13 @@ const getBranchCode = (val: string): string => {
   const v = val.trim().toUpperCase();
   if (['AD', 'AK', 'AR', 'GS', 'GU', 'KO', 'LK', 'MG', 'MK', 'NS'].includes(v)) return v;
 
-  if (v.includes('ADDIS')) return 'AD';
   if (v.includes('AKAKI')) return 'AK';
+  if (v.includes('ADDIS') || v.includes('KETEMA') || v.includes('HEAD')) return 'AD';
   if (v.includes('ARADA')) return 'AR';
-  if (v.includes('GERD') || v.includes('SHOLA')) return 'GS';
+  if (v.includes('GURD') || v.includes('GERD') || v.includes('SHOLA')) return 'GS';
   if (v.includes('GULLELE') || v.includes('GULELE')) return 'GU';
-  if (v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
-  if (v.includes('LIDETA')) return 'LK';
+  if (v.includes('KOLEFE') || v.includes('KOLFE') || v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
+  if (v.includes('LEMI') || v.includes('KURA') || v.includes('LIDETA')) return 'LK';
   if (v.includes('MEGENAGNA')) return 'MG';
   if (v.includes('MEKANISA')) return 'MK';
   if (v.includes('NIFAS') || v.includes('NEFAS')) return 'NS';
@@ -189,25 +204,209 @@ async function authorizeGLReport() {
 
   if (!session || !session.id) throw new Error('Unauthorized');
 
-  const perms = session.permissions || [];
-  const role = (session.role || '').toLowerCase().trim();
-  const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin'
-    || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+  // Query live permissions from DB for this staff member's role to reflect real-time updates
+  let perms: string[] = session.permissions || [];
+  if (session.id && session.id !== 'audit-admin') {
+    try {
+      const { dbGetStaffPermissions } = await import('./db-queries');
+      const livePerms = await dbGetStaffPermissions(session.id);
+      if (livePerms && Array.isArray(livePerms) && livePerms.length > 0) {
+        perms = livePerms;
+      }
+    } catch (e) {
+      console.warn('Could not fetch live permissions, using session:', e);
+    }
+  }
 
-  const canView = isAdmin
-    || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL)
+  const isAuditEnv = session.id === 'audit-admin';
+
+  // Base view permission
+  const hasBaseView = perms.includes(PERMISSIONS.REPORT_GL_AUDIT_VIEW)
+    || perms.includes('report:gl_audit_view')
+    || perms.includes('report_gl_audit_view')
+    || isAuditEnv;
+
+  // System-wide GL access (view all branches)
+  const hasGlobalGL = perms.includes(PERMISSIONS.REPORT_GL_AUDIT_VIEW_ALL)
+    || perms.includes('report:gl_audit_view_all')
+    || perms.includes('report_gl_audit_view_all')
+    || isAuditEnv;
+
+  // Branch-scoped GL access
+  const hasBranchGL = perms.includes(PERMISSIONS.REPORT_GL_AUDIT_VIEW_BRANCH)
+    || perms.includes('report:gl_audit_view_branch')
+    || perms.includes('report_gl_audit_view_branch');
+
+  const canView = hasGlobalGL || hasBranchGL || hasBaseView;
+
+  if (!canView) throw new Error('Forbidden: Missing GL financial and audit report permissions');
+
+  const isLockedToBranch = !hasGlobalGL;
+  let lockedBranchId: string | null = null;
+  if (isLockedToBranch) {
+    lockedBranchId = session.branchId || session.branch_id || null;
+    if (!lockedBranchId && session.id) {
+      try {
+        const staffRes: any = await query('SELECT branch_id FROM staff_members WHERE id = $1', [session.id]);
+        if (staffRes[0]?.branch_id) {
+          lockedBranchId = String(staffRes[0].branch_id);
+        }
+      } catch {}
+    }
+  }
+
+  // Branch scope
+  const canViewAllBranches = hasGlobalGL;
+
+  // Tab 1: GL Code Summary Tab (STRICT: requires explicit report:gl_monthly_summary_by_code)
+  const canViewSummary = perms.includes(PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE)
+    || perms.includes('report:gl_monthly_summary_by_code')
+    || isAuditEnv;
+
+  // Tab 3: Component Breakdown Matrix (STRICT: requires explicit report:gl_audit_view_matrix)
+  const canViewMatrix = perms.includes(PERMISSIONS.REPORT_GL_AUDIT_VIEW_MATRIX)
+    || perms.includes('report:gl_audit_view_matrix')
+    || isAuditEnv;
+
+  // Tab 4: Audit & Anomaly Inspector (STRICT: requires explicit report:gl_audit_view_anomaly)
+  const canViewAnomalyTab = perms.includes(PERMISSIONS.REPORT_GL_AUDIT_VIEW_ANOMALY)
+    || perms.includes('report:gl_audit_view_anomaly')
+    || isAuditEnv;
+
+  // Period Toggle: Monthly Breakdown (STRICT: requires explicit monthly permission)
+  const canViewMonthly = hasGlobalGL
+    ? (perms.includes(PERMISSIONS.REPORT_GL_FINANCE_MONTHLY)
+      || perms.includes('report:gl_finance_monthly')
+      || isAuditEnv)
+    : (perms.includes(PERMISSIONS.REPORT_GL_FINANCE_MONTHLY)
+      || perms.includes(PERMISSIONS.REPORT_BRANCH_GL_FINANCE_MONTHLY)
+      || perms.includes('report:gl_finance_monthly')
+      || perms.includes('report:branch_gl_finance_monthly')
+      || isAuditEnv);
+
+  // Period Toggle: Yearly / Annual Report (STRICT: requires explicit yearly report permission)
+  const canViewYearly = hasGlobalGL
+    ? (perms.includes(PERMISSIONS.REPORT_GL_FINANCE_YEARLY)
+      || perms.includes('report:gl_finance_yearly')
+      || isAuditEnv)
+    : (perms.includes(PERMISSIONS.REPORT_GL_FINANCE_YEARLY)
+      || perms.includes(PERMISSIONS.REPORT_BRANCH_GL_FINANCE_YEARLY)
+      || perms.includes('report:gl_finance_yearly')
+      || perms.includes('report:branch_gl_finance_yearly')
+      || isAuditEnv);
+
+  // Export permissions
+  const canExport = perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL)
     || perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH)
-    || perms.includes(PERMISSIONS.REPORT_GL_MONTHLY_SUMMARY_BY_CODE)
-    || perms.includes(PERMISSIONS.REPORT_GL_FINANCE_MONTHLY)
-    || perms.includes(PERMISSIONS.REPORT_GL_FINANCE_YEARLY)
-    || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
+    || perms.includes(PERMISSIONS.REPORT_CUSTOMER_DATA_EXPORT)
+    || perms.includes(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT)
+    || perms.includes(PERMISSIONS.REPORT_BRANCH_MONTHLY_BILL_EXPORT)
+    || isAuditEnv;
 
-  if (!canView) throw new Error('Forbidden: Missing GL report permissions');
+  // Anomaly inspector item-level drill/actions
+  const canViewAnomalies = perms.includes(PERMISSIONS.BILL_CORRECT_VIEW)
+    || perms.includes(PERMISSIONS.BILL_CORRECT)
+    || perms.includes(PERMISSIONS.BILL_VIEW_ALL)
+    || perms.includes(PERMISSIONS.BILL_VIEW_BRANCH)
+    || isAuditEnv;
 
-  const isLockedToBranch = !isAdmin && !perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL);
-  const lockedBranchId = isLockedToBranch ? (session.branchId || null) : null;
+  // Drill down drawer
+  const canDrillDown = perms.includes(PERMISSIONS.BILL_VIEW_ALL)
+    || perms.includes(PERMISSIONS.BILL_VIEW_BRANCH)
+    || perms.includes(PERMISSIONS.BILL_CORRECT_VIEW)
+    || isAuditEnv;
 
-  return { session, isAdmin, isLockedToBranch, lockedBranchId };
+  const isAdmin = session.role === 'admin' || isAuditEnv;
+
+  return {
+    session,
+    isAdmin,
+    hasGlobalGL,
+    canViewAllBranches,
+    isLockedToBranch,
+    lockedBranchId,
+    canViewSummary,
+    canViewMonthly,
+    canViewYearly,
+    canExport,
+    canViewMatrix,
+    canViewAnomalies,
+    canViewAnomalyTab,
+    canDrillDown
+  };
+}
+
+/**
+ * Evaluates the current user's GL Report capabilities for UI rendering.
+ */
+export async function getGLUserPermissionsAction(): Promise<{
+  success: boolean;
+  error?: string;
+  data: {
+    canAccess: boolean;
+    isAdmin: boolean;
+    canViewSummary: boolean;
+    canViewAllBranches: boolean;
+    lockedBranchId: string | null;
+    branchName?: string | null;
+    canViewMonthly: boolean;
+    canViewYearly: boolean;
+    canExport: boolean;
+    canViewMatrix: boolean;
+    canViewAnomalies: boolean;
+    canViewAnomalyTab: boolean;
+    canDrillDown: boolean;
+  };
+}> {
+  try {
+    const auth = await authorizeGLReport();
+    let branchName: string | null = null;
+    if (auth.lockedBranchId) {
+      try {
+        const bRes: any = await query('SELECT name FROM branches WHERE id = $1', [auth.lockedBranchId]);
+        if (bRes[0]?.name) branchName = bRes[0].name;
+      } catch {}
+    }
+
+    return {
+      success: true,
+      data: {
+        canAccess: true,
+        isAdmin: auth.isAdmin,
+        canViewSummary: auth.canViewSummary,
+        canViewAllBranches: auth.canViewAllBranches,
+        lockedBranchId: auth.lockedBranchId,
+        branchName,
+        canViewMonthly: auth.canViewMonthly,
+        canViewYearly: auth.canViewYearly,
+        canExport: auth.canExport,
+        canViewMatrix: auth.canViewMatrix,
+        canViewAnomalies: auth.canViewAnomalies,
+        canViewAnomalyTab: auth.canViewAnomalyTab,
+        canDrillDown: auth.canDrillDown,
+      }
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Unauthorized',
+      data: {
+        canAccess: false,
+        isAdmin: false,
+        canViewSummary: false,
+        canViewAllBranches: false,
+        lockedBranchId: null,
+        branchName: null,
+        canViewMonthly: false,
+        canViewYearly: false,
+        canExport: false,
+        canViewMatrix: false,
+        canViewAnomalies: false,
+        canViewAnomalyTab: false,
+        canDrillDown: false,
+      }
+    };
+  }
 }
 
 /**
@@ -432,6 +631,7 @@ export async function getGLSummaryReportAction(params: {
 
     // Aggregates
     const glSummaryMap: Record<string, GLSummaryRow> = {};
+    const allBranchMonthlyMap: Record<string, GLAllBranchMonthlyRow> = {};
     const componentMatrixRows: GLComponentMatrixRow[] = [];
     const glCodeBreakdown: Record<string, { count: number; total: number; vat: number; name: string; currentAmount?: number; arrearsAmount?: number }> = {};
 
@@ -665,6 +865,29 @@ export async function getGLSummaryReportAction(params: {
           glSummaryMap[summaryKey].cleanCount += 1;
         }
 
+        // All Branch Monthly aggregation: (PERIOD, BRANCH, GL_CODE)
+        const allBranchKey = `${periodStr}|${branchCode}|${code}`;
+        if (!allBranchMonthlyMap[allBranchKey]) {
+          allBranchMonthlyMap[allBranchKey] = {
+            key: allBranchKey,
+            count: 0,
+            branch: branchCode,
+            branchName: rawBranchName,
+            branchId: b.branch_id || '',
+            glCode: code,
+            glName: GL_NAMES[code] || code,
+            totalAmount: 0,
+            vatAmount: 0,
+            withoutVat: 0,
+            period: periodStr,
+            rawPeriod,
+          };
+        }
+        allBranchMonthlyMap[allBranchKey].count += 1;
+        allBranchMonthlyMap[allBranchKey].totalAmount += totalLineAmount;
+        allBranchMonthlyMap[allBranchKey].vatAmount += (currVat + arrVat);
+        allBranchMonthlyMap[allBranchKey].withoutVat += (currNet + arrNet);
+
         // Breakdown tracker
         if (!glCodeBreakdown[code]) {
           glCodeBreakdown[code] = {
@@ -745,11 +968,27 @@ export async function getGLSummaryReportAction(params: {
       glCodeBreakdown,
     };
 
+    const allBranchMonthlyRows: GLAllBranchMonthlyRow[] = Object.values(allBranchMonthlyMap)
+      .map(row => ({
+        ...row,
+        totalAmount: parseFloat(row.totalAmount.toFixed(2)),
+        vatAmount: parseFloat(row.vatAmount.toFixed(2)),
+        withoutVat: parseFloat(row.withoutVat.toFixed(2)),
+      }))
+      .sort((a, b) => {
+        const pd = String(b.rawPeriod || '').localeCompare(String(a.rawPeriod || ''));
+        if (pd !== 0) return pd;
+        const bd = String(a.branch || '').localeCompare(String(b.branch || ''));
+        if (bd !== 0) return bd;
+        return String(a.glCode || '').localeCompare(String(b.glCode || ''));
+      });
+
     return {
       success: true,
       kpis,
-      summaryRows,
-      componentMatrixRows: componentMatrixRows.slice(0, 500), // top 500 for UI responsiveness
+      summaryRows: auth.canViewSummary ? summaryRows : [],
+      allBranchMonthlyRows: auth.canViewAllBranches ? allBranchMonthlyRows : [],
+      componentMatrixRows: auth.canViewMatrix ? componentMatrixRows.slice(0, 500) : [],
       totalBills: bills.length,
     };
   } catch (error: any) {
@@ -1013,6 +1252,9 @@ export async function getGLAuditAnomaliesAction(params: {
 }) {
   try {
     const auth = await authorizeGLReport();
+    if (!auth.canViewAnomalyTab) {
+      return { success: true, anomalies: [], totalAnomalies: 0 };
+    }
     const effectiveBranchId = auth.lockedBranchId || (params.branchId && params.branchId !== 'all' ? params.branchId : null);
     const isYearly = params.periodType === 'yearly';
 

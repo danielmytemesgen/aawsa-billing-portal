@@ -9,10 +9,11 @@ import {
   getBulkMeters, initializeBulkMeters, subscribeToBulkMeters,
   getBranches, initializeBranches, subscribeToBranches
 } from "@/lib/data-store";
-import { getAllSentBillsAction } from "@/lib/actions";
+import { getAllSentBillsAction, getSentBillsBranchSummaryAction } from "@/lib/actions";
 import type { DomainBill } from "@/lib/data-store";
 import type { IndividualCustomer } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
+import type { SentBillsBranchSummaryRow } from "@/lib/db-queries";
 import { Send, Search, Lock, Download, Loader2, Calendar, ChevronDown, FileSpreadsheet, FileText, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportSentBillsToCsv, exportSentBillsToXlsx, getAvailableMonthYearOptions } from "@/lib/export-utils";
@@ -28,6 +29,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { ReportPrintSummaryDialog } from "@/components/reports/ReportPrintSummaryDialog";
+import { SentBillsBranchSummaryCard } from "@/components/reports/SentBillsBranchSummaryCard";
 
 export default function SentBillsReportPage() {
   const { hasPermission } = usePermissions();
@@ -49,6 +51,9 @@ export default function SentBillsReportPage() {
   const [isPrintSummaryOpen, setIsPrintSummaryOpen] = React.useState(false);
   const [printBills, setPrintBills] = React.useState<DomainBill[]>([]);
   const [isFetchingPrintData, setIsFetchingPrintData] = React.useState(false);
+
+  const [branchSummary, setBranchSummary] = React.useState<SentBillsBranchSummaryRow[]>([]);
+  const [isSummaryLoading, setIsSummaryLoading] = React.useState(true);
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -215,8 +220,42 @@ export default function SentBillsReportPage() {
     fetchBills();
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
 
+  // Fetch branch summary
+  const fetchSummaryRef = React.useRef<() => void>(() => { });
+  React.useEffect(() => {
+    fetchSummaryRef.current = async () => {
+      setIsSummaryLoading(true);
+      const branchIdToFilter = canViewAllBranches ? selectedBranchId : currentUser?.branchId;
+      const normalizedBranchId = !branchIdToFilter || branchIdToFilter === 'all' ? undefined : branchIdToFilter;
+      const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
+
+      try {
+        const res = await getSentBillsBranchSummaryAction({
+          searchTerm: debouncedSearch,
+          branchId: normalizedBranchId,
+          monthYear: normalizedMonthYear,
+        });
+        if (res.success && res.summary) {
+          setBranchSummary(res.summary);
+        } else {
+          setBranchSummary([]);
+        }
+      } catch (err) {
+        console.error("Error loading branch summary:", err);
+        setBranchSummary([]);
+      } finally {
+        setIsSummaryLoading(false);
+      }
+    };
+  }, [debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+
+  React.useEffect(() => {
+    if (!currentUser) return;
+    fetchSummaryRef.current();
+  }, [debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+
   // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
-  const fetchBillsRef = React.useRef<() => void>(() => {});
+  const fetchBillsRef = React.useRef<() => void>(() => { });
   React.useEffect(() => {
     fetchBillsRef.current = async () => {
       setIsLoading(true);
@@ -228,8 +267,12 @@ export default function SentBillsReportPage() {
       setIsLoading(false);
     };
   }, [page, rowsPerPage, debouncedSearch, selectedBranchId, selectedMonthYear, currentUser, canViewAllBranches]);
+
   React.useEffect(() => {
-    const handleDataRefreshed = () => { fetchBillsRef.current(); };
+    const handleDataRefreshed = () => {
+      fetchBillsRef.current();
+      fetchSummaryRef.current();
+    };
     window.addEventListener('data-refreshed', handleDataRefreshed);
     return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
   }, []);
@@ -266,6 +309,18 @@ export default function SentBillsReportPage() {
           <p className="text-muted-foreground mt-1 text-base">Comprehensive history of all bills sent to customers across the system.</p>
         </div>
       </div>
+
+      {/* ── Branch Summary Report ── */}
+      <SentBillsBranchSummaryCard
+        summary={branchSummary}
+        isLoading={isSummaryLoading}
+        selectedMonthYear={selectedMonthYear}
+        onMonthYearChange={(val) => {
+          setSelectedMonthYear(val);
+          setPage(0);
+        }}
+        monthOptions={monthOptions}
+      />
 
       <Card className="shadow-md border-slate-200/60 overflow-hidden rounded-3xl">
         <CardHeader className="bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-slate-50/40 border-b pb-6 pt-6 px-6">
@@ -362,10 +417,10 @@ export default function SentBillsReportPage() {
             {isLoading ? (
               <TableSkeleton columns={8} rows={10} />
             ) : bills.length === 0 ? (
-              <EmptyState 
-                icon={Send} 
-                title="No Sent Bills Found" 
-                description="There are currently no sent bills matching your filters or search criteria." 
+              <EmptyState
+                icon={Send}
+                title="No Sent Bills Found"
+                description="There are currently no sent bills matching your filters or search criteria."
               />
             ) : (
               <BillTable bills={bills} customers={customers} bulkMeters={bulkMeters} branches={branches} showDebitColumns={true} />

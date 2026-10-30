@@ -4640,7 +4640,6 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     walkOrder?: number | string;
     meterKey?: string;
 }>, staffId?: string) => {
-    await dbEnsurePaymentColumnsExist();
     let updatedCount = 0;
     const errors: Array<{ row: number; error: string }> = [];
     const affectedBulkKeys = new Set<string>();
@@ -4945,6 +4944,16 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const rowContradictions: string[] = [];
             const cleanStrVal = (val: any) => (val === undefined || val === null ? '' : String(val).replace(/[-_\s]+/g, '').trim().toLowerCase());
             const cleanKeyVal = (val: string) => (val || '').replace(/^(BBPT|BILL|BM|IND|CUST|METER)[-_]?/i, '').replace(/[^a-zA-Z0-9]/g, '').trim().toLowerCase();
+            const normalizeText = (val: any) => String(val || '').toLowerCase().replace(/[^a-z0-9]/gi, '').trim();
+            const normalizeBranch = (val: any) => String(val || '').toLowerCase().replace(/[^a-z0-9]/gi, '').replace(/branch$/i, '').trim();
+            const normalizePhone = (val: any) => {
+                if (!val) return '';
+                let digits = String(val).replace(/[^0-9]/g, '');
+                if (digits.startsWith('251')) {
+                    digits = '0' + digits.substring(3);
+                }
+                return digits;
+            };
 
             // 1. Customer Key
             if (rawCustKey && rawCustKey !== '-') {
@@ -4957,16 +4966,17 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             // 2. Customer Name
             const rawCustName = rec.customerName?.trim();
             if (rawCustName && rawCustName !== '-' && targetBill.CUSTOMERNAME) {
-                if (rawCustName.toLowerCase() !== targetBill.CUSTOMERNAME.trim().toLowerCase()) {
+                if (normalizeText(rawCustName) !== normalizeText(targetBill.CUSTOMERNAME)) {
                     rowContradictions.push(`Customer Name "${rawCustName}" contradicts existing bill Customer Name ("${targetBill.CUSTOMERNAME}")`);
                 }
             }
 
             // 3. Branch
             const rawBranch = rec.branch?.trim();
-            if (rawBranch && rawBranch !== '-' && targetBill.CUSTOMERBRANCH) {
-                if (rawBranch.toLowerCase() !== targetBill.CUSTOMERBRANCH.trim().toLowerCase()) {
-                    rowContradictions.push(`Branch "${rawBranch}" contradicts existing bill Branch ("${targetBill.CUSTOMERBRANCH}")`);
+            if (rawBranch && rawBranch !== '-' && (targetBill.CUSTOMERBRANCH || targetBill.branch_name)) {
+                const targetBranchNormalized = normalizeBranch(targetBill.CUSTOMERBRANCH || targetBill.branch_name);
+                if (normalizeBranch(rawBranch) !== targetBranchNormalized) {
+                    rowContradictions.push(`Branch "${rawBranch}" contradicts existing bill Branch ("${targetBill.CUSTOMERBRANCH || targetBill.branch_name}")`);
                 }
             }
 
@@ -4974,7 +4984,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             // The CSV is the source of truth for payment reconciliation, so an amount
             // LOWER than the bill total is treated as a mismatch (partial payments go
             // through other channels). An amount HIGHER than the bill is an
-            // overpayment (duplicate transaction / bill corrected downward) â€” the
+            // overpayment (duplicate transaction / bill corrected downward) — the
             // credit-note engine turns the excess into a deposit on the meter, so it
             // is allowed through and linked to this bill (source_bill_id).
             if (rec.amount !== undefined && rec.amount !== null && !isNaN(Number(rec.amount))) {
@@ -4988,7 +4998,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             // 5. Phone
             const rawPhone = rec.phone?.trim();
             if (rawPhone && rawPhone !== '-' && targetBill.phone && targetBill.phone !== '-') {
-                if (cleanStrVal(rawPhone) !== cleanStrVal(targetBill.phone)) {
+                if (normalizePhone(rawPhone) !== normalizePhone(targetBill.phone)) {
                     rowContradictions.push(`Phone "${rawPhone}" contradicts existing bill Phone ("${targetBill.phone}")`);
                 }
             }
@@ -5234,12 +5244,16 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
     // links any duplicate-transaction / bill-correction credit that still has no
     // source bill to the meter's most recent overpaid bill â€” a defensive
     // invariant for credits recorded before the overpayment was recognised.
-    for (const key of affectedBulkKeys) {
-        try {
-            await dbSyncAgingForCustomer(key);
-        } catch (syncErr) {
-            console.error(`[CSV] Aging sync failed for bulk meter ${key}:`, syncErr);
-        }
+    const bulkKeys = Array.from(affectedBulkKeys);
+    for (let i = 0; i < bulkKeys.length; i += 5) {
+        const chunk = bulkKeys.slice(i, i + 5);
+        await Promise.all(chunk.map(async (key) => {
+            try {
+                await dbSyncAgingForCustomer(key);
+            } catch (syncErr) {
+                console.error(`[CSV] Aging sync failed for bulk meter ${key}:`, syncErr);
+            }
+        }));
     }
     try {
         const linked = await dbLinkCreditSourcePayments();
@@ -5354,7 +5368,16 @@ export const dbGetAllSentBillsPaginated = async (params: {
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
+        sql += ` AND (
+            COALESCE(br.id::text, b.branch_id::text, '') ILIKE $${paramIndex}
+            OR br.id::text ILIKE $${paramIndex}
+            OR b.branch_id::text ILIKE $${paramIndex}
+            OR c.branch_id::text ILIKE $${paramIndex}
+            OR bm.branch_id::text ILIKE $${paramIndex}
+            OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $${paramIndex}
+            OR br.name ILIKE $${paramIndex}
+            OR b."CUSTOMERBRANCH" ILIKE $${paramIndex}
+        )`;
         queryParams.push(params.branchId);
         paramIndex++;
     }
@@ -5393,7 +5416,16 @@ export const dbGetAllSentBillsCount = async (params: {
     let paramIndex = 1;
 
     if (params.branchId && params.branchId !== 'all') {
-        sql += ` AND (b.branch_id::text ILIKE $${paramIndex} OR c.branch_id::text ILIKE $${paramIndex} OR bm.branch_id::text ILIKE $${paramIndex} OR b."CUSTOMERBRANCH" ILIKE $${paramIndex} OR br.name ILIKE $${paramIndex})`;
+        sql += ` AND (
+            COALESCE(br.id::text, b.branch_id::text, '') ILIKE $${paramIndex}
+            OR br.id::text ILIKE $${paramIndex}
+            OR b.branch_id::text ILIKE $${paramIndex}
+            OR c.branch_id::text ILIKE $${paramIndex}
+            OR bm.branch_id::text ILIKE $${paramIndex}
+            OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $${paramIndex}
+            OR br.name ILIKE $${paramIndex}
+            OR b."CUSTOMERBRANCH" ILIKE $${paramIndex}
+        )`;
         queryParams.push(params.branchId);
         paramIndex++;
     }
@@ -5411,6 +5443,333 @@ export const dbGetAllSentBillsCount = async (params: {
     const rows: any = await query(sql, queryParams);
     return parseInt(rows[0].count);
 };
+
+export interface BillsBranchSummaryRow {
+    branchId: string;
+    branchName: string;
+    branchCode: string;
+    period: string;
+    rawPeriod: string;
+    billCount: number;
+    totalAmount: number;
+}
+
+export type SentBillsBranchSummaryRow = BillsBranchSummaryRow;
+
+export const dbGetBillsBranchSummary = async (params: {
+    type?: 'sent' | 'paid' | 'unsettled';
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    groupByPeriod?: boolean;
+}): Promise<BillsBranchSummaryRow[]> => {
+    const reportType = params.type || 'sent';
+    const shouldGroupByMonth = params.groupByPeriod !== false;
+
+    let amountSql = 'COALESCE(SUM(COALESCE(b."TOTALBILLAMOUNT", 0)::numeric), 0)::numeric';
+    let statusFilter = "b.status = 'Posted' AND b.deleted_at IS NULL";
+
+    if (reportType === 'paid') {
+        amountSql = 'COALESCE(SUM(COALESCE(b.amount_paid, b."TOTALBILLAMOUNT", 0)::numeric), 0)::numeric';
+        statusFilter += " AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'";
+    } else if (reportType === 'unsettled') {
+        statusFilter += " AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' OR b.payment_status IS NULL)";
+    }
+
+    let sql = `
+        SELECT 
+            COALESCE(br.id::text, b.branch_id::text, '') AS branch_id,
+            COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office / Unassigned') AS branch_name,
+            ${shouldGroupByMonth ? `COALESCE(b.month_year, '') AS month_year,` : `'' AS month_year,`}
+            COUNT(*)::int AS bill_count,
+            ${amountSql} AS total_amount
+        FROM bills b
+        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
+        WHERE ${statusFilter}
+    `;
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (params.branchId && params.branchId !== 'all') {
+        sql += ` AND (
+            COALESCE(br.id::text, b.branch_id::text, '') ILIKE $${paramIndex}
+            OR br.id::text ILIKE $${paramIndex}
+            OR b.branch_id::text ILIKE $${paramIndex}
+            OR c.branch_id::text ILIKE $${paramIndex}
+            OR bm.branch_id::text ILIKE $${paramIndex}
+            OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $${paramIndex}
+            OR br.name ILIKE $${paramIndex}
+            OR b."CUSTOMERBRANCH" ILIKE $${paramIndex}
+        )`;
+        queryParams.push(params.branchId);
+        paramIndex++;
+    }
+
+    if (params.monthYear && params.monthYear !== 'all') {
+        sql += ` AND b.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    if (params.searchTerm) {
+        sql += ` AND (b."BILLKEY" ILIKE $${paramIndex} OR b."CUSTOMERNAME" ILIKE $${paramIndex} OR b."CUSTOMERKEY" ILIKE $${paramIndex} OR b.individual_customer_id ILIKE $${paramIndex})`;
+        queryParams.push(`%${params.searchTerm}%`);
+        paramIndex++;
+    }
+
+    if (shouldGroupByMonth) {
+        sql += `
+            GROUP BY COALESCE(br.id::text, b.branch_id::text, ''), COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office / Unassigned'), COALESCE(b.month_year, '')
+            ORDER BY COALESCE(b.month_year, '') DESC, total_amount DESC, bill_count DESC
+        `;
+    } else {
+        sql += `
+            GROUP BY COALESCE(br.id::text, b.branch_id::text, ''), COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office / Unassigned')
+            ORDER BY total_amount DESC, bill_count DESC
+        `;
+    }
+
+    const rows: any = await query(sql, queryParams);
+
+    const formatPeriod = (monthYearStr: string) => {
+        if (!monthYearStr) return 'All';
+        const clean = String(monthYearStr).trim();
+        if (!clean.includes('-')) return clean;
+        const [yr, mo] = clean.split('-').map(Number);
+        if (!yr || !mo) return clean;
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const mName = monthNames[mo - 1] || 'Jan';
+        const shortYr = String(yr).slice(-2);
+        return `${shortYr}-${mName}`;
+    };
+
+    const resolveBranchCode = (val: string): string => {
+        if (!val) return 'AD';
+        const v = val.trim().toUpperCase();
+        if (['AD', 'AK', 'AR', 'GS', 'GU', 'KO', 'LK', 'MG', 'MK', 'NS'].includes(v)) return v;
+
+        if (v.includes('AKAKI')) return 'AK';
+        if (v.includes('ADDIS') || v.includes('KETEMA') || v.includes('HEAD')) return 'AD';
+        if (v.includes('ARADA')) return 'AR';
+        if (v.includes('GURD') || v.includes('GERD') || v.includes('SHOLA')) return 'GS';
+        if (v.includes('GULLELE') || v.includes('GULELE')) return 'GU';
+        if (v.includes('KOLEFE') || v.includes('KOLFE') || v.includes('KALITY') || v.includes('KOTEBE') || v.includes('KOTTEBE')) return 'KO';
+        if (v.includes('LEMI') || v.includes('KURA') || v.includes('LIDETA')) return 'LK';
+        if (v.includes('MEGENAGNA')) return 'MG';
+        if (v.includes('MEKANISA')) return 'MK';
+        if (v.includes('NIFAS') || v.includes('NEFAS')) return 'NS';
+
+        const clean = v.replace(/[^A-Z]/g, '');
+        return clean.length >= 2 ? clean.substring(0, 2) : 'AD';
+    };
+
+    return rows.map((r: any) => {
+        const rawMonth = r.month_year || (params.monthYear && params.monthYear !== 'all' ? params.monthYear : '');
+        return {
+            branchId: r.branch_id || '',
+            branchName: r.branch_name || 'Unassigned',
+            branchCode: resolveBranchCode(r.branch_name),
+            period: formatPeriod(rawMonth),
+            rawPeriod: rawMonth,
+            billCount: parseInt(r.bill_count || '0', 10),
+            totalAmount: parseFloat(Number(r.total_amount || 0).toFixed(2)),
+        };
+    });
+};
+
+export const dbGetSentBillsBranchSummary = async (params: {
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    groupByPeriod?: boolean;
+}): Promise<BillsBranchSummaryRow[]> => {
+    return dbGetBillsBranchSummary({ ...params, type: 'sent' });
+};
+
+export const dbGetPaidBillsBranchSummary = async (params: {
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    groupByPeriod?: boolean;
+}): Promise<BillsBranchSummaryRow[]> => {
+    return dbGetBillsBranchSummary({ ...params, type: 'paid' });
+};
+
+export const dbGetUnsettledBillsBranchSummary = async (params: {
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    groupByPeriod?: boolean;
+}): Promise<BillsBranchSummaryRow[]> => {
+    return dbGetBillsBranchSummary({ ...params, type: 'unsettled' });
+};
+
+export interface DeliverySummaryRow {
+    period: string;
+    branchId: string;
+    branch: string;
+    chargeGroup: string;
+    numberOfBills: number;
+    waterConsumption: number;
+    meterRent: number;
+    sanitation: number;
+    sewrage: number;
+    maintenance: number;
+    vatAmount: number;
+    billAmount: number;
+    debit30: number;
+    debit30To60: number;
+    debit60: number;
+    totalAmount: number;
+}
+
+export const dbGetDeliverySummary = async (params: {
+    branchId?: string;
+    monthYear?: string;
+    chargeGroup?: string;
+    searchTerm?: string;
+}): Promise<DeliverySummaryRow[]> => {
+    let sql = `
+        SELECT 
+            b.month_year AS period,
+            COALESCE(br.id::text, b.branch_id::text, '') AS branch_id,
+            COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office') AS branch,
+            COALESCE(bm.charge_group, c."customerType", 'Domestic') AS charge_group,
+            COUNT(*)::int AS number_of_bills,
+            SUM(COALESCE(b.base_water_charge, 0)::numeric)::numeric AS water_consumption,
+            SUM(COALESCE(b.meter_rent, 0)::numeric)::numeric AS meter_rent,
+            SUM(COALESCE(b.sanitation_fee, 0)::numeric)::numeric AS sanitation,
+            SUM(COALESCE(b.sewerage_charge, 0)::numeric)::numeric AS sewrage,
+            SUM(COALESCE(b.maintenance_fee, 0)::numeric)::numeric AS maintenance,
+            SUM(COALESCE(b.vat_amount, 0)::numeric)::numeric AS vat_amount,
+            SUM(COALESCE(b."THISMONTHBILLAMT", 0)::numeric)::numeric AS bill_amount,
+            SUM(COALESCE(b.debit_30, 0)::numeric)::numeric AS debit_30,
+            SUM(COALESCE(b.debit_30_60, 0)::numeric)::numeric AS debit_30_60,
+            SUM(COALESCE(b.debit_60, 0)::numeric)::numeric AS debit_60,
+            SUM(COALESCE(b."TOTALBILLAMOUNT", 0)::numeric)::numeric AS total_amount
+        FROM bills b
+        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
+        WHERE b.deleted_at IS NULL
+    `;
+
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (params.branchId && params.branchId !== 'all') {
+        sql += ` AND (
+            COALESCE(br.id::text, b.branch_id::text, '') ILIKE $${paramIndex}
+            OR br.id::text ILIKE $${paramIndex}
+            OR b.branch_id::text ILIKE $${paramIndex}
+            OR c.branch_id::text ILIKE $${paramIndex}
+            OR bm.branch_id::text ILIKE $${paramIndex}
+            OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $${paramIndex}
+            OR br.name ILIKE $${paramIndex}
+            OR b."CUSTOMERBRANCH" ILIKE $${paramIndex}
+        )`;
+        queryParams.push(params.branchId);
+        paramIndex++;
+    }
+
+    if (params.monthYear && params.monthYear !== 'all') {
+        sql += ` AND b.month_year = $${paramIndex++}`;
+        queryParams.push(params.monthYear);
+    }
+
+    if (params.chargeGroup && params.chargeGroup !== 'all') {
+        sql += ` AND COALESCE(bm.charge_group, c."customerType", 'Domestic') ILIKE $${paramIndex++}`;
+        queryParams.push(params.chargeGroup);
+    }
+
+    if (params.searchTerm && params.searchTerm.trim() !== '') {
+        const term = `%${params.searchTerm.trim()}%`;
+        sql += ` AND (
+            COALESCE(br.name, b."CUSTOMERBRANCH") ILIKE $${paramIndex} 
+            OR COALESCE(bm.charge_group, c."customerType", 'Domestic') ILIKE $${paramIndex} 
+            OR b.month_year ILIKE $${paramIndex}
+        )`;
+        queryParams.push(term);
+        paramIndex++;
+    }
+
+    sql += `
+        GROUP BY b.month_year, COALESCE(br.id::text, b.branch_id::text, ''), COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office'), COALESCE(bm.charge_group, c."customerType", 'Domestic')
+        ORDER BY b.month_year DESC, branch ASC, charge_group ASC
+    `;
+
+    const rows: any = await query(sql, queryParams);
+
+    return rows.map((r: any) => ({
+        period: r.period || '',
+        branchId: r.branch_id || '',
+        branch: r.branch || 'Head Office',
+        chargeGroup: r.charge_group || 'Domestic',
+        numberOfBills: Number(r.number_of_bills || 0),
+        waterConsumption: Number(r.water_consumption || 0),
+        meterRent: Number(r.meter_rent || 0),
+        sanitation: Number(r.sanitation || 0),
+        sewrage: Number(r.sewrage || 0),
+        maintenance: Number(r.maintenance || 0),
+        vatAmount: Number(r.vat_amount || 0),
+        billAmount: Number(r.bill_amount || 0),
+        debit30: Number(r.debit_30 || 0),
+        debit30To60: Number(r.debit_30_60 || 0),
+        debit60: Number(r.debit_60 || 0),
+        totalAmount: Number(r.total_amount || 0),
+    }));
+};
+
+export const dbGetDeliverySummaryPeriods = async (branchId?: string): Promise<{
+    latestMonth: string;
+    availableMonths: string[];
+}> => {
+    let sql = `
+        SELECT 
+            MAX(b.month_year) as latest_month,
+            ARRAY_AGG(DISTINCT b.month_year ORDER BY b.month_year DESC) as available_months
+        FROM bills b
+        WHERE b.deleted_at IS NULL AND b.month_year IS NOT NULL AND b.month_year != ''
+    `;
+    const queryParams: any[] = [];
+    if (branchId && branchId !== 'all') {
+        sql = `
+            SELECT 
+                MAX(b.month_year) as latest_month,
+                ARRAY_AGG(DISTINCT b.month_year ORDER BY b.month_year DESC) as available_months
+            FROM bills b
+            LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+            LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
+            LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
+            WHERE b.deleted_at IS NULL AND b.month_year IS NOT NULL AND b.month_year != ''
+              AND (
+                COALESCE(br.id::text, b.branch_id::text, '') ILIKE $1
+                OR br.id::text ILIKE $1
+                OR b.branch_id::text ILIKE $1
+                OR c.branch_id::text ILIKE $1
+                OR bm.branch_id::text ILIKE $1
+                OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $1
+                OR br.name ILIKE $1
+                OR b."CUSTOMERBRANCH" ILIKE $1
+              )
+        `;
+        queryParams.push(branchId);
+    }
+
+    const rows: any = await query(sql, queryParams);
+    const row = rows[0] || {};
+    const now = new Date();
+    const fallbackMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const latestMonth = row.latest_month || fallbackMonth;
+    const availableMonths = (row.available_months || []).filter(Boolean);
+
+    return {
+        latestMonth,
+        availableMonths,
+    };
+};
+
 
 export const dbArchiveOldRecords = async (monthsThreshold: number = 36) => {
     return await withTransaction(async (client) => {
