@@ -804,9 +804,10 @@ export async function getGLSummaryReportAction(params: {
         vat: parseFloat(vat.toFixed(2)),
         totalExclVat: parseFloat((thisMonth - vat).toFixed(2)),
         totalInclVat: parseFloat(thisMonth.toFixed(2)),
-        totalAmount:  parseFloat(thisMonth.toFixed(2)),
-        // outstanding = TOTALBILLAMOUNT - THISMONTHBILLAMT (carryover, not a new GL entry)
-        outstandingCarryover: parseFloat((total - thisMonth).toFixed(2)),
+        // totalAmount = full bill total including prior-period arrears carried forward
+        totalAmount:  parseFloat(Math.max(total, thisMonth).toFixed(2)),
+        // outstandingCarryover = prior-period arrears portion only (TOTALBILLAMOUNT - THISMONTHBILLAMT)
+        outstandingCarryover: parseFloat(carryover.toFixed(2)),
         anomalyCount: hasAnomaly ? 1 : 0,
         auditStatus: hasAnomaly ? (isMathMismatch || isNegative ? 'Error' : 'Warning') : 'Clean',
       });

@@ -103,8 +103,8 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
       "Penalty Amount":       r.penalty ?? 0,
       "VAT Amount":           r.vat ?? 0,
       "Total Excl VAT":       r.totalExclVat ?? 0,
-      "Total Amount":         r.totalAmount ?? 0,
-      "Outstanding Carryover": r.outstandingCarryover ?? 0,
+      "Total Amount (Incl. Arrears)": r.totalAmount ?? 0,
+      "Arrears Carryover":     r.outstandingCarryover ?? 0,
       "Audit Status":         String(r.auditStatus || "Clean"),
     }));
     const headers = Object.keys(exportData[0]);
@@ -209,7 +209,7 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                 <TableHead className="font-bold text-xs uppercase text-slate-600 text-right whitespace-nowrap">
                   VAT
                 </TableHead>
-                <TableHead className="font-bold text-xs uppercase text-slate-600 text-right whitespace-nowrap" onClick={() => toggleSort("totalAmount")}>
+                <TableHead className="font-bold text-xs uppercase text-slate-600 text-right whitespace-nowrap" onClick={() => toggleSort("totalAmount")} title="Full bill total including prior-period arrears carried forward">
                   <div className="flex items-center justify-end gap-1">
                     <span>Total (ETB)</span>
                     <ArrowUpDown className="h-3 w-3 text-slate-400" />
@@ -298,7 +298,10 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                     <TableCell className="text-right font-mono text-xs text-amber-700 whitespace-nowrap">
                       {r.vat > 0 ? formatNumber(r.vat) : "—"}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs font-bold text-slate-900 whitespace-nowrap">
+                    <TableCell
+                      className="text-right font-mono text-xs font-bold text-slate-900 whitespace-nowrap"
+                      title={`Current: ${formatNumber(r.totalInclVat)} + Arrears: ${formatNumber(r.outstandingCarryover ?? 0)}`}
+                    >
                       {formatNumber(r.totalAmount)}
                     </TableCell>
                     <TableCell className={`text-right font-mono text-xs whitespace-nowrap font-semibold ${
