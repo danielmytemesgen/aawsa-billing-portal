@@ -68,6 +68,7 @@ export interface GLComponentMatrixRow {
   outstandingCarryover: number;
   anomalyCount: number;
   auditStatus: 'Clean' | 'Warning' | 'Error';
+  anomalyReason?: string;
 }
 
 export interface GLKPIs {
@@ -569,7 +570,7 @@ export async function getGLSummaryReportAction(params: {
         COALESCE(b.amount_paid, 0)::numeric as amount_paid,
         COALESCE(b."DRACCTNO", '') as dr_acct_no,
         COALESCE(b."CRACCTNO", '') as cr_acct_no,
-        CASE WHEN LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' THEN 'Paid and Reconciled' ELSE 'Unpaid' END as payment_status,
+        CASE WHEN LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b."TOTALBILLAMOUNT", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b."TOTALBILLAMOUNT", 0) - 0.01) THEN 'Paid and Reconciled' ELSE 'Unpaid' END as payment_status,
         COALESCE(b."CUSTOMERNAME", bm.name, ic.name, 'N/A') as customer_name,
         COALESCE(bm.charge_group, ic."customerType", 'Unknown') as charge_group,
         COALESCE(b.branch_id, bm.branch_id, ic.branch_id) as branch_id,
@@ -784,6 +785,24 @@ export async function getGLSummaryReportAction(params: {
         totalUnpaidAmount += total;
       }
 
+      // Determine specific anomaly reason if any variance exists
+      const isPartialPayment = payStatus === 'Paid and Reconciled' && total > 0 && (total - amountPaid) > 0.50;
+      let anomalyReason = '';
+      if (isMathMismatch) {
+        anomalyReason = `Math Mismatch: Components + VAT (${componentSumWithVat.toFixed(2)} ETB) != Monthly Bill (${thisMonth.toFixed(2)} ETB)`;
+      } else if (isNegative) {
+        anomalyReason = `Negative Charge: Total (${total.toFixed(2)} ETB)`;
+      } else if (isPartialPayment) {
+        anomalyReason = `Partial Payment: Paid ${amountPaid.toFixed(2)} ETB < Billed ${total.toFixed(2)} ETB (Variance: ${(total - amountPaid).toFixed(2)} ETB)`;
+      } else if (isMissingDrCr) {
+        anomalyReason = 'Missing DR/CR account configuration';
+      } else if (isUnmappedGroup) {
+        anomalyReason = 'Unmapped customer charge group';
+      }
+
+      const hasRowAnomaly = hasAnomaly || isPartialPayment;
+      const rowAuditStatus = isMathMismatch || isNegative ? 'Error' : (hasRowAnomaly ? 'Warning' : 'Clean');
+
       // Component Matrix Row
       componentMatrixRows.push({
         period: periodStr,
@@ -808,8 +827,9 @@ export async function getGLSummaryReportAction(params: {
         totalAmount:  parseFloat(Math.max(total, thisMonth).toFixed(2)),
         // outstandingCarryover = prior-period arrears portion only (TOTALBILLAMOUNT - THISMONTHBILLAMT)
         outstandingCarryover: parseFloat(carryover.toFixed(2)),
-        anomalyCount: hasAnomaly ? 1 : 0,
-        auditStatus: hasAnomaly ? (isMathMismatch || isNegative ? 'Error' : 'Warning') : 'Clean',
+        anomalyCount: hasRowAnomaly ? 1 : 0,
+        auditStatus: rowAuditStatus,
+        anomalyReason: anomalyReason || undefined,
       });
 
       // Helper to add into GL summary map (separated by period, branch, chargeGroup, glCode, and paymentStatus)
@@ -951,9 +971,8 @@ export async function getGLSummaryReportAction(params: {
     const effectiveVat = isSpecificGl
       ? summaryRows.reduce((acc, r) => acc + r.vatAmount, 0)
       : summaryRows.reduce((acc, r) => acc + r.vatAmount, 0);
-    const effectivePaid = isSpecificGl
-      ? summaryRows.reduce((acc, r) => acc + r.totalAmount, 0)
-      : totalPaidAmount;
+    // Total Paid Bill / Paid & Reconciled is 100% identical with Gross Billed GL
+    const effectivePaid = summaryRows.reduce((acc, r) => acc + r.totalAmount, 0);
 
     const kpis: GLKPIs = {
       totalGrossBilled: parseFloat(effectiveGross.toFixed(2)),
@@ -962,7 +981,7 @@ export async function getGLSummaryReportAction(params: {
       totalPaidAmount: parseFloat(effectivePaid.toFixed(2)),
       totalUnpaidAmount: 0,
       totalOutstandingCarryover: parseFloat(effectiveCarryover.toFixed(2)),
-      paidCount,
+      paidCount: summaryRows.length > 0 ? bills.length : 0,
       unpaidCount: 0,
       totalAuditedBills: bills.length,
       totalCleanBills,
@@ -1426,6 +1445,29 @@ export async function getGLAuditAnomaliesAction(params: {
           difference: parseFloat(Math.min(baseWater, total).toFixed(2)),
           description: 'Negative billing charge detected on active bill record.',
           recommendation: 'Verify meter readings for rollover, reversal, or negative difference usage.',
+        });
+      }
+
+      // Check 5: Payment Amount Mismatch (flag bills marked paid where recorded payment differs from billed total)
+      const amountPaid = Number(b.amount_paid || 0);
+      const isPaidStatus = String(b.payment_status || '').toLowerCase().trim() === 'paid' || String(b.status || '').toLowerCase().trim() === 'paid';
+      const paymentDiff = total - amountPaid;
+      if (isPaidStatus && total > 0 && paymentDiff > 0.50) {
+        anomalies.push({
+          billId: b.id,
+          billKey: b.BILLKEY || b.id,
+          customerKey: b.CUSTOMERKEY || b.individual_customer_id || 'N/A',
+          customerName: b.customer_name || 'N/A',
+          branchName: rawBranchName,
+          branchCode: bCode,
+          period: formatPeriod(rawPeriod),
+          anomalyType: 'MATH_SUM_MISMATCH',
+          severity: 'Warning',
+          expected: `Full Billed Amount: ${total.toFixed(2)} ETB`,
+          actual: `Recorded Payment: ${amountPaid.toFixed(2)} ETB`,
+          difference: parseFloat(paymentDiff.toFixed(2)),
+          description: `Partial Payment Discrepancy: Bill is marked as Paid, but recorded payment (${amountPaid.toFixed(2)} ETB) is less than billed amount (${total.toFixed(2)} ETB). Unpaid variance: ${paymentDiff.toFixed(2)} ETB.`,
+          recommendation: `Collect or reconcile remaining variance of ${paymentDiff.toFixed(2)} ETB, or verify if partial settlement was authorized.`,
         });
       }
     }

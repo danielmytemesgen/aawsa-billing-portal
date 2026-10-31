@@ -4444,13 +4444,17 @@ export const dbGetPaidBillsPaginated = async (params: {
         LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
         LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.deleted_at IS NULL
-          AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
+          AND (
+            LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
+            OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid'
+            OR (COALESCE(b."TOTALBILLAMOUNT", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b."TOTALBILLAMOUNT", 0) - 0.01)
+          )
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
 
     if (params.excludeUnfinalized) {
-        sql += " AND b.status = 'Posted'";
+        sql += " AND COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')";
     }
 
     if (params.branchId && params.branchId !== 'all') {
@@ -4489,13 +4493,17 @@ export const dbGetPaidBillsCount = async (params: {
         LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
         LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
         WHERE b.deleted_at IS NULL
-          AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
+          AND (
+            LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'
+            OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid'
+            OR (COALESCE(b."TOTALBILLAMOUNT", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b."TOTALBILLAMOUNT", 0) - 0.01)
+          )
     `;
     const queryParams: any[] = [];
     let paramIndex = 1;
 
     if (params.excludeUnfinalized) {
-        sql += " AND b.status = 'Posted'";
+        sql += " AND COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')";
     }
 
     if (params.branchId && params.branchId !== 'all') {
@@ -5472,7 +5480,7 @@ export const dbGetBillsBranchSummary = async (params: {
     if (reportType === 'paid') {
         // Full billed amount on paid bills — matches GL Financial & Audit Report Gross Billed GL exactly
         amountSql = 'COALESCE(SUM(COALESCE(b."TOTALBILLAMOUNT", b.amount_paid, 0)::numeric), 0)::numeric';
-        statusFilter += " AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'";
+        statusFilter = "b.deleted_at IS NULL AND COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft') AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))";
     } else if (reportType === 'unsettled') {
         statusFilter += " AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' OR b.payment_status IS NULL)";
     }

@@ -106,6 +106,7 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
       "Total Amount (Incl. Arrears)": r.totalAmount ?? 0,
       "Arrears Carryover":     r.outstandingCarryover ?? 0,
       "Audit Status":         String(r.auditStatus || "Clean"),
+      "Audit Reason":         String(r.anomalyReason || "Clean"),
     }));
     const headers = Object.keys(exportData[0]);
     const blob = arrayToXlsxBlob(exportData, headers, "Component Matrix");
@@ -311,9 +312,18 @@ export function GLComponentMatrixTable({ rows, isLoading }: GLComponentMatrixTab
                     </TableCell>
                     <TableCell className="text-center whitespace-nowrap">
                       {r.auditStatus === "Clean" ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600 inline" />
+                        <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full text-[11px] font-semibold border border-emerald-200" title="Clean: all charge components and payments balance">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                          <span>Clean</span>
+                        </span>
                       ) : (
-                        <AlertTriangle className="h-4 w-4 text-amber-600 inline" />
+                        <span
+                          className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full text-[11px] font-semibold border border-amber-200 cursor-help max-w-[200px] truncate"
+                          title={r.anomalyReason || "Discrepancy detected on this bill"}
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                          <span className="truncate">{r.anomalyReason ? (r.anomalyReason.length > 25 ? r.anomalyReason.substring(0, 23) + '...' : r.anomalyReason) : 'Discrepancy'}</span>
+                        </span>
                       )}
                     </TableCell>
                   </TableRow>
