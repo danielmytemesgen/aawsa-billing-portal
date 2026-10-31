@@ -77,15 +77,17 @@ describe('Penalty Policy Engine Audit - All Modules', () => {
     });
 
     it('correctly handles camelCase monthYear from DomainBill in calculateDebtAging', () => {
-      const oldMonth = getMonthsAgo(4);
+      // Use getMonthsAgo(5) to ensure the bill is reliably >= 4 months old across all calendar months
+      // (getMonthsAgo(4) can overflow JS date arithmetic, e.g. Oct 31 → June 31 → July 1 = only 3 months old)
+      const oldMonth = getMonthsAgo(5);
       const bills = [
         { monthYear: oldMonth, THISMONTHBILLAMT: 1000, amountPaid: 0 }
       ];
       const tariffOn = { ...baseTariff, penalty_enabled: true };
       const result = calculateDebtAging(1000, bills, tariffOn);
 
-      // 1000 base * (0.15 bank + 0.10 tier) = 250
-      expect(result.penaltyAmt).toBe(250);
+      // 1000 base * (0.15 bank + 0.15 tier for month=5) = 300
+      expect(result.penaltyAmt).toBe(300);
     });
   });
 

@@ -5470,7 +5470,8 @@ export const dbGetBillsBranchSummary = async (params: {
     let statusFilter = "b.status = 'Posted' AND b.deleted_at IS NULL";
 
     if (reportType === 'paid') {
-        amountSql = 'COALESCE(SUM(COALESCE(b.amount_paid, b."TOTALBILLAMOUNT", 0)::numeric), 0)::numeric';
+        // Full billed amount on paid bills — matches GL Financial & Audit Report Gross Billed GL exactly
+        amountSql = 'COALESCE(SUM(COALESCE(b."TOTALBILLAMOUNT", b.amount_paid, 0)::numeric), 0)::numeric';
         statusFilter += " AND LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid'";
     } else if (reportType === 'unsettled') {
         statusFilter += " AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' OR b.payment_status IS NULL)";

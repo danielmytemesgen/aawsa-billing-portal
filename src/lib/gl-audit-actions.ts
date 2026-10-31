@@ -721,8 +721,8 @@ export async function getGLSummaryReportAction(params: {
       else if (!hasConfigGap) totalCleanBills++;
       else totalCleanBills++; // config gaps don't reduce clean count
 
-      // Track revenue & collections
-      totalGrossBilled += thisMonth;
+      // Track revenue & collections (Gross Billed GL includes prior-period arrears to match Paid Report exactly)
+      totalGrossBilled += total;
       totalNetRevenue  += (thisMonth - vat);
       totalVat         += vat;
 
@@ -938,18 +938,19 @@ export async function getGLSummaryReportAction(params: {
       });
 
     const isSpecificGl = params.glCode && params.glCode !== 'all';
+    // Gross Billed GL reflects full recognized revenue (current + arrears) to be 100% identical with Paid Report
     const effectiveGross = isSpecificGl
-      ? summaryRows.reduce((acc, r) => acc + r.currentAmount, 0)
-      : totalGrossBilled;
+      ? summaryRows.reduce((acc, r) => acc + r.totalAmount, 0)
+      : summaryRows.reduce((acc, r) => acc + r.totalAmount, 0);
     const effectiveCarryover = isSpecificGl
       ? summaryRows.reduce((acc, r) => acc + r.arrearsAmount, 0)
       : totalOutstandingCarryover;
     const effectiveNet = isSpecificGl
       ? summaryRows.reduce((acc, r) => acc + r.withoutVat, 0)
-      : totalNetRevenue;
+      : summaryRows.reduce((acc, r) => acc + r.withoutVat, 0);
     const effectiveVat = isSpecificGl
       ? summaryRows.reduce((acc, r) => acc + r.vatAmount, 0)
-      : totalVat;
+      : summaryRows.reduce((acc, r) => acc + r.vatAmount, 0);
     const effectivePaid = isSpecificGl
       ? summaryRows.reduce((acc, r) => acc + r.totalAmount, 0)
       : totalPaidAmount;

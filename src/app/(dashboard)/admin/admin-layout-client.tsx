@@ -227,8 +227,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         navItems.push({ title: "Customer & Metering", items: customerMeteringItems });
     }
 
-    // 5. Data & Reports
-    const dataReportsItems: NavItem[] = [];
+    // 5. Dedicated Data Entry Section
     const canAccessDataEntry = hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) 
         || hasPermission(PERMISSIONS.CUSTOMERS_CREATE) 
         || hasPermission(PERMISSIONS.BULK_METERS_CREATE)
@@ -236,13 +235,20 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.DATA_ENTRY_INDIVIDUAL_FORM)
         || hasPermission(PERMISSIONS.DATA_ENTRY_BULK_CSV)
         || hasPermission(PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV);
+
     if (canAccessDataEntry) {
-        dataReportsItems.push({ 
+        navItems.push({ 
             title: "Data Entry", 
-            href: isAdmin ? "/admin/data-entry" : "/staff/data-entry", 
-            iconName: "FileText" 
+            items: [{ 
+                title: "Data Entry", 
+                href: isAdmin ? "/admin/data-entry" : "/staff/data-entry", 
+                iconName: "FileText" 
+            }] 
         });
     }
+
+    // 6. Reports Section
+    const reportsItems: NavItem[] = [];
 
     const canAccessGeneralReports = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) 
         || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
@@ -250,7 +256,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW);
 
     if (canAccessGeneralReports) {
-        dataReportsItems.push({ title: "Reports", href: isAdmin ? "/admin/reports" : "/staff/reports", iconName: "BarChart2" });
+        reportsItems.push({ title: "Reports", href: isAdmin ? "/admin/reports" : "/staff/reports", iconName: "BarChart2" });
     }
 
     const canViewPaidBillsReport = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) 
@@ -261,7 +267,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
     if (canViewPaidBillsReport) {
-        dataReportsItems.push({ title: "List Of Paid Bills", href: isAdmin ? "/admin/reports/paid-bills" : "/staff/reports/paid-bills", iconName: "CheckCircle2" });
+        reportsItems.push({ title: "List Of Paid Bills", href: isAdmin ? "/admin/reports/paid-bills" : "/staff/reports/paid-bills", iconName: "CheckCircle2" });
     }
 
     const canViewSentBillsReport = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) 
@@ -273,7 +279,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
     if (canViewSentBillsReport) {
-        dataReportsItems.push({ title: "List Of Sent Bills", href: isAdmin ? "/admin/reports/sent-bills" : "/staff/reports/sent-bills", iconName: "Send" });
+        reportsItems.push({ title: "List Of Sent Bills", href: isAdmin ? "/admin/reports/sent-bills" : "/staff/reports/sent-bills", iconName: "Send" });
     }
 
     const canViewUnsettledBillsReport = hasPermission(PERMISSIONS.REPORT_LIST_OF_UNSETTLED_BILLS)
@@ -285,7 +291,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
     if (canViewUnsettledBillsReport) {
-        dataReportsItems.push({ title: "List of Unsettled Bills", href: isAdmin ? "/admin/reports/unsettled-bills" : "/staff/reports/unsettled-bills", iconName: "FileClock" });
+        reportsItems.push({ title: "List of Unsettled Bills", href: isAdmin ? "/admin/reports/unsettled-bills" : "/staff/reports/unsettled-bills", iconName: "FileClock" });
     }
 
     const canViewCorrectedBillsReport = hasPermission(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
@@ -296,7 +302,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
     if (canViewCorrectedBillsReport) {
-        dataReportsItems.push({ title: "Corrected Bills", href: isAdmin ? "/admin/reports/corrected-bills" : "/staff/reports/corrected-bills", iconName: "FileDiff" });
+        reportsItems.push({ title: "Corrected Bills", href: isAdmin ? "/admin/reports/corrected-bills" : "/staff/reports/corrected-bills", iconName: "FileDiff" });
     }
 
     // Strictly check assigned GL Financial & Audit Report permissions only
@@ -308,7 +314,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission('report:gl_audit_view_branch');
 
     if (canViewGLReports) {
-        dataReportsItems.push({ 
+        reportsItems.push({ 
             title: "GL Reports & Audit", 
             href: isAdmin ? "/admin/reports/gl-audit" : "/staff/reports/gl-audit", 
             iconName: "Scale" 
@@ -322,7 +328,7 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
     if (canViewCreditReports) {
-        dataReportsItems.push({ 
+        reportsItems.push({ 
             title: "Credit Note Report", 
             href: isAdmin ? "/admin/reports/credit-notes" : "/staff/reports/credit-notes", 
             iconName: "Wallet" 
@@ -336,15 +342,15 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
 
     if (canViewDeliverySummaryReport) {
-        dataReportsItems.push({
+        reportsItems.push({
             title: "Delivery Summary Report",
             href: isAdmin ? "/admin/reports/delivery-summary" : "/staff/reports/delivery-summary",
             iconName: "Truck"
         });
     }
 
-    if (dataReportsItems.length > 0) {
-        navItems.push({ title: "Data & Reports", items: dataReportsItems });
+    if (reportsItems.length > 0) {
+        navItems.push({ title: "Reports", items: reportsItems });
     }
 
     // 6. System Settings
