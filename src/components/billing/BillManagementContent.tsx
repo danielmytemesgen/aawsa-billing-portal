@@ -31,7 +31,7 @@ import { getBulkMeters, getCustomers, initializeBulkMeters, initializeCustomers,
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn, formatDate } from '@/lib/utils';
 import { format, subDays, isBefore } from 'date-fns';
-import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from '@/lib/billing-utils';
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod } from '@/lib/billing-utils';
 import {
     Loader2,
     Filter,
@@ -459,7 +459,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
         const d30_60 = Number(b.debit30_60 || b.debit_30_60 || 0);
         const d60 = Number(b.debit60 || b.debit_60 || 0);
         const totalUnpaidDebt = Number(b.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
-        const penalty = getPenaltyValue(Number(b.PENALTYAMT || 0), penaltyEnabled);
+        const isPenOn = isPenaltyEnabledForPeriod(getTariffs(), b.month_year, b.charge_group || b.customerType);
+        const penalty = getPenaltyValue(Number(b.PENALTYAMT || 0), isPenOn);
         // Outstanding = all unpaid debt + current penalty
         const outstanding = totalUnpaidDebt + penalty;
         const current = getMonthlyBillAmt(b);
@@ -915,7 +916,8 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                             const d30 = recon ? recon.d30 : Number(bill.debit_30 || bill.debit30 || 0);
                             const d30_60 = recon ? recon.d30_60 : Number(bill.debit_30_60 || bill.debit30_60 || 0);
                             const d60 = recon ? recon.d60 : Number(bill.debit_60 || bill.debit60 || 0);
-                            const penaltyAmt = recon ? recon.penalty : getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
+                            const isRowPenEnabled = isPenaltyEnabledForPeriod(getTariffs(), bill.month_year, bill.charge_group || bill.customerType);
+                            const penaltyAmt = recon ? recon.penalty : getPenaltyValue(Number(bill.PENALTYAMT || 0), isRowPenEnabled);
 
                             const currentOutstanding = recon ? recon.outstanding : Number(bill.OUTSTANDINGAMT ?? (d30 + d30_60 + d60)) + penaltyAmt;
                             const currentBillAmt = recon ? Math.max(0, recon.currentMonthly) : getMonthlyBillAmt(bill);
@@ -947,12 +949,12 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                     <TableCell className="text-right text-[10px] text-gray-500">{Number(d60).toFixed(2)}</TableCell>
                                     <TableCell className={cn(
                                         "text-right text-xs font-medium",
-                                        penaltyEnabled && penaltyAmt > 0.001
+                                        isRowPenEnabled && penaltyAmt > 0.001
                                             ? "text-destructive"
                                             : "text-muted-foreground"
                                     )}>
                                         {Number(penaltyAmt).toFixed(2)}
-                                        {!penaltyEnabled && <span className="ml-1 text-[9px] text-muted-foreground font-normal">(Off)</span>}
+                                        {!isRowPenEnabled && <span className="ml-1 text-[9px] text-muted-foreground font-normal">(Off)</span>}
                                     </TableCell>
                                     <TableCell className="text-right text-xs">{currentOutstanding.toFixed(2)}</TableCell>
                                     <TableCell className="text-right text-xs">{currentBillAmt.toFixed(2)}</TableCell>

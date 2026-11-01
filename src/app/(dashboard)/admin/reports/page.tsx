@@ -30,7 +30,7 @@ import { calculateBillAction, deleteBillAction, getAllBranchesAction , getAllCus
 import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
 import { format as formatDate, parse } from "date-fns";
 import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
-import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from "@/lib/billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod } from "@/lib/billing-utils";
 
 
 // Top-level type guards for meter reading unions (used by multiple reports)
@@ -354,7 +354,8 @@ const availableReports: ReportType[] = [
         // Use DB-stored financial fields (synced by dbSyncAgingForCustomer)
         const currentBill = parseFloat(Number(b.THISMONTHBILLAMT || b.base_water_charge || 0).toFixed(2));
         const outstanding = parseFloat(Number(b.OUTSTANDINGAMT   || 0).toFixed(2));
-        const penalty     = parseFloat(getPenaltyValue(Number(b.PENALTYAMT || 0), penaltyEnabled).toFixed(2));
+        const isPenOn = isPenaltyEnabledForPeriod(tariffsRes?.data ?? [], b.month_year || b.monthYear, b.charge_group || b.customerType);
+        const penalty     = parseFloat(getPenaltyValue(Number(b.PENALTYAMT || 0), isPenOn).toFixed(2));
         const totalBill   = parseFloat(Number(b.TOTALBILLAMOUNT  || (currentBill + outstanding + penalty)).toFixed(2));
         const amountPaid  = parseFloat(Number(b.amount_paid      || 0).toFixed(2));
 
@@ -875,7 +876,7 @@ const availableReports: ReportType[] = [
         sanit: Number(bill.sanitation_fee) || 0,
         rent: Number(bill.meter_rent) || 0,
         add: Number(bill.additional_fees_charge) || 0,
-        penalty: getPenaltyValue(Number(bill.PENALTYAMT) || 0, penaltyEnabled),
+        penalty: getPenaltyValue(Number(bill.PENALTYAMT) || 0, isPenaltyEnabledForPeriod(tariffsRes?.data ?? [], bill.month_year || bill.monthYear, bill.charge_group || bill.customerType)),
         vat: Number(bill.vat_amount || bill.vatAmount) || 0,
         total: Number(bill.TOTALBILLAMOUNT) || 0,
       });
@@ -1210,7 +1211,8 @@ const availableReports: ReportType[] = [
         const thisMonthBillAmt = Number(bill.THISMONTHBILLAMT || bill.baseWaterCharge || 0);
         // OUTSTANDINGAMT in the DB is the carry-forward from previous unpaid bills
         const outstandingAmt   = Number(bill.OUTSTANDINGAMT || 0);
-        const penaltyAmt       = getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
+        const isPenOn = isPenaltyEnabledForPeriod(tariffsRes?.data ?? [], bill.month_year || bill.monthYear, bill.charge_group || bill.customerType);
+        const penaltyAmt       = getPenaltyValue(Number(bill.PENALTYAMT || 0), isPenOn);
         const totalBillAmount  = Number(bill.TOTALBILLAMOUNT || (thisMonthBillAmt + outstandingAmt + penaltyAmt));
 
         // Generate BILLKEY if missing
@@ -1406,7 +1408,8 @@ const availableReports: ReportType[] = [
         const sanitation = Number(b.sanitation_fee ?? b.sanitationFee ?? 0);
         const meterRent = Number(b.meter_rent ?? b.meterRent ?? 0);
         const maintenance = Number(b.maintenance_fee ?? b.maintenanceFee ?? 0);
-        const additional = Number(b.additional_fees_charge ?? b.additionalFeesCharge ?? 0) + getPenaltyValue(Number(b.PENALTYAMT ?? 0), penaltyEnabled);
+        const isPenOn = isPenaltyEnabledForPeriod(tariffsRes?.data ?? [], b.month_year || b.monthYear, b.charge_group || b.customerType);
+        const additional = Number(b.additional_fees_charge ?? b.additionalFeesCharge ?? 0) + getPenaltyValue(Number(b.PENALTYAMT ?? 0), isPenOn);
         const vat = Number(b.vat_amount ?? b.vatAmount ?? 0);
 
         if (baseWater === 0 && Number(b.THISMONTHBILLAMT || 0) > 0 && sewerage === 0 && sanitation === 0 && meterRent === 0 && maintenance === 0) {

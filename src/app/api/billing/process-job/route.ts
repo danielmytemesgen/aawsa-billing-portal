@@ -91,7 +91,7 @@ export async function POST(request: Request) {
   } = await import('@/lib/db-queries');
 
   const { calculateBill, calculateBillFromTariff } = await import('@/lib/billing');
-  const { calculateDebtAging, normalizeTariff, isPenaltyEngineEnabled } = await import('@/lib/billing-utils');
+  const { calculateDebtAging, normalizeTariff, isPenaltyEnabledForPeriod } = await import('@/lib/billing-utils');
   const { buildBillingPeriod } = await import('@/lib/billing-config');
   const { randomUUID } = await import('crypto');
 
@@ -175,10 +175,10 @@ export async function POST(request: Request) {
     let lastId = currentJob.last_processed_id;
     const failedItems: string[] = [];
 
+    // Load all tariffs once — used inside loop for per-version penalty check
     const allTariffsForGuard = await getCachedPenaltyGuardFlags(
-      () => query('SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC')
+      () => query('SELECT penalty_enabled, effective_date, customer_type FROM tariffs ORDER BY effective_date DESC')
     );
-    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffsForGuard);
 
     for (const item of items) {
       try {
@@ -251,7 +251,12 @@ export async function POST(request: Request) {
         }
 
         const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
-        const tariffForAging = globalPenaltyOn ? cachedTariff : ({ ...(cachedTariff || {}), penalty_enabled: false } as any);
+        const penaltyOnForItem = isPenaltyEnabledForPeriod(
+          allTariffsForGuard,
+          currentJob.month_year,
+          cachedTariff?.customer_type
+        );
+        const tariffForAging = penaltyOnForItem ? cachedTariff : ({ ...(cachedTariff || {}), penalty_enabled: false } as any);
         const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(
           balanceFromPreviousPeriods, historicalBills, tariffForAging, currentJob.month_year
         );

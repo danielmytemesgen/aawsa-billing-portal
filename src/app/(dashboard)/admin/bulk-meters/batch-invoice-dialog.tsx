@@ -14,7 +14,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { getMostRecentBillsForBulkMetersAction } from "@/lib/actions";
 import { initializeTariffs, getTariffs } from "@/lib/data-store";
-import { getPenaltyValue, isPenaltyEngineEnabled } from "@/lib/billing-utils";
+import { getPenaltyValue, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod } from "@/lib/billing-utils";
 
 interface BatchInvoiceDialogProps {
     open: boolean;
@@ -110,8 +110,8 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
                 debit30: Number(row.debit_30 ?? 0),
                 debit30_60: Number(row.debit_30_60 ?? 0),
                 debit60: Number(row.debit_60 ?? 0),
-                PENALTYAMT: getPenaltyValue(Number(row.PENALTYAMT ?? 0), penaltyEnabled),
-                penaltyEnabled,
+                PENALTYAMT: getPenaltyValue(Number(row.PENALTYAMT ?? 0), isPenaltyEnabledForPeriod(getTariffs(), row.month_year, row.charge_group || row.customerType)),
+                penaltyEnabled: isPenaltyEnabledForPeriod(getTariffs(), row.month_year, row.charge_group || row.customerType),
                 dueDate: row.due_date,
                 paymentStatus: row.payment_status ?? 'Unpaid',
                 billPeriodStartDate: row.bill_period_start_date,
@@ -153,7 +153,8 @@ export function BatchInvoiceDialog({ open, onOpenChange, selectedMeterIds, onCom
             const d60 = Number(row.debit_60 || 0);
             const outstanding = Number(row.OUTSTANDINGAMT ?? (d30 + d30_60 + d60));
             const current = Math.max(0, Number(row.THISMONTHBILLAMT ?? (Number(row.TOTALBILLAMOUNT || 0) - outstanding)));
-            const penalty = getPenaltyValue(Number(row.PENALTYAMT || 0), penaltyEnabled);
+            const isRowPenEnabled = isPenaltyEnabledForPeriod(getTariffs(), row.month_year, row.charge_group || row.customerType);
+            const penalty = getPenaltyValue(Number(row.PENALTYAMT || 0), isRowPenEnabled);
             const totalPayable = outstanding + current + penalty;
             return [
                 row.name,

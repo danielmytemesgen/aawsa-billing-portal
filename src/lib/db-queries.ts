@@ -6210,12 +6210,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     );
     const tariffs = client ? tariffsRes.rows : tariffsRes;
 
-    const allTariffsRes = await qFunc(
-        `SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC`
-    );
-    const allTariffs = client ? allTariffsRes.rows : allTariffsRes;
-    const { isPenaltyEngineEnabled } = await import('./billing-utils');
-    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffs);
+    // Note: Per-version penalty check is evaluated per bill via activeTariff.penalty_enabled
 
     const findActiveTariff = (dateStr: string) => {
         let lookupDate = dateStr;
@@ -6291,7 +6286,7 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
         const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
         if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-        const isPenaltyEnabled = globalPenaltyOn && (activeTariff?.penalty_enabled !== false);
+        const isPenaltyEnabled = activeTariff?.penalty_enabled !== false;
         if (isPenaltyEnabled && maxAge >= threshold) {
             const applicableTier = [...tieredRates].sort((a: any, b: any) => b.month - a.month).find((t: any) => maxAge >= t.month);
             const totalRate = bankRate + Number(applicableTier?.rate || 0);

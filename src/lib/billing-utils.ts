@@ -78,21 +78,28 @@ export function isPenaltyEnabledForPeriod(
 ): boolean {
     if (!tariffs || tariffs.length === 0) return true;
 
-    // Build the lookup date: first day of the billing month (YYYY-MM-DD)
-    const [y, m] = monthYear.split('-').map(Number);
-    if (!y || !m) return true;
-    const lookupDate = `${y}-${String(m).padStart(2, '0')}-01`;
+    // Build the lookup date: actual last day of the billing month (YYYY-MM-DD)
+    // Ensures mid-month tariff versions (e.g. 2026-09-11 Ethiopian calendar boundary)
+    // correctly apply to bills of that month, aligned with gl-audit and db-queries.
+    const lookupDate = getEndDayOfMonth(monthYear);
 
-    // Prefer tariffs matching the customer type; fall back to all types if none match
+    // Normalize customer type matching
+    const cgLow = (customerType || '').toLowerCase();
+    const isDomestic = cgLow.includes('domestic') && !cgLow.includes('non');
+
     const typed = customerType
-        ? tariffs.filter(t =>
-            !t.customer_type ||
-            String(t.customer_type).toLowerCase() === String(customerType).toLowerCase()
-          )
+        ? tariffs.filter(t => {
+            if (!t.customer_type) return true;
+            const tLow = String(t.customer_type).toLowerCase();
+            if (isDomestic) {
+                return tLow.includes('domestic') && !tLow.includes('non');
+            }
+            return tLow.includes('non') || tLow === cgLow;
+          })
         : tariffs;
     const pool = typed.length > 0 ? typed : tariffs;
 
-    // Find the most recent tariff version whose effective_date <= billing month start
+    // Find the most recent tariff version whose effective_date <= billing month ceiling
     const applicable = pool
         .filter(t => String(t.effective_date || '').substring(0, 10) <= lookupDate)
         .sort((a, b) =>

@@ -11,7 +11,7 @@ import { format, parseISO } from "date-fns";
 import { cn, formatDate } from "@/lib/utils";
 import { formatNumber } from '@/lib/format';
 import type { Branch } from "../branches/branch-types";
-import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from "@/lib/billing-utils";
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod } from "@/lib/billing-utils";
 import { getTariffs } from "@/lib/data-store";
 import { getBillKey, getCustomerPhone } from "@/lib/export-utils";
 
@@ -177,7 +177,10 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
                   return formatNumber(outstanding);
                 })()}</TableCell>
                 <TableCell className="text-right text-slate-600 py-4">{formatNumber(getMonthlyBillAmt(bill))}</TableCell>
-                <TableCell className="text-right text-red-500 font-bold py-4">{formatNumber(getPenaltyValue(normalizeNumber(bill.PENALTYAMT) ?? 0, penaltyEnabled))}</TableCell>
+                {(() => {
+                  const isRowPenEnabled = isPenaltyEnabledForPeriod(getTariffs(), bill.monthYear || (bill as any).month_year, (bill as any).customerType || (bill as any).charge_group);
+                  return <TableCell className="text-right text-red-500 font-bold py-4">{formatNumber(getPenaltyValue(normalizeNumber(bill.PENALTYAMT) ?? 0, isRowPenEnabled))}</TableCell>;
+                })()}
                 <TableCell className="text-right font-black font-mono text-indigo-700 bg-indigo-50/40 py-4 pr-6">{(() => {
                   const outstanding = normalizeNumber(bill.OUTSTANDINGAMT) ?? (
                     (normalizeNumber((bill as any).debit_30 ?? bill.debit30) ?? 0) + 
@@ -185,7 +188,8 @@ export function BillTable({ bills, customers, bulkMeters, branches, allBills, sh
                     (normalizeNumber((bill as any).debit_60 ?? bill.debit60) ?? 0)
                   );
                   const current = getMonthlyBillAmt(bill);
-                  const penalty = getPenaltyValue(normalizeNumber(bill.PENALTYAMT) ?? 0, penaltyEnabled);
+                  const isRowPenEnabled = isPenaltyEnabledForPeriod(getTariffs(), bill.monthYear || (bill as any).month_year, (bill as any).customerType || (bill as any).charge_group);
+                  const penalty = getPenaltyValue(normalizeNumber(bill.PENALTYAMT) ?? 0, isRowPenEnabled);
                   const totalDue = normalizeNumber((bill as any).totalAmountDue ?? bill.TOTALBILLAMOUNT) ?? (outstanding + current + penalty);
 
                   return formatNumber(totalDue);

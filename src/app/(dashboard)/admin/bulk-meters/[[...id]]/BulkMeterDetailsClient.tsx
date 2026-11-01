@@ -44,7 +44,7 @@ import { Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, parseISO, lastDayOfMonth } from "date-fns";
 import { getBillingPeriodStartDate, getBillingPeriodEndDate, calculateDueDate } from "@/lib/billing-config";
-import { calculateDebtAging, getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled, reconstructOutstandingForBill } from "@/lib/billing-utils";
+import { calculateDebtAging, getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod, reconstructOutstandingForBill } from "@/lib/billing-utils";
 import { computeCreditForBill } from "@/lib/credit-utils";
 import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 import { useCardPenaltyDisplay } from "@/hooks/useCardPenaltyDisplay";
@@ -508,7 +508,7 @@ export default function BulkMeterDetailsPage() {
     if (billToRender) {
       // Dynamic Outstanding Reconstruction for the selected bill
       const billIndex = currentBillingHistory.findIndex(b => b.id === billToRender.id);
-      const isPenaltyPolicyEnabled = isPenaltyEngineEnabled(getTariffs());
+      const isPenaltyPolicyEnabled = isPenaltyEnabledForPeriod(getTariffs(), billToRender.monthYear || (billToRender as any).month_year, bulkMeter?.chargeGroup || (bulkMeter as any)?.charge_group);
       const reconstructedOutstanding = reconstructOutstandingForBill(
         billToRender,
         billIndex,
@@ -594,8 +594,8 @@ export default function BulkMeterDetailsPage() {
         billingMonth
       );
 
-      // Guard: exclude penalty from totalPayable when the global penalty engine is OFF
-      const isPenaltyPolicyEnabled = isPenaltyEngineEnabled(getTariffs());
+      // Guard: exclude penalty from totalPayable when the penalty engine is OFF for this period
+      const isPenaltyPolicyEnabled = isPenaltyEnabledForPeriod(getTariffs(), billingMonth, bulkMeter?.chargeGroup || (bulkMeter as any)?.charge_group);
       const livePenaltyAmt = getPenaltyValue(rawLivePenaltyAmt, isPenaltyPolicyEnabled);
 
       finalBillCardDetails = {
@@ -872,7 +872,7 @@ export default function BulkMeterDetailsPage() {
       const legacyDebt = Math.max(0, arrearsSum - (d30_bucket + d30_60_bucket + d60_bucket));
       if (legacyDebt > 0.01) maxAge = Math.max(maxAge, 3);
 
-      const isPenaltyEnabled = isPenaltyEngineEnabled(getTariffs()) && (activeTariff as any)?.penalty_enabled !== false;
+      const isPenaltyEnabled = (activeTariff as any)?.penalty_enabled !== false;
       if (isPenaltyEnabled && maxAge >= threshold) {
         const applicableTier = [...tieredRates].sort((a, b) => b.month - a.month).find(t => maxAge >= t.month);
         const totalRate = bankRate + Number(applicableTier?.rate || 0);
@@ -992,7 +992,7 @@ export default function BulkMeterDetailsPage() {
   } = memoizedDetails;
 
   // Penalty engine state — used by the card UI to label the penalty row
-  const isPenaltyOff = !isPenaltyEngineEnabled(getTariffs());
+  const isPenaltyOff = !isPenaltyEnabledForPeriod(getTariffs(), billCardDetails.month && billCardDetails.month !== 'N/A' ? billCardDetails.month : '', bulkMeter?.chargeGroup || (bulkMeter as any)?.charge_group || 'Non-domestic');
 
   // Count how many distinct months are carrying unpaid debt that feeds into the outstanding balance.
   // We look at the billing history relative to the currently displayed bill month:

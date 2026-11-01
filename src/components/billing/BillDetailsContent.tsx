@@ -45,7 +45,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled } from '@/lib/billing-utils';
+import { getMonthlyBillAmt, getPenaltyValue, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod } from '@/lib/billing-utils';
 
 // Mock types
 type Bill = {
@@ -429,7 +429,8 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                 }
 
                 await initializeTariffs(true);
-                setPenaltyEnabled(isPenaltyEngineEnabled(getTariffs()));
+                const billMonth = b.month_year || (b.created_at ? String(b.created_at).slice(0, 7) : '');
+                setPenaltyEnabled(isPenaltyEnabledForPeriod(getTariffs(), billMonth, customerType));
 
                 const logsRes = await getBillWorkflowLogsAction(id);
                 if (logsRes.data) setLogs(logsRes.data);
