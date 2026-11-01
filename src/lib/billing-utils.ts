@@ -40,8 +40,8 @@ export function getPenaltyValue(rawPenalty: number, penaltyEnabled: boolean): nu
 }
 
 /**
- * Inspects a list of tariffs and determines whether the penalty policy engine
- * is enabled based on the most recent effective tariff. Defaults to true.
+ * @deprecated Use isPenaltyEnabledForPeriod() for per-tariff-version penalty control.
+ * This function reads only the LATEST tariff's flag — kept for backward compatibility.
  */
 export function isPenaltyEngineEnabled(tariffs?: any[] | null): boolean {
     if (!tariffs || tariffs.length === 0) return true;
@@ -51,6 +51,57 @@ export function isPenaltyEngineEnabled(tariffs?: any[] | null): boolean {
     const latest = sorted[0];
     return latest?.penalty_enabled !== undefined && latest?.penalty_enabled !== null
         ? Boolean(latest.penalty_enabled)
+        : true;
+}
+
+/**
+ * Returns whether penalty is enabled for a specific billing period and customer type.
+ *
+ * Finds the tariff version whose effective_date is the most recent date that is
+ * still <= the first day of the given billing month (monthYear = "YYYY-MM"), then
+ * reads penalty_enabled from THAT specific version only.
+ *
+ * This allows each tariff version to independently toggle penalty ON or OFF for
+ * the billing periods it governs — enabling or disabling penalty in one version
+ * does NOT affect bills governed by other versions.
+ *
+ * Falls back to true (penalty ON) when no matching tariff version is found.
+ *
+ * @param tariffs      - Array of tariff rows with { effective_date, penalty_enabled, customer_type }
+ * @param monthYear    - Billing period in "YYYY-MM" format (e.g. "2026-09")
+ * @param customerType - Customer/charge group type (e.g. "Non-domestic"). Optional.
+ */
+export function isPenaltyEnabledForPeriod(
+    tariffs: any[] | null | undefined,
+    monthYear: string,
+    customerType?: string
+): boolean {
+    if (!tariffs || tariffs.length === 0) return true;
+
+    // Build the lookup date: first day of the billing month (YYYY-MM-DD)
+    const [y, m] = monthYear.split('-').map(Number);
+    if (!y || !m) return true;
+    const lookupDate = `${y}-${String(m).padStart(2, '0')}-01`;
+
+    // Prefer tariffs matching the customer type; fall back to all types if none match
+    const typed = customerType
+        ? tariffs.filter(t =>
+            !t.customer_type ||
+            String(t.customer_type).toLowerCase() === String(customerType).toLowerCase()
+          )
+        : tariffs;
+    const pool = typed.length > 0 ? typed : tariffs;
+
+    // Find the most recent tariff version whose effective_date <= billing month start
+    const applicable = pool
+        .filter(t => String(t.effective_date || '').substring(0, 10) <= lookupDate)
+        .sort((a, b) =>
+            String(b.effective_date || '').localeCompare(String(a.effective_date || ''))
+        )[0];
+
+    if (!applicable) return true; // no matching version — default: penalty ON
+    return applicable.penalty_enabled !== undefined && applicable.penalty_enabled !== null
+        ? Boolean(applicable.penalty_enabled)
         : true;
 }
 

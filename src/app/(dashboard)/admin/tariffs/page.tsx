@@ -1029,6 +1029,9 @@ export default function TariffManagementPage() {
                                 {(activeTariffInfo.penalty_enabled ?? true) ? "● Active (ON)" : "○ Disabled (OFF - 0 ETB)"}
                               </Badge>
                             </div>
+                            <p className="text-[11px] text-slate-500 font-medium mb-1">
+                              Applies to bills from <span className="font-semibold text-slate-700">{activeTariffInfo.effective_date}</span> onwards
+                            </p>
                             <p className="text-base font-bold text-amber-900 leading-tight">Threshold: <span className="font-black text-amber-600">Month {activeTariffInfo.penalty_month_threshold || 3}</span></p>
                             <p className="text-xs font-bold text-amber-600 uppercase mt-1 tracking-widest bg-amber-100/50 px-2 py-0.5 rounded-md inline-block">Bank Rate + Tiered Matrix</p>
                           </div>
@@ -1280,6 +1283,7 @@ export default function TariffManagementPage() {
               ]
             }}
             canUpdate={canUpdateTariffs}
+            effectiveDate={activeTariffInfo.effective_date}
           />
 
           <NewVersionDialog

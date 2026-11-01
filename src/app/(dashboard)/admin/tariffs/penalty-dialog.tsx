@@ -55,6 +55,7 @@ interface PenaltyDialogProps {
         penalty_tiered_rates: { month: number; rate: number }[];
     };
     canUpdate: boolean;
+    effectiveDate?: string;
 }
 
 export function PenaltyDialog({
@@ -63,6 +64,7 @@ export function PenaltyDialog({
     onSubmit,
     defaultValues,
     canUpdate,
+    effectiveDate,
 }: PenaltyDialogProps) {
     const form = useForm<PenaltyFormValues>({
         resolver: zodResolver(penaltySchema),
@@ -145,7 +147,9 @@ export function PenaltyDialog({
                         <div>
                             <DialogTitle className="text-2xl font-black text-white leading-tight">Penalty Policy Engine</DialogTitle>
                             <DialogDescription className="font-bold text-slate-400 mt-1">
-                                Configure when penalties start and the applicable interest rates.
+                                {effectiveDate 
+                                    ? `Configure penalty rules for tariff version effective ${effectiveDate}.`
+                                    : "Configure when penalties start and the applicable interest rates."}
                             </DialogDescription>
                         </div>
                     </div>
@@ -191,8 +195,8 @@ export function PenaltyDialog({
                                                 </div>
                                                 <p className="text-xs text-slate-400 mt-0.5 font-medium">
                                                     {field.value 
-                                                        ? "Overdue bills incur late interest and escalation tiers."
-                                                        : "Calculation bypassed. 0.00 ETB penalty applied to bills."}
+                                                        ? (effectiveDate ? `Active for bills in periods from ${effectiveDate} onwards.` : "Overdue bills incur late interest and escalation tiers.")
+                                                        : (effectiveDate ? `Bypassed (0.00 ETB) for bills in periods from ${effectiveDate} onwards.` : "Calculation bypassed. 0.00 ETB penalty applied to bills.")}
                                                 </p>
                                             </div>
                                         </div>

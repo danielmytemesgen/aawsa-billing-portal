@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import React from 'react';
 import ReactDOMServer from 'react-dom/server';
-import { calculateDebtAging, normalizeTariff, getMonthlyBillAmt, isPenaltyEngineEnabled, reconstructOutstandingForBill } from '@/lib/billing-utils';
+import { calculateDebtAging, normalizeTariff, getMonthlyBillAmt, isPenaltyEngineEnabled, isPenaltyEnabledForPeriod, reconstructOutstandingForBill } from '@/lib/billing-utils';
 import { useCardPenaltyDisplay } from '@/hooks/useCardPenaltyDisplay';
 
 function getMonthsAgo(months: number) {
@@ -500,6 +500,55 @@ describe('Penalty Policy Engine Audit - All Modules', () => {
       expect(output.displayedPenaltyAmt).toBe(0);
       expect(output.displayedTotalPayable).toBe(0);
       expect(output.currentRenderedBillId).toBe(null);
+    });
+  });
+
+  describe('8. isPenaltyEnabledForPeriod - Per-Tariff-Version Date Scoped Penalty', () => {
+    const sampleTariffs = [
+      { effective_date: '2026-01-01', penalty_enabled: true, customer_type: 'Non-domestic' },
+      { effective_date: '2026-07-01', penalty_enabled: false, customer_type: 'Non-domestic' },
+      { effective_date: '2026-10-01', penalty_enabled: true, customer_type: 'Non-domestic' },
+      { effective_date: '2026-01-01', penalty_enabled: false, customer_type: 'Domestic' },
+      { effective_date: '2026-08-01', penalty_enabled: true, customer_type: 'Domestic' },
+    ];
+
+    it('returns true for 2026-06 (before the Non-domestic OFF version)', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-06', 'Non-domestic')).toBe(true);
+    });
+
+    it('returns false for 2026-07 (exact effective date of OFF version)', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-07', 'Non-domestic')).toBe(false);
+    });
+
+    it('returns false for 2026-09 (within OFF version date range before 2026-10)', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-09', 'Non-domestic')).toBe(false);
+    });
+
+    it('returns true for 2026-10 (new ON version takes effect)', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-10', 'Non-domestic')).toBe(true);
+    });
+
+    it('returns true for 2026-11 (subsequent period under 2026-10 version)', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-11', 'Non-domestic')).toBe(true);
+    });
+
+    it('accurately isolates customer_type (Domestic OFF in 2026-06, ON in 2026-08)', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-06', 'Domestic')).toBe(false);
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2026-08', 'Domestic')).toBe(true);
+    });
+
+    it('defaults to true when tariffs is empty or null', () => {
+      expect(isPenaltyEnabledForPeriod(null, '2026-09', 'Non-domestic')).toBe(true);
+      expect(isPenaltyEnabledForPeriod([], '2026-09', 'Non-domestic')).toBe(true);
+    });
+
+    it('defaults to true when billing month is prior to any tariff version', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '2025-12', 'Non-domestic')).toBe(true);
+    });
+
+    it('gracefully handles malformed monthYear inputs', () => {
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, '', 'Non-domestic')).toBe(true);
+      expect(isPenaltyEnabledForPeriod(sampleTariffs, 'invalid', 'Non-domestic')).toBe(true);
     });
   });
 });

@@ -1613,7 +1613,7 @@ export async function runBillingCycleAction(payload: {
     const balanceFromPreviousPeriods = Number(bulkMeter.outStandingbill || 0);
 
     // 5. Aging & Penalty Calculation (FIFO based on historical bills, considering partial payments)
-    const { calculateDebtAging, isPenaltyEngineEnabled } = await import('./billing-utils');
+    const { calculateDebtAging, isPenaltyEnabledForPeriod } = await import('./billing-utils');
     const historicalBills = await dbGetBillsByBulkMeterId(payload.bulkMeterId);
 
     // Convert DB row to expected TariffInfo structure for calculateDebtAging if a row was found
@@ -1634,10 +1634,15 @@ export async function runBillingCycleAction(payload: {
     }
 
     const allTariffsForGuard = await getCachedPenaltyGuardFlags(
-      () => query('SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC')
+      () => query('SELECT penalty_enabled, effective_date, customer_type FROM tariffs ORDER BY effective_date DESC')
     );
-    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffsForGuard);
-    const tariffForAging = globalPenaltyOn ? activeTariff : ({ ...(activeTariff || {}), penalty_enabled: false } as any);
+    // Use the penalty_enabled from the tariff version that governed THIS bill's billing period
+    const penaltyOnForThisBill = isPenaltyEnabledForPeriod(
+      allTariffsForGuard,
+      payload.monthYear,          // e.g. "2026-09"
+      activeTariff?.customer_type // e.g. "Non-domestic"
+    );
+    const tariffForAging = penaltyOnForThisBill ? activeTariff : ({ ...(activeTariff || {}), penalty_enabled: false } as any);
 
     const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, tariffForAging, payload.monthYear);
 
@@ -7029,7 +7034,7 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     }
 
     // 2. Prepare Batch Constants (Tariffs, Dates, etc.)
-    const { calculateDebtAging, normalizeTariff, isPenaltyEngineEnabled } = await import('./billing-utils');
+    const { calculateDebtAging, normalizeTariff, isPenaltyEnabledForPeriod } = await import('./billing-utils');
     const {
       dbGetLatestApplicableTariff,
       dbGetCustomersByBulkMeterIds,
@@ -7100,10 +7105,10 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
     let lastId = job.last_processed_id;
     const failedItems: string[] = [];
 
+    // Load all tariffs once — used inside loop for per-version penalty check
     const allTariffsForGuard = await getCachedPenaltyGuardFlags(
-      () => query('SELECT penalty_enabled, effective_date FROM tariffs ORDER BY effective_date DESC')
+      () => query('SELECT penalty_enabled, effective_date, customer_type FROM tariffs ORDER BY effective_date DESC')
     );
-    const globalPenaltyOn = isPenaltyEngineEnabled(allTariffsForGuard);
 
     // 3. Process each item using pre-fetched in-memory data (no DB calls inside loop)
     for (const item of items) {
@@ -7182,7 +7187,13 @@ export async function processBillingJobChunkAction(jobId: string, chunkSize: num
         }
 
         const balanceFromPreviousPeriods = Number(item.outStandingbill || item.balance_carried_forward || 0);
-        const tariffForAging = globalPenaltyOn ? cachedTariff : ({ ...(cachedTariff || {}), penalty_enabled: false } as any);
+        // Per-version penalty check: use the tariff version effective for this job's billing month
+        const penaltyOnForItem = isPenaltyEnabledForPeriod(
+          allTariffsForGuard,
+          job.month_year,               // e.g. "2026-09"
+          cachedTariff?.customer_type   // e.g. "Non-domestic"
+        );
+        const tariffForAging = penaltyOnForItem ? cachedTariff : ({ ...(cachedTariff || {}), penalty_enabled: false } as any);
         // Pass job.month_year so age is calculated relative to the billing month, not server time
         const { debit30, debit30_60, debit60, penaltyAmt } = calculateDebtAging(balanceFromPreviousPeriods, historicalBills, tariffForAging, job.month_year);
 
