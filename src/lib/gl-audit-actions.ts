@@ -534,7 +534,7 @@ export async function getGLSummaryReportAction(params: {
 
     if (effectiveBranchId) {
       sqlParams.push(effectiveBranchId);
-      whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length})`);
+      whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length} OR br.id = $${sqlParams.length})`);
     }
 
     if (isYearly) {
@@ -576,14 +576,43 @@ export async function getGLSummaryReportAction(params: {
         COALESCE(b.branch_id, bm.branch_id, ic.branch_id) as branch_id,
         COALESCE(br.name, b."CUSTOMERBRANCH", 'Addis Ababa') as branch_name
       FROM bills b
-      LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
-      LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
+      LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+      LEFT JOIN individual_customers ic ON (b.individual_customer_id = ic."customerKeyNumber" OR b."CUSTOMERKEY" = ic."customerKeyNumber")
       LEFT JOIN branches br ON br.id = COALESCE(b.branch_id, bm.branch_id, ic.branch_id)
       WHERE ${whereClauses.join(' AND ')}
       ORDER BY b.month_year DESC, b.created_at DESC
     `;
 
     const bills: any[] = await query(sql, sqlParams);
+
+    // ── Load all tariffs once for per-bill-period penalty_enabled check ──────
+    // When a tariff has penalty_enabled = false for the bill's period, the
+    // penalty amount must be excluded from ALL GL line items (FIREGL, component
+    // matrix, totals) — consistent with billing cards, outstanding, and aging.
+    const allTariffsForGl: any[] = await query(
+      'SELECT customer_type, effective_date, penalty_enabled FROM tariffs ORDER BY effective_date DESC',
+      []
+    );
+    /**
+     * Returns true only when the tariff effective for `monthYear`
+     * (e.g. "2026-08") had penalty_enabled = true for that customer type.
+     * Falls back to true (include penalty) when no tariff record is found.
+     */
+    const isPenaltyOnForBill = (monthYear: string, chargeGroup: string): boolean => {
+      const [y, m] = monthYear.split('-').map(Number);
+      if (!y || !m) return true;
+      // Last calendar day of the bill's month = effective date ceiling
+      const lastDay = new Date(y, m, 0).getDate();
+      const lookupDate = `${monthYear}-${String(lastDay).padStart(2, '0')}`;
+      const cgLow = (chargeGroup || '').toLowerCase();
+      const cType = cgLow.includes('domestic') && !cgLow.includes('non') ? 'Domestic' : 'Non-domestic';
+      const applicable = allTariffsForGl
+        .filter(t => String(t.customer_type || '') === cType)
+        .filter(t => String(t.effective_date || '').substring(0, 10) <= lookupDate)
+        .sort((a, bRow) => String(bRow.effective_date || '').localeCompare(String(a.effective_date || '')))[0];
+      return applicable ? Boolean(applicable.penalty_enabled) : true;
+    };
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Identify customers with prior-period arrears carryover
     const carryoverCustomerKeys = Array.from(new Set(
@@ -692,6 +721,10 @@ export async function getGLSummaryReportAction(params: {
       const maintenance = Number(b.maintenance_fee || 0);
       const additional = Number(b.additional_fees_charge || 0);
       const penalty = Number(b.penalty_amt || 0);
+      // Respect tariff penalty_enabled for this bill's period:
+      // if penalty is OFF in the tariff applicable to this bill's month_year,
+      // exclude it from all GL items (FIREGL, component matrix, totals).
+      const effectivePenalty = isPenaltyOnForBill(rawMonth, b.charge_group || 'Non-domestic') ? penalty : 0;
       const vat = Number(b.vat_amount || 0);
       const thisMonth = Number(b.this_month_bill_amt || 0);
       const total = Number(b.total_bill_amount || 0);
@@ -707,7 +740,7 @@ export async function getGLSummaryReportAction(params: {
       const componentSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional;
       const componentSumWithVat = componentSum + vat;
       const mathDiffNoPen = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
-      const mathDiffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + penalty - thisMonth) : 0;
+      const mathDiffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + effectivePenalty - thisMonth) : 0;
       const mathDiff = Math.min(mathDiffNoPen, mathDiffWithPen);
       const isMathMismatch = thisMonth > 0 && mathDiff > 0.50;
       const isMissingDrCr = (!b.dr_acct_no || b.dr_acct_no === '' || b.dr_acct_no === '0000000000')
@@ -759,7 +792,7 @@ export async function getGLSummaryReportAction(params: {
         priorVat *= ratio;
       } else if (carryover > 0.01) {
         // Fallback for bills without historical records in DB
-        const currSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional + penalty + vat;
+        const currSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional + effectivePenalty + vat;
         if (currSum > 0) {
           const ratio = carryover / currSum;
           priorWater = baseWater * ratio;
@@ -767,7 +800,7 @@ export async function getGLSummaryReportAction(params: {
           priorSan = sanitation * ratio;
           priorRent = meterRent * ratio;
           priorMnt = maintenance * ratio;
-          priorFire = (additional + penalty) * ratio;
+          priorFire = (additional + effectivePenalty) * ratio;
           priorVat = vat * ratio;
         } else {
           priorWater = carryover;
@@ -819,7 +852,7 @@ export async function getGLSummaryReportAction(params: {
         meterRent: parseFloat(meterRent.toFixed(2)),
         maintenance: parseFloat(maintenance.toFixed(2)),
         additional: parseFloat(additional.toFixed(2)),
-        penalty: parseFloat(Number(b.penalty_amt || 0).toFixed(2)),
+        penalty: parseFloat(effectivePenalty.toFixed(2)),
         vat: parseFloat(vat.toFixed(2)),
         totalExclVat: parseFloat((thisMonth - vat).toFixed(2)),
         totalInclVat: parseFloat(thisMonth.toFixed(2)),
@@ -932,7 +965,7 @@ export async function getGLSummaryReportAction(params: {
       addGlItem('SNTGL', sanitation, 0, priorSan, 0);
       addGlItem('MTRRNTGL', meterRent, 0, priorRent, 0);
       addGlItem('MNTGL', maintenance, 0, priorMnt, 0);
-      addGlItem('FIREGL', additional + penalty, 0, priorFire, 0);
+      addGlItem('FIREGL', additional + effectivePenalty, 0, priorFire, 0);
     }
 
     // Format summary rows
@@ -1048,7 +1081,7 @@ export async function getGLBillsDrillDownAction(params: {
 
     if (auth.lockedBranchId) {
       sqlParams.push(auth.lockedBranchId);
-      whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length})`);
+      whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length} OR br.id = $${sqlParams.length})`);
     }
 
     if (params.period && params.period !== 'all') {
@@ -1105,8 +1138,8 @@ export async function getGLBillsDrillDownAction(params: {
         COALESCE(b.branch_id, bm.branch_id, ic.branch_id) as branch_id,
         COALESCE(br.name, b."CUSTOMERBRANCH", 'Addis Ababa') as branch_name
       FROM bills b
-      LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
-      LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
+      LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+      LEFT JOIN individual_customers ic ON (b.individual_customer_id = ic."customerKeyNumber" OR b."CUSTOMERKEY" = ic."customerKeyNumber")
       LEFT JOIN branches br ON br.id = COALESCE(b.branch_id, bm.branch_id, ic.branch_id)
       WHERE ${whereClauses.join(' AND ')}
       ORDER BY b.created_at DESC
@@ -1114,6 +1147,25 @@ export async function getGLBillsDrillDownAction(params: {
     `;
 
     const bills: any[] = await query(sql, sqlParams);
+
+    // Load tariffs for penalty_enabled per-period check in drill-down
+    const allTariffsForDd: any[] = await query(
+      'SELECT customer_type, effective_date, penalty_enabled FROM tariffs ORDER BY effective_date DESC',
+      []
+    );
+    const isPenaltyOnForDd = (monthYear: string, chargeGroup: string): boolean => {
+      const [y, m] = monthYear.split('-').map(Number);
+      if (!y || !m) return true;
+      const lastDay = new Date(y, m, 0).getDate();
+      const lookupDate = `${monthYear}-${String(lastDay).padStart(2, '0')}`;
+      const cgLow = (chargeGroup || '').toLowerCase();
+      const cType = cgLow.includes('domestic') && !cgLow.includes('non') ? 'Domestic' : 'Non-domestic';
+      const applicable = allTariffsForDd
+        .filter(t => String(t.customer_type || '') === cType)
+        .filter(t => String(t.effective_date || '').substring(0, 10) <= lookupDate)
+        .sort((a, bRow) => String(bRow.effective_date || '').localeCompare(String(a.effective_date || '')))[0];
+      return applicable ? Boolean(applicable.penalty_enabled) : true;
+    };
 
     // Process and filter by branchCode, chargeGroup, and glCode in memory
     const items: GLBillDrillDownItem[] = [];
@@ -1157,6 +1209,9 @@ export async function getGLBillsDrillDownAction(params: {
       const maintenance = Number(b.maintenance_fee || 0);
       const additional = Number(b.additional_fees_charge || 0);
       const penalty = Number(b.penalty_amt || 0);
+      // Exclude penalty from GL when tariff has penalty_enabled = false for this bill's period
+      const rawDdMonth = (b.month_year || '').substring(0, 7) || '2026-10';
+      const effectivePenaltyDd = isPenaltyOnForDd(rawDdMonth, b.charge_group || 'Non-domestic') ? penalty : 0;
       const vat = Number(b.vat_amount || 0);
       const thisMonth = Number(b.this_month_bill_amt || 0);
       const total = Number(b.total_bill_amount || 0);
@@ -1174,7 +1229,7 @@ export async function getGLBillsDrillDownAction(params: {
         if (params.glCode === 'SNTGL' && (sanitation > 0 || carryover > 0)) hasCharge = true;
         if (params.glCode === 'MTRRNTGL' && (meterRent > 0 || carryover > 0)) hasCharge = true;
         if (params.glCode === 'MNTGL' && (maintenance > 0 || carryover > 0)) hasCharge = true;
-        if (params.glCode === 'FIREGL' && (additional > 0 || penalty > 0 || carryover > 0)) hasCharge = true;
+        if (params.glCode === 'FIREGL' && (additional > 0 || effectivePenaltyDd > 0 || carryover > 0)) hasCharge = true;
 
         if (!hasCharge) continue;
       }
@@ -1185,7 +1240,7 @@ export async function getGLBillsDrillDownAction(params: {
       const componentSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional;
       const componentSumWithVat = componentSum + vat;
       const diffNoPen = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
-      const diffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + penalty - thisMonth) : 0;
+      const diffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + effectivePenaltyDd - thisMonth) : 0;
       const diff = Math.min(diffNoPen, diffWithPen);
       if (diff > 0.50) {
         auditFlags.push(`Arithmetic Sum Mismatch (Components+VAT: ${componentSumWithVat.toFixed(2)} vs ThisMonth: ${thisMonth.toFixed(2)}, Δ ${diff.toFixed(2)} ETB)`);
@@ -1230,7 +1285,7 @@ export async function getGLBillsDrillDownAction(params: {
         meterRent: parseFloat(meterRent.toFixed(2)),
         maintenance: parseFloat(maintenance.toFixed(2)),
         additional: parseFloat(additional.toFixed(2)),
-        penalty: parseFloat(Number(b.penalty_amt || 0).toFixed(2)),
+        penalty: parseFloat(effectivePenaltyDd.toFixed(2)),
         vat: parseFloat(vat.toFixed(2)),
         thisMonthAmount: parseFloat(thisMonth.toFixed(2)),
         outstanding: parseFloat(Number(b.outstanding_amt || 0).toFixed(2)),
@@ -1289,7 +1344,7 @@ export async function getGLAuditAnomaliesAction(params: {
 
     if (effectiveBranchId) {
       sqlParams.push(effectiveBranchId);
-      whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length})`);
+      whereClauses.push(`(b.branch_id = $${sqlParams.length} OR bm.branch_id = $${sqlParams.length} OR ic.branch_id = $${sqlParams.length} OR br.id = $${sqlParams.length})`);
     }
 
     if (isYearly) {
@@ -1327,8 +1382,8 @@ export async function getGLAuditAnomaliesAction(params: {
         COALESCE(bm.charge_group, ic."customerType", '') as charge_group,
         COALESCE(br.name, b."CUSTOMERBRANCH", 'Addis Ababa') as branch_name
       FROM bills b
-      LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
-      LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
+      LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
+      LEFT JOIN individual_customers ic ON (b.individual_customer_id = ic."customerKeyNumber" OR b."CUSTOMERKEY" = ic."customerKeyNumber")
       LEFT JOIN branches br ON br.id = COALESCE(b.branch_id, bm.branch_id, ic.branch_id)
       WHERE ${whereClauses.join(' AND ')}
       LIMIT 2000
@@ -1336,6 +1391,25 @@ export async function getGLAuditAnomaliesAction(params: {
 
     const bills: any[] = await query(sql, sqlParams);
     const anomalies: GLAnomalyItem[] = [];
+
+    // Load tariffs for penalty_enabled check in anomaly scanner
+    const allTariffsForAn: any[] = await query(
+      'SELECT customer_type, effective_date, penalty_enabled FROM tariffs ORDER BY effective_date DESC',
+      []
+    );
+    const isPenaltyOnForAn = (monthYear: string, chargeGroup: string): boolean => {
+      const [y, m] = monthYear.split('-').map(Number);
+      if (!y || !m) return true;
+      const lastDay = new Date(y, m, 0).getDate();
+      const lookupDate = `${monthYear}-${String(lastDay).padStart(2, '0')}`;
+      const cgLow = (chargeGroup || '').toLowerCase();
+      const cType = cgLow.includes('domestic') && !cgLow.includes('non') ? 'Domestic' : 'Non-domestic';
+      const applicable = allTariffsForAn
+        .filter(t => String(t.customer_type || '') === cType)
+        .filter(t => String(t.effective_date || '').substring(0, 10) <= lookupDate)
+        .sort((a, bRow) => String(bRow.effective_date || '').localeCompare(String(a.effective_date || '')))[0];
+      return applicable ? Boolean(applicable.penalty_enabled) : true;
+    };
 
     for (const b of bills) {
       const rawBranchName = b.branch_name || 'Addis Ababa';
@@ -1349,6 +1423,9 @@ export async function getGLAuditAnomaliesAction(params: {
       const maintenance = Number(b.maintenance_fee || 0);
       const additional = Number(b.additional_fees_charge || 0);
       const penalty = Number(b.penalty_amt || 0);
+      // Exclude penalty from anomaly checks when tariff has penalty_enabled = false for this bill's period
+      const rawAnMonth = (b.month_year || '').substring(0, 7) || '2026-10';
+      const effectivePenaltyAn = isPenaltyOnForAn(rawAnMonth, b.charge_group || 'Non-domestic') ? penalty : 0;
       const vat = Number(b.vat_amount || 0);
       const thisMonth = Number(b.this_month_bill_amt || 0);
       const total = Number(b.total_bill_amount || 0);
@@ -1362,7 +1439,7 @@ export async function getGLAuditAnomaliesAction(params: {
       const componentSum = baseWater + sewerage + sanitation + meterRent + maintenance + additional;
       const componentSumWithVat = componentSum + vat;
       const mathDiffNoPen = thisMonth > 0 ? Math.abs(componentSumWithVat - thisMonth) : 0;
-      const mathDiffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + penalty - thisMonth) : 0;
+      const mathDiffWithPen = thisMonth > 0 ? Math.abs(componentSumWithVat + effectivePenaltyAn - thisMonth) : 0;
       const mathDiff = Math.min(mathDiffNoPen, mathDiffWithPen);
 
       // Check 1: Math Sum Mismatch (tolerance 0.50 ETB for rounding)
