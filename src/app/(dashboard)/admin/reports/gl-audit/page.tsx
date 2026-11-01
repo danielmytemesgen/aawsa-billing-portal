@@ -39,6 +39,7 @@ import {
   type GLAllBranchMonthlyRow,
   type GLKPIs,
   type GLAnomalyItem,
+  type GLReconciliationAudit,
 } from "@/lib/gl-audit-actions";
 import { getAllBranchesAction } from "@/lib/actions";
 import { GLKPICards } from "@/components/reports/gl/GLKPICards";
@@ -47,6 +48,8 @@ import { GLAllBranchMonthlyTable } from "@/components/reports/gl/GLAllBranchMont
 import { GLComponentMatrixTable } from "@/components/reports/gl/GLComponentMatrixTable";
 import { GLAnomalyInspector } from "@/components/reports/gl/GLAnomalyInspector";
 import { GLBillDrillDownDrawer } from "@/components/reports/gl/GLBillDrillDownDrawer";
+import { GLReconciliationDrawer } from "@/components/reports/gl/GLReconciliationDrawer";
+import { formatNumber } from "@/lib/format";
 import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from "@/lib/xlsx";
 import { getAvailableMonthYearOptions } from "@/lib/export-utils";
 
@@ -127,6 +130,8 @@ export default function GLReportsAuditPage() {
   // Drawer state
   const [inspectRow, setInspectRow] = useState<GLSummaryRow | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
+  const [reconciliationAudit, setReconciliationAudit] = useState<GLReconciliationAudit | null>(null);
+  const [isReconDrawerOpen, setIsReconDrawerOpen] = useState<boolean>(false);
 
   // Month-year options (combines generator with database distinct billing periods)
   const monthOptions = React.useMemo(() => {
@@ -287,6 +292,9 @@ export default function GLReportsAuditPage() {
         setSummaryRows(summaryRes.summaryRows || []);
         setAllBranchMonthlyRows(summaryRes.allBranchMonthlyRows || []);
         setMatrixRows(summaryRes.componentMatrixRows || []);
+        if ((summaryRes as any).reconciliationAudit) {
+          setReconciliationAudit((summaryRes as any).reconciliationAudit);
+        }
       } else {
         toast({
           title: "GL Data Notice",
@@ -909,8 +917,45 @@ export default function GLReportsAuditPage() {
         </CardContent>
       </Card>
 
+      {/* ── Reconciliation Discrepancy Banner ── */}
+      {reconciliationAudit && !reconciliationAudit.isReconciled && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50/90 p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-100 text-amber-800 shrink-0">
+              <ShieldAlert className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-amber-950 flex items-center gap-2">
+                <span>
+                  Reconciliation Variance Detected: {reconciliationAudit.varianceAmount > 0 ? `+${formatNumber(reconciliationAudit.varianceAmount)}` : formatNumber(reconciliationAudit.varianceAmount)} ETB
+                </span>
+                <Badge variant="outline" className="text-[10px] bg-white border-amber-300 text-amber-800 font-bold">
+                  {reconciliationAudit.divergentBillCount} {reconciliationAudit.divergentBillCount === 1 ? 'bill' : 'bills'}
+                </Badge>
+              </div>
+              <p className="text-xs text-amber-800/90 mt-0.5">
+                Discrepancy identified between Paid Bills Report ({formatNumber(reconciliationAudit.paidReportTotal)} ETB) and GL Gross Billed ({formatNumber(reconciliationAudit.glGrossTotal)} ETB).
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={() => setIsReconDrawerOpen(true)}
+            size="sm"
+            className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-9 shrink-0 gap-1.5 shadow-sm"
+          >
+            <Scale className="h-4 w-4" />
+            <span>Inspect Divergent Bills ({reconciliationAudit.divergentBillCount})</span>
+          </Button>
+        </div>
+      )}
+
       {/* ── Financial KPI Cards ── */}
-      <GLKPICards kpis={kpis} isLoading={isLoading} />
+      <GLKPICards
+        kpis={kpis}
+        reconciliationAudit={reconciliationAudit}
+        onOpenReconciliation={() => setIsReconDrawerOpen(true)}
+        isLoading={isLoading}
+      />
 
       {/* ── Multi-Tab Interactive Workspace ── */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -1034,6 +1079,15 @@ export default function GLReportsAuditPage() {
           onClose={() => setIsDrawerOpen(false)}
         />
       )}
+
+      {/* ── Reconciliation Audit Inspector Drawer ── */}
+      <GLReconciliationDrawer
+        open={isReconDrawerOpen}
+        onClose={() => setIsReconDrawerOpen(false)}
+        reconciliationAudit={reconciliationAudit}
+        periodLabel={periodType === 'yearly' ? (selectedYear !== 'all' ? `FY ${selectedYear}` : 'All Fiscal Years') : (selectedMonthYear !== 'all' ? selectedMonthYear : 'All Active Periods')}
+        branchLabel={selectedBranchId !== 'all' ? (branches.find(b => b.id === selectedBranchId)?.name || selectedBranchId) : 'All Branches'}
+      />
     </div>
   );
 }

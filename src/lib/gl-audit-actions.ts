@@ -144,6 +144,32 @@ export interface GLAnomalyItem {
   recommendation: string;
 }
 
+export interface GLDivergentBill {
+  billId: string;
+  billKey: string;
+  customerKey: string;
+  customerName: string;
+  branchName: string;
+  branchCode: string;
+  period: string;
+  rawPeriod: string;
+  paidReportAmount: number;
+  glRecognizedAmount: number;
+  varianceAmount: number;
+  varianceType: 'PARTIAL_PAYMENT' | 'PENALTY_EXCLUSION' | 'COMPONENT_ROUNDING' | 'STATUS_MISMATCH';
+  rootCauseReason: string;
+}
+
+export interface GLReconciliationAudit {
+  isReconciled: boolean;
+  varianceAmount: number;
+  paidReportTotal: number;
+  glGrossTotal: number;
+  divergentBillCount: number;
+  divergentBills: GLDivergentBill[];
+}
+
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const GL_NAMES: Record<string, string> = {
@@ -675,6 +701,8 @@ export async function getGLSummaryReportAction(params: {
     let unpaidCount = 0;
     let totalAnomalies = 0;
     let totalCleanBills = 0;
+    const divergentBills: GLDivergentBill[] = [];
+    let paidReportBaselineSum = 0;
 
     for (const b of bills) {
       const rawMonth = (b.month_year || '').substring(0, 7) || '2026-10';
@@ -835,6 +863,49 @@ export async function getGLSummaryReportAction(params: {
 
       const hasRowAnomaly = hasAnomaly || isPartialPayment;
       const rowAuditStatus = isMathMismatch || isNegative ? 'Error' : (hasRowAnomaly ? 'Warning' : 'Clean');
+      // ── Live Reconciliation Scanner: Paid Bills Report baseline vs GL ────────
+      const paidReportBillAmount = Number(b.total_bill_amount || b.amount_paid || 0);
+      paidReportBaselineSum += paidReportBillAmount;
+      const penaltyExcludedAmount = penalty - effectivePenalty;
+      const glRecognizedBillAmount = Math.max(0, total - penaltyExcludedAmount);
+      const billVariance = parseFloat((paidReportBillAmount - glRecognizedBillAmount).toFixed(2));
+
+      if (Math.abs(billVariance) > 0.01) {
+        let varType: 'PARTIAL_PAYMENT' | 'PENALTY_EXCLUSION' | 'COMPONENT_ROUNDING' | 'STATUS_MISMATCH' = 'STATUS_MISMATCH';
+        let varReason = '';
+
+        if (penaltyExcludedAmount > 0 && Math.abs(billVariance - penaltyExcludedAmount) <= 0.50) {
+          varType = 'PENALTY_EXCLUSION';
+          varReason = `Tariff penalty excluded by policy: Stored penalty of ${penalty.toFixed(2)} ETB was turned OFF in Tariff for ${periodStr}.`;
+        } else if (total > 0 && (total - Number(b.amount_paid || 0)) > 0.50) {
+          varType = 'PARTIAL_PAYMENT';
+          varReason = `Partial payment settlement: Billed ${total.toFixed(2)} ETB vs recorded payment of ${Number(b.amount_paid || 0).toFixed(2)} ETB (Variance: ${(total - Number(b.amount_paid || 0)).toFixed(2)} ETB).`;
+        } else if (mathDiff > 0.50) {
+          varType = 'COMPONENT_ROUNDING';
+          varReason = `Component math mismatch: Sum of tariff charges + VAT (${componentSumWithVat.toFixed(2)} ETB) != Monthly bill (${thisMonth.toFixed(2)} ETB).`;
+        } else {
+          varType = 'STATUS_MISMATCH';
+          varReason = `Ledger variance of ${billVariance.toFixed(2)} ETB between Paid Bills Report and GL postings.`;
+        }
+
+        divergentBills.push({
+          billId: b.id,
+          billKey: b.BILLKEY || b.id,
+          customerKey: b.CUSTOMERKEY || b.individual_customer_id || 'N/A',
+          customerName: b.customer_name || 'N/A',
+          branchName: rawBranchName,
+          branchCode,
+          period: periodStr,
+          rawPeriod,
+          paidReportAmount: parseFloat(paidReportBillAmount.toFixed(2)),
+          glRecognizedAmount: parseFloat(glRecognizedBillAmount.toFixed(2)),
+          varianceAmount: billVariance,
+          varianceType: varType,
+          rootCauseReason: varReason,
+        });
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
 
       // Component Matrix Row
       componentMatrixRows.push({
@@ -1037,6 +1108,21 @@ export async function getGLSummaryReportAction(params: {
         return String(a.glCode || '').localeCompare(String(b.glCode || ''));
       });
 
+
+    const totalPaidReportBaseline = parseFloat(paidReportBaselineSum.toFixed(2));
+    const totalGLGross = parseFloat(effectiveGross.toFixed(2));
+    const reconciliationVariance = parseFloat((totalGLGross - totalPaidReportBaseline).toFixed(2));
+    const isReconciled = Math.abs(reconciliationVariance) <= 0.01 && divergentBills.length === 0;
+
+    const reconciliationAudit: GLReconciliationAudit = {
+      isReconciled,
+      varianceAmount: reconciliationVariance,
+      paidReportTotal: totalPaidReportBaseline,
+      glGrossTotal: totalGLGross,
+      divergentBillCount: divergentBills.length,
+      divergentBills,
+    };
+
     return {
       success: true,
       kpis,
@@ -1044,6 +1130,7 @@ export async function getGLSummaryReportAction(params: {
       allBranchMonthlyRows: auth.canViewAllBranches ? allBranchMonthlyRows : [],
       componentMatrixRows: auth.canViewMatrix ? componentMatrixRows.slice(0, 500) : [],
       totalBills: bills.length,
+      reconciliationAudit,
     };
   } catch (error: any) {
     console.error('getGLSummaryReportAction error:', error);
