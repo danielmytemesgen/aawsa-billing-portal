@@ -5467,8 +5467,14 @@ export interface BillsBranchSummaryRow {
 
 export type SentBillsBranchSummaryRow = BillsBranchSummaryRow;
 
+export interface CombinedBillingSummaryResult {
+    delivery: BillsBranchSummaryRow[];
+    paid: BillsBranchSummaryRow[];
+    unsettled: BillsBranchSummaryRow[];
+}
+
 export const dbGetBillsBranchSummary = async (params: {
-    type?: 'sent' | 'paid' | 'unsettled';
+    type?: 'sent' | 'paid' | 'unsettled' | 'delivery' | 'all';
     searchTerm?: string;
     branchId?: string;
     monthYear?: string;
@@ -5477,15 +5483,17 @@ export const dbGetBillsBranchSummary = async (params: {
     const reportType = params.type || 'sent';
     const shouldGroupByMonth = params.groupByPeriod !== false;
 
+    const paidCondition = "(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))";
+
     let amountSql = 'COALESCE(SUM(COALESCE(b."TOTALBILLAMOUNT", 0)::numeric), 0)::numeric';
-    let statusFilter = "b.status = 'Posted' AND b.deleted_at IS NULL";
+    let statusFilter = "b.deleted_at IS NULL AND COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')";
 
     if (reportType === 'paid') {
         // Full billed amount on paid bills — matches GL Financial & Audit Report Gross Billed GL exactly
         amountSql = 'COALESCE(SUM(COALESCE(b."TOTALBILLAMOUNT", b.amount_paid, 0)::numeric), 0)::numeric';
-        statusFilter = "b.deleted_at IS NULL AND COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft') AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))";
+        statusFilter += ` AND ${paidCondition}`;
     } else if (reportType === 'unsettled') {
-        statusFilter += " AND (LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' OR b.payment_status IS NULL)";
+        statusFilter += ` AND NOT ${paidCondition}`;
     }
 
     let sql = `
@@ -5635,6 +5643,21 @@ export interface DeliverySummaryRow {
     debit60: number;
     totalAmount: number;
 }
+
+
+export const dbGetCombinedBillingSummary = async (params: {
+    searchTerm?: string;
+    branchId?: string;
+    monthYear?: string;
+    groupByPeriod?: boolean;
+}): Promise<CombinedBillingSummaryResult> => {
+    const [delivery, paid, unsettled] = await Promise.all([
+        dbGetBillsBranchSummary({ ...params, type: 'sent' }),
+        dbGetBillsBranchSummary({ ...params, type: 'paid' }),
+        dbGetBillsBranchSummary({ ...params, type: 'unsettled' }),
+    ]);
+    return { delivery, paid, unsettled };
+};
 
 export const dbGetDeliverySummary = async (params: {
     branchId?: string;

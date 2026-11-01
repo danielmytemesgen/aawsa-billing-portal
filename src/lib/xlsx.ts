@@ -79,3 +79,56 @@ export const downloadFile = (content: Blob, fileName: string) => {
   document.body.removeChild(link);
   URL.revokeObjectURL(link.href);
 };
+
+
+export interface SheetConfig {
+  sheetName: string;
+  headers: string[];
+  data: any[];
+}
+
+export const multiSheetToXlsxBlob = (sheets: SheetConfig[]): Blob => {
+  const wb: XLSX.WorkBook = XLSX.utils.book_new();
+
+  for (const sheet of sheets) {
+    const aoa: any[][] = [
+      sheet.headers,
+      ...sheet.data.map(row => sheet.headers.map(h => row[h] ?? "")),
+    ];
+
+    const ws: XLSX.WorkSheet = XLSX.utils.aoa_to_sheet(aoa);
+
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        const cell = ws[addr];
+        if (!cell) continue;
+
+        if (R === 0) {
+          cell.s = { font: { bold: true } } as any;
+        } else if (typeof cell.v === "string") {
+          cell.t = "s";
+        }
+      }
+    }
+
+    const colWidths = sheet.headers.map((header, colIndex) => {
+      let maxLength = (header || "").length;
+      for (let R = 1; R < aoa.length; R++) {
+        const val = aoa[R][colIndex];
+        if (val != null) {
+          maxLength = Math.max(maxLength, String(val).length);
+        }
+      }
+      return { wch: Math.min(maxLength + 2, 60) };
+    });
+    ws["!cols"] = colWidths as any;
+
+    const safeTitle = (sheet.sheetName || "Sheet").replace(/[:\\/?*\[\]]/g, "").substring(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, safeTitle);
+  }
+
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  return new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+};

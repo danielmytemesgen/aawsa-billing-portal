@@ -149,6 +149,8 @@ import {
   dbGetSentBillsBranchSummary,
   dbGetPaidBillsBranchSummary,
   dbGetUnsettledBillsBranchSummary,
+  dbGetCombinedBillingSummary,
+  type CombinedBillingSummaryResult,
   dbGetDeliverySummary,
   dbGetDeliverySummaryPeriods,
   type BillsBranchSummaryRow,
@@ -7605,7 +7607,7 @@ export async function getAllSentBillsAction(params: {
 }
 
 export async function getBillsBranchSummaryAction(params: {
-  type?: 'sent' | 'paid' | 'unsettled';
+  type?: 'sent' | 'paid' | 'unsettled' | 'delivery' | 'all';
   searchTerm?: string;
   branchId?: string;
   monthYear?: string;
@@ -7658,6 +7660,39 @@ export async function getUnsettledBillsBranchSummaryAction(params: {
   groupByPeriod?: boolean;
 }) {
   return getBillsBranchSummaryAction({ ...params, type: 'unsettled' });
+}
+
+export async function getCombinedBillingSummaryAction(params: {
+  branchId?: string;
+  monthYear?: string;
+  searchTerm?: string;
+  groupByPeriod?: boolean;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+
+    const effectiveBranchId = canSelectBranch
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const result = await dbGetCombinedBillingSummary({
+      ...params,
+      branchId: normalizedBranchId,
+    });
+
+    return {
+      success: true,
+      delivery: result.delivery,
+      paid: result.paid,
+      unsettled: result.unsettled,
+    };
+  });
 }
 
 export async function getDeliverySummaryReportAction(params: {

@@ -349,6 +349,22 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         });
     }
 
+    const canViewBillingSummaryReport = hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+        || hasPermission(PERMISSIONS.REPORT_LIST_OF_PAID_BILLS)
+        || hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS)
+        || hasPermission(PERMISSIONS.REPORT_LIST_OF_UNSETTLED_BILLS)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (canViewBillingSummaryReport) {
+        reportsItems.push({
+            title: "Summary Report",
+            href: isAdmin ? "/admin/reports/billing-summary" : "/staff/reports/billing-summary",
+            iconName: "BarChart3"
+        });
+    }
+
+
     if (reportsItems.length > 0) {
         navItems.push({ title: "Reports", items: reportsItems });
     }

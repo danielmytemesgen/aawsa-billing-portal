@@ -1848,7 +1848,30 @@ export default function AdminReportsPage() {
       )}
 
       {/* ── Section 2: Usage Trend ── */}
-      <div className="relative rounded-2xl border border-cyan-200 bg-white shadow-sm overflow-hidden">
+            {/* ── Section: Billing Summary Report (Delivery, Paid & Unsettled) ── */}
+      <div className="relative rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-indigo-500 to-blue-600 rounded-l-2xl" />
+        <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-11 w-11 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-sm shrink-0">
+              <BarChart3 className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Billing Summary Report</h2>
+              <p className="text-sm text-slate-500">
+                Consolidated branch summary combining Total Delivery, Total Paid, and Total Unsettled reports in one view.
+              </p>
+            </div>
+          </div>
+          <Link href="/admin/reports/billing-summary" passHref>
+            <Button className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white shadow-md font-semibold shrink-0">
+              <BarChart3 className="h-4 w-4 mr-2" /> View Summary Report
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+<div className="relative rounded-2xl border border-cyan-200 bg-white shadow-sm overflow-hidden">
         <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-cyan-500 to-blue-500 rounded-l-2xl" />
         <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
