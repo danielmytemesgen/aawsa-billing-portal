@@ -33,16 +33,31 @@ export async function GET() {
     // ── Execute all analytics queries concurrently in parallel ───────────────
     const [revenueRows, branchRows, agingRows, defaulterRows] = await Promise.all([
       // 1. Revenue Trend (last 6 months)
+      // collected uses COALESCE(TOTALBILLAMOUNT, amount_paid, 0) — the authoritative
+      // paid formula aligned with Dashboard, GL, and Paid Bills Branch Summary.
       query(`
         SELECT
-          month_year                                              AS month,
-          SUM(COALESCE("TOTALBILLAMOUNT", 0))::numeric(14,2)      AS billed,
-          SUM(COALESCE(amount_paid, 0))::numeric(14,2)            AS collected,
+          month_year                                                        AS month,
+          SUM(COALESCE("TOTALBILLAMOUNT", 0))::numeric(14,2)                AS billed,
+          COALESCE(SUM(
+            CASE WHEN (
+              LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+              OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+              OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+            ) THEN COALESCE("TOTALBILLAMOUNT", amount_paid, 0) ELSE 0 END
+          ), 0)::numeric(14,2)                                              AS collected,
           CASE
             WHEN SUM(COALESCE("TOTALBILLAMOUNT", 0)) > 0
-            THEN ROUND(SUM(COALESCE(amount_paid, 0)) / SUM("TOTALBILLAMOUNT") * 100, 1)
+            THEN ROUND(
+              COALESCE(SUM(
+                CASE WHEN (
+                  LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+                  OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+                  OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+                ) THEN COALESCE("TOTALBILLAMOUNT", amount_paid, 0) ELSE 0 END
+              ), 0) / SUM("TOTALBILLAMOUNT") * 100, 1)
             ELSE 0
-          END                                                     AS collection_rate
+          END                                                               AS collection_rate
         FROM bills
         WHERE status = 'Approved'
           AND deleted_at IS NULL

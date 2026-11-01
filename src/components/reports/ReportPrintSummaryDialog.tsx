@@ -84,7 +84,8 @@ export function ReportPrintSummaryDialog({
       totalOutstanding += outstanding;
       totalCurrent += currentBill;
       totalPenalty += penalty;
-      totalAmount += type === 'paid' ? Number(bill.amount_paid ?? bill.amountPaid ?? totalDue) : totalDue;
+      // Use TOTALBILLAMOUNT as authoritative paid total (matches GL & Paid Bills Branch Summary)
+      totalAmount += type === 'paid' ? Number(bill.TOTALBILLAMOUNT ?? bill.totalAmountDue ?? bill.amount_paid ?? bill.amountPaid ?? totalDue) : totalDue;
 
       const status = bill.reconciliation_status_computed || bill.reconciliation_status || bill.reconciliationStatus || "";
       if (status.toLowerCase() === 'reconciled') reconciledCount++;
@@ -113,7 +114,8 @@ export function ReportPrintSummaryDialog({
       const currentBill = getMonthlyBillAmt(bill);
       const penalty = getPenaltyValue(Number(bill.PENALTYAMT ?? 0), penaltyEnabled);
       const totalDue = Number(bill.totalAmountDue ?? bill.TOTALBILLAMOUNT ?? (outstanding + currentBill + penalty));
-      const amt = type === 'paid' ? Number(bill.amount_paid ?? bill.amountPaid ?? totalDue) : totalDue;
+      // Use TOTALBILLAMOUNT as authoritative paid total (matches GL & Paid Bills Branch Summary)
+      const amt = type === 'paid' ? Number(bill.TOTALBILLAMOUNT ?? bill.totalAmountDue ?? bill.amount_paid ?? bill.amountPaid ?? totalDue) : totalDue;
 
       if (!map.has(bName)) {
         map.set(bName, { branchName: bName, count: 0, totalAmount: 0 });

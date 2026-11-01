@@ -3625,19 +3625,22 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             params
         ),
 
-        // 2. Revenue aggregation (includes actual amount_paid or full bill total if marked Paid)
+        // 2. Revenue aggregation — authoritative formula: COALESCE(TOTALBILLAMOUNT, amount_paid, 0)
+        //    with the same 3-way paid filter used in Paid Bills Branch Summary & GL reports.
+        //    This ensures Dashboard "Collected", Paid Bills Summary, Print Summary, and GL all agree.
         query(
             `SELECT
                 SUM(COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))) as total_billed,
-                SUM(
-                    CASE 
-                        WHEN COALESCE(amount_paid, 0) > 0 THEN amount_paid
-                        WHEN payment_status = 'Paid' THEN COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))
-                        ELSE 0
-                    END
-                ) as total_collected
+                COALESCE(SUM(COALESCE("TOTALBILLAMOUNT", amount_paid, 0)::numeric), 0) as total_collected
              FROM bills
-             WHERE status = 'Posted' AND month_year = $1 AND deleted_at IS NULL ${branchFilter}`,
+             WHERE deleted_at IS NULL ${branchFilter}
+               AND month_year = $1
+               AND COALESCE(status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')
+               AND (
+                   LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+                   OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+                   OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+               )`,
             params
         ),
 
