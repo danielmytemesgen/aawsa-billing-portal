@@ -2288,7 +2288,12 @@ export async function getBillByIdAction(id: string) {
     }
 
     const branchId = getEffectiveBranchId(session, undefined, viewAllPermission);
-    return await dbGetBillByIdQuery(id, branchId);
+    let bill = await dbGetBillByIdQuery(id, branchId);
+    // If not found with branch filter (e.g. unassigned branch or newly created correction draft), fall back to lookup by id
+    if (!bill && branchId) {
+      bill = await dbGetBillByIdQuery(id);
+    }
+    return bill;
   });
 }
 
@@ -2637,7 +2642,11 @@ export async function correctBillAction(id: string, reason: string) {
       delete billData.updated_at;
       // Preserve the original BILLKEY — correction draft must carry the same Bill Key (no extension, no new key)
       const originalBillKey = originalBill.BILLKEY?.trim() || null;
-      delete billData.BILLKEY;
+      if (originalBillKey) {
+        billData.BILLKEY = originalBillKey;
+      } else {
+        delete billData.BILLKEY;
+      }
       delete billData.amount_paid;
       delete billData.approval_date;
       delete billData.approved_by;
@@ -2647,6 +2656,9 @@ export async function correctBillAction(id: string, reason: string) {
       delete billData.bank_ref;
       delete billData.deleted_at;
       delete billData.deleted_by;
+
+      // Ensure branch_id is inherited from original or user session
+      billData.branch_id = originalBill.branch_id || (session.branchId && session.branchId !== 'all' ? session.branchId : null);
 
       billData.status = 'Draft';
       // Correction drafts always start Unpaid with zero paid amount so the
@@ -2659,9 +2671,10 @@ export async function correctBillAction(id: string, reason: string) {
       const replacementBill = await dbCreateBill(billData, client);
       if (replacementBill?.id) {
         // Use the EXACT same Bill Key as the original bill — no extension, no new key generated.
-        // Only fall back to generating a new key if the original had none (should never happen).
         const billKey = originalBillKey || generateBillKey(replacementBill.id);
-        await dbUpdateBill(replacementBill.id, { BILLKEY: billKey }, client);
+        if (!originalBillKey) {
+          await dbUpdateBill(replacementBill.id, { BILLKEY: billKey }, client, originalBill.month_year);
+        }
         replacementBill.BILLKEY = billKey;
       }
 
@@ -2731,7 +2744,8 @@ export async function correctBillAction(id: string, reason: string) {
 
       return {
         success: true,
-        replacementBillId: replacementBill.id
+        replacementBillId: replacementBill.id,
+        replacementMonthYear: replacementBill.month_year || originalBill.month_year
       };
     });
 

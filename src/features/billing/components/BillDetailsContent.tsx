@@ -455,8 +455,14 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     async function loadData() {
         setLoading(true);
         try {
-            const billRes = await getBillByIdAction(id);
-            if (billRes.data) {
+            let billRes = await getBillByIdAction(id);
+            // Retry once after a brief pause if bill not immediately visible (e.g. slight pool/replication latency on redirect)
+            if (!billRes?.data) {
+                await new Promise(r => setTimeout(r, 600));
+                billRes = await getBillByIdAction(id);
+            }
+
+            if (billRes?.data) {
                 const b = billRes.data as Bill;
                 setBill(b);
                 setEditValues({
@@ -1226,6 +1232,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                         description: `Original bill reversed. Redirecting to draft for correction...`,
                     });
                     setRejectReason('');
+                    await new Promise(r => setTimeout(r, 400));
                     router.push(`${basePath}/${replacementId}`);
                     return;
                 } else {

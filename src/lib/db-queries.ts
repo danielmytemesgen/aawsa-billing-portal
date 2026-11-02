@@ -1537,12 +1537,13 @@ export const dbGetBillById = async (id: string, branchId?: string | any, client?
             FROM bills b
             LEFT JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
             LEFT JOIN individual_customers ic ON b.individual_customer_id = ic."customerKeyNumber"
-            WHERE b.id = $1 AND (b.deleted_at IS NULL OR b.status = 'Reversed')
-            AND (b.branch_id = $2 OR bm.branch_id = $2 OR ic.branch_id = $2)
+            WHERE b.id = $1 AND (b.deleted_at IS NULL OR b.status = 'Reversed' OR b.status = 'Draft')
+            AND (b.branch_id = $2 OR bm.branch_id = $2 OR ic.branch_id = $2 OR b.branch_id IS NULL)
         `, [id, actualBranchId]);
-        return (actualClient ? res.rows : res)[0] ?? null;
+        const row = (actualClient ? res.rows : res)[0];
+        if (row) return row;
     }
-    const res: any = await qFunc('SELECT * FROM bills WHERE id = $1 AND (deleted_at IS NULL OR status = \'Reversed\')', [id]);
+    const res: any = await qFunc('SELECT * FROM bills WHERE id = $1 AND (deleted_at IS NULL OR status = \'Reversed\' OR status = \'Draft\')', [id]);
     return (actualClient ? res.rows : res)[0] ?? null;
 };
 
