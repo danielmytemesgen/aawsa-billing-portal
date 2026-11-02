@@ -1544,7 +1544,13 @@ export const dbGetBillById = async (id: string, branchId?: string | any, client?
         if (row) return row;
     }
     const res: any = await qFunc('SELECT * FROM bills WHERE id = $1 AND (deleted_at IS NULL OR status = \'Reversed\' OR status = \'Draft\')', [id]);
-    return (actualClient ? res.rows : res)[0] ?? null;
+    let row = (actualClient ? res.rows : res)[0] ?? null;
+    if (!row) {
+        // Unconditional fallback lookup by primary key id
+        const fallbackRes: any = await qFunc('SELECT * FROM bills WHERE id = $1', [id]);
+        row = (actualClient ? fallbackRes.rows : fallbackRes)[0] ?? null;
+    }
+    return row;
 };
 
 export const dbGetBillsByCustomerId = async (customerKeyNumber: string, branchId?: string, excludeUnfinalized?: boolean) => {
@@ -8246,6 +8252,55 @@ export const dbInsertBillCorrection = async (data: {
     notes?: string | null;
     metadata?: any;
 }, client?: any) => {
+    const qFunc = client ? client.query.bind(client) : query;
+    try {
+        await qFunc(`
+            CREATE TABLE IF NOT EXISTS bill_correct (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                original_bill_id UUID NOT NULL,
+                original_bill_number VARCHAR(100) NOT NULL,
+                replacement_bill_id UUID,
+                replacement_bill_number VARCHAR(100),
+                bill_key VARCHAR(100),
+                month_year VARCHAR(7) NOT NULL,
+                customer_key VARCHAR(50) NOT NULL,
+                customer_name VARCHAR(255),
+                customer_type VARCHAR(30) DEFAULT 'individual',
+                branch_id UUID,
+                branch_name VARCHAR(100),
+                meter_number VARCHAR(100),
+                contract_number VARCHAR(100),
+                reason TEXT NOT NULL,
+                reason_category VARCHAR(50) DEFAULT 'meter_reading_error',
+                corrected_by UUID,
+                corrected_by_name VARCHAR(255),
+                corrected_at TIMESTAMPTZ DEFAULT NOW(),
+                original_prev_read NUMERIC(12, 3),
+                original_curr_read NUMERIC(12, 3),
+                original_consumption NUMERIC(12, 3),
+                original_base_charge NUMERIC(12, 2) DEFAULT 0.00,
+                original_sewerage_charge NUMERIC(12, 2) DEFAULT 0.00,
+                original_penalty_amount NUMERIC(12, 2) DEFAULT 0.00,
+                original_bill_amount NUMERIC(14, 2) NOT NULL,
+                new_prev_read NUMERIC(12, 3),
+                new_curr_read NUMERIC(12, 3),
+                new_consumption NUMERIC(12, 3),
+                new_base_charge NUMERIC(12, 2),
+                new_sewerage_charge NUMERIC(12, 2),
+                new_penalty_amount NUMERIC(12, 2),
+                new_bill_amount NUMERIC(14, 2),
+                consumption_difference NUMERIC(12, 3),
+                amount_difference NUMERIC(14, 2),
+                status VARCHAR(30) DEFAULT 'Draft_Replacement',
+                notes TEXT,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        `);
+    } catch (_tblErr) {
+        // Non-fatal if table already exists or permission restricted
+    }
     const sql = `
         INSERT INTO bill_correct (
             original_bill_id, original_bill_number, replacement_bill_id, replacement_bill_number,

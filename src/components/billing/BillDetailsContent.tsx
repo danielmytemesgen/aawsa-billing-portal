@@ -843,7 +843,7 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
                     });
                     setRejectReason('');
                     await new Promise(r => setTimeout(r, 400));
-                    router.push(`${basePath}/${replacementId}`);
+                    window.location.href = `${basePath}/${replacementId}`;
                     return;
                 } else {
                     toast({ title: "Success", description: `Bill ${currentAction}ed successfully.` });
@@ -859,7 +859,12 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     };
 
     if (loading && !bill) return <div className="p-8 flex items-center gap-2"><Loader2 className="animate-spin" /> Loading...</div>;
-    if (!bill) return <div className="p-8">Bill not found.</div>;
+    if (!bill) return (
+        <div className="p-8 space-y-4">
+            <div className="text-gray-700 font-medium">Bill not found or still initializing.</div>
+            <Button variant="outline" onClick={() => loadData()}>Retry Loading Bill</Button>
+        </div>
+    );
 
     // Special return for Print Mode
     if (isPrintMode) {

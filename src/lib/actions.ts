@@ -2290,7 +2290,7 @@ export async function getBillByIdAction(id: string) {
     const branchId = getEffectiveBranchId(session, undefined, viewAllPermission);
     let bill = await dbGetBillByIdQuery(id, branchId);
     // If not found with branch filter (e.g. unassigned branch or newly created correction draft), fall back to lookup by id
-    if (!bill && branchId) {
+    if (!bill) {
       bill = await dbGetBillByIdQuery(id);
     }
     return bill;
@@ -2572,6 +2572,8 @@ export async function correctBillAction(id: string, reason: string) {
       dbInsertBillCorrection
     } = await import('./db-queries');
 
+    let auditData: any = null;
+
     const result = await withTransaction(async (client) => {
       const originalBill = await dbGetBillById(id);
       if (!originalBill) throw new Error("Original bill not found");
@@ -2694,17 +2696,34 @@ export async function correctBillAction(id: string, reason: string) {
         reason: `Correction draft created from reversed bill ${originalBill.bill_number}. Reason: ${reason}`
       }, client);
 
-      // 5. Record correction event in bill_correct for reporting & audit trail
+      auditData = {
+        originalBill,
+        replacementBill
+      };
+
+      return {
+        success: true,
+        replacementBillId: replacementBill.id,
+        replacementMonthYear: replacementBill.month_year || originalBill.month_year
+      };
+    });
+
+    // 5. Record correction event in bill_correct for reporting & audit trail
+    // CRITICAL: Runs OUTSIDE the transaction using standard pool query so that any table/schema issues
+    // never abort or roll back the committed bill reversal and replacement creation.
+    if (auditData?.replacementBill && auditData?.originalBill) {
       try {
+        const { originalBill, replacementBill } = auditData;
+        const dbMod = await import('./db');
         const branchRes: any = originalBill.branch_id
-          ? await client.query(`SELECT name FROM branches WHERE id = $1 LIMIT 1`, [originalBill.branch_id])
+          ? await dbMod.query(`SELECT name FROM branches WHERE id = $1 LIMIT 1`, [originalBill.branch_id]).catch(() => null)
           : null;
-        const branchName = branchRes?.rows?.[0]?.name || originalBill.CUSTOMERBRANCH || null;
+        const branchName = branchRes?.[0]?.name || originalBill.CUSTOMERBRANCH || null;
 
         const staffRes: any = session.id
-          ? await client.query(`SELECT name, email FROM staff_members WHERE id = $1 LIMIT 1`, [session.id]).catch(() => null)
+          ? await dbMod.query(`SELECT name, email FROM staff_members WHERE id = $1 LIMIT 1`, [session.id]).catch(() => null)
           : null;
-        const staffName = staffRes?.rows?.[0]?.name || session.name || session.email || 'System';
+        const staffName = staffRes?.[0]?.name || session.name || session.email || 'System';
 
         const customerType = originalBill.CUSTOMERKEY ? 'bulk_meter' : 'individual';
         const customerKey = originalBill.CUSTOMERKEY || originalBill.individual_customer_id || '';
@@ -2736,18 +2755,12 @@ export async function correctBillAction(id: string, reason: string) {
           original_bill_amount: originalBill.TOTALBILLAMOUNT ?? 0,
           status: 'Draft_Replacement',
           notes: `Correction initiated. Replacement: ${replacementBill?.bill_number || 'N/A'}`
-        }, client);
+        });
       } catch (corrErr) {
-        // Non-fatal: log but don't abort the transaction
-        console.error('[correctBillAction] Failed to insert bill_correct record:', corrErr);
+        // Non-fatal: log but don't fail the correction
+        console.error('[correctBillAction] Failed to insert bill_correct record (non-fatal):', corrErr);
       }
-
-      return {
-        success: true,
-        replacementBillId: replacementBill.id,
-        replacementMonthYear: replacementBill.month_year || originalBill.month_year
-      };
-    });
+    }
 
     try {
       await logSecurityEventAction({
