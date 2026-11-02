@@ -294,7 +294,7 @@ export default function AdminDashboardPage() {
   const [dynamicWaterUsageTrendData, setDynamicWaterUsageTrendData] = React.useState<{ month: string; usage: number }[]>([]);
 
   // New Revenue and Progress State
-  const [revenueEfficiency, setRevenueEfficiency] = React.useState({ billed: 0, collected: 0, efficiency: 0 });
+  const [revenueEfficiency, setRevenueEfficiency] = React.useState({ billed: 0, collected: 0, efficiency: 0, unpaidAmount: 0, unpaidCount: 0, paidCount: 0 });
   const [readingProgress, setReadingProgress] = React.useState({ total: 0, read: 0, percentage: 0 });
   const [topDelinquentCustomers, setTopDelinquentCustomers] = React.useState<{ name: string; balance: number; type: string }[]>([]);
   const [totalOverdueAccountsCount, setTotalOverdueAccountsCount] = React.useState<number>(0);
@@ -421,7 +421,10 @@ export default function AdminDashboardPage() {
       setRevenueEfficiency({
         billed: metrics.revenue.totalBilled,
         collected: metrics.revenue.totalCollected,
-        efficiency: metrics.revenue.efficiency
+        efficiency: metrics.revenue.efficiency,
+        unpaidAmount: metrics.revenue.totalUnpaid ?? 0,
+        unpaidCount: metrics.revenue.unpaidCount ?? 0,
+        paidCount: metrics.revenue.paidCount ?? 0
       });
 
       // 4. Progress
@@ -785,14 +788,37 @@ export default function AdminDashboardPage() {
             </div>
             <p className="text-sm text-slate-600 font-semibold mb-4">Collection Efficiency <span className="text-xs text-slate-400 font-normal">(target: 80%)</span></p>
 
-            <div className="flex justify-between items-center mb-4 pt-1">
+            <div className="flex justify-between items-start mb-4 pt-1">
               <div>
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Total Billed</p>
-                <p className="text-base font-black text-slate-800"><span className="text-xs text-slate-400 mr-1">ETB</span>{revenueEfficiency.billed.toLocaleString()}</p>
+                <p className="text-base font-black text-slate-800">
+                  <span className="text-xs text-slate-400 mr-1">ETB</span>
+                  {revenueEfficiency.billed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                {revenueEfficiency.unpaidCount > 0 ? (
+                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200/60">
+                      {revenueEfficiency.unpaidCount} Unpaid
+                    </span>
+                    <span className="text-[11px] font-semibold text-rose-600">
+                      ETB {revenueEfficiency.unpaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-[11px] font-semibold text-emerald-600 mt-1">All bills settled</p>
+                )}
               </div>
               <div className="text-right">
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Collected</p>
-                <p className="text-base font-black text-emerald-700"><span className="text-xs text-slate-400 mr-1">ETB</span>{revenueEfficiency.collected.toLocaleString()}</p>
+                <p className="text-base font-black text-emerald-700">
+                  <span className="text-xs text-slate-400 mr-1">ETB</span>
+                  {revenueEfficiency.collected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <div className="mt-1 flex items-center justify-end gap-1.5">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                    {revenueEfficiency.paidCount || 0} Paid
+                  </span>
+                </div>
               </div>
             </div>
 

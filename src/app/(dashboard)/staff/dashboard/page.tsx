@@ -539,7 +539,7 @@ export default function StaffDashboardPage() {
         paidBills: 0, 
         unpaidBills: 0, 
         billsPaymentStatusData: [], 
-        revenueEfficiency: { billed: 0, collected: 0, efficiency: 0 },
+        revenueEfficiency: { billed: 0, collected: 0, efficiency: 0, unpaidAmount: 0, unpaidCount: 0, paidCount: 0 },
         readingProgress: { total: 0, read: 0, percentage: 0 },
         todayActivity: { bills: 0, readings: 0, customers: 0 },
         branchPerformanceData: [], 
@@ -627,6 +627,9 @@ export default function StaffDashboardPage() {
         billed: Number(metrics?.revenue?.totalBilled || 0),
         collected: Number(metrics?.revenue?.totalCollected || 0),
         efficiency: Number(metrics?.revenue?.efficiency || 0),
+        unpaidAmount: Number(metrics?.revenue?.totalUnpaid || 0),
+        unpaidCount: Number(metrics?.revenue?.unpaidCount || 0),
+        paidCount: Number(metrics?.revenue?.paidCount || 0),
       },
       readingProgress: {
         total: Number(metrics?.readings?.totalCustomers || branchBMs.length),
@@ -1076,14 +1079,37 @@ export default function StaffDashboardPage() {
             </div>
             <p className="text-sm text-slate-600 font-semibold mb-4">Collection Efficiency <span className="text-xs text-slate-400 font-normal">(target: 80%)</span></p>
 
-            <div className="flex justify-between items-center mb-4 pt-1">
+            <div className="flex justify-between items-start mb-4 pt-1">
               <div>
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Total Billed</p>
-                <p className="text-base font-black text-slate-800"><span className="text-xs text-slate-400 mr-1">ETB</span>{processedStats.revenueEfficiency.billed.toLocaleString()}</p>
+                <p className="text-base font-black text-slate-800">
+                  <span className="text-xs text-slate-400 mr-1">ETB</span>
+                  {processedStats.revenueEfficiency.billed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                {processedStats.revenueEfficiency.unpaidCount > 0 ? (
+                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200/60">
+                      {processedStats.revenueEfficiency.unpaidCount} Unpaid
+                    </span>
+                    <span className="text-[11px] font-semibold text-rose-600">
+                      ETB {processedStats.revenueEfficiency.unpaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-[11px] font-semibold text-emerald-600 mt-1">All bills settled</p>
+                )}
               </div>
               <div className="text-right">
                 <p className="text-xs uppercase font-bold text-slate-500 tracking-wider mb-1">Collected</p>
-                <p className="text-base font-black text-emerald-700"><span className="text-xs text-slate-400 mr-1">ETB</span>{processedStats.revenueEfficiency.collected.toLocaleString()}</p>
+                <p className="text-base font-black text-emerald-700">
+                  <span className="text-xs text-slate-400 mr-1">ETB</span>
+                  {processedStats.revenueEfficiency.collected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <div className="mt-1 flex items-center justify-end gap-1.5">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                    {processedStats.revenueEfficiency.paidCount || 0} Paid
+                  </span>
+                </div>
               </div>
             </div>
 

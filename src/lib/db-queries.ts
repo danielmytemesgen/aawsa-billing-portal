@@ -3632,22 +3632,45 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             params
         ),
 
-        // 2. Revenue aggregation — authoritative formula: COALESCE(TOTALBILLAMOUNT, amount_paid, 0)
-        //    with the same 3-way paid filter used in Paid Bills Branch Summary & GL reports.
-        //    This ensures Dashboard "Collected", Paid Bills Summary, Print Summary, and GL all agree.
+        // 2. Revenue aggregation — authoritative formula:
+        //    Total Billed: all posted bills issued in that month (paid + unpaid).
+        //    Total Collected: paid bills (or amount_paid) matching Paid Bills & GL reports.
+        //    Total Unpaid: unpaid bills amount and count for that month.
         query(
             `SELECT
-                SUM(COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))) as total_billed,
-                COALESCE(SUM(COALESCE("TOTALBILLAMOUNT", amount_paid, 0)::numeric), 0) as total_collected
+                COALESCE(SUM(COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))::numeric), 0) as total_billed,
+                COALESCE(SUM(
+                    CASE WHEN (
+                        LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+                        OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+                        OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+                    ) THEN COALESCE("TOTALBILLAMOUNT", amount_paid, 0)::numeric ELSE 0 END
+                ), 0) as total_collected,
+                COALESCE(SUM(
+                    CASE WHEN NOT (
+                        LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+                        OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+                        OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+                    ) THEN COALESCE("TOTALBILLAMOUNT", COALESCE("PENALTYAMT", 0) + COALESCE("OUTSTANDINGAMT", (COALESCE(debit_30, 0) + COALESCE(debit_30_60, 0) + COALESCE(debit_60, 0))))::numeric ELSE 0 END
+                ), 0) as total_unpaid_amount,
+                COALESCE(COUNT(
+                    CASE WHEN NOT (
+                        LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+                        OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+                        OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+                    ) THEN 1 END
+                ), 0) as total_unpaid_count,
+                COALESCE(COUNT(
+                    CASE WHEN (
+                        LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
+                        OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
+                        OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
+                    ) THEN 1 END
+                ), 0) as total_paid_count
              FROM bills
              WHERE deleted_at IS NULL ${branchFilter}
                AND month_year = $1
-               AND COALESCE(status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')
-               AND (
-                   LOWER(TRIM(COALESCE(payment_status::text, ''))) = 'paid'
-                   OR LOWER(TRIM(COALESCE(status::text, ''))) = 'paid'
-                   OR (COALESCE("TOTALBILLAMOUNT", 0) > 0 AND COALESCE(amount_paid, 0) >= COALESCE("TOTALBILLAMOUNT", 0) - 0.01)
-               )`,
+               AND COALESCE(status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')`,
             params
         ),
 
@@ -3776,7 +3799,7 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
     ]);
 
     // ── Step 4: Assemble result ────────────────────────────────────────────────
-    const revenue = revenueData[0] || { total_billed: 0, total_collected: 0 };
+    const revenue = revenueData[0] || { total_billed: 0, total_collected: 0, total_unpaid_amount: 0, total_unpaid_count: 0, total_paid_count: 0 };
     const totalCustomers = parseInt(totalCustomersData[0]?.count || 0);
     const currentReadings = parseInt(currentReadingsData[0]?.count || 0);
     const totalOverdueCount = parseInt(overdueAccountsCountData[0]?.count || 0);
@@ -3787,6 +3810,9 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
         revenue: {
             totalBilled: Number(revenue.total_billed || 0),
             totalCollected: Number(revenue.total_collected || 0),
+            totalUnpaid: Number(revenue.total_unpaid_amount || 0),
+            unpaidCount: Number(revenue.total_unpaid_count || 0),
+            paidCount: Number(revenue.total_paid_count || 0),
             efficiency: (revenue.total_billed && Number(revenue.total_billed) > 0)
                 ? (Number(revenue.total_collected || 0) / Number(revenue.total_billed)) * 100
                 : 0,
