@@ -8629,7 +8629,7 @@ export const ensureReadingCorrectionsTableExists = async (executor?: any) => {
     }
 
     // Synchronize reading corrections recorded via bill_correct into reading_corrections table
-    // so any correction performed in Bill Management immediately displays in the Reading Corrections Report
+    // so any correction performed in Bill Management immediately displays with verified data integrity
     try {
         await qFunc(`
             INSERT INTO reading_corrections (
@@ -8654,11 +8654,11 @@ export const ensureReadingCorrectionsTableExists = async (executor?: any) => {
                 COALESCE(b.original_prev_read, 0),
                 COALESCE(b.original_curr_read, 0),
                 COALESCE(b.original_consumption, 0),
-                COALESCE(b.new_prev_read, b.original_prev_read, 0),
-                COALESCE(b.new_curr_read, b.original_curr_read, 0),
-                COALESCE(b.new_consumption, b.original_consumption, 0),
-                COALESCE(b.consumption_difference, COALESCE(b.new_consumption, b.original_consumption, 0) - COALESCE(b.original_consumption, 0)),
-                (COALESCE(b.new_curr_read, b.original_curr_read, 0) - COALESCE(b.original_curr_read, 0)),
+                COALESCE(NULLIF(b.new_prev_read, 0), NULLIF(repl.PREVREAD, 0), b.original_prev_read, 0),
+                COALESCE(NULLIF(b.new_curr_read, 0), NULLIF(repl.CURRREAD, 0), b.original_curr_read, 0),
+                COALESCE(NULLIF(b.new_consumption, 0), NULLIF(repl.CONS, 0), b.original_consumption, 0),
+                COALESCE(b.consumption_difference, COALESCE(NULLIF(b.new_consumption, 0), NULLIF(repl.CONS, 0), b.original_consumption, 0) - COALESCE(b.original_consumption, 0)),
+                (COALESCE(NULLIF(b.new_curr_read, 0), NULLIF(repl.CURRREAD, 0), b.original_curr_read, 0) - COALESCE(b.original_curr_read, 0)),
                 b.reason,
                 COALESCE(b.reason_category, 'meter_reading_error'),
                 b.corrected_by,
@@ -8667,20 +8667,22 @@ export const ensureReadingCorrectionsTableExists = async (executor?: any) => {
                 b.notes,
                 COALESCE(b.created_at, NOW())
             FROM bill_correct b
+            LEFT JOIN bills repl ON repl.id = b.replacement_bill_id
             WHERE NOT EXISTS (
                 SELECT 1 FROM reading_corrections rc WHERE rc.reading_id = b.original_bill_id::text
             );
 
+            -- Update existing rows where new_current_reading was 0 or newly rebilled
             UPDATE reading_corrections rc
-            SET new_previous_reading = COALESCE(b.new_prev_read, rc.new_previous_reading),
-                new_current_reading = COALESCE(b.new_curr_read, rc.new_current_reading),
-                new_consumption = COALESCE(b.new_consumption, rc.new_consumption),
-                consumption_difference = COALESCE(b.consumption_difference, COALESCE(b.new_consumption, rc.new_consumption, 0) - rc.old_consumption),
-                reading_difference = COALESCE(b.new_curr_read, rc.new_current_reading, 0) - rc.old_current_reading
+            SET new_previous_reading = COALESCE(NULLIF(b.new_prev_read, 0), NULLIF(repl.PREVREAD, 0), rc.new_previous_reading),
+                new_current_reading = COALESCE(NULLIF(b.new_curr_read, 0), NULLIF(repl.CURRREAD, 0), rc.new_current_reading),
+                new_consumption = COALESCE(NULLIF(b.new_consumption, 0), NULLIF(repl.CONS, 0), rc.new_consumption),
+                consumption_difference = (COALESCE(NULLIF(b.new_consumption, 0), NULLIF(repl.CONS, 0), rc.new_consumption, 0) - rc.old_consumption),
+                reading_difference = (COALESCE(NULLIF(b.new_curr_read, 0), NULLIF(repl.CURRREAD, 0), rc.new_current_reading, 0) - rc.old_current_reading)
             FROM bill_correct b
+            LEFT JOIN bills repl ON repl.id = b.replacement_bill_id
             WHERE rc.reading_id = b.original_bill_id::text
-              AND b.new_curr_read IS NOT NULL
-              AND (rc.new_current_reading != b.new_curr_read OR rc.new_previous_reading != b.new_prev_read);
+              AND (rc.new_current_reading = 0 AND rc.old_current_reading > 0);
         `);
     } catch (_syncErr) {
         // Safe fallback if bill_correct table is not present

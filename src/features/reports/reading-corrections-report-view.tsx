@@ -65,27 +65,34 @@ function formatM3(val: number | null | undefined): string {
 
 function DeltaBadge({ value, unit = "m³" }: { value: number | null; unit?: string }) {
   if (value == null) return <span className="text-muted-foreground">—</span>;
-  const isPos = value > 0;
-  const isNeg = value < 0;
-  const label = `${isPos ? "+" : ""}${formatM3(value)}`;
+  const num = Number(value);
+  const isPos = num > 0.001;
+  const isNeg = num < -0.001;
+  const formattedVal = `${isPos ? "+" : ""}${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
   return (
     <span
       className={[
-        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold",
-        isPos ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border border-rose-200/60" : "",
-        isNeg ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200/60" : "",
-        !isPos && !isNeg ? "bg-gray-100 text-gray-500 border border-gray-200/60" : "",
+        "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap",
+        isPos ? "bg-rose-50 text-rose-700 border border-rose-200" : "",
+        isNeg ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "",
+        !isPos && !isNeg ? "bg-slate-100 text-slate-600 border border-slate-200" : "",
       ].join(" ")}
     >
-      {isPos ? <TrendingUp className="w-3 h-3" /> : isNeg ? <TrendingDown className="w-3 h-3" /> : null}
-      {label}
+      {isPos ? <TrendingUp className="w-3 h-3 text-rose-600 shrink-0" /> : isNeg ? <TrendingDown className="w-3 h-3 text-emerald-600 shrink-0" /> : null}
+      <span>{formattedVal}</span>
     </span>
   );
 }
 
 function formatReasonCategory(cat: string): string {
+  if (!cat) return "Other";
   const found = REASON_CATEGORIES.find((c) => c.value === cat);
-  return found ? found.label : cat.replace(/_/g, " ");
+  if (found) return found.label;
+  return cat
+    .split(/[_s]+/
+    )
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
 }
 
 export function ReadingCorrectionsReportView({
@@ -123,7 +130,7 @@ export function ReadingCorrectionsReportView({
 
   // Month options
   const monthOptions = React.useMemo(() => {
-    return [{ value: "all", label: "All Months" }, ...getAvailableMonthYearOptions()];
+    return getAvailableMonthYearOptions();
   }, []);
 
   // Debounce search
@@ -346,26 +353,32 @@ export function ReadingCorrectionsReportView({
                   <TableBody className="text-xs">
                     <TableRow>
                       <TableCell className="font-semibold text-slate-700">Previous Reading</TableCell>
-                      <TableCell className="text-right">{Number(selectedRecord.old_previous_reading).toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-bold text-blue-700">{Number(selectedRecord.new_previous_reading).toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono">
-                        {(Number(selectedRecord.new_previous_reading) - Number(selectedRecord.old_previous_reading)).toFixed(2)}
+                      <TableCell className="text-right font-mono text-slate-700">{Number(selectedRecord.old_previous_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right font-bold font-mono text-blue-700">{Number(selectedRecord.new_previous_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right font-mono text-slate-600">
+                        {(() => {
+                          const diff = Number(selectedRecord.new_previous_reading) - Number(selectedRecord.old_previous_reading);
+                          return `${diff > 0 ? "+" : ""}${diff.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                        })()}
                       </TableCell>
                     </TableRow>
                     <TableRow>
                       <TableCell className="font-semibold text-slate-700">Current Reading</TableCell>
-                      <TableCell className="text-right">{Number(selectedRecord.old_current_reading).toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-bold text-blue-700">{Number(selectedRecord.new_current_reading).toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono">
-                        {Number(selectedRecord.reading_difference).toFixed(2)}
+                      <TableCell className="text-right font-mono text-slate-700">{Number(selectedRecord.old_current_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right font-bold font-mono text-blue-700">{Number(selectedRecord.new_current_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right font-mono text-slate-600">
+                        {(() => {
+                          const diff = Number(selectedRecord.reading_difference);
+                          return `${diff > 0 ? "+" : ""}${diff.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                        })()}
                       </TableCell>
                     </TableRow>
                     <TableRow className="bg-slate-50/70 font-bold">
                       <TableCell className="text-slate-900">Consumption Volume</TableCell>
-                      <TableCell className="text-right">{Number(selectedRecord.old_consumption).toFixed(2)} m³</TableCell>
-                      <TableCell className="text-right text-blue-800 font-black">{Number(selectedRecord.new_consumption).toFixed(2)} m³</TableCell>
+                      <TableCell className="text-right font-mono text-slate-800">{Number(selectedRecord.old_consumption).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³</TableCell>
+                      <TableCell className="text-right font-mono text-blue-800 font-black">{Number(selectedRecord.new_consumption).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³</TableCell>
                       <TableCell className="text-right">
-                        <DeltaBadge value={Number(selectedRecord.consumption_difference)} unit="m3" />
+                        <DeltaBadge value={Number(selectedRecord.consumption_difference)} unit="m³" />
                       </TableCell>
                     </TableRow>
                   </TableBody>
@@ -666,7 +679,7 @@ export function ReadingCorrectionsReportView({
                             {row.meter_type === "bulk" ? "Bulk" : "Indiv"}
                           </Badge>
                           {row.customer_name && (
-                            <span className="text-slate-500 text-[11px] truncate max-w-[120px]" title={row.customer_name}>
+                            <span className="text-slate-500 text-[11px] truncate max-w-[220px]" title={row.customer_name}>
                               {row.customer_name}
                             </span>
                           )}
@@ -680,15 +693,29 @@ export function ReadingCorrectionsReportView({
                       </TableCell>
 
                       {/* Original (Old) */}
-                      <TableCell className="text-right">
-                        <div className="font-medium text-slate-600">{Number(row.old_current_reading).toFixed(2)}</div>
-                        <div className="text-[10px] text-slate-400">P: {Number(row.old_previous_reading).toFixed(2)} | U: {Number(row.old_consumption).toFixed(2)}</div>
+                      <TableCell className="text-right whitespace-nowrap">
+                        <div className="font-semibold text-slate-800 text-[11px]">
+                          <span className="text-[10px] font-normal text-slate-400 mr-1">Curr:</span>
+                          {Number(row.old_current_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                          <span>Prev: {Number(row.old_previous_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="mx-1 text-slate-300">|</span>
+                          <span className="font-semibold text-slate-700">Usage: {Number(row.old_consumption).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³</span>
+                        </div>
                       </TableCell>
 
                       {/* Corrected (New) */}
-                      <TableCell className="text-right">
-                        <div className="font-bold text-blue-700">{Number(row.new_current_reading).toFixed(2)}</div>
-                        <div className="text-[10px] text-blue-500">P: {Number(row.new_previous_reading).toFixed(2)} | U: {Number(row.new_consumption).toFixed(2)}</div>
+                      <TableCell className="text-right whitespace-nowrap">
+                        <div className="font-bold text-blue-700 text-[11px]">
+                          <span className="text-[10px] font-normal text-blue-400 mr-1">Curr:</span>
+                          {Number(row.new_current_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-blue-600 font-mono mt-0.5">
+                          <span>Prev: {Number(row.new_previous_reading).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="mx-1 text-blue-300">|</span>
+                          <span className="font-semibold text-blue-800">Usage: {Number(row.new_consumption).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} m³</span>
+                        </div>
                       </TableCell>
 
                       {/* Variance */}
