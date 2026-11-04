@@ -2712,18 +2712,20 @@ export async function correctBillAction(id: string, reason: string) {
     // CRITICAL: Runs OUTSIDE the transaction using standard pool query so that any table/schema issues
     // never abort or roll back the committed bill reversal and replacement creation.
     if (auditData?.replacementBill && auditData?.originalBill) {
+      let branchName: string | null = auditData.originalBill.CUSTOMERBRANCH || null;
+      let staffName: string = session.name || session.email || 'System';
       try {
         const { originalBill, replacementBill } = auditData;
         const dbMod = await import('./db');
         const branchRes: any = originalBill.branch_id
           ? await dbMod.query(`SELECT name FROM branches WHERE id = $1 LIMIT 1`, [originalBill.branch_id]).catch(() => null)
           : null;
-        const branchName = branchRes?.[0]?.name || originalBill.CUSTOMERBRANCH || null;
+        if (branchRes?.[0]?.name) branchName = branchRes[0].name;
 
         const staffRes: any = session.id
           ? await dbMod.query(`SELECT name, email FROM staff_members WHERE id = $1 LIMIT 1`, [session.id]).catch(() => null)
           : null;
-        const staffName = staffRes?.[0]?.name || session.name || session.email || 'System';
+        if (staffRes?.[0]?.name) staffName = staffRes[0].name;
 
         const customerType = originalBill.CUSTOMERKEY ? 'bulk_meter' : 'individual';
         const customerKey = originalBill.CUSTOMERKEY || originalBill.individual_customer_id || '';
@@ -2759,6 +2761,50 @@ export async function correctBillAction(id: string, reason: string) {
       } catch (corrErr) {
         // Non-fatal: log but don't fail the correction
         console.error('[correctBillAction] Failed to insert bill_correct record (non-fatal):', corrErr);
+      }
+
+      // ── Also log to reading_corrections audit table so the Reading Corrections Report is populated ──
+      try {
+        const { dbInsertReadingCorrection, ensureReadingCorrectionsTableExists } = await import('./db-queries');
+        await ensureReadingCorrectionsTableExists();
+        const { originalBill, replacementBill } = auditData;
+        const meterTypeAudit: 'individual' | 'bulk' = originalBill.CUSTOMERKEY ? 'bulk' : 'individual';
+        const customerKeyAudit = originalBill.CUSTOMERKEY || originalBill.individual_customer_id || '';
+        const oldPrevRead = Number(originalBill.PREVREAD ?? 0);
+        const oldCurrRead = Number(originalBill.CURRREAD ?? 0);
+        const oldCons = Number(originalBill.CONS ?? (oldCurrRead - oldPrevRead));
+        // At correction initiation the new readings = same as original (they will be edited via Save & Rebill)
+        // We log the initial snapshot so the correction appears immediately in the report.
+        await dbInsertReadingCorrection({
+          reading_id: originalBill.id,
+          meter_type: meterTypeAudit,
+          customer_key: customerKeyAudit,
+          customer_name: originalBill.CUSTOMERNAME || null,
+          meter_number: originalBill.METER_KEY || null,
+          branch_id: originalBill.branch_id || null,
+          branch_name: branchName,
+          route_key: null,
+          month_year: originalBill.month_year || '',
+          reading_date: new Date().toISOString(),
+          old_previous_reading: oldPrevRead,
+          old_current_reading: oldCurrRead,
+          old_consumption: oldCons,
+          old_fault_code: null,
+          new_previous_reading: oldPrevRead,
+          new_current_reading: oldCurrRead,
+          new_consumption: oldCons,
+          new_fault_code: null,
+          consumption_difference: 0,
+          reading_difference: 0,
+          reason: reason,
+          reason_category: 'bill_correction',
+          corrected_by: session.id || null,
+          corrected_by_name: staffName,
+          notes: `Bill correction initiated. Original: ${originalBill.bill_number}. Replacement: ${replacementBill?.bill_number || 'N/A'}`
+        });
+      } catch (rcErr) {
+        // Non-fatal
+        console.error('[correctBillAction] Failed to insert reading_corrections record (non-fatal):', rcErr);
       }
     }
 
@@ -4791,6 +4837,50 @@ export async function updateBulkAndAssignedReadingsAction(payload: {
 
       return { success: true };
     });
+
+    // ── Update reading_corrections record if this is a correction draft (Save & Rebill) ──
+    // Runs outside the transaction so DB errors don't abort the already-committed bill.
+    if (payload.bulkBillId) {
+      try {
+        const dbMod = await import('./db');
+        // Find the reading_corrections record that was inserted when correctBillAction was called
+        // We identify it by reading_id = bulkBillId (original bill id) and bill_correction category.
+        // We update it with the actual new readings from this Save & Rebill.
+        const bulkUsageFinal = payload.bulkCurrRead - payload.bulkPrevRead;
+        const rcRes: any = await dbMod.query(
+          `SELECT id, old_current_reading, old_previous_reading, old_consumption FROM reading_corrections
+           WHERE reading_id = $1 OR reading_id = (SELECT original_bill_id::text FROM bill_correct WHERE replacement_bill_id = $1 LIMIT 1)
+           ORDER BY corrected_at DESC LIMIT 1`,
+          [payload.bulkBillId]
+        ).catch(() => null);
+        const rcRow = (rcRes as any)?.[0];
+        if (rcRow) {
+          const oldCons = Number(rcRow.old_consumption ?? 0);
+          const newCons = Math.max(0, bulkUsageFinal);
+          await dbMod.query(
+            `UPDATE reading_corrections
+             SET new_previous_reading = $1,
+                 new_current_reading = $2,
+                 new_consumption = $3,
+                 consumption_difference = $4,
+                 reading_difference = $5,
+                 notes = COALESCE(notes, '') || ' | Readings updated via Save & Rebill.'
+             WHERE id = $6`,
+            [
+              payload.bulkPrevRead,
+              payload.bulkCurrRead,
+              newCons,
+              newCons - oldCons,
+              payload.bulkCurrRead - Number(rcRow.old_current_reading ?? 0),
+              rcRow.id
+            ]
+          );
+        }
+      } catch (rcErr) {
+        // Non-fatal
+        console.error('[updateBulkAndAssignedReadingsAction] Failed to update reading_corrections record (non-fatal):', rcErr);
+      }
+    }
   });
 }
 
@@ -9444,3 +9534,249 @@ export async function fixReconciliationAnomaliesAction(params: {
 }
 
 
+
+// ── Meter Reading Correction Actions ──────────────────────────────────────────
+
+export async function correctMeterReadingAction(payload: {
+  readingId: string;
+  meterType: 'individual' | 'bulk';
+  customerKey: string;
+  monthYear: string;
+  newPreviousReading: number;
+  newCurrentReading: number;
+  newFaultCode?: string | null;
+  reason: string;
+  reasonCategory?: string;
+  notes?: string | null;
+}) {
+  return await wrap(async () => {
+    const session = await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
+
+    if (payload.newCurrentReading < payload.newPreviousReading) {
+      throw new Error("Current reading cannot be less than previous reading.");
+    }
+    if (!payload.reason || payload.reason.trim().length < 4) {
+      throw new Error("A valid correction reason is required (minimum 4 characters).");
+    }
+
+    const {
+      dbInsertReadingCorrection,
+      dbGetCustomerById,
+      dbGetBulkMeterById
+    } = await import('./db-queries');
+
+    // Fetch original reading record
+    let origRow: any = null;
+    if (payload.meterType === 'individual') {
+      const qRes: any = await query(
+        `SELECT r.*, ic.name as customer_name, ic."METER_KEY" as meter_number, ic.branch_id, ic."ROUTE_KEY" as route_key, b.name as branch_name
+         FROM individual_customer_readings r
+         LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+         LEFT JOIN branches b ON ic.branch_id = b.id
+         WHERE r.id = $1 AND r.deleted_at IS NULL LIMIT 1`,
+        [payload.readingId]
+      );
+      origRow = qRes?.[0] || qRes?.rows?.[0];
+      if (!origRow && payload.customerKey) {
+        // Fallback by customerKey and month
+        const altRes: any = await query(
+          `SELECT r.*, ic.name as customer_name, ic."METER_KEY" as meter_number, ic.branch_id, ic."ROUTE_KEY" as route_key, b.name as branch_name
+           FROM individual_customer_readings r
+           LEFT JOIN individual_customers ic ON r."CUST_KEY" = ic."customerKeyNumber"
+           LEFT JOIN branches b ON ic.branch_id = b.id
+           WHERE r."CUST_KEY" = $1 AND r.deleted_at IS NULL ORDER BY r."READING_DATE" DESC LIMIT 1`,
+          [payload.customerKey]
+        );
+        origRow = altRes?.[0] || altRes?.rows?.[0];
+      }
+    } else {
+      const qRes: any = await query(
+        `SELECT r.*, bm.name as customer_name, bm.meter_number, bm.branch_id, bm."ROUTE_KEY" as route_key, b.name as branch_name
+         FROM bulk_meter_readings r
+         LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+         LEFT JOIN branches b ON bm.branch_id = b.id
+         WHERE r.id = $1 AND r.deleted_at IS NULL LIMIT 1`,
+        [payload.readingId]
+      );
+      origRow = qRes?.[0] || qRes?.rows?.[0];
+      if (!origRow && payload.customerKey) {
+        const altRes: any = await query(
+          `SELECT r.*, bm.name as customer_name, bm.meter_number, bm.branch_id, bm."ROUTE_KEY" as route_key, b.name as branch_name
+           FROM bulk_meter_readings r
+           LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
+           LEFT JOIN branches b ON bm.branch_id = b.id
+           WHERE r."CUST_KEY" = $1 AND r.deleted_at IS NULL ORDER BY r."READING_DATE" DESC LIMIT 1`,
+          [payload.customerKey]
+        );
+        origRow = altRes?.[0] || altRes?.rows?.[0];
+      }
+    }
+
+    if (!origRow) {
+      throw new Error("Target reading record not found to correct.");
+    }
+
+    // Branch isolation check
+    if (origRow.branch_id) {
+      verifyEntityBranchAccess(origRow.branch_id, session, PERMISSIONS.METER_READINGS_VIEW_ALL, 'meter reading');
+    }
+
+    const oldPreviousReading = Number(origRow.PREVIOUS_READING ?? origRow.previous_reading ?? 0);
+    const oldCurrentReading = Number(origRow.METER_READING ?? origRow.reading_value ?? 0);
+    const oldConsumption = Math.max(0, oldCurrentReading - oldPreviousReading);
+    const newConsumption = Math.max(0, payload.newCurrentReading - payload.newPreviousReading);
+    const consumptionDiff = newConsumption - oldConsumption;
+    const readingDiff = payload.newCurrentReading - oldCurrentReading;
+
+    // Update reading and master table inside transaction
+    await withTransaction(async (client) => {
+      if (payload.meterType === 'individual') {
+        await client.query(
+          `UPDATE individual_customer_readings 
+           SET "METER_READING" = $1, "PREVIOUS_READING" = $2, "FAULT_CODE" = $3, notes = COALESCE($4, notes), updated_at = NOW() 
+           WHERE id = $5`,
+          [payload.newCurrentReading, payload.newPreviousReading, payload.newFaultCode || null, payload.notes || null, origRow.id]
+        );
+        await client.query(
+          `UPDATE individual_customers 
+           SET "previousReading" = $1, "currentReading" = $2, month = COALESCE($3, month), "updatedAt" = NOW() 
+           WHERE "customerKeyNumber" = $4`,
+          [payload.newPreviousReading, payload.newCurrentReading, payload.monthYear || null, payload.customerKey]
+        );
+      } else {
+        await client.query(
+          `UPDATE bulk_meter_readings 
+           SET "METER_READING" = $1, "PREVIOUS_READING" = $2, "FAULT_CODE" = $3, notes = COALESCE($4, notes), updated_at = NOW() 
+           WHERE id = $5`,
+          [payload.newCurrentReading, payload.newPreviousReading, payload.newFaultCode || null, payload.notes || null, origRow.id]
+        );
+        await client.query(
+          `UPDATE bulk_meters 
+           SET "previousReading" = $1, "currentReading" = $2, month = COALESCE($3, month), "updatedAt" = NOW() 
+           WHERE "customerKeyNumber" = $4`,
+          [payload.newPreviousReading, payload.newCurrentReading, payload.monthYear || null, payload.customerKey]
+        );
+      }
+    });
+
+    // Insert audit record (outside transaction so audit table issue won't roll back the reading update)
+    let correctionRecord: any = null;
+    try {
+      correctionRecord = await dbInsertReadingCorrection({
+        reading_id: String(origRow.id || payload.readingId),
+        meter_type: payload.meterType,
+        customer_key: payload.customerKey,
+        customer_name: origRow.customer_name || null,
+        meter_number: origRow.meter_number || origRow.METER_KEY || null,
+        branch_id: origRow.branch_id || null,
+        branch_name: origRow.branch_name || null,
+        route_key: origRow.route_key || origRow.ROUTE_KEY || null,
+        month_year: payload.monthYear || (origRow.READING_DATE ? String(origRow.READING_DATE).substring(0, 7) : 'N/A'),
+        reading_date: origRow.READING_DATE || origRow.reading_date || new Date(),
+        old_previous_reading: oldPreviousReading,
+        old_current_reading: oldCurrentReading,
+        old_consumption: oldConsumption,
+        old_fault_code: origRow.FAULT_CODE || origRow.fault_code || null,
+        new_previous_reading: payload.newPreviousReading,
+        new_current_reading: payload.newCurrentReading,
+        new_consumption: newConsumption,
+        new_fault_code: payload.newFaultCode || null,
+        consumption_difference: consumptionDiff,
+        reading_difference: readingDiff,
+        reason: payload.reason.trim(),
+        reason_category: payload.reasonCategory || 'meter_dial_misread',
+        corrected_by: session.id || null,
+        corrected_by_name: session.name || session.email || 'Staff Member',
+        notes: payload.notes || null
+      });
+    } catch (auditErr) {
+      console.error('[correctMeterReadingAction] Failed to insert reading_corrections record:', auditErr);
+    }
+
+    try {
+      await logSecurityEventAction({
+        event: 'Correct Meter Reading',
+        severity: 'info',
+        details: {
+          readingId: origRow.id,
+          meterType: payload.meterType,
+          customerKey: payload.customerKey,
+          oldRead: oldCurrentReading,
+          newRead: payload.newCurrentReading,
+          variance: consumptionDiff,
+          reason: payload.reason
+        }
+      });
+    } catch (_logErr) {
+      // Non-fatal
+    }
+
+    return {
+      success: true,
+      correctionId: correctionRecord?.id || null,
+      consumptionDifference: consumptionDiff,
+      readingDifference: readingDiff,
+      message: "Meter reading successfully corrected and logged in audit report."
+    };
+  });
+}
+
+export async function getReadingCorrectionsAction(options: {
+  page?: number;
+  pageSize?: number;
+  branchId?: string;
+  monthYear?: string;
+  meterType?: 'individual' | 'bulk' | 'all';
+  reasonCategory?: string;
+  searchTerm?: string;
+  startDate?: string;
+  endDate?: string;
+} = {}) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes('*') || perms.includes('all') || perms.includes('admin') ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+      perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH);
+    if (!hasPerm) throw new Error('Forbidden: Missing permission to view reading corrections');
+
+    const filterBranchId = getEffectiveBranchId(session, options.branchId, PERMISSIONS.METER_READINGS_VIEW_ALL);
+    const { dbGetReadingCorrections } = await import('./db-queries');
+
+    return await dbGetReadingCorrections({
+      ...options,
+      branchId: filterBranchId
+    });
+  });
+}
+
+export async function getReadingCorrectionKPIsAction(options: {
+  branchId?: string;
+  monthYear?: string;
+  meterType?: 'individual' | 'bulk' | 'all';
+  reasonCategory?: string;
+  searchTerm?: string;
+  startDate?: string;
+  endDate?: string;
+} = {}) {
+  return await wrap(async () => {
+    const session = await checkPermission();
+    const perms = session.permissions || [];
+    const hasPerm = perms.includes('*') || perms.includes('all') || perms.includes('admin') ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+      perms.includes(PERMISSIONS.REPORTS_GENERATE_BRANCH);
+    if (!hasPerm) throw new Error('Forbidden: Missing permission to view reading corrections');
+
+    const filterBranchId = getEffectiveBranchId(session, options.branchId, PERMISSIONS.METER_READINGS_VIEW_ALL);
+    const { dbGetReadingCorrectionKPIs } = await import('./db-queries');
+
+    return await dbGetReadingCorrectionKPIs({
+      ...options,
+      branchId: filterBranchId
+    });
+  });
+}

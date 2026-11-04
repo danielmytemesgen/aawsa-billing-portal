@@ -1121,3 +1121,53 @@ export type BillCorrection = {
   created_at: string;
   updated_at: string;
 };
+export type ReadingCorrection = {
+  id: string;
+  reading_id: string;
+  meter_type: 'individual' | 'bulk';
+  customer_key: string;
+  customer_name: string | null;
+  meter_number: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  route_key: string | null;
+  month_year: string;
+  reading_date: string;
+  old_previous_reading: number;
+  old_current_reading: number;
+  old_consumption: number;
+  old_fault_code: string | null;
+  new_previous_reading: number;
+  new_current_reading: number;
+  new_consumption: number;
+  new_fault_code: string | null;
+  consumption_difference: number;
+  reading_difference: number;
+  reason: string;
+  reason_category: string;
+  corrected_by: string | null;
+  corrected_by_name: string;
+  corrected_at: string;
+  notes: string | null;
+  created_at: string;
+};
+
+export type ReadingCorrectionKPIs = {
+  totalCorrections: number;
+  netConsumptionVariance: number;
+  increasedCount: number;
+  decreasedCount: number;
+  topReason: string;
+};
+
+export const READING_CORRECTION_REASONS = [
+  { value: "meter_dial_misread", label: "Meter Dial Misread", description: "Reader incorrectly transcribed digits from meter dial" },
+  { value: "transposed_digits", label: "Transposed Digits", description: "Inverted numbers during data recording (e.g. 54 vs 45)" },
+  { value: "meter_rollover", label: "Meter Counter Rollover", description: "Meter mechanical dial flipped over maximum reading limit" },
+  { value: "customer_dispute", label: "Customer Dispute / Re-inspection", description: "Customer contested reading, verified via branch field inspection" },
+  { value: "fault_code_update", label: "Fault Code / Meter Status Correction", description: "Updated meter status or fault classification" },
+  { value: "data_entry_error", label: "Data Entry / Import Error", description: "Manual CSV or keying entry error during batch upload" },
+  { value: "other", label: "Other Administrative Correction", description: "Other verified operational correction" },
+] as const;
+
+export type ReadingCorrectionReasonCode = typeof READING_CORRECTION_REASONS[number]['value'];

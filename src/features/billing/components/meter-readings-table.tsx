@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -12,27 +11,41 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import type { DisplayReading } from "@/lib/data-store";
-import { format, parseISO } from "date-fns";
 import { formatDate } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
-import { Eye } from "lucide-react";
+import { Eye, FileEdit } from "lucide-react";
 import { ReadingDetailsDialog, type ReadingData } from "@/features/billing/components/reading-details-dialog";
+import { CorrectMeterReadingDialog } from "@/features/billing/components/correct-meter-reading-dialog";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 interface MeterReadingsTableProps {
   data: DisplayReading[];
+  onReadingUpdated?: () => void;
 }
 
-const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
+const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data, onReadingUpdated }) => {
+  const { hasPermission } = usePermissions();
+  const canCorrectReading =
+    hasPermission(PERMISSIONS.METER_READINGS_UPDATE) ||
+    hasPermission("meter_readings_update") ||
+    hasPermission("admin") ||
+    hasPermission("*") ||
+    hasPermission("all");
+
   const [selectedReading, setSelectedReading] = React.useState<ReadingData | null>(null);
+  const [selectedRawReading, setSelectedRawReading] = React.useState<DisplayReading | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
+  const [isCorrectDialogOpen, setIsCorrectDialogOpen] = React.useState(false);
 
   const handleViewDetails = (reading: DisplayReading) => {
+    setSelectedRawReading(reading);
     const mappedData: ReadingData = {
       id: reading.id,
       meterIdentifier: reading.meterIdentifier,
       meterId: reading.meterId || "N/A",
-      meterType: reading.meterType === 'bulk' ? 'Bulk' : 'Individual',
+      meterType: reading.meterType === "bulk" ? "Bulk" : "Individual",
       previousReading: reading.previousReading,
       currentReading: reading.readingValue,
       usage: reading.readingValue - reading.previousReading,
@@ -49,16 +62,34 @@ const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
     setIsDetailsOpen(true);
   };
 
+  const handleOpenCorrection = (reading: DisplayReading) => {
+    setSelectedRawReading(reading);
+    setIsCorrectDialogOpen(true);
+  };
+
   return (
     <div className="mt-2 text-primary">
       {/* Reading Details Dialog */}
-      <React.Fragment key="reading-dialog">
-        <ReadingDetailsDialog
-          open={isDetailsOpen}
-          onOpenChange={setIsDetailsOpen}
-          reading={selectedReading}
-        />
-      </React.Fragment>
+      <ReadingDetailsDialog
+        open={isDetailsOpen}
+        onOpenChange={setIsDetailsOpen}
+        reading={selectedReading}
+        onCorrectReading={
+          canCorrectReading && selectedRawReading
+            ? () => handleOpenCorrection(selectedRawReading)
+            : undefined
+        }
+      />
+
+      {/* Correct Reading Dialog */}
+      <CorrectMeterReadingDialog
+        open={isCorrectDialogOpen}
+        onOpenChange={setIsCorrectDialogOpen}
+        reading={selectedRawReading}
+        onSuccess={() => {
+          if (onReadingUpdated) onReadingUpdated();
+        }}
+      />
 
       {/* Desktop Table */}
       <div className="hidden md:block rounded-md border text-sm overflow-hidden bg-white/50 backdrop-blur-sm">
@@ -71,7 +102,7 @@ const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
               <TableHead className="font-bold">Reading Date</TableHead>
               <TableHead className="font-bold">Month/Year</TableHead>
               <TableHead className="font-bold">Notes</TableHead>
-              <TableHead className="text-right font-bold w-[80px]">Actions</TableHead>
+              <TableHead className="text-right font-bold w-[100px]">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -80,23 +111,41 @@ const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
                 <TableRow key={reading.id} className="group hover:bg-white/80 transition-colors">
                   <TableCell className="font-bold text-gray-900">{reading.meterIdentifier}</TableCell>
                   <TableCell>
-                    <Badge variant={reading.meterType === 'bulk' ? "secondary" : "default"} className="font-bold text-[10px] h-5">
-                      {reading.meterType === 'individual' ? 'Individual' : 'Bulk'}
+                    <Badge variant={reading.meterType === "bulk" ? "secondary" : "default"} className="font-bold text-[10px] h-5">
+                      {reading.meterType === "individual" ? "Individual" : "Bulk"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right font-black text-gray-700">{typeof reading.readingValue === 'number' ? reading.readingValue.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</TableCell>
+                  <TableCell className="text-right font-black text-gray-700">
+                    {typeof reading.readingValue === "number"
+                      ? reading.readingValue.toLocaleString(undefined, { minimumFractionDigits: 2 })
+                      : "-"}
+                  </TableCell>
                   <TableCell className="font-medium text-gray-600">{formatDate(reading.readingDate)}</TableCell>
                   <TableCell className="font-medium text-gray-600">{reading.monthYear}</TableCell>
                   <TableCell className="text-xs text-muted-foreground truncate max-w-xs italic">{reading.notes || "-"}</TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 hover:bg-blue-50 hover:text-blue-600 rounded-full transition-all"
-                      onClick={() => handleViewDetails(reading)}
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      {canCorrectReading && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Correct Reading"
+                          className="h-8 w-8 hover:bg-amber-50 hover:text-amber-600 rounded-full transition-all"
+                          onClick={() => handleOpenCorrection(reading)}
+                        >
+                          <FileEdit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="View Details"
+                        className="h-8 w-8 hover:bg-blue-50 hover:text-blue-600 rounded-full transition-all"
+                        onClick={() => handleViewDetails(reading)}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -119,23 +168,39 @@ const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data }) => {
               <div className="flex justify-between items-start">
                 <div>
                   <div className="font-black text-sm text-gray-900 leading-tight pr-2">{reading.meterIdentifier}</div>
-                  <Badge variant={reading.meterType === 'bulk' ? "secondary" : "default"} className="text-[9px] h-4.5 px-1.5 mt-1 font-bold uppercase tracking-wider">
-                    {reading.meterType === 'individual' ? 'Indiv' : 'Bulk'}
+                  <Badge variant={reading.meterType === "bulk" ? "secondary" : "default"} className="text-[9px] h-4.5 px-1.5 mt-1 font-bold uppercase tracking-wider">
+                    {reading.meterType === "individual" ? "Indiv" : "Bulk"}
                   </Badge>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 bg-gray-50 text-blue-600 rounded-full shrink-0"
-                  onClick={() => handleViewDetails(reading)}
-                >
-                  <Eye className="h-5 w-5" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  {canCorrectReading && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Correct Reading"
+                      className="h-9 w-9 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-full shrink-0"
+                      onClick={() => handleOpenCorrection(reading)}
+                    >
+                      <FileEdit className="h-4.5 w-4.5" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="View Details"
+                    className="h-9 w-9 bg-gray-50 text-blue-600 hover:bg-blue-100 rounded-full shrink-0"
+                    onClick={() => handleViewDetails(reading)}
+                  >
+                    <Eye className="h-5 w-5" />
+                  </Button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-y-3 gap-x-2 text-[11px]">
                 <div className="flex flex-col">
                   <span className="text-muted-foreground uppercase font-black text-[9px] tracking-widest mb-0.5">Value</span>
-                  <span className="font-bold text-gray-800">{typeof reading.readingValue === 'number' ? reading.readingValue.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'} m³</span>
+                  <span className="font-bold text-gray-800">
+                    {typeof reading.readingValue === "number" ? reading.readingValue.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "-"} m³
+                  </span>
                 </div>
                 <div className="flex flex-col">
                   <span className="text-muted-foreground uppercase font-black text-[9px] tracking-widest mb-0.5">Date</span>

@@ -305,6 +305,21 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         reportsItems.push({ title: "Corrected Bills", href: isAdmin ? "/admin/reports/corrected-bills" : "/staff/reports/corrected-bills", iconName: "FileDiff" });
     }
 
+    const canViewReadingCorrectionsReport = hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL)
+        || hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL)
+        || hasPermission(PERMISSIONS.METER_READINGS_VIEW_BRANCH)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (canViewReadingCorrectionsReport) {
+        reportsItems.push({ 
+            title: "Reading Corrections", 
+            href: isAdmin ? "/admin/reports/reading-corrections" : "/staff/reports/reading-corrections", 
+            iconName: "FileEdit" 
+        });
+    }
+
     // Strictly check assigned GL Financial & Audit Report permissions only
     const canViewGLReports = hasPermission(PERMISSIONS.REPORT_GL_AUDIT_VIEW)
         || hasPermission(PERMISSIONS.REPORT_GL_AUDIT_VIEW_ALL)

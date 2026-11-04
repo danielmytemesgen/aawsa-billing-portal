@@ -8581,3 +8581,359 @@ export const dbGetBillCorrectionById = async (id: string) => {
     return rows[0] || null;
 };
 
+
+// ── Reading Corrections Audit Queries ──────────────────────────────────────────
+
+export const ensureReadingCorrectionsTableExists = async (executor?: any) => {
+    const qFunc = executor ? (executor.query ? executor.query.bind(executor) : executor) : query;
+    try {
+        await qFunc(`
+            CREATE TABLE IF NOT EXISTS reading_corrections (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                reading_id VARCHAR(100) NOT NULL,
+                meter_type VARCHAR(20) NOT NULL,
+                customer_key VARCHAR(100) NOT NULL,
+                customer_name VARCHAR(255),
+                meter_number VARCHAR(100),
+                branch_id UUID,
+                branch_name VARCHAR(100),
+                route_key VARCHAR(100),
+                month_year VARCHAR(7) NOT NULL,
+                reading_date TIMESTAMPTZ NOT NULL,
+                old_previous_reading NUMERIC(12, 3) NOT NULL,
+                old_current_reading NUMERIC(12, 3) NOT NULL,
+                old_consumption NUMERIC(12, 3) NOT NULL,
+                old_fault_code VARCHAR(50),
+                new_previous_reading NUMERIC(12, 3) NOT NULL,
+                new_current_reading NUMERIC(12, 3) NOT NULL,
+                new_consumption NUMERIC(12, 3) NOT NULL,
+                new_fault_code VARCHAR(50),
+                consumption_difference NUMERIC(12, 3) NOT NULL,
+                reading_difference NUMERIC(12, 3) NOT NULL,
+                reason TEXT NOT NULL,
+                reason_category VARCHAR(50) DEFAULT 'meter_dial_misread',
+                corrected_by UUID,
+                corrected_by_name VARCHAR(255) NOT NULL,
+                corrected_at TIMESTAMPTZ DEFAULT NOW(),
+                notes TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_reading_corr_cust_key ON reading_corrections(customer_key);
+            CREATE INDEX IF NOT EXISTS idx_reading_corr_branch_id ON reading_corrections(branch_id);
+            CREATE INDEX IF NOT EXISTS idx_reading_corr_month_year ON reading_corrections(month_year);
+            CREATE INDEX IF NOT EXISTS idx_reading_corr_date ON reading_corrections(corrected_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_reading_corr_meter_type ON reading_corrections(meter_type);
+        `);
+    } catch (_err) {
+        // Safe fallback if table/index exists or permission restricted
+    }
+
+    // Synchronize reading corrections recorded via bill_correct into reading_corrections table
+    // so any correction performed in Bill Management immediately displays in the Reading Corrections Report
+    try {
+        await qFunc(`
+            INSERT INTO reading_corrections (
+                reading_id, meter_type, customer_key, customer_name, meter_number,
+                branch_id, branch_name, route_key, month_year, reading_date,
+                old_previous_reading, old_current_reading, old_consumption,
+                new_previous_reading, new_current_reading, new_consumption,
+                consumption_difference, reading_difference, reason, reason_category,
+                corrected_by, corrected_by_name, corrected_at, notes, created_at
+            )
+            SELECT
+                b.original_bill_id::text,
+                CASE WHEN b.customer_type = 'bulk_meter' THEN 'bulk' ELSE 'individual' END,
+                b.customer_key,
+                b.customer_name,
+                b.meter_number,
+                b.branch_id,
+                b.branch_name,
+                b.contract_number,
+                b.month_year,
+                COALESCE(b.corrected_at, b.created_at, NOW()),
+                COALESCE(b.original_prev_read, 0),
+                COALESCE(b.original_curr_read, 0),
+                COALESCE(b.original_consumption, 0),
+                COALESCE(b.new_prev_read, b.original_prev_read, 0),
+                COALESCE(b.new_curr_read, b.original_curr_read, 0),
+                COALESCE(b.new_consumption, b.original_consumption, 0),
+                COALESCE(b.consumption_difference, COALESCE(b.new_consumption, b.original_consumption, 0) - COALESCE(b.original_consumption, 0)),
+                (COALESCE(b.new_curr_read, b.original_curr_read, 0) - COALESCE(b.original_curr_read, 0)),
+                b.reason,
+                COALESCE(b.reason_category, 'meter_reading_error'),
+                b.corrected_by,
+                COALESCE(b.corrected_by_name, 'Staff'),
+                COALESCE(b.corrected_at, b.created_at, NOW()),
+                b.notes,
+                COALESCE(b.created_at, NOW())
+            FROM bill_correct b
+            WHERE NOT EXISTS (
+                SELECT 1 FROM reading_corrections rc WHERE rc.reading_id = b.original_bill_id::text
+            );
+
+            UPDATE reading_corrections rc
+            SET new_previous_reading = COALESCE(b.new_prev_read, rc.new_previous_reading),
+                new_current_reading = COALESCE(b.new_curr_read, rc.new_current_reading),
+                new_consumption = COALESCE(b.new_consumption, rc.new_consumption),
+                consumption_difference = COALESCE(b.consumption_difference, COALESCE(b.new_consumption, rc.new_consumption, 0) - rc.old_consumption),
+                reading_difference = COALESCE(b.new_curr_read, rc.new_current_reading, 0) - rc.old_current_reading
+            FROM bill_correct b
+            WHERE rc.reading_id = b.original_bill_id::text
+              AND b.new_curr_read IS NOT NULL
+              AND (rc.new_current_reading != b.new_curr_read OR rc.new_previous_reading != b.new_prev_read);
+        `);
+    } catch (_syncErr) {
+        // Safe fallback if bill_correct table is not present
+    }
+};
+
+export const dbInsertReadingCorrection = async (data: {
+    reading_id: string;
+    meter_type: 'individual' | 'bulk';
+    customer_key: string;
+    customer_name?: string | null;
+    meter_number?: string | null;
+    branch_id?: string | null;
+    branch_name?: string | null;
+    route_key?: string | null;
+    month_year: string;
+    reading_date: string | Date;
+    old_previous_reading: number;
+    old_current_reading: number;
+    old_consumption: number;
+    old_fault_code?: string | null;
+    new_previous_reading: number;
+    new_current_reading: number;
+    new_consumption: number;
+    new_fault_code?: string | null;
+    consumption_difference: number;
+    reading_difference: number;
+    reason: string;
+    reason_category?: string;
+    corrected_by?: string | null;
+    corrected_by_name: string;
+    notes?: string | null;
+}, client?: any) => {
+    await ensureReadingCorrectionsTableExists(client);
+
+    const qFunc = client ? (client.query ? client.query.bind(client) : client) : query;
+    const sql = `
+        INSERT INTO reading_corrections (
+            reading_id, meter_type, customer_key, customer_name, meter_number,
+            branch_id, branch_name, route_key, month_year, reading_date,
+            old_previous_reading, old_current_reading, old_consumption, old_fault_code,
+            new_previous_reading, new_current_reading, new_consumption, new_fault_code,
+            consumption_difference, reading_difference,
+            reason, reason_category, corrected_by, corrected_by_name, notes
+        ) VALUES (
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9, $10,
+            $11, $12, $13, $14,
+            $15, $16, $17, $18,
+            $19, $20,
+            $21, $22, $23, $24, $25
+        )
+        RETURNING *
+    `;
+
+    const params = [
+        data.reading_id,
+        data.meter_type,
+        data.customer_key,
+        data.customer_name || null,
+        data.meter_number || null,
+        data.branch_id || null,
+        data.branch_name || null,
+        data.route_key || null,
+        data.month_year,
+        data.reading_date,
+        data.old_previous_reading,
+        data.old_current_reading,
+        data.old_consumption,
+        data.old_fault_code || null,
+        data.new_previous_reading,
+        data.new_current_reading,
+        data.new_consumption,
+        data.new_fault_code || null,
+        data.consumption_difference,
+        data.reading_difference,
+        data.reason,
+        data.reason_category || 'meter_dial_misread',
+        data.corrected_by || null,
+        data.corrected_by_name,
+        data.notes || null
+    ];
+
+    if (client) {
+        const res = await client.query(sql, params);
+        return res.rows[0];
+    }
+    const res: any = await query(sql, params);
+    return res[0];
+};
+
+export const dbGetReadingCorrections = async (options: {
+    page?: number;
+    pageSize?: number;
+    branchId?: string;
+    monthYear?: string;
+    meterType?: 'individual' | 'bulk' | 'all';
+    reasonCategory?: string;
+    searchTerm?: string;
+    startDate?: string;
+    endDate?: string;
+} = {}) => {
+    await ensureReadingCorrectionsTableExists();
+
+    const page = Math.max(1, options.page || 1);
+    const pageSize = Math.max(1, Math.min(200, options.pageSize || 20));
+    const offset = (page - 1) * pageSize;
+
+    const whereClauses: string[] = ['1=1'];
+    const params: any[] = [];
+
+    if (options.branchId && options.branchId !== 'all') {
+        params.push(options.branchId);
+        whereClauses.push(`branch_id = $${params.length}`);
+    }
+
+    if (options.monthYear && options.monthYear !== 'all') {
+        params.push(options.monthYear);
+        whereClauses.push(`month_year = $${params.length}`);
+    }
+
+    if (options.meterType && options.meterType !== 'all') {
+        params.push(options.meterType);
+        whereClauses.push(`meter_type = $${params.length}`);
+    }
+
+    if (options.reasonCategory && options.reasonCategory !== 'all') {
+        params.push(options.reasonCategory);
+        whereClauses.push(`reason_category = $${params.length}`);
+    }
+
+    if (options.startDate) {
+        params.push(options.startDate);
+        whereClauses.push(`corrected_at >= $${params.length}::timestamptz`);
+    }
+
+    if (options.endDate) {
+        params.push(options.endDate);
+        whereClauses.push(`corrected_at <= $${params.length}::timestamptz`);
+    }
+
+    if (options.searchTerm && options.searchTerm.trim()) {
+        params.push(`%${options.searchTerm.trim()}%`);
+        whereClauses.push(`(
+            customer_key ILIKE $${params.length}
+            OR customer_name ILIKE $${params.length}
+            OR meter_number ILIKE $${params.length}
+            OR corrected_by_name ILIKE $${params.length}
+            OR reason ILIKE $${params.length}
+            OR route_key ILIKE $${params.length}
+        )`);
+    }
+
+    const whereClause = whereClauses.join(' AND ');
+
+    const countSql = `SELECT COUNT(*)::int as count FROM reading_corrections WHERE ${whereClause}`;
+    const countRes: any = await query(countSql, params);
+    const totalCount = parseInt(countRes[0]?.count || 0, 10);
+
+    params.push(pageSize, offset);
+    const dataSql = `
+        SELECT * FROM reading_corrections 
+        WHERE ${whereClause} 
+        ORDER BY corrected_at DESC 
+        LIMIT $${params.length - 1} OFFSET $${params.length}
+    `;
+    const rows: any = await query(dataSql, params);
+
+    return {
+        rows: rows || [],
+        totalCount,
+        page,
+        pageSize,
+        totalPages: Math.ceil(totalCount / pageSize)
+    };
+};
+
+export const dbGetReadingCorrectionKPIs = async (options: {
+    branchId?: string;
+    monthYear?: string;
+    meterType?: 'individual' | 'bulk' | 'all';
+    reasonCategory?: string;
+    searchTerm?: string;
+    startDate?: string;
+    endDate?: string;
+} = {}) => {
+    await ensureReadingCorrectionsTableExists();
+
+    const whereClauses: string[] = ['1=1'];
+    const params: any[] = [];
+
+    if (options.branchId && options.branchId !== 'all') {
+        params.push(options.branchId);
+        whereClauses.push(`branch_id = $${params.length}`);
+    }
+
+    if (options.monthYear && options.monthYear !== 'all') {
+        params.push(options.monthYear);
+        whereClauses.push(`month_year = $${params.length}`);
+    }
+
+    if (options.meterType && options.meterType !== 'all') {
+        params.push(options.meterType);
+        whereClauses.push(`meter_type = $${params.length}`);
+    }
+
+    if (options.reasonCategory && options.reasonCategory !== 'all') {
+        params.push(options.reasonCategory);
+        whereClauses.push(`reason_category = $${params.length}`);
+    }
+
+    if (options.startDate) {
+        params.push(options.startDate);
+        whereClauses.push(`corrected_at >= $${params.length}::timestamptz`);
+    }
+
+    if (options.endDate) {
+        params.push(options.endDate);
+        whereClauses.push(`corrected_at <= $${params.length}::timestamptz`);
+    }
+
+    if (options.searchTerm && options.searchTerm.trim()) {
+        params.push(`%${options.searchTerm.trim()}%`);
+        whereClauses.push(`(
+            customer_key ILIKE $${params.length}
+            OR customer_name ILIKE $${params.length}
+            OR meter_number ILIKE $${params.length}
+            OR corrected_by_name ILIKE $${params.length}
+            OR reason ILIKE $${params.length}
+        )`);
+    }
+
+    const whereClause = whereClauses.join(' AND ');
+
+    const kpiSql = `
+        SELECT
+            COUNT(*)::int as total_corrections,
+            COALESCE(SUM(consumption_difference), 0)::numeric as net_consumption_variance,
+            COUNT(*) FILTER (WHERE consumption_difference > 0)::int as increased_count,
+            COUNT(*) FILTER (WHERE consumption_difference < 0)::int as decreased_count,
+            MODE() WITHIN GROUP (ORDER BY reason_category) as top_reason
+        FROM reading_corrections
+        WHERE ${whereClause}
+    `;
+
+    const rows: any = await query(kpiSql, params);
+    const row = rows[0] || {};
+
+    return {
+        totalCorrections: parseInt(row.total_corrections || 0, 10),
+        netConsumptionVariance: parseFloat(row.net_consumption_variance || 0),
+        increasedCount: parseInt(row.increased_count || 0, 10),
+        decreasedCount: parseInt(row.decreased_count || 0, 10),
+        topReason: row.top_reason || 'N/A'
+    };
+};

@@ -5,7 +5,7 @@ import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar, CalendarSync, WifiOff, RefreshCw } from "lucide-react";
+import { PlusCircle, Search, UploadCloud, FileText, BarChart, FileSpreadsheet, FileEdit, Download, Activity, ListPlus, Database, AlertCircle, XCircle, AlertTriangle, FileDown, Calendar, CalendarSync, WifiOff, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AddMeterReadingForm, type AddMeterReadingFormValues } from "@/features/billing/components/add-meter-reading-form";
 import MeterReadingsTable from "@/features/billing/components/meter-readings-table";
@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { ReadingAnalyticsReportView } from "@/features/billing/components/reading-analytics-report-view";
+import { ReadingCorrectionsReportView } from "@/features/reports/reading-corrections-report-view";
 import {
   addIndividualCustomerReading,
   addBulkMeterReading,
@@ -767,7 +768,7 @@ export default function AdminMeterReadingsPage() {
         setActiveTab(val);
         if (val === 'analytics' || val === 'report') loadFullReadingsForAnalytics();
       }}>
-        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1.5 bg-slate-100/90 rounded-2xl h-auto gap-1 border border-slate-200/80 shadow-xs">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-3 lg:grid-cols-5 p-1.5 bg-slate-100/90 rounded-2xl h-auto gap-1 border border-slate-200/80 shadow-xs">
           <TabsTrigger 
             value="individual"
             className="rounded-xl data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
@@ -800,6 +801,13 @@ export default function AdminMeterReadingsPage() {
               </TabsTrigger>
             </>
           )}
+          <TabsTrigger 
+            value="corrections"
+            className="rounded-xl data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
+          >
+            <FileEdit className="h-4 w-4 mr-2" />
+            Reading Corrections
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="individual">
           <Card className="shadow-md border-slate-200/60 overflow-hidden">
@@ -846,7 +854,7 @@ export default function AdminMeterReadingsPage() {
                   No individual readings found for the selected period.
                 </div>
               ) : (
-                <MeterReadingsTable data={individualReadings} />
+                <MeterReadingsTable data={individualReadings} onReadingUpdated={() => { fetchReadings(); fetchMonthTotals(selectedMonthYear); }} />
               )}
             </CardContent>
             {individualTotalCount > 0 && (
@@ -908,7 +916,7 @@ export default function AdminMeterReadingsPage() {
                   No bulk readings found for the selected period.
                 </div>
               ) : (
-                <MeterReadingsTable data={bulkReadings} />
+                <MeterReadingsTable data={bulkReadings} onReadingUpdated={() => { fetchReadings(); fetchMonthTotals(selectedMonthYear); }} />
               )}
             </CardContent>
             {bulkTotalCount > 0 && (
@@ -956,6 +964,13 @@ export default function AdminMeterReadingsPage() {
             </TabsContent>
           </>
         )}
+        <TabsContent value="corrections" className="space-y-4">
+          <ReadingCorrectionsReportView 
+            isAdmin={true}
+            isEmbedded={true}
+            fullscreenUrl="/admin/reports/reading-corrections"
+          />
+        </TabsContent>
       </Tabs>
 
       {/* Manual entry dialog — shown for users with manual create permission */}

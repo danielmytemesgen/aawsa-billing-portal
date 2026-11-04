@@ -20,6 +20,7 @@ import {
     ArrowRight,
     TrendingUp,
     FileText,
+    FileEdit,
     RefreshCw,
     Download
 } from "lucide-react";
@@ -51,9 +52,10 @@ interface ReadingDetailsDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     reading: ReadingData | null;
+    onCorrectReading?: () => void;
 }
 
-export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDetailsDialogProps) {
+export function ReadingDetailsDialog({ open, onOpenChange, reading, onCorrectReading }: ReadingDetailsDialogProps) {
     const [photoData, setPhotoData] = React.useState<string | null>(null);
     const [isLoadingPhoto, setIsLoadingPhoto] = React.useState(false);
 
@@ -272,7 +274,20 @@ export function ReadingDetailsDialog({ open, onOpenChange, reading }: ReadingDet
                     </div>
                 </div>
 
-                <div className="p-4 bg-gray-50 border-t flex justify-end">
+                <div className="p-4 bg-gray-50 border-t flex items-center justify-between">
+                    {onCorrectReading ? (
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                onOpenChange(false);
+                                onCorrectReading();
+                            }}
+                            className="border-amber-300 text-amber-700 hover:bg-amber-50 font-bold"
+                        >
+                            <FileEdit className="mr-2 h-4 w-4 text-amber-600" />
+                            Correct This Reading
+                        </Button>
+                    ) : <div />}
                     <Button onClick={() => onOpenChange(false)} className="bg-blue-600 hover:bg-blue-700">
                         <CheckCircle2 className="mr-2 h-4 w-4" />
                         Close Details
