@@ -132,6 +132,13 @@ export const PERMISSIONS = {
     METER_READINGS_CREATE_INDIVIDUAL: 'meter_readings_create_individual',
     METER_READINGS_EDIT_RECALCULATE_VIEW: 'meter_readings_edit_recalculate_view',
     METER_READINGS_EDIT_RECALCULATE: 'meter_readings_edit_recalculate',
+    METER_READINGS_PERIOD_CONTROL: 'meter_readings_period_control',
+    METER_READINGS_PERIOD_VIEW: 'meter_readings_period_view',
+    METER_READINGS_EXPORT: 'meter_readings_export',
+    METER_READINGS_CORRECTIONS_VIEW: 'meter_readings_corrections_view',
+    METER_READINGS_CORRECT: 'meter_readings_correct',
+    METER_READINGS_SHIFT_MONTH: 'meter_readings_shift_month',
+    METER_READINGS_OFFLINE_METRICS: 'meter_readings_offline_metrics',
 
     // Data Entry
     DATA_ENTRY_ACCESS: 'data_entry_access',

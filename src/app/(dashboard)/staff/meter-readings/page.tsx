@@ -55,6 +55,7 @@ import { TablePagination } from "@/components/ui/table-pagination";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PERMISSIONS } from "@/lib/constants/auth";
+import { ReadingPeriodToggle } from "@/features/admin/components/reading-period-toggle";
 
 interface User {
   id?: string;
@@ -67,6 +68,27 @@ interface User {
 export default function StaffMeterReadingsPage() {
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
+
+  // ── RBAC: Computed permission flags ──────────────────────────────────────
+  const canViewAnalytics =
+    hasPermission(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW) ||
+    hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+    hasPermission('*') || hasPermission('all') || hasPermission('admin');
+  const canViewCorrections =
+    hasPermission(PERMISSIONS.METER_READINGS_CORRECTIONS_VIEW) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CORRECT) ||
+    hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+    hasPermission('*') || hasPermission('all') || hasPermission('admin');
+  const canExport =
+    hasPermission(PERMISSIONS.METER_READINGS_EXPORT) ||
+    hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
+    hasPermission('*') || hasPermission('all') || hasPermission('admin');
+  const canShiftMonth =
+    hasPermission(PERMISSIONS.METER_READINGS_SHIFT_MONTH) ||
+    hasPermission(PERMISSIONS.METER_READINGS_UPDATE) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+    hasPermission('*') || hasPermission('all') || hasPermission('admin');
+  // ─────────────────────────────────────────────────────────────────────────
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isIndividualCsvModalOpen, setIsIndividualCsvModalOpen] = React.useState(false);
   const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = React.useState(false);
@@ -82,8 +104,28 @@ export default function StaffMeterReadingsPage() {
     hasPermission('*') ||
     hasPermission('all');
 
-  const canViewIndividualReadings = hasGlobalReadingView || hasPermission(PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL);
-  const canViewBulkReadings = hasGlobalReadingView || hasPermission(PERMISSIONS.METER_READINGS_VIEW_BULK);
+  const canViewIndividualReadings =
+    hasGlobalReadingView ||
+    hasPermission(PERMISSIONS.METER_READINGS_VIEW_INDIVIDUAL) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+    hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
+  const canViewBulkReadings =
+    hasGlobalReadingView ||
+    hasPermission(PERMISSIONS.METER_READINGS_VIEW_BULK) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
+    hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
+    hasPermission(PERMISSIONS.ROUTES_VIEW_ASSIGNED);
+
+  // Determine which tabs are available, compute dynamic grid cols
+  const permittedTabs = [
+    canViewIndividualReadings && 'individual',
+    canViewBulkReadings && 'bulk',
+    canViewAnalytics && 'analytics',
+    canViewAnalytics && 'report',
+    canViewCorrections && 'corrections',
+  ].filter(Boolean) as string[];
+  const tabGridCols = Math.min(5, Math.max(1, permittedTabs.length));
 
   const [allCustomers, setAllCustomers] = React.useState<IndividualCustomer[]>([]);
   const [allBulkMeters, setAllBulkMeters] = React.useState<BulkMeter[]>([]);
@@ -138,12 +180,14 @@ export default function StaffMeterReadingsPage() {
   const [activeTab, setActiveTab] = React.useState("individual");
 
   React.useEffect(() => {
-    if (!canViewIndividualReadings && canViewBulkReadings) {
+    const firstAllowed = permittedTabs[0] || 'individual';
+    if (!permittedTabs.includes(activeTab)) {
+      setActiveTab(firstAllowed);
+    } else if (!canViewIndividualReadings && canViewBulkReadings) {
       setActiveTab("bulk");
-    } else if (canViewIndividualReadings) {
-      setActiveTab("individual");
     }
-  }, [canViewIndividualReadings, canViewBulkReadings]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permittedTabs.join(','), canViewIndividualReadings, canViewBulkReadings]);
 
   // Debounce search term by 350ms
   React.useEffect(() => {
@@ -477,7 +521,7 @@ export default function StaffMeterReadingsPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          {hasPermission('meter_readings_analytics_view') && (
+          {canViewAnalytics && (
             <div className="flex items-center gap-2">
               <Button
                 className={cn(
@@ -539,8 +583,7 @@ export default function StaffMeterReadingsPage() {
                   hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
                   hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) ||
                   hasPermission(PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV) ||
-                  hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) ||
-                  canViewIndividualReadings) && (
+                  hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS)) && (
                   <DropdownMenuItem onSelect={() => setIsIndividualCsvModalOpen(true)}>
                     <UploadCloud className="mr-2 h-4 w-4" />
                     <span>Upload Individual (CSV)</span>
@@ -550,8 +593,7 @@ export default function StaffMeterReadingsPage() {
                   hasPermission(PERMISSIONS.METER_READINGS_CREATE) ||
                   hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) ||
                   hasPermission(PERMISSIONS.DATA_ENTRY_BULK_CSV) ||
-                  hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS) ||
-                  canViewBulkReadings) && (
+                  hasPermission(PERMISSIONS.DATA_ENTRY_ACCESS)) && (
                   <DropdownMenuItem onSelect={() => setIsBulkCsvModalOpen(true)}>
                     <UploadCloud className="mr-2 h-4 w-4" />
                     <span>Upload Bulk (CSV)</span>
@@ -560,7 +602,16 @@ export default function StaffMeterReadingsPage() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          {canExport && (
+            <Button onClick={() => handleExportCsv(canViewIndividualReadings ? 'individual' : 'bulk')} className="bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-200">
+              <FileDown className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          )}
         </div>
+      </div>
+
+      <div className="w-full">
+        <ReadingPeriodToggle />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -639,7 +690,7 @@ export default function StaffMeterReadingsPage() {
         setActiveTab(val);
         if (val === 'analytics' || val === 'report') loadFullReadingsForAnalytics();
       }}>
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-3 lg:grid-cols-5 p-1.5 bg-slate-100/90 rounded-2xl h-auto gap-1 border border-slate-200/80 shadow-xs">
+        <TabsList className={`grid w-full grid-cols-2 md:grid-cols-${Math.max(2, tabGridCols)} lg:grid-cols-${tabGridCols} p-1.5 bg-slate-100/90 rounded-2xl h-auto gap-1 border border-slate-200/80 shadow-xs`}>
           {canViewIndividualReadings && (
             <TabsTrigger 
               value="individual"
@@ -658,7 +709,7 @@ export default function StaffMeterReadingsPage() {
               Bulk Readings ({bulkTotalCount})
             </TabsTrigger>
           )}
-          {hasPermission('meter_readings_analytics_view') && (
+          {canViewAnalytics && (
             <>
               <TabsTrigger 
                 value="analytics"
@@ -676,13 +727,15 @@ export default function StaffMeterReadingsPage() {
               </TabsTrigger>
             </>
           )}
-          <TabsTrigger 
-            value="corrections"
-            className="rounded-xl data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
-          >
-            <FileEdit className="h-4 w-4 mr-2" />
-            Reading Corrections
-          </TabsTrigger>
+          {canViewCorrections && (
+            <TabsTrigger 
+              value="corrections"
+              className="rounded-xl data-[state=active]:bg-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:hover:bg-slate-200/70 transition-all font-bold py-2.5 text-slate-600"
+            >
+              <FileEdit className="h-4 w-4 mr-2" />
+              Reading Corrections
+            </TabsTrigger>
+          )}
         </TabsList>
         {canViewIndividualReadings && (
           <TabsContent value="individual">
@@ -697,7 +750,8 @@ export default function StaffMeterReadingsPage() {
                     <CardDescription>View and manage all recorded readings for individual customers.</CardDescription>
                   </div>
                 </div>
-                <Button
+                {canExport && (
+<Button
                   variant="outline"
                   size="sm"
                   className="shrink-0 border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 gap-1.5"
@@ -707,6 +761,7 @@ export default function StaffMeterReadingsPage() {
                   <FileDown className="h-4 w-4" />
                   Export CSV ({individualTotalCount})
                 </Button>
+)}
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
                 {isTableLoading && individualReadings.length === 0 ? (
@@ -745,7 +800,8 @@ export default function StaffMeterReadingsPage() {
                     <CardDescription>View and manage all recorded readings for bulk meters.</CardDescription>
                   </div>
                 </div>
-                <Button
+                {canExport && (
+<Button
                   variant="outline"
                   size="sm"
                   className="shrink-0 border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 gap-1.5"
@@ -755,6 +811,7 @@ export default function StaffMeterReadingsPage() {
                   <FileDown className="h-4 w-4" />
                   Export CSV ({bulkTotalCount})
                 </Button>
+)}
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
                 {isTableLoading && bulkReadings.length === 0 ? (
@@ -780,7 +837,7 @@ export default function StaffMeterReadingsPage() {
             </Card>
           </TabsContent>
         )}
-        {hasPermission('meter_readings_analytics_view') && (
+        {canViewAnalytics && (
           <>
             <TabsContent value="analytics" className="space-y-4">
               {isAnalyticsLoading && allIndividualReadings.length === 0 ? (
@@ -812,6 +869,7 @@ export default function StaffMeterReadingsPage() {
             </TabsContent>
           </>
         )}
+        {canViewCorrections && (
         <TabsContent value="corrections" className="space-y-4">
           <ReadingCorrectionsReportView 
             isAdmin={false}
@@ -819,6 +877,7 @@ export default function StaffMeterReadingsPage() {
             fullscreenUrl="/staff/reports/reading-corrections"
           />
         </TabsContent>
+        )}
       </Tabs>
 
       {/* Manual entry dialog — shown for users with manual create permission */}

@@ -355,7 +355,23 @@ export async function updateReadingPeriodStatusAction(
 ) {
   const session = await getSession();
   if (!session || !session.id) {
-    throw new Error("Unauthorized: Invalid session");
+    throw new Error('Unauthorized: Invalid session');
+  }
+  // Enforce granular RBAC: only meter_readings_period_control, settings_manage, or superadmin may update
+  const periodPerms = await dbGetStaffPermissions(session.id);
+  const canControlPeriod =
+    periodPerms.includes('meter_readings_period_control') ||
+    periodPerms.includes('settings_manage') ||
+    periodPerms.includes('*') ||
+    periodPerms.includes('all') ||
+    periodPerms.includes('admin');
+  if (!canControlPeriod) {
+    await logPermissionDenial(
+      'Missing meter_readings_period_control permission',
+      'meter_readings_period_control',
+      { ...session, permissions: periodPerms }
+    );
+    throw new Error('Forbidden: You do not have permission to modify the meter reading period settings.');
   }
   await dbUpdateSystemSetting('reading_period_status', status);
 
@@ -3477,7 +3493,19 @@ export async function batchCreateIndividualCustomerReadingsAction(
 
 export async function updateIndividualCustomerReadingAction(id: string, reading: IndividualCustomerReadingUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.METER_READINGS_UPDATE);
+    const session = await getSession();
+    if (!session || !session.id) throw new Error("Unauthorized: Invalid session");
+    const perms = await dbGetStaffPermissions(session.id);
+    const canCorrect =
+      perms.includes(PERMISSIONS.METER_READINGS_CORRECT) ||
+      perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
+      perms.includes('*') ||
+      perms.includes('all') ||
+      perms.includes('admin');
+    if (!canCorrect) {
+      await logPermissionDenial('Missing meter_readings_correct permission', PERMISSIONS.METER_READINGS_CORRECT, { ...session, permissions: perms });
+      throw new Error("Forbidden: Missing permission to correct meter readings.");
+    }
     // Fetch the reading to get its CUST_KEY, then verify branch ownership
     const rows: any = await query(
       'SELECT "CUST_KEY" FROM individual_customer_readings WHERE id = $1 AND deleted_at IS NULL LIMIT 1',
@@ -3873,7 +3901,8 @@ export async function previewShiftReadingMonthAction(params: {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
-    const canManage = perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
+    const canManage = perms.includes(PERMISSIONS.METER_READINGS_SHIFT_MONTH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
       perms.includes(PERMISSIONS.METER_READINGS_CREATE) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL);
     if (!canManage) throw new Error('Forbidden: Missing permission to manage meter readings');
@@ -3894,7 +3923,8 @@ export async function executeShiftReadingMonthAction(params: {
     const session = await getSession();
     if (!session || !session.id) throw new Error('Unauthorized');
     const perms = session.permissions || [];
-    const canManage = perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
+    const canManage = perms.includes(PERMISSIONS.METER_READINGS_SHIFT_MONTH) ||
+      perms.includes(PERMISSIONS.METER_READINGS_UPDATE) ||
       perms.includes(PERMISSIONS.METER_READINGS_CREATE);
     if (!canManage) throw new Error('Forbidden: Missing permission to update meter readings');
 
@@ -9591,7 +9621,7 @@ export async function correctMeterReadingAction(payload: {
       }
     } else {
       const qRes: any = await query(
-        `SELECT r.*, bm.name as customer_name, bm.meter_number, bm.branch_id, bm."ROUTE_KEY" as route_key, b.name as branch_name
+        `SELECT r.*, bm.name as customer_name, bm."METER_KEY" as meter_number, bm.branch_id, bm."ROUTE_KEY" as route_key, b.name as branch_name
          FROM bulk_meter_readings r
          LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
          LEFT JOIN branches b ON bm.branch_id = b.id
@@ -9601,7 +9631,7 @@ export async function correctMeterReadingAction(payload: {
       origRow = qRes?.[0] || qRes?.rows?.[0];
       if (!origRow && payload.customerKey) {
         const altRes: any = await query(
-          `SELECT r.*, bm.name as customer_name, bm.meter_number, bm.branch_id, bm."ROUTE_KEY" as route_key, b.name as branch_name
+          `SELECT r.*, bm.name as customer_name, bm."METER_KEY" as meter_number, bm.branch_id, bm."ROUTE_KEY" as route_key, b.name as branch_name
            FROM bulk_meter_readings r
            LEFT JOIN bulk_meters bm ON r."CUST_KEY" = bm."customerKeyNumber"
            LEFT JOIN branches b ON bm.branch_id = b.id
@@ -9631,11 +9661,11 @@ export async function correctMeterReadingAction(payload: {
     // Update reading and master table inside transaction
     await withTransaction(async (client) => {
       if (payload.meterType === 'individual') {
-        await client.query(
+                await client.query(
           `UPDATE individual_customer_readings 
-           SET "METER_READING" = $1, "PREVIOUS_READING" = $2, "FAULT_CODE" = $3, notes = COALESCE($4, notes), updated_at = NOW() 
-           WHERE id = $5`,
-          [payload.newCurrentReading, payload.newPreviousReading, payload.newFaultCode || null, payload.notes || null, origRow.id]
+           SET "METER_READING" = $1, "PREVIOUS_READING" = $2, "FAULT_CODE" = COALESCE($3, "FAULT_CODE") 
+           WHERE id = $4`,
+          [payload.newCurrentReading, payload.newPreviousReading, payload.newFaultCode || null, origRow.id]
         );
         await client.query(
           `UPDATE individual_customers 
@@ -9644,11 +9674,11 @@ export async function correctMeterReadingAction(payload: {
           [payload.newPreviousReading, payload.newCurrentReading, payload.monthYear || null, payload.customerKey]
         );
       } else {
-        await client.query(
+                await client.query(
           `UPDATE bulk_meter_readings 
-           SET "METER_READING" = $1, "PREVIOUS_READING" = $2, "FAULT_CODE" = $3, notes = COALESCE($4, notes), updated_at = NOW() 
-           WHERE id = $5`,
-          [payload.newCurrentReading, payload.newPreviousReading, payload.newFaultCode || null, payload.notes || null, origRow.id]
+           SET "METER_READING" = $1, "PREVIOUS_READING" = $2, "FAULT_CODE" = COALESCE($3, "FAULT_CODE") 
+           WHERE id = $4`,
+          [payload.newCurrentReading, payload.newPreviousReading, payload.newFaultCode || null, origRow.id]
         );
         await client.query(
           `UPDATE bulk_meters 
@@ -9736,6 +9766,8 @@ export async function getReadingCorrectionsAction(options: {
     const session = await checkPermission();
     const perms = session.permissions || [];
     const hasPerm = perms.includes('*') || perms.includes('all') || perms.includes('admin') ||
+      perms.includes(PERMISSIONS.METER_READINGS_CORRECTIONS_VIEW) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CORRECT) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
       perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) ||
@@ -9765,6 +9797,8 @@ export async function getReadingCorrectionKPIsAction(options: {
     const session = await checkPermission();
     const perms = session.permissions || [];
     const hasPerm = perms.includes('*') || perms.includes('all') || perms.includes('admin') ||
+      perms.includes(PERMISSIONS.METER_READINGS_CORRECTIONS_VIEW) ||
+      perms.includes(PERMISSIONS.METER_READINGS_CORRECT) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
       perms.includes(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
       perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) ||

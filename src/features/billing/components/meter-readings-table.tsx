@@ -28,7 +28,9 @@ interface MeterReadingsTableProps {
 const MeterReadingsTable: React.FC<MeterReadingsTableProps> = ({ data, onReadingUpdated }) => {
   const { hasPermission } = usePermissions();
   const canCorrectReading =
+    hasPermission(PERMISSIONS.METER_READINGS_CORRECT) ||
     hasPermission(PERMISSIONS.METER_READINGS_UPDATE) ||
+    hasPermission("meter_readings_correct") ||
     hasPermission("meter_readings_update") ||
     hasPermission("admin") ||
     hasPermission("*") ||

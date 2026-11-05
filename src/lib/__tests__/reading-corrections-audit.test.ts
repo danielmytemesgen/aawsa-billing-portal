@@ -65,6 +65,8 @@ describe('Meter Reading Corrections Audit & Verification', () => {
       if (isWildcard) return true;
 
       return (
+        permissions.has(PERMISSIONS.METER_READINGS_CORRECTIONS_VIEW) ||
+        permissions.has(PERMISSIONS.METER_READINGS_CORRECT) ||
         permissions.has(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
         permissions.has(PERMISSIONS.METER_READINGS_VIEW_BRANCH) ||
         permissions.has(PERMISSIONS.REPORTS_GENERATE_ALL) ||

@@ -7,26 +7,45 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getReadingPeriodDetailsAction, updateReadingPeriodStatusAction, updateReadingPeriodDetailsAction, ReadingPeriodStatus } from "@/lib/actions";
+import { getReadingPeriodDetailsAction, updateReadingPeriodStatusAction, ReadingPeriodStatus } from "@/lib/actions";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, AlertTriangle, Lock as LockIcon, Unlock, Calendar, Clock, Save, CheckCircle2 } from "lucide-react";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
+import { Loader2, AlertTriangle, Lock as LockIcon, Unlock, Calendar, Clock, Save, CheckCircle2, Eye } from "lucide-react";
 
 export function ReadingPeriodToggle() {
-    const [status, setStatus] = React.useState<ReadingPeriodStatus>('Open');
-    const [startDate, setStartDate] = React.useState<string>('');
-    const [endDate, setEndDate] = React.useState<string>('');
-    const [isLoading, setIsLoading] = React.useState(true);
-    const [isUpdating, setIsUpdating] = React.useState(false);
+    const { hasPermission } = usePermissions();
     const { toast } = useToast();
 
+    // Permission flags — evaluated from hook
+    const canControl =
+        hasPermission(PERMISSIONS.METER_READINGS_PERIOD_CONTROL) ||
+        hasPermission(PERMISSIONS.SETTINGS_MANAGE) ||
+        hasPermission("*") ||
+        hasPermission("all") ||
+        hasPermission("admin");
+    const canView =
+        canControl ||
+        hasPermission(PERMISSIONS.METER_READINGS_PERIOD_VIEW);
+
+    const [status, setStatus] = React.useState<ReadingPeriodStatus>("Open");
+    const [startDate, setStartDate] = React.useState<string>("");
+    const [endDate, setEndDate] = React.useState<string>("");
+    const [isLoading, setIsLoading] = React.useState(true);
+    const [isUpdating, setIsUpdating] = React.useState(false);
+
     React.useEffect(() => {
+        if (!canView) {
+            setIsLoading(false);
+            return;
+        }
         const fetchDetails = async () => {
             try {
                 const details = await getReadingPeriodDetailsAction();
                 if (details) {
-                    setStatus(details.status || 'Open');
-                    setStartDate(details.startDate || '');
-                    setEndDate(details.endDate || '');
+                    setStatus(details.status || "Open");
+                    setStartDate(details.startDate || "");
+                    setEndDate(details.endDate || "");
                 }
             } catch (error) {
                 console.error("Failed to fetch reading period details:", error);
@@ -35,40 +54,43 @@ export function ReadingPeriodToggle() {
             }
         };
         fetchDetails();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleSave = async () => {
+        if (!canControl) {
+            toast({ title: "Access Denied", description: "You do not have permission to modify reading period settings.", variant: "destructive" });
+            return;
+        }
         setIsUpdating(true);
         try {
-            if (typeof updateReadingPeriodStatusAction === 'function') {
-                await updateReadingPeriodStatusAction(status, startDate, endDate);
-            } else if (typeof updateReadingPeriodDetailsAction === 'function') {
-                await updateReadingPeriodDetailsAction({ status, startDate, endDate });
-            } else {
-                const { updateReadingPeriodStatusAction: dynamicAction } = await import('@/lib/actions');
-                await dynamicAction(status, startDate, endDate);
-            }
+            await updateReadingPeriodStatusAction(status, startDate, endDate);
             const freshDetails = await getReadingPeriodDetailsAction();
             if (freshDetails) {
                 setStatus(freshDetails.status);
-                setStartDate(freshDetails.startDate || '');
-                setEndDate(freshDetails.endDate || '');
+                setStartDate(freshDetails.startDate || "");
+                setEndDate(freshDetails.endDate || "");
             }
             toast({
                 title: "Reading Period Updated",
                 description: `Status is now "${freshDetails?.status || status}". Active cycle: ${freshDetails?.startDate || startDate} to ${freshDetails?.endDate || endDate}.`,
-                variant: "default"
+                variant: "default",
             });
         } catch (error: any) {
             toast({
                 title: "Update Failed",
                 description: error.message || "Failed to update reading period details.",
-                variant: "destructive"
+                variant: "destructive",
             });
         } finally {
             setIsUpdating(false);
         }
     };
+
+    // Completely hidden if user has neither view nor control permission
+    if (!canView) {
+        return null;
+    }
 
     if (isLoading) {
         return (
@@ -81,13 +103,13 @@ export function ReadingPeriodToggle() {
     }
 
     const getStatusCardBg = () => {
-        if (status === 'Open') return 'bg-emerald-50/50 border-emerald-200';
-        if (status === 'Ready for New Reading') return 'bg-amber-50/50 border-amber-200';
-        return 'bg-red-50/50 border-red-200';
+        if (status === "Open") return "bg-emerald-50/50 border-emerald-200";
+        if (status === "Ready for New Reading") return "bg-amber-50/50 border-amber-200";
+        return "bg-red-50/50 border-red-200";
     };
 
     const getStatusBadge = () => {
-        if (status === 'Open') {
+        if (status === "Open") {
             return (
                 <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-700 gap-1.5 px-3 py-1 text-xs">
                     <Unlock className="h-3.5 w-3.5" />
@@ -95,7 +117,7 @@ export function ReadingPeriodToggle() {
                 </Badge>
             );
         }
-        if (status === 'Ready for New Reading') {
+        if (status === "Ready for New Reading") {
             return (
                 <Badge variant="secondary" className="bg-amber-500 text-white hover:bg-amber-600 gap-1.5 px-3 py-1 text-xs">
                     <Clock className="h-3.5 w-3.5" />
@@ -116,19 +138,26 @@ export function ReadingPeriodToggle() {
             <CardHeader className="pb-3 border-b bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        {status === 'Open' ? (
+                        {status === "Open" ? (
                             <Unlock className="h-5 w-5 text-emerald-600" />
-                        ) : status === 'Ready for New Reading' ? (
+                        ) : status === "Ready for New Reading" ? (
                             <Clock className="h-5 w-5 text-amber-600" />
                         ) : (
                             <LockIcon className="h-5 w-5 text-red-600" />
                         )}
                         <CardTitle className="text-lg font-bold">Meter Reading Period Control</CardTitle>
+                        {!canControl && (
+                            <Badge variant="outline" className="ml-2 text-xs gap-1 text-slate-500 border-slate-300">
+                                <Eye className="h-3 w-3" /> View Only
+                            </Badge>
+                        )}
                     </div>
                     {getStatusBadge()}
                 </div>
                 <CardDescription>
-                    Configure the current meter reading period status, start date, and end date saved in system settings.
+                    {canControl
+                        ? "Configure the current meter reading period status, start date, and end date saved in system settings."
+                        : "Current meter reading period schedule (read-only — contact an administrator to change these settings)."}
                 </CardDescription>
             </CardHeader>
             <CardContent className="pt-5 space-y-5">
@@ -140,21 +169,27 @@ export function ReadingPeriodToggle() {
                                 Reading Period Status
                             </Label>
                             <p className="text-sm text-muted-foreground">
-                                {status === 'Open' && "Readers can currently access assigned routes and submit meter readings."}
-                                {status === 'Closed' && "Field reading is locked. Readers cannot submit new readings."}
-                                {status === 'Ready for New Reading' && "Period is prepared and ready for upcoming meter reading cycle."}
+                                {status === "Open" && "Readers can currently access assigned routes and submit meter readings."}
+                                {status === "Closed" && "Field reading is locked. Readers cannot submit new readings."}
+                                {status === "Ready for New Reading" && "Period is prepared and ready for upcoming meter reading cycle."}
                             </p>
                         </div>
-                        <Select value={status} onValueChange={(val) => setStatus(val as ReadingPeriodStatus)}>
-                            <SelectTrigger id="reading-status-select" className="w-full sm:w-[220px] bg-white dark:bg-slate-800">
-                                <SelectValue placeholder="Select Status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="Open">🟢 Open (Active)</SelectItem>
-                                <SelectItem value="Ready for New Reading">🟡 Ready for New Reading</SelectItem>
-                                <SelectItem value="Closed">🔴 Closed (Locked)</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        {canControl ? (
+                            <Select value={status} onValueChange={(val) => setStatus(val as ReadingPeriodStatus)}>
+                                <SelectTrigger id="reading-status-select" className="w-full sm:w-[220px] bg-white dark:bg-slate-800">
+                                    <SelectValue placeholder="Select Status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="Open">🟢 Open (Active)</SelectItem>
+                                    <SelectItem value="Ready for New Reading">🟡 Ready for New Reading</SelectItem>
+                                    <SelectItem value="Closed">🔴 Closed (Locked)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        ) : (
+                            <div className="text-sm font-semibold text-slate-700 px-3 py-1 bg-slate-100 rounded-lg border border-slate-200 w-full sm:w-[220px] text-center">
+                                {status}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -165,13 +200,19 @@ export function ReadingPeriodToggle() {
                             <Calendar className="h-4 w-4 text-blue-600" />
                             Reading Start Date (Auto-Recurring)
                         </Label>
-                        <Input
-                            id="reading-start-date"
-                            type="date"
-                            value={startDate}
-                            onChange={(e) => setStartDate(e.target.value)}
-                            className="bg-white dark:bg-slate-800"
-                        />
+                        {canControl ? (
+                            <Input
+                                id="reading-start-date"
+                                type="date"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                className="bg-white dark:bg-slate-800"
+                            />
+                        ) : (
+                            <div className="text-sm font-mono font-bold text-slate-800 px-3 py-2 bg-slate-50 rounded border border-slate-200">
+                                {startDate || "—"}
+                            </div>
+                        )}
                         <p className="text-xs text-muted-foreground">Start date of reading cycle (Day {startDate ? parseInt(startDate.slice(8, 10)) : 1} of every month).</p>
                     </div>
 
@@ -180,13 +221,19 @@ export function ReadingPeriodToggle() {
                             <Calendar className="h-4 w-4 text-blue-600" />
                             Reading End Date (Auto-Recurring)
                         </Label>
-                        <Input
-                            id="reading-end-date"
-                            type="date"
-                            value={endDate}
-                            onChange={(e) => setEndDate(e.target.value)}
-                            className="bg-white dark:bg-slate-800"
-                        />
+                        {canControl ? (
+                            <Input
+                                id="reading-end-date"
+                                type="date"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                className="bg-white dark:bg-slate-800"
+                            />
+                        ) : (
+                            <div className="text-sm font-mono font-bold text-slate-800 px-3 py-2 bg-slate-50 rounded border border-slate-200">
+                                {endDate || "—"}
+                            </div>
+                        )}
                         <p className="text-xs text-muted-foreground">End date of reading cycle (Day {endDate ? parseInt(endDate.slice(8, 10)) : 20} of every month).</p>
                     </div>
                 </div>
@@ -199,16 +246,16 @@ export function ReadingPeriodToggle() {
                 </div>
 
                 {/* Notice alerts */}
-                {status === 'Closed' && (
+                {status === "Closed" && (
                     <div className="p-3 bg-red-100/60 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-md flex gap-3 text-red-900 dark:text-red-200 text-sm">
                         <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
                         <p>
-                            <strong>Notice:</strong> Locking the period hides assigned routes from field readers' mobile applications.
+                            <strong>Notice:</strong> Locking the period hides assigned routes from field readers&apos; mobile applications.
                         </p>
                     </div>
                 )}
 
-                {status === 'Ready for New Reading' && (
+                {status === "Ready for New Reading" && (
                     <div className="p-3 bg-amber-100/60 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-md flex gap-3 text-amber-900 dark:text-amber-200 text-sm">
                         <Clock className="h-5 w-5 shrink-0 text-amber-600" />
                         <p>
@@ -217,13 +264,15 @@ export function ReadingPeriodToggle() {
                     </div>
                 )}
 
-                {/* Save Button Action */}
-                <div className="flex justify-end pt-2">
-                    <Button onClick={handleSave} disabled={isUpdating} className="gap-2 bg-blue-600 hover:bg-blue-700">
-                        {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                        {isUpdating ? 'Saving Changes...' : 'Save Reading Period Settings'}
-                    </Button>
-                </div>
+                {/* Save Button — only rendered for users with control permission */}
+                {canControl && (
+                    <div className="flex justify-end pt-2">
+                        <Button onClick={handleSave} disabled={isUpdating} className="gap-2 bg-blue-600 hover:bg-blue-700">
+                            {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                            {isUpdating ? "Saving Changes..." : "Save Reading Period Settings"}
+                        </Button>
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
