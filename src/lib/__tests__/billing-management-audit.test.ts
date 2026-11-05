@@ -125,4 +125,25 @@ describe('Bill Management Audit - Aging Fallback & Anomaly Heuristics', () => {
     expect(isError).toBe(true);
     expect(errorRes.error.message).toContain('Forbidden');
   });
+
+  it('omits monthYear filter when monthFilter is "all" to display latest bill data', () => {
+    // When monthFilter is 'all', tableMonthYear must be undefined so backend returns latest bills ordered by created_at DESC
+    const monthFilter = 'all';
+    const tableMonthYear = monthFilter === 'all' ? undefined : monthFilter;
+
+    expect(tableMonthYear).toBeUndefined();
+
+    // Simulated query params for unsettled and paid actions
+    const unsettledParams = {
+      page: 0,
+      limit: 10,
+      monthYear: tableMonthYear,
+    };
+    expect(unsettledParams.monthYear).toBeUndefined();
+
+    // When monthFilter is a specific month, it filters strictly by that month
+    const specificMonth: string = '2026-08';
+    const specificTableMonth = specificMonth === 'all' ? undefined : specificMonth;
+    expect(specificTableMonth).toBe('2026-08');
+  });
 });

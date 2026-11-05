@@ -144,6 +144,8 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         PERMISSIONS.BILL_REWORK,
         PERMISSIONS.BILL_UPDATE,
         PERMISSIONS.BILL_DELETE,
+        PERMISSIONS.BILL_SUBMIT,
+        PERMISSIONS.BILL_CORRECT,
         PERMISSIONS.BILL_CLOSE_CYCLE
     );
     if (canAccessBillManagement) {
@@ -536,19 +538,28 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
     const permissionsValue: PermissionsContextType = React.useMemo(() => {
         const permSet = new Set(user?.permissions || []);
         const isWildcard = permSet.has('*') || permSet.has('all');
+        const hasBillManageAll = permSet.has('bill:manage_all');
         return {
             permissions: permSet,
             hasPermission: (permission: string) => {
                 if (!user) return false;
-                return isWildcard || permSet.has(permission);
+                if (isWildcard) return true;
+                if (hasBillManageAll && (permission.startsWith('bill:') || permission === 'billing:close_cycle')) return true;
+                return permSet.has(permission);
             },
             hasAnyPermission: (...pList: string[]) => {
                 if (!user) return false;
-                return isWildcard || pList.some(p => permSet.has(p));
+                if (isWildcard) return true;
+                if (hasBillManageAll && pList.some(p => p.startsWith('bill:') || p === 'billing:close_cycle')) return true;
+                return pList.some(p => permSet.has(p));
             },
             hasAllPermissions: (...pList: string[]) => {
                 if (!user) return false;
-                return isWildcard || pList.every(p => permSet.has(p));
+                if (isWildcard) return true;
+                return pList.every(p => {
+                    if (hasBillManageAll && (p.startsWith('bill:') || p === 'billing:close_cycle')) return true;
+                    return permSet.has(p);
+                });
             },
             refreshPermissions
         };

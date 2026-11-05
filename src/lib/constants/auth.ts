@@ -110,6 +110,7 @@ export const PERMISSIONS = {
     BILL_CREATE: 'bill:create',
     BILL_UPDATE: 'bill:update',
     BILL_DELETE: 'bill:delete',
+    BILL_SUBMIT: 'bill:submit',
     BILL_APPROVE: 'bill:approve',
     BILL_POST: 'bill:post',
     BILL_SEND: 'bill:send',

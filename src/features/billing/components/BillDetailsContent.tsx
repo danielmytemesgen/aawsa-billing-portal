@@ -1271,7 +1271,8 @@ export function BillDetailsContent({ basePath = '/staff/bill-management' }: { ba
     };
 
     const canEdit = (bill.status === 'Draft' || bill.status === 'Rework') &&
-      (hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
+      (checkBillPermission(PERMISSIONS.BILL_UPDATE) ||
+       hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS_VIEW) ||
        hasPermission(PERMISSIONS.BULK_METERS_EDIT_READINGS) ||
        hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE_VIEW) ||
        hasPermission(PERMISSIONS.METER_READINGS_EDIT_RECALCULATE));

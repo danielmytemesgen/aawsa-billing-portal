@@ -242,19 +242,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 console.warn('Failed to read penalty_enabled from tariffs:', tariffErr);
             }
 
-            if (effectiveMonth === 'all') {
-                const distinctRes = await getDistinctBillingMonthsAction();
-                if (distinctRes.data) {
-                    const months = Array.from(new Set(distinctRes.data as string[]))
-                        .filter(Boolean)
-                        .sort()
-                        .reverse();
-                    if (months.length > 0) {
-                        effectiveMonth = months[0];
-                        setMonthFilter(months[0]);
-                    }
-                }
-            }
+            // Keep monthFilter as 'all' by default so Outstanding and Paid tables display all latest bill data
 
             let billsRes: any;
             if (effectiveMonth !== 'all') {
@@ -391,7 +379,21 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     const canViewPaid = hasPermission('bill:view_paid') || hasPermission('bill:manage_all');
     const canViewUnpaid = hasPermission('bill:view_awaiting_payment') || hasPermission('bill:view_overdue') || hasPermission('bill:manage_all');
 
-    const canAccessPage = canViewDrafts || canViewPending || canViewRework || canViewApproved || canViewPaid || canViewUnpaid;
+    const canSubmitBills = hasPermission('bill:submit') || hasPermission('bill:create') || hasPermission('bill:manage_all');
+    const canApproveBills = hasPermission('bill:approve') || hasPermission('bill:manage_all');
+    const canPostBills = hasPermission('bill:post') || hasPermission('bill:send') || hasPermission('bill:manage_all');
+
+    const canSeeOutstandingTable = canViewUnpaid || canManagePayment || hasPermission('bill:view_branch') || hasPermission('bill:manage_all');
+    const canSeePaidBillsTable = canViewPaid || canManagePayment || hasPermission('bill:view_branch') || hasPermission('bill:manage_all');
+
+    const canDispute = hasPermission(PERMISSIONS.BILL_UPDATE)
+        || hasPermission(PERMISSIONS.BILL_REWORK)
+        || hasPermission(PERMISSIONS.BILL_CORRECT)
+        || hasPermission(PERMISSIONS.SUPPORT_CREATE)
+        || hasPermission(PERMISSIONS.SUPPORT_MANAGE)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    const canAccessPage = canViewDrafts || canViewPending || canViewRework || canViewApproved || canViewPaid || canViewUnpaid || hasPermission('bill:view_branch') || hasPermission('bill:manage_all');
 
     // Generate the Reconstructed History Map for all bills
     // so the table can display the aging buckets accurately
@@ -822,7 +824,9 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
     React.useEffect(() => {
         if (!canAccessPage) return;
-        if (!effectiveMonthYear && monthFilter !== 'all') return;
+
+        // When monthFilter is 'all', query without month restriction so latest bill data displays
+        const tableMonthYear = monthFilter === 'all' ? undefined : monthFilter;
 
         const fetchOutstanding = async () => {
             setOutstandingLoading(true);
@@ -832,7 +836,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     limit: itemsPerPage,
                     searchTerm: normalizedSearchTerm,
                     branchId: effectiveBranchId,
-                    monthYear: effectiveMonthYear,
+                    monthYear: tableMonthYear,
                     statusFilter,
                 });
                 if (res.success) {
@@ -854,7 +858,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     limit: paidItemsPerPage,
                     searchTerm: normalizedSearchTerm,
                     branchId: effectiveBranchId,
-                    monthYear: effectiveMonthYear,
+                    monthYear: tableMonthYear,
                 });
                 if (res.success) {
                     setPaidBills(res.bills || []);
@@ -869,13 +873,13 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
         refreshAllRef.current = () => {
             loadData();
-            fetchOutstanding();
-            fetchPaid();
+            if (canSeeOutstandingTable) fetchOutstanding();
+            if (canSeePaidBillsTable) fetchPaid();
         };
 
-        fetchOutstanding();
-        fetchPaid();
-    }, [effectiveMonthYear, effectiveBranchId, normalizedSearchTerm, statusFilter, currentPage, itemsPerPage, paidCurrentPage, paidItemsPerPage, monthFilter, canAccessPage]);
+        if (canSeeOutstandingTable) fetchOutstanding();
+        if (canSeePaidBillsTable) fetchPaid();
+    }, [monthFilter, effectiveBranchId, normalizedSearchTerm, statusFilter, currentPage, itemsPerPage, paidCurrentPage, paidItemsPerPage, canAccessPage, canSeeOutstandingTable, canSeePaidBillsTable]);
 
     // Auto-refresh: re-fetch bills, outstanding bills, and paid bills when DataRefreshProvider signals new data
     React.useEffect(() => {
@@ -1046,30 +1050,30 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     <p className="text-muted-foreground mt-1">Review, approve and track billing workflow across branches.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    {isAdmin && (
-                        <>
-                            <Button
-                                variant="outline"
-                                className="h-10 border-blue-200 bg-blue-50/60 hover:bg-blue-100/80 text-blue-900 shadow-sm gap-2 font-semibold"
-                                onClick={() => setSmartAuditOpen(true)}
-                            >
-                                <ShieldCheck className="h-4 w-4 text-blue-600" />
-                                Audit & Inspection
-                                {pendingApprovals.length > 0 && (
-                                    <Badge className="h-5 px-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold">
-                                        {pendingApprovals.length} Pending
-                                    </Badge>
-                                )}
-                            </Button>
-                            <Button 
-                                variant="outline" 
-                                className="h-10 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 shadow-sm gap-1.5"
-                                onClick={() => setIsBulkDeleteDialogOpen(true)}
-                            >
-                                <Trash2 className="h-4 w-4" />
-                                Reset / Delete Batch
-                            </Button>
-                        </>
+                    {(isAdmin || hasPermission('bill:manage_all') || hasPermission('bill:approve')) && (
+                        <Button
+                            variant="outline"
+                            className="h-10 border-blue-200 bg-blue-50/60 hover:bg-blue-100/80 text-blue-900 shadow-sm gap-2 font-semibold"
+                            onClick={() => setSmartAuditOpen(true)}
+                        >
+                            <ShieldCheck className="h-4 w-4 text-blue-600" />
+                            Audit & Inspection
+                            {pendingApprovals.length > 0 && (
+                                <Badge className="h-5 px-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold">
+                                    {pendingApprovals.length} Pending
+                                </Badge>
+                            )}
+                        </Button>
+                    )}
+                    {(isAdmin || hasPermission('bill:manage_all') || hasPermission('bill:delete')) && (
+                        <Button 
+                            variant="outline" 
+                            className="h-10 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 shadow-sm gap-1.5"
+                            onClick={() => setIsBulkDeleteDialogOpen(true)}
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            Reset / Delete Batch
+                        </Button>
                     )}
                     {hasPermission('billing:close_cycle') && (
                         <Button className="h-10 bg-blue-600 hover:bg-blue-700 shadow-sm" onClick={() => setIsCycleDialogOpen(true)}>
@@ -1204,11 +1208,12 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                 postedCount={postedBillsCount}
                 role={role}
                 basePath={basePath}
+                showDrafts={canViewDrafts || canViewRework}
                 showApprovals={canViewPending}
                 showReadyToPost={canViewApproved}
-                onSubmitAll={canViewDrafts ? handleSubmitAll : undefined}
-                onApproveAll={canViewPending ? handleApproveAll : undefined}
-                onPostAll={canViewApproved ? handlePostAll : undefined}
+                onSubmitAll={(canViewDrafts && canSubmitBills) ? handleSubmitAll : undefined}
+                onApproveAll={(canViewPending && canApproveBills) ? handleApproveAll : undefined}
+                onPostAll={(canViewApproved && canPostBills) ? handlePostAll : undefined}
             />
 
             {/* Aging Summary & Quick Filters */}
@@ -1231,9 +1236,11 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                         <CardTitle className="text-sm font-bold uppercase tracking-wider text-gray-600 flex items-center gap-2">
                             <Filter className="h-4 w-4" /> Search & Smart Filters
                         </CardTitle>
-                        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleExportCSV}>
-                            <Download className="mr-2 h-3.5 w-3.5" /> Export CSV
-                        </Button>
+                        {(hasPermission('bill:view_branch') || hasPermission('bill:manage_all') || canSeeOutstandingTable || canSeePaidBillsTable) && (
+                            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleExportCSV}>
+                                <Download className="mr-2 h-3.5 w-3.5" /> Export CSV
+                            </Button>
+                        )}
                     </CardHeader>
                     <CardContent className="pt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="relative">
@@ -1285,14 +1292,16 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                                             const value = format(date, 'yyyy-MM');
                                             setMonthFilter(value);
                                             setCurrentPage(0);
+                                            setPaidCurrentPage(0);
                                             loadData({ branchFilter, monthFilter: value });
                                         } else {
                                             setMonthFilter('all');
                                             setCurrentPage(0);
+                                            setPaidCurrentPage(0);
                                             loadData({ branchFilter, monthFilter: 'all' });
                                         }
                                     }}
-                                    placeholder="Select Month"
+                                    placeholder="Filter by Month (All Months)"
                                 />
                                 {monthFilter !== 'all' && (
                                     <Button
@@ -1316,6 +1325,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
             </div>
 
 
+            {canSeeOutstandingTable && (
             <Card className="shadow-sm border-gray-100 overflow-hidden">
                 <CardHeader className="bg-gray-50/50 flex flex-row items-center justify-between border-b border-gray-100 py-3 px-5">
                     <CardTitle className="text-base font-bold text-gray-700">Outstanding Bills Table</CardTitle>
@@ -1335,7 +1345,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                             <BillTable
                                 bills={outstandingBills}
                                 onDelete={handleDelete}
-                                onDispute={handleDisputeClick}
+                                onDispute={canDispute ? handleDisputeClick : undefined}
                                 onEditPaymentStatus={canManagePayment ? ((b) => { setEditingPaymentBill(b); setIsEditPaymentOpen(true); }) : undefined}
                                 router={router}
                                 basePath={basePath}
@@ -1369,8 +1379,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     )}
                 </CardContent>
             </Card>
+            )}
 
             {/* Paid Bills Table */}
+            {canSeePaidBillsTable && (
             <Card className="shadow-sm border-gray-100 overflow-hidden">
                 <CardHeader className="bg-blue-50/30 flex flex-row items-center justify-between border-b border-gray-100 py-3 px-5">
                     <CardTitle className="text-base font-bold text-blue-800 flex items-center gap-2">
@@ -1392,7 +1404,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                             <BillTable
                                 bills={paidBills}
                                 onDelete={handleDelete}
-                                onDispute={handleDisputeClick}
+                                onDispute={canDispute ? handleDisputeClick : undefined}
                                 onEditPaymentStatus={canManagePayment ? ((b) => { setEditingPaymentBill(b); setIsEditPaymentOpen(true); }) : undefined}
                                 router={router}
                                 basePath={basePath}
@@ -1426,6 +1438,7 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
                     )}
                 </CardContent>
             </Card>
+            )}
 
             <BillingCycleDialog
                 open={isCycleDialogOpen}
@@ -1596,6 +1609,45 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
 // Sub-components
 function BillTable({ bills, onDelete, router, basePath, canDelete = false, reconstructedHistoryMap, onDispute, onEditPaymentStatus, penaltyEnabled = true }: { bills: any[], onDelete: (id: string) => void, router: any, basePath: string, canDelete?: boolean, reconstructedHistoryMap?: Map<string, any>, onDispute?: (bill: any) => void, onEditPaymentStatus?: (bill: any) => void, penaltyEnabled?: boolean }) {
+    const { hasPermission } = usePermissions();
+
+    const canViewDetails = hasPermission(PERMISSIONS.BILL_VIEW_ALL)
+        || hasPermission(PERMISSIONS.BILL_VIEW_BRANCH)
+        || hasPermission(PERMISSIONS.BILL_VIEW_PAID)
+        || hasPermission(PERMISSIONS.BILL_VIEW_UNPAID)
+        || hasPermission(PERMISSIONS.BILL_VIEW_OVERDUE)
+        || hasPermission(PERMISSIONS.BILL_VIEW_DRAFTS)
+        || hasPermission(PERMISSIONS.BILL_VIEW_PENDING)
+        || hasPermission(PERMISSIONS.BILL_VIEW_APPROVED);
+
+    const canCheckCorrection = hasPermission(PERMISSIONS.BILL_CORRECT)
+        || hasPermission(PERMISSIONS.BILL_CORRECT_VIEW)
+        || hasPermission(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
+        || hasPermission(PERMISSIONS.REPORT_BRANCH_LIST_OF_CORRECTED_BILLS)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    const canPrintExportBill = hasPermission(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT)
+        || hasPermission(PERMISSIONS.REPORT_BRANCH_MONTHLY_BILL_EXPORT)
+        || hasPermission(PERMISSIONS.BILL_POST)
+        || hasPermission(PERMISSIONS.BILL_SEND)
+        || hasPermission(PERMISSIONS.BILL_VIEW_BRANCH)
+        || hasPermission(PERMISSIONS.BILL_VIEW_PAID)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    const canEditPayment = hasPermission(PERMISSIONS.BILL_UPDATE)
+        || hasPermission(PERMISSIONS.BILL_POST)
+        || hasPermission(PERMISSIONS.PAYMENTS_CREATE)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    const canDisputeRecord = hasPermission(PERMISSIONS.BILL_UPDATE)
+        || hasPermission(PERMISSIONS.BILL_REWORK)
+        || hasPermission(PERMISSIONS.BILL_CORRECT)
+        || hasPermission(PERMISSIONS.SUPPORT_CREATE)
+        || hasPermission(PERMISSIONS.SUPPORT_MANAGE)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+    const canDeleteRecord = canDelete || hasPermission(PERMISSIONS.BILL_DELETE) || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
     if (bills.length === 0) return null;
 
     return (
@@ -1710,48 +1762,70 @@ function BillTable({ bills, onDelete, router, basePath, canDelete = false, recon
                                         </div>
                                     </TableCell>
                                     <TableCell className="text-right">
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                    <MoreVertical className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end" className="w-44">
-                                                <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
-                                                    <Eye className="mr-2 h-4 w-4" /> View Details
-                                                </DropdownMenuItem>
-                                                {(bill.bill_number?.startsWith('CORR-') || (typeof bill.notes === 'string' && bill.notes.includes('Correction of')) || bill.status === 'Reversed') && (
-                                                    <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)} className="text-orange-700 font-semibold focus:text-orange-800">
-                                                        <RotateCcw className="mr-2 h-4 w-4 text-orange-600" /> Check Correction
-                                                    </DropdownMenuItem>
-                                                )}
-                                                <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
-                                                    <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
-                                                </DropdownMenuItem>
-                                                {onEditPaymentStatus && (
-                                                    <DropdownMenuItem
-                                                        onClick={() => onEditPaymentStatus(bill)}
-                                                        className={cn("cursor-pointer", bill.payment_status === 'Paid' ? "text-destructive font-medium focus:text-destructive" : "text-blue-600 font-medium focus:text-blue-600")}
-                                                    >
-                                                        <RotateCcw className="mr-2 h-4 w-4" />
-                                                        {bill.payment_status === 'Paid' ? 'Reverse Payment' : 'Edit Payment Status'}
-                                                    </DropdownMenuItem>
-                                                )}
-                                                {onDispute && bill.status !== 'Disputed' && (
-                                                    <DropdownMenuItem onClick={() => onDispute(bill)} className="text-amber-700 font-medium focus:text-amber-800">
-                                                        <AlertTriangle className="mr-2 h-4 w-4 text-amber-600" /> Dispute Invoice
-                                                    </DropdownMenuItem>
-                                                )}
-                                                {canDelete && (
-                                                    <DropdownMenuItem
-                                                        className="text-red-600 focus:text-red-600"
-                                                        onClick={() => onDelete(bill.id)}
-                                                    >
-                                                        <Trash2 className="mr-2 h-4 w-4" /> Delete Record
-                                                    </DropdownMenuItem>
-                                                )}
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
+                                        {(() => {
+                                            const isCorrection = Boolean(bill.bill_number?.startsWith('CORR-') || (typeof bill.notes === 'string' && bill.notes.includes('Correction of')) || bill.status === 'Reversed');
+                                            const showViewDetails = canViewDetails;
+                                            const showCheckCorrection = canCheckCorrection && isCorrection;
+                                            const showPrintExport = canPrintExportBill;
+                                            const showEditPayment = Boolean(onEditPaymentStatus && canEditPayment);
+                                            const showDispute = Boolean(onDispute && canDisputeRecord && bill.status !== 'Disputed');
+                                            const showDelete = Boolean(canDeleteRecord);
+
+                                            const hasAnyRowAction = showViewDetails || showCheckCorrection || showPrintExport || showEditPayment || showDispute || showDelete;
+
+                                            if (!hasAnyRowAction) {
+                                                return <span className="text-muted-foreground text-xs select-none">—</span>;
+                                            }
+
+                                            return (
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                            <MoreVertical className="h-4 w-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end" className="w-48">
+                                                        {showViewDetails && (
+                                                            <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)}>
+                                                                <Eye className="mr-2 h-4 w-4" /> View Details
+                                                            </DropdownMenuItem>
+                                                        )}
+                                                        {showCheckCorrection && (
+                                                            <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}`)} className="text-orange-700 font-semibold focus:text-orange-800">
+                                                                <RotateCcw className="mr-2 h-4 w-4 text-orange-600" /> Check Correction
+                                                            </DropdownMenuItem>
+                                                        )}
+                                                        {showPrintExport && (
+                                                            <DropdownMenuItem onClick={() => router.push(`${basePath}/${bill.id}?print=true`)}>
+                                                                <Printer className="mr-2 h-4 w-4" /> Print/Export Bill
+                                                            </DropdownMenuItem>
+                                                        )}
+                                                        {showEditPayment && (
+                                                            <DropdownMenuItem
+                                                                onClick={() => onEditPaymentStatus && onEditPaymentStatus(bill)}
+                                                                className={cn("cursor-pointer", bill.payment_status === 'Paid' ? "text-destructive font-medium focus:text-destructive" : "text-blue-600 font-medium focus:text-blue-600")}
+                                                            >
+                                                                <RotateCcw className="mr-2 h-4 w-4" />
+                                                                {bill.payment_status === 'Paid' ? 'Reverse Payment' : 'Edit Payment Status'}
+                                                            </DropdownMenuItem>
+                                                        )}
+                                                        {showDispute && (
+                                                            <DropdownMenuItem onClick={() => onDispute && onDispute(bill)} className="text-amber-700 font-medium focus:text-amber-800">
+                                                                <AlertTriangle className="mr-2 h-4 w-4 text-amber-600" /> Dispute Invoice
+                                                            </DropdownMenuItem>
+                                                        )}
+                                                        {showDelete && (
+                                                            <DropdownMenuItem
+                                                                className="text-red-600 focus:text-red-600"
+                                                                onClick={() => onDelete(bill.id)}
+                                                            >
+                                                                <Trash2 className="mr-2 h-4 w-4" /> Delete Record
+                                                            </DropdownMenuItem>
+                                                        )}
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
+                                            );
+                                        })()}
                                     </TableCell>
                                 </TableRow>
                             );

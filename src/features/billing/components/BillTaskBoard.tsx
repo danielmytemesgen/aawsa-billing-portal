@@ -39,6 +39,7 @@ interface BillTaskBoardProps {
     postedCount?: number;
     role?: string;
     basePath?: string;
+    showDrafts?: boolean;
     showApprovals?: boolean;
     showReadyToPost?: boolean;
     onSubmitAll?: () => Promise<void>;
@@ -55,6 +56,7 @@ export function BillTaskBoard({
     approvedBills,
     postedCount = 0,
     basePath = '/staff/bill-management',
+    showDrafts = true,
     showApprovals = false,
     showReadyToPost = false,
     onSubmitAll,
@@ -118,10 +120,10 @@ export function BillTaskBoard({
                 {/* My Tasks Column */}
                 <TaskColumn
                     title="My Tasks"
-                    items={myTasks}
+                    items={showDrafts ? myTasks : []}
                     color="blue"
                     basePath={basePath}
-                    isLocked={false}
+                    isLocked={!showDrafts}
                     emptyIcon={<FileText className="h-8 w-8 text-blue-200" />}
                     emptyMessage="No drafts or rework items"
                     emptyHint="Create a new bill to get started."
@@ -135,7 +137,7 @@ export function BillTaskBoard({
                     )}
                     bulkActionLabel="Submit All for Approval"
                     bulkActionClassName="bg-blue-600 hover:bg-blue-700 text-white"
-                    onBulkAction={onSubmitAll}
+                    onBulkAction={showDrafts ? onSubmitAll : undefined}
                 />
 
                 {/* Pending Approvals Column */}

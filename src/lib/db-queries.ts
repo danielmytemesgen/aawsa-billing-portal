@@ -858,9 +858,11 @@ export const dbDeleteStaffMember = async (email: string, deletedBy?: string, bra
 
 export const dbGetDistinctBillingMonths = async () => {
     return await query(`
-      SELECT DISTINCT month_year FROM bills WHERE deleted_at IS NULL
-      UNION
-      SELECT DISTINCT month FROM bulk_meters
+      SELECT DISTINCT month_year 
+      FROM bills 
+      WHERE deleted_at IS NULL 
+        AND month_year IS NOT NULL 
+        AND status NOT IN ('Void', 'Reversed', 'Cancelled')
       ORDER BY month_year DESC
     `);
 };

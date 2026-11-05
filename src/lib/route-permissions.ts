@@ -155,6 +155,8 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.BILL_REWORK,
         PERMISSIONS.BILL_UPDATE,
         PERMISSIONS.BILL_DELETE,
+        PERMISSIONS.BILL_SUBMIT,
+        PERMISSIONS.BILL_CORRECT,
         PERMISSIONS.BILL_CLOSE_CYCLE
       ],
     },

@@ -2326,8 +2326,8 @@ export async function submitBillAction(id: string) {
     const session = await checkPermission();
     const perms = session.permissions || [];
 
-    if (!(perms.includes(PERMISSIONS.BILL_CREATE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
-      throw new Error('Forbidden: Missing permission bill_create or bill_view_all');
+    if (!(perms.includes(PERMISSIONS.BILL_SUBMIT) || perms.includes(PERMISSIONS.BILL_CREATE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
+      throw new Error('Forbidden: Missing permission bill:submit');
     }
 
     await verifyBillBranchAccess(id, session);
@@ -2389,7 +2389,7 @@ export async function approveBillAction(id: string) {
 
 export async function rejectBillAction(id: string, reason: string) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BILL_APPROVE); // Map rework to approve or manage_all
+    const session = await checkPermissionAny(PERMISSIONS.BILL_APPROVE, PERMISSIONS.BILL_REWORK, PERMISSIONS.BILL_VIEW_ALL);
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
@@ -2531,7 +2531,14 @@ export async function postBillAction(id: string) {
 
 export async function disputeBillAction(id: string, reason: string, requestedAdjustment?: number) {
   return await wrap(async () => {
-    const session = await checkPermission();
+    const session = await checkPermissionAny(
+      PERMISSIONS.BILL_UPDATE,
+      PERMISSIONS.BILL_REWORK,
+      PERMISSIONS.BILL_CORRECT,
+      PERMISSIONS.SUPPORT_CREATE,
+      PERMISSIONS.SUPPORT_MANAGE,
+      PERMISSIONS.BILL_VIEW_ALL
+    );
     await verifyBillBranchAccess(id, session);
 
     return await withTransaction(async (client) => {
@@ -8067,8 +8074,8 @@ export async function submitBillsBulkAction(ids: string[]) {
     const session = await checkPermission();
     const perms = session.permissions || [];
 
-    if (!(perms.includes(PERMISSIONS.BILL_CREATE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
-      throw new Error('Forbidden: Missing permission bill_create or bill_view_all');
+    if (!(perms.includes(PERMISSIONS.BILL_SUBMIT) || perms.includes(PERMISSIONS.BILL_CREATE) || perms.includes(PERMISSIONS.BILL_VIEW_ALL))) {
+      throw new Error('Forbidden: Missing permission bill:submit');
     }
 
     await verifyBillsBranchAccessBulk(ids, session);
