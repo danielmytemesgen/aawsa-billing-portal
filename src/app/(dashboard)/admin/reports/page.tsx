@@ -1912,6 +1912,34 @@ export default function AdminReportsPage() {
       </div>
 
 
+      {/* ── Section: Monthly Bill Export Report (Admin Only) ── */}
+      {(canGenerateAll || hasPermission(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT)) && (
+      <div className="relative rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
+        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-emerald-500 to-teal-600 rounded-l-2xl" />
+        <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-11 w-11 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-sm shrink-0">
+              <FileDown className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-slate-800">Monthly Bill Export Report</h2>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Admin Only</span>
+              </div>
+              <p className="text-sm text-slate-500">
+                Official monthly billing export in standardized CSV/XLSX format for CBE, Telebirr, and banking payment switch integration.
+              </p>
+            </div>
+          </div>
+          <Link href="/admin/reports/monthly-bill-export" passHref>
+            <Button className="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md font-semibold shrink-0">
+              <FileDown className="h-4 w-4 mr-2" /> View Monthly Bill Export
+            </Button>
+          </Link>
+        </div>
+      </div>
+      )}
+
       {/* ── Section 3: Manual Report Generator ── */}
       <div className="relative rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
         <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-indigo-500 to-blue-600 rounded-l-2xl" />

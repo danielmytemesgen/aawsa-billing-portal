@@ -381,6 +381,23 @@ const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
         });
     }
 
+    // Monthly Bill Export (CSV / XLSX) — Exclusively for Admin
+    const canViewMonthlyBillExport = isAdmin && (
+        hasPermission(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT)
+        || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+        || hasPermission(PERMISSIONS.BILL_VIEW_ALL)
+        || hasPermission('*')
+        || hasPermission('admin')
+    );
+
+    if (canViewMonthlyBillExport) {
+        reportsItems.push({
+            title: "Monthly Bill Export",
+            href: "/admin/reports/monthly-bill-export",
+            iconName: "FileSpreadsheet"
+        });
+    }
+
 
     if (reportsItems.length > 0) {
         navItems.push({ title: "Reports", items: reportsItems });

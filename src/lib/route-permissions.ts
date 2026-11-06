@@ -58,8 +58,19 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       ],
     },
     {
+      match: (currentPath) => currentPath === '/admin/reports/monthly-bill-export',
+      anyOf: [
+        PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT,
+        PERMISSIONS.REPORTS_GENERATE_ALL,
+        PERMISSIONS.BILL_VIEW_ALL,
+        'report:monthly_bill_export',
+      ],
+    },
+    {
       match: (currentPath) => currentPath.startsWith('/admin/reports') || currentPath.startsWith('/staff/reports'),
       anyOf: [
+        PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT,
+        PERMISSIONS.REPORT_BRANCH_MONTHLY_BILL_EXPORT,
         PERMISSIONS.REPORTS_GENERATE_ALL,
         PERMISSIONS.REPORTS_GENERATE_BRANCH,
         PERMISSIONS.ROUTES_VIEW_ASSIGNED,

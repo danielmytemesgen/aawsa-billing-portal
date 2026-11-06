@@ -462,3 +462,109 @@ export const exportPaidBillsToXlsx = (
   const dateStr = format(new Date(), 'yyyy-MM-dd');
   downloadFile(blob, `${filenamePrefix}_${dateStr}.xlsx`);
 };
+
+
+export const ALL_MONTHLY_BILL_COLUMNS = [
+  { id: "BILLKEY", label: "Bill Key", category: "Identifier" },
+  { id: "CUSTOMERKEY", label: "Customer Key", category: "Identifier" },
+  { id: "CUSTOMERNAME", label: "Customer Name", category: "Customer" },
+  { id: "CUSTOMERTIN", label: "TIN / Contract Number", category: "Customer" },
+  { id: "CUSTOMERBRANCH", label: "Customer Branch", category: "Branch" },
+  { id: "REASON", label: "Billing Period / Reason", category: "Period" },
+  { id: "PREVREAD", label: "Previous Reading", category: "Meter Reading" },
+  { id: "CURRREAD", label: "Current Reading", category: "Meter Reading" },
+  { id: "CONS", label: "Consumption (m³)", category: "Meter Reading" },
+  { id: "THISMONTHBILLAMT", label: "This Month Bill (ETB)", category: "Charges" },
+  { id: "OUTSTANDINGAMT", label: "Outstanding Balance (ETB)", category: "Charges" },
+  { id: "PENALTYAMT", label: "Penalty Amount (ETB)", category: "Charges" },
+  { id: "VAT_AMOUNT", label: "VAT Amount (ETB)", category: "Charges" },
+  { id: "TOTALBILLAMOUNT", label: "Total Payable Bill (ETB)", category: "Charges" },
+  { id: "DRACCTNO", label: "Debit Account (DRACCTNO)", category: "Accounting" },
+  { id: "CRACCTNO", label: "Credit Account (CRACCTNO)", category: "Accounting" },
+] as const;
+
+export const exportMonthlyBillsToCsv = (
+  records: any[],
+  filenamePrefix = "monthly_bill_export",
+  customHeaders?: string[]
+) => {
+  const defaultHeaders = [
+    "BILLKEY", "CUSTOMERKEY", "CUSTOMERNAME", "CUSTOMERTIN", "CUSTOMERBRANCH", "REASON",
+    "CURRREAD", "PREVREAD", "CONS", "TOTALBILLAMOUNT", "THISMONTHBILLAMT",
+    "OUTSTANDINGAMT", "PENALTYAMT", "VAT_AMOUNT", "DRACCTNO", "CRACCTNO"
+  ];
+  const headers = customHeaders && customHeaders.length > 0 ? customHeaders : defaultHeaders;
+
+  const data = records.map((r: any) => {
+    const fullRow: any = {
+      "BILLKEY": r.BILLKEY || "",
+      "CUSTOMERKEY": r.CUSTOMERKEY || "",
+      "CUSTOMERNAME": r.CUSTOMERNAME || "",
+      "CUSTOMERTIN": r.CUSTOMERTIN || "",
+      "CUSTOMERBRANCH": r.CUSTOMERBRANCH || "",
+      "REASON": r.REASON || "",
+      "CURRREAD": Number(r.CURRREAD || 0),
+      "PREVREAD": Number(r.PREVREAD || 0),
+      "CONS": Number(r.CONS || 0),
+      "TOTALBILLAMOUNT": parseFloat(Number(r.TOTALBILLAMOUNT || 0).toFixed(2)),
+      "THISMONTHBILLAMT": parseFloat(Number(r.THISMONTHBILLAMT || 0).toFixed(2)),
+      "OUTSTANDINGAMT": parseFloat(Number(r.OUTSTANDINGAMT || 0).toFixed(2)),
+      "PENALTYAMT": parseFloat(Number(r.PENALTYAMT || 0).toFixed(2)),
+      "VAT_AMOUNT": parseFloat(Number(r.VAT_AMOUNT || 0).toFixed(2)),
+      "DRACCTNO": r.DRACCTNO || "",
+      "CRACCTNO": r.CRACCTNO || ""
+    };
+    const row: any = {};
+    headers.forEach((h: string) => {
+      row[h] = fullRow[h] !== undefined ? fullRow[h] : (r[h] ?? "");
+    });
+    return row;
+  });
+
+  const blob = arrayToCsvBlob(data, headers);
+  const dateStr = format(new Date(), 'yyyy-MM-dd');
+  downloadFile(blob, `${filenamePrefix}_${dateStr}.csv`);
+};
+
+export const exportMonthlyBillsToXlsx = (
+  records: any[],
+  filenamePrefix = "monthly_bill_export",
+  customHeaders?: string[]
+) => {
+  const defaultHeaders = [
+    "BILLKEY", "CUSTOMERKEY", "CUSTOMERNAME", "CUSTOMERTIN", "CUSTOMERBRANCH", "REASON",
+    "CURRREAD", "PREVREAD", "CONS", "TOTALBILLAMOUNT", "THISMONTHBILLAMT",
+    "OUTSTANDINGAMT", "PENALTYAMT", "VAT_AMOUNT", "DRACCTNO", "CRACCTNO"
+  ];
+  const headers = customHeaders && customHeaders.length > 0 ? customHeaders : defaultHeaders;
+
+  const data = records.map((r: any) => {
+    const fullRow: any = {
+      "BILLKEY": r.BILLKEY || "",
+      "CUSTOMERKEY": r.CUSTOMERKEY || "",
+      "CUSTOMERNAME": r.CUSTOMERNAME || "",
+      "CUSTOMERTIN": r.CUSTOMERTIN || "",
+      "CUSTOMERBRANCH": r.CUSTOMERBRANCH || "",
+      "REASON": r.REASON || "",
+      "CURRREAD": Number(r.CURRREAD || 0),
+      "PREVREAD": Number(r.PREVREAD || 0),
+      "CONS": Number(r.CONS || 0),
+      "TOTALBILLAMOUNT": parseFloat(Number(r.TOTALBILLAMOUNT || 0).toFixed(2)),
+      "THISMONTHBILLAMT": parseFloat(Number(r.THISMONTHBILLAMT || 0).toFixed(2)),
+      "OUTSTANDINGAMT": parseFloat(Number(r.OUTSTANDINGAMT || 0).toFixed(2)),
+      "PENALTYAMT": parseFloat(Number(r.PENALTYAMT || 0).toFixed(2)),
+      "VAT_AMOUNT": parseFloat(Number(r.VAT_AMOUNT || 0).toFixed(2)),
+      "DRACCTNO": r.DRACCTNO || "",
+      "CRACCTNO": r.CRACCTNO || ""
+    };
+    const row: any = {};
+    headers.forEach((h: string) => {
+      row[h] = fullRow[h] !== undefined ? fullRow[h] : (r[h] ?? "");
+    });
+    return row;
+  });
+
+  const blob = arrayToXlsxBlob(data, headers);
+  const dateStr = format(new Date(), 'yyyy-MM-dd');
+  downloadFile(blob, `${filenamePrefix}_${dateStr}.xlsx`);
+};

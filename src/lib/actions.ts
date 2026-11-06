@@ -153,6 +153,10 @@ import {
   type CombinedBillingSummaryResult,
   dbGetDeliverySummary,
   dbGetDeliverySummaryPeriods,
+  dbGetMonthlyBillExportPaginated,
+  dbGetMonthlyBillExportAll,
+  type MonthlyBillExportRow,
+  type MonthlyBillExportTotals,
   type BillsBranchSummaryRow,
   type SentBillsBranchSummaryRow,
   type DeliverySummaryRow,
@@ -7893,6 +7897,77 @@ export async function getDeliverySummaryPeriodsAction(branchId?: string) {
 
     const res = await dbGetDeliverySummaryPeriods(normalizedBranchId);
     return { success: true, ...res };
+  });
+}
+
+export async function getMonthlyBillExportAction(params: {
+  page: number;
+  limit: number;
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  chargeGroup?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const hasPerm = perms.includes(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT) || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (!isAdmin && !hasPerm) {
+      throw new Error('Forbidden: Only administrators can access Monthly Bill Export');
+    }
+
+    const effectiveBranchId = isAdmin || hasPerm
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const offset = params.page * params.limit;
+    const result = await dbGetMonthlyBillExportPaginated({
+      ...params,
+      offset,
+      branchId: normalizedBranchId,
+    });
+
+    return { success: true, ...result };
+  });
+}
+
+export async function getAllMonthlyBillExportRecordsAction(params: {
+  searchTerm?: string;
+  branchId?: string;
+  monthYear?: string;
+  chargeGroup?: string;
+  limit?: number;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const role = (session.role || '').toLowerCase().trim();
+    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const hasPerm = perms.includes(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT) || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
+
+    if (!isAdmin && !hasPerm) {
+      throw new Error('Forbidden: Only administrators can access Monthly Bill Export');
+    }
+
+    const effectiveBranchId = isAdmin || hasPerm
+      ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
+      : (session.branchId || '00000000-0000-0000-0000-000000000000');
+    const normalizedBranchId = !effectiveBranchId || effectiveBranchId === 'all' ? undefined : effectiveBranchId;
+
+    const rows = await dbGetMonthlyBillExportAll({
+      ...params,
+      branchId: normalizedBranchId,
+    });
+
+    return { success: true, rows };
   });
 }
 
