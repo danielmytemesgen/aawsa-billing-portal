@@ -160,10 +160,53 @@ export function GLSummaryTable({ rows, onInspectRow, isLoading }: GLSummaryTable
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Payment Status Indicator */}
-          <div className="flex items-center px-3 py-1 bg-emerald-50 rounded-xl border border-emerald-200/80 gap-2 shrink-0">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-semibold text-emerald-800">Paid &amp; Reconciled ({filteredRows.length})</span>
+          {/* Payment Status Filter Pills */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              size="sm"
+              variant={paymentFilter === "all" ? "default" : "outline"}
+              onClick={() => {
+                setPaymentFilter("all");
+                setPage(0);
+              }}
+              className="h-8 text-xs rounded-lg px-2.5"
+            >
+              All ({rows.length})
+            </Button>
+            {paidCount > 0 && (
+              <Button
+                size="sm"
+                variant={paymentFilter === "Paid and Reconciled" ? "default" : "outline"}
+                onClick={() => {
+                  setPaymentFilter("Paid and Reconciled");
+                  setPage(0);
+                }}
+                className={`h-8 text-xs rounded-lg px-2.5 ${
+                  paymentFilter === "Paid and Reconciled"
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                }`}
+              >
+                Paid &amp; Reconciled ({paidCount})
+              </Button>
+            )}
+            {unpaidCount > 0 && (
+              <Button
+                size="sm"
+                variant={paymentFilter === "Unpaid" ? "default" : "outline"}
+                onClick={() => {
+                  setPaymentFilter("Unpaid");
+                  setPage(0);
+                }}
+                className={`h-8 text-xs rounded-lg px-2.5 ${
+                  paymentFilter === "Unpaid"
+                    ? "bg-amber-600 text-white hover:bg-amber-700"
+                    : "text-amber-700 border-amber-200 hover:bg-amber-50"
+                }`}
+              >
+                Unpaid ({unpaidCount})
+              </Button>
+            )}
           </div>
 
           {/* GL Code Filter Pills */}

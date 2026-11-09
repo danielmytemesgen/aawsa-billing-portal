@@ -17,6 +17,8 @@ import {
   ALL_MONTHLY_BILL_COLUMNS,
   exportMonthlyBillsToCsv,
   exportMonthlyBillsToXlsx,
+  exportBillFileNovat,
+  exportVatFile,
   getAvailableMonthYearOptions,
 } from "@/lib/export-utils";
 import { formatNumber } from "@/lib/format";
@@ -89,6 +91,7 @@ export default function AdminMonthlyBillExportPage() {
   const [pageSize, setPageSize] = useState<number>(25);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isExportingLedger, setIsExportingLedger] = useState<boolean>(false);
   const [isPeriodsInitialized, setIsPeriodsInitialized] = useState<boolean>(false);
 
   // Check if current user is admin / has full report export permission
@@ -228,6 +231,16 @@ export default function AdminMonthlyBillExportPage() {
     return ALL_MONTHLY_BILL_COLUMNS.filter((c) => selectedColumns.has(c.id));
   }, [selectedColumns]);
 
+  // Period label for ledger export filenames, e.g. "October_2026" or "All"
+  const periodLabel = useMemo(() => {
+    if (!selectedMonthYear || selectedMonthYear === "all") return "All";
+    const [yr, mo] = selectedMonthYear.split("-").map(Number);
+    const d = new Date(yr, (mo || 1) - 1, 1);
+    return isNaN(d.getTime())
+      ? selectedMonthYear.replace(/-/g, "_")
+      : format(d, "MMMM_yyyy");
+  }, [selectedMonthYear]);
+
   // Fetch paginated data
   const fetchData = useCallback(async () => {
     if (!isAdmin || !isPeriodsInitialized) return;
@@ -252,7 +265,7 @@ export default function AdminMonthlyBillExportPage() {
         toast({
           variant: "destructive",
           title: "Failed to Fetch Data",
-          description: (res as any)?.error || "Could not load monthly bill export records.",
+          description: (res as any)?.error?.message || (typeof (res as any)?.error === "string" ? (res as any).error : null) || "Could not load monthly bill export records.",
         });
       }
     } catch (err: any) {
@@ -260,7 +273,7 @@ export default function AdminMonthlyBillExportPage() {
       toast({
         variant: "destructive",
         title: "Error",
-        description: err.message || "An unexpected error occurred while loading records.",
+        description: err?.message || (typeof err === "string" ? err : null) || "An unexpected error occurred while loading records.",
       });
     } finally {
       setIsLoading(false);
@@ -286,7 +299,10 @@ export default function AdminMonthlyBillExportPage() {
     const chosenHeaders = activeOrderedColumns.map((c) => c.id);
     toast({
       title: "Preparing Export",
-      description: `Fetching records matching filters and formatting ${chosenHeaders.length} selected columns...`,
+      description:
+        formatType === "csv"
+          ? `Generating Bill_${periodLabel}.csv (15 fixed columns, no VAT)...`
+          : `Fetching records and formatting ${chosenHeaders.length} selected columns...`,
     });
 
     try {
@@ -309,24 +325,69 @@ export default function AdminMonthlyBillExportPage() {
 
       const prefix = `monthly_bill_export_${selectedMonthYear || "all"}`;
       if (formatType === "csv") {
-        exportMonthlyBillsToCsv(exportRows, prefix, chosenHeaders);
+        // Fixed 15-column ledger format: BILLKEY … CRACCTNO (no VAT)
+        exportBillFileNovat(exportRows, periodLabel);
       } else {
         exportMonthlyBillsToXlsx(exportRows, prefix, chosenHeaders);
       }
 
       toast({
         title: "Export Complete",
-        description: `Successfully exported ${exportRows.length} bills (${chosenHeaders.length} columns) in ${formatType.toUpperCase()} format.`,
+        description:
+          formatType === "csv"
+            ? `Exported ${exportRows.length} bills → Bill_${periodLabel}.csv (15 cols, no VAT).`
+            : `Successfully exported ${exportRows.length} bills (${chosenHeaders.length} columns) in XLSX format.`,
       });
     } catch (err: any) {
       console.error("Export error:", err);
       toast({
         variant: "destructive",
         title: "Export Failed",
-        description: err.message || "Failed to generate monthly bill export file.",
+        description: err?.message || (typeof err === "string" ? err : null) || "Failed to generate monthly bill export file.",
       });
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  // Handle Ledger Dual-File Export: Bill_<period>.csv (15 cols, no VAT) + VAT_<period>.csv
+  const handleExportLedgerFiles = async () => {
+    setIsExportingLedger(true);
+    toast({
+      title: "Preparing Ledger Files",
+      description: `Generating Bill_${periodLabel}.csv and VAT_${periodLabel}.csv ...`,
+    });
+    try {
+      const res = await getAllMonthlyBillExportRecordsAction({
+        branchId: selectedBranchId === "all" ? undefined : selectedBranchId,
+        monthYear: selectedMonthYear === "all" ? undefined : selectedMonthYear,
+        chargeGroup: selectedChargeGroup === "all" ? undefined : selectedChargeGroup,
+        searchTerm: debouncedSearch.trim() === "" ? undefined : debouncedSearch.trim(),
+      });
+      const exportRows = res?.rows || [];
+      if (exportRows.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "No Data",
+          description: "No records match the current filter selection.",
+        });
+        return;
+      }
+      exportBillFileNovat(exportRows, periodLabel);
+      exportVatFile(exportRows, periodLabel);
+      toast({
+        title: "Export Complete",
+        description: `Generated Bill_${periodLabel}.csv (15 cols, no VAT) and VAT_${periodLabel}.csv.`,
+      });
+    } catch (err: any) {
+      console.error("Ledger export error:", err);
+      toast({
+        variant: "destructive",
+        title: "Export Failed",
+        description: err?.message || (typeof err === "string" ? err : null) || "Failed to generate ledger export files.",
+      });
+    } finally {
+      setIsExportingLedger(false);
     }
   };
 
@@ -340,7 +401,7 @@ export default function AdminMonthlyBillExportPage() {
       case "CUSTOMERNAME":
         return <span className="font-medium text-slate-800">{row.CUSTOMERNAME}</span>;
       case "CUSTOMERTIN":
-        return <span className="font-mono text-slate-500 text-[11px]">{row.CUSTOMERTIN || "—"}</span>;
+        return <span className="font-mono text-slate-500 text-[11px]"></span>;
       case "CUSTOMERBRANCH":
         return (
           <Badge variant="outline" className="text-[10px] font-medium bg-slate-50 text-slate-700 border-slate-200">
@@ -476,11 +537,23 @@ export default function AdminMonthlyBillExportPage() {
           <Button
             size="sm"
             onClick={() => handleExport("csv")}
-            disabled={isLoading || isExporting || totalCount === 0 || selectedColumns.size === 0}
+            disabled={isLoading || isExporting || totalCount === 0}
             className="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md font-semibold"
+            title={`Export Bill_${periodLabel}.csv — 15 fixed columns (no VAT): BILLKEY, CUSTOMERKEY, CUSTOMERNAME, CUSTOMERTIN, CUSTOMERBRANCH, REASON, CURRREAD, PREVREAD, CONS, TOTALBILLAMOUNT, THISMONTHBILLAMT, OUTSTANDINGAMT, PENALTYAMT, DRACCTNO, CRACCTNO`}
           >
             <Download className="h-4 w-4 mr-2" />
-            {isExporting ? "Exporting…" : `Export CSV (${selectedColumns.size} cols)`}
+            {isExporting ? "Exporting…" : `Export CSV (15 cols)`}
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={handleExportLedgerFiles}
+            disabled={isLoading || isExportingLedger || totalCount === 0}
+            className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-md font-semibold gap-2"
+            title={`Export Bill_${periodLabel}.csv (15 cols, no VAT) + VAT_${periodLabel}.csv`}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            {isExportingLedger ? "Generating…" : `Bill + VAT Files`}
           </Button>
         </div>
       </div>

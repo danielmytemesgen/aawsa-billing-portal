@@ -471,16 +471,16 @@ export const ALL_MONTHLY_BILL_COLUMNS = [
   { id: "CUSTOMERTIN", label: "TIN / Contract Number", category: "Customer" },
   { id: "CUSTOMERBRANCH", label: "Customer Branch", category: "Branch" },
   { id: "REASON", label: "Billing Period / Reason", category: "Period" },
-  { id: "PREVREAD", label: "Previous Reading", category: "Meter Reading" },
   { id: "CURRREAD", label: "Current Reading", category: "Meter Reading" },
+  { id: "PREVREAD", label: "Previous Reading", category: "Meter Reading" },
   { id: "CONS", label: "Consumption (m³)", category: "Meter Reading" },
+  { id: "TOTALBILLAMOUNT", label: "Total Payable Bill (ETB)", category: "Charges" },
   { id: "THISMONTHBILLAMT", label: "This Month Bill (ETB)", category: "Charges" },
   { id: "OUTSTANDINGAMT", label: "Outstanding Balance (ETB)", category: "Charges" },
   { id: "PENALTYAMT", label: "Penalty Amount (ETB)", category: "Charges" },
-  { id: "VAT_AMOUNT", label: "VAT Amount (ETB)", category: "Charges" },
-  { id: "TOTALBILLAMOUNT", label: "Total Payable Bill (ETB)", category: "Charges" },
   { id: "DRACCTNO", label: "Debit Account (DRACCTNO)", category: "Accounting" },
   { id: "CRACCTNO", label: "Credit Account (CRACCTNO)", category: "Accounting" },
+  { id: "VAT_AMOUNT", label: "VAT Amount (ETB)", category: "Charges" },
 ] as const;
 
 export const exportMonthlyBillsToCsv = (
@@ -500,7 +500,7 @@ export const exportMonthlyBillsToCsv = (
       "BILLKEY": r.BILLKEY || "",
       "CUSTOMERKEY": r.CUSTOMERKEY || "",
       "CUSTOMERNAME": r.CUSTOMERNAME || "",
-      "CUSTOMERTIN": r.CUSTOMERTIN || "",
+      "CUSTOMERTIN": "",
       "CUSTOMERBRANCH": r.CUSTOMERBRANCH || "",
       "REASON": r.REASON || "",
       "CURRREAD": Number(r.CURRREAD || 0),
@@ -543,7 +543,7 @@ export const exportMonthlyBillsToXlsx = (
       "BILLKEY": r.BILLKEY || "",
       "CUSTOMERKEY": r.CUSTOMERKEY || "",
       "CUSTOMERNAME": r.CUSTOMERNAME || "",
-      "CUSTOMERTIN": r.CUSTOMERTIN || "",
+      "CUSTOMERTIN": "",
       "CUSTOMERBRANCH": r.CUSTOMERBRANCH || "",
       "REASON": r.REASON || "",
       "CURRREAD": Number(r.CURRREAD || 0),
@@ -567,4 +567,54 @@ export const exportMonthlyBillsToXlsx = (
   const blob = arrayToXlsxBlob(data, headers);
   const dateStr = format(new Date(), 'yyyy-MM-dd');
   downloadFile(blob, `${filenamePrefix}_${dateStr}.xlsx`);
+};
+
+// ─── Ledger dual-file export ─────────────────────────────────────────────────────────
+
+/** Column order for the Bill_<period>.csv file (15 cols, NO VAT) */
+export const BILL_EXPORT_COLUMNS_NO_VAT = [
+  "BILLKEY", "CUSTOMERKEY", "CUSTOMERNAME", "CUSTOMERTIN", "CUSTOMERBRANCH",
+  "REASON", "CURRREAD", "PREVREAD", "CONS", "TOTALBILLAMOUNT",
+  "THISMONTHBILLAMT", "OUTSTANDINGAMT", "PENALTYAMT", "DRACCTNO", "CRACCTNO",
+] as const;
+
+/**
+ * Export Bill_<periodLabel>.csv — 15 columns, VAT excluded.
+ * periodLabel: e.g. "October_2026" or "All"
+ */
+export const exportBillFileNovat = (records: any[], periodLabel: string): void => {
+  const headers = [...BILL_EXPORT_COLUMNS_NO_VAT];
+  const data = records.map((r: any) => ({
+    BILLKEY:          r.BILLKEY || "",
+    CUSTOMERKEY:      r.CUSTOMERKEY || "",
+    CUSTOMERNAME:     r.CUSTOMERNAME || "",
+    CUSTOMERTIN:      "",
+    CUSTOMERBRANCH:   r.CUSTOMERBRANCH || "",
+    REASON:           r.REASON || "",
+    CURRREAD:         Number(r.CURRREAD || 0),
+    PREVREAD:         Number(r.PREVREAD || 0),
+    CONS:             Number(r.CONS || 0),
+    TOTALBILLAMOUNT:  parseFloat(Number(r.TOTALBILLAMOUNT || 0).toFixed(2)),
+    THISMONTHBILLAMT: parseFloat(Number(r.THISMONTHBILLAMT || 0).toFixed(2)),
+    OUTSTANDINGAMT:   parseFloat(Number(r.OUTSTANDINGAMT || 0).toFixed(2)),
+    PENALTYAMT:       parseFloat(Number(r.PENALTYAMT || 0).toFixed(2)),
+    DRACCTNO:         r.DRACCTNO || "",
+    CRACCTNO:         r.CRACCTNO || "",
+  }));
+  const blob = arrayToCsvBlob(data, headers);
+  downloadFile(blob, `Bill_${periodLabel}.csv`);
+};
+
+/**
+ * Export VAT_<periodLabel>.csv — 2 columns: BILLKEY, VAT_AMOUNT.
+ * periodLabel: e.g. "October_2026" or "All"
+ */
+export const exportVatFile = (records: any[], periodLabel: string): void => {
+  const headers = ["BILLKEY", "VAT_AMOUNT"];
+  const data = records.map((r: any) => ({
+    BILLKEY:    r.BILLKEY || "",
+    VAT_AMOUNT: parseFloat(Number(r.VAT_AMOUNT || 0).toFixed(2)),
+  }));
+  const blob = arrayToCsvBlob(data, headers);
+  downloadFile(blob, `VAT_${periodLabel}.csv`);
 };

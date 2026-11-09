@@ -13,7 +13,6 @@ describe('Meter Reading Corrections Audit & Verification', () => {
     expect(validCodes).toContain('fault_code_update');
     expect(validCodes).toContain('other');
   });
-
   it('correctly calculates consumption variance between original and corrected readings', () => {
     const oldPrev = 153;
     const oldCurr = 534;
@@ -26,7 +25,6 @@ describe('Meter Reading Corrections Audit & Verification', () => {
 
     const readingDiff = newCurr - oldCurr; // -81
     const consumptionVariance = newUsage - oldUsage; // -81 m³
-
     expect(oldUsage).toBe(381);
     expect(newUsage).toBe(300);
     expect(readingDiff).toBe(-81);

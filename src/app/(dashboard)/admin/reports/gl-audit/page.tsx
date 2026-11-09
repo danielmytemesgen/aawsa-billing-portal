@@ -69,7 +69,7 @@ export default function GLReportsAuditPage() {
   const [years, setYears] = useState<string[]>([]);
   const [selectedChargeGroup, setSelectedChargeGroup] = useState<string>("all");
   const [selectedGlCode, setSelectedGlCode] = useState<string>("all");
-  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<string>("Paid and Reconciled");
+  const [selectedPaymentStatus] = useState<string>("Paid and Reconciled");
   const [activeTab, setActiveTab] = useState<string>("summary");
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -274,7 +274,7 @@ export default function GLReportsAuditPage() {
           year: periodType === "yearly" && selectedYear !== "all" ? selectedYear : undefined,
           chargeGroup: selectedChargeGroup !== "all" ? selectedChargeGroup : undefined,
           glCode: selectedGlCode !== "all" ? selectedGlCode : undefined,
-          paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
+          paymentStatus: "Paid and Reconciled",
         }),
         glPerms.canViewAnomalyTab
           ? getGLAuditAnomaliesAction({
@@ -282,7 +282,7 @@ export default function GLReportsAuditPage() {
               periodType,
               monthYear: periodType === "monthly" && selectedMonthYear !== "all" ? selectedMonthYear : undefined,
               year: periodType === "yearly" && selectedYear !== "all" ? selectedYear : undefined,
-              paymentStatus: selectedPaymentStatus !== "all" ? selectedPaymentStatus : undefined,
+              paymentStatus: "Paid and Reconciled",
             })
           : Promise.resolve({ success: true, anomalies: [] }),
       ]);
@@ -406,7 +406,7 @@ export default function GLReportsAuditPage() {
         "Branch Code":          String(r.branchCode || r.branch  || ""),
         "Branch Name":          String(r.branchName || ""),
         "Charge Group":         String(r.chargeGroup || ""),
-        "Payment Status":       String(r.paymentStatus || ""),
+        "Payment Status":       String(r.paymentStatus || "Paid and Reconciled"),
         "GL Code":              String(r.glCode      || ""),
         "GL Description":       String(r.glName      || ""),
         "Bills Count":          r.count      ?? 0,
@@ -474,7 +474,7 @@ export default function GLReportsAuditPage() {
         "BRANCH_CODE":   String(r.branchCode  || r.branch  || ""),
         "BRANCH_NAME":   String(r.branchName  || ""),
         "CHARGE_GROUP":  String(r.chargeGroup || ""),
-        "PAYMENT_STATUS": String(r.paymentStatus || ""),
+        "PAYMENT_STATUS": String(r.paymentStatus || "Paid and Reconciled"),
         "GL_CODE":       String(r.glCode      || ""),
         "GL_DESC":       String(r.glName      || ""),
         "COUNT":           r.count       ?? 0,
@@ -709,7 +709,7 @@ export default function GLReportsAuditPage() {
               General Ledger (GL) {periodType === "yearly" ? "Yearly Annual" : "Monthly"} Financial &amp; Audit Report
             </h1>
             <p className="text-xs text-slate-600 mt-0.5">
-              Type: {periodType === "yearly" ? "Annual Consolidated" : "Monthly Breakdown"} · Period: {periodType === "yearly" ? (selectedYear !== "all" ? `FY ${selectedYear}` : "All Fiscal Years") : (selectedMonthYear !== "all" ? selectedMonthYear : "All Active Periods")} · Branch: {selectedBranchId !== "all" ? (branches.find(b => b.id === selectedBranchId)?.name || selectedBranchId) : "All Branches"}
+              Type: {periodType === "yearly" ? "Annual Consolidated" : "Monthly Breakdown"} · Period: {periodType === "yearly" ? (selectedYear !== "all" ? `FY ${selectedYear}` : "All Fiscal Years") : (selectedMonthYear !== "all" ? selectedMonthYear : "All Active Periods")} · Branch: {selectedBranchId !== "all" ? (branches.find(b => b.id === selectedBranchId)?.name || selectedBranchId) : "All Branches"} · Status: Paid &amp; Reconciled (GL Recognized)
             </p>
           </div>
           <div className="text-right text-xs font-mono text-slate-500">
@@ -881,14 +881,17 @@ export default function GLReportsAuditPage() {
             {/* Payment Status Filter */}
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Payment Status</label>
-              <div className="h-9 px-3 rounded-xl border border-emerald-200 bg-emerald-50/70 flex items-center justify-between">
+              <div 
+                className="h-9 px-3 rounded-xl border border-emerald-300 bg-emerald-50/40 flex items-center justify-between text-xs font-semibold text-emerald-800 shadow-2xs"
+                title="GL Financial & Audit Report strictly recognizes Paid and Reconciled revenue"
+              >
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-                  <span className="text-xs font-semibold text-emerald-800">Paid and Reconciled</span>
+                  <span>Paid and Reconciled</span>
                 </div>
-                <Badge variant="outline" className="text-[10px] bg-white text-emerald-700 border-emerald-200 font-bold px-1.5 py-0">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-emerald-700 border border-emerald-200">
                   GL Recognized
-                </Badge>
+                </span>
               </div>
             </div>
 

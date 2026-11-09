@@ -6,7 +6,7 @@ import Link from "next/link";
 import { arrayToXlsxBlob, arrayToCsvBlob, downloadFile } from '@/lib/xlsx';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart, FileDown, RefreshCw, RefreshCw as RefreshCwIcon } from "lucide-react";
+import { Download, FileSpreadsheet, Info, AlertCircle, Lock, Archive, Trash2, Filter, Check, ChevronsUpDown, Eye, TrendingUp, Users, CreditCard, Activity, Settings2, FileCheck, Database, BarChart3, PieChart, FileDown, RefreshCw, RefreshCw as RefreshCwIcon, AlertTriangle, Droplets, Headphones, ShieldCheck, Layers } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";

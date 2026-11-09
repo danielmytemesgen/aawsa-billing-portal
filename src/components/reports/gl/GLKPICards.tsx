@@ -66,7 +66,9 @@ export function GLKPICards({
                 <>
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                   <span className="font-semibold underline decoration-emerald-300 decoration-dotted">
-                    {formatNumber(kpis.totalPaidAmount || 0)} Paid &amp; Reconciled
+                    {(kpis.totalPaidAmount || 0) > 0
+                      ? `${formatNumber(kpis.totalPaidAmount)} Paid &amp; Reconciled`
+                      : `${formatNumber(kpis.totalGrossBilled)} Total Billed GL`}
                   </span>
                 </>
               ) : (
@@ -81,7 +83,9 @@ export function GLKPICards({
           ) : (
             <div className="flex items-center gap-1.5 mt-1 text-[11px] font-medium">
               <span className="text-emerald-700 font-semibold">
-                {formatNumber(kpis.totalPaidAmount || 0)} Paid &amp; Reconciled
+                {(kpis.totalPaidAmount || 0) > 0
+                  ? `${formatNumber(kpis.totalPaidAmount)} Paid &amp; Reconciled`
+                  : `${formatNumber(kpis.totalGrossBilled)} Total Billed GL`}
               </span>
             </div>
           )}
@@ -147,7 +151,11 @@ export function GLKPICards({
             {isLoading ? "—" : `${formatNumber(kpis.totalAuditedBills)}`}
           </div>
           <p className="text-xs text-slate-500 mt-1 font-medium">
-            {kpis.paidCount} paid &amp; reconciled · {kpis.totalAnomalies} flagged
+            {kpis.paidCount > 0 && kpis.unpaidCount > 0
+              ? `${kpis.paidCount} paid • ${kpis.unpaidCount} unpaid • ${kpis.totalAnomalies} flagged`
+              : kpis.paidCount > 0
+              ? `${kpis.paidCount} paid & reconciled • ${kpis.totalAnomalies} flagged`
+              : `${kpis.unpaidCount} unpaid • ${kpis.totalAnomalies} flagged`}
           </p>
         </CardContent>
       </Card>

@@ -492,7 +492,7 @@ export async function getAvailableGLPeriodsAction(): Promise<{
     const availableMonths: string[] = monthRes.map((r: any) => r.month_year).filter(Boolean);
     const latestRow = latestRes[0] || {};
     const fallbackMonth = new Date().toISOString().slice(0, 7);
-    const latestMonth: string = latestRow.latest_paid_month || latestRow.latest_overall_month || fallbackMonth;
+    const latestMonth: string = latestRow.latest_overall_month || latestRow.latest_paid_month || fallbackMonth;
 
     return {
       success: true,
@@ -550,12 +550,18 @@ export async function getGLSummaryReportAction(params: {
     const isYearly = params.periodType === 'yearly';
 
     // Build SQL with joins to bulk_meters, individual_customers, and branches
-    // The GL Financial & Audit Report strictly displays Paid and Reconciled transactions
     const whereClauses: string[] = [
       'b.deleted_at IS NULL',
       "COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')",
-      "(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))",
     ];
+    if (params.paymentStatus && params.paymentStatus !== 'all') {
+      const psNorm = params.paymentStatus.toLowerCase().trim();
+      if (psNorm === 'paid and reconciled' || psNorm === 'paid') {
+        whereClauses.push("(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))");
+      } else if (psNorm === 'unpaid') {
+        whereClauses.push("(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' AND LOWER(TRIM(COALESCE(b.status::text, ''))) != 'paid' AND (COALESCE(b.\"TOTALBILLAMOUNT\", 0) = 0 OR COALESCE(b.amount_paid, 0) < COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))");
+      }
+    }
     const sqlParams: any[] = [];
 
     if (effectiveBranchId) {
@@ -1075,18 +1081,22 @@ export async function getGLSummaryReportAction(params: {
     const effectiveVat = isSpecificGl
       ? summaryRows.reduce((acc, r) => acc + r.vatAmount, 0)
       : summaryRows.reduce((acc, r) => acc + r.vatAmount, 0);
-    // Total Paid Bill / Paid & Reconciled is 100% identical with Gross Billed GL
-    const effectivePaid = summaryRows.reduce((acc, r) => acc + r.totalAmount, 0);
+    const effectivePaid = summaryRows
+      .filter((r) => r.paymentStatus === 'Paid and Reconciled')
+      .reduce((acc, r) => acc + r.totalAmount, 0);
+    const effectiveUnpaid = summaryRows
+      .filter((r) => r.paymentStatus === 'Unpaid')
+      .reduce((acc, r) => acc + r.totalAmount, 0);
 
     const kpis: GLKPIs = {
       totalGrossBilled: parseFloat(effectiveGross.toFixed(2)),
       totalNetRevenue: parseFloat(effectiveNet.toFixed(2)),
       totalVat: parseFloat(effectiveVat.toFixed(2)),
       totalPaidAmount: parseFloat(effectivePaid.toFixed(2)),
-      totalUnpaidAmount: 0,
+      totalUnpaidAmount: parseFloat(effectiveUnpaid.toFixed(2)),
       totalOutstandingCarryover: parseFloat(effectiveCarryover.toFixed(2)),
-      paidCount: summaryRows.length > 0 ? bills.length : 0,
-      unpaidCount: 0,
+      paidCount,
+      unpaidCount,
       totalAuditedBills: bills.length,
       totalCleanBills,
       totalAnomalies,
@@ -1161,9 +1171,15 @@ export async function getGLBillsDrillDownAction(params: {
     const whereClauses: string[] = [
       'b.deleted_at IS NULL',
       "COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')",
-      // The GL Financial & Audit Report strictly displays Paid and Reconciled transactions
-      "(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))",
     ];
+    if (params.paymentStatus && params.paymentStatus !== 'all') {
+      const psNorm = params.paymentStatus.toLowerCase().trim();
+      if (psNorm === 'paid and reconciled' || psNorm === 'paid') {
+        whereClauses.push("(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))");
+      } else if (psNorm === 'unpaid') {
+        whereClauses.push("(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' AND LOWER(TRIM(COALESCE(b.status::text, ''))) != 'paid' AND (COALESCE(b.\"TOTALBILLAMOUNT\", 0) = 0 OR COALESCE(b.amount_paid, 0) < COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))");
+      }
+    }
     const sqlParams: any[] = [];
 
     if (auth.lockedBranchId) {
@@ -1424,9 +1440,15 @@ export async function getGLAuditAnomaliesAction(params: {
     const whereClauses: string[] = [
       'b.deleted_at IS NULL',
       "COALESCE(b.status, 'Posted') NOT IN ('Reversed', 'Cancelled', 'Void', 'Draft')",
-      // The GL Financial & Audit Report strictly displays Paid and Reconciled transactions
-      "(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))",
     ];
+    if (params.paymentStatus && params.paymentStatus !== 'all') {
+      const psNorm = params.paymentStatus.toLowerCase().trim();
+      if (psNorm === 'paid and reconciled' || psNorm === 'paid') {
+        whereClauses.push("(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) = 'paid' OR LOWER(TRIM(COALESCE(b.status::text, ''))) = 'paid' OR (COALESCE(b.\"TOTALBILLAMOUNT\", 0) > 0 AND COALESCE(b.amount_paid, 0) >= COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))");
+      } else if (psNorm === 'unpaid') {
+        whereClauses.push("(LOWER(TRIM(COALESCE(b.payment_status::text, ''))) != 'paid' AND LOWER(TRIM(COALESCE(b.status::text, ''))) != 'paid' AND (COALESCE(b.\"TOTALBILLAMOUNT\", 0) = 0 OR COALESCE(b.amount_paid, 0) < COALESCE(b.\"TOTALBILLAMOUNT\", 0) - 0.01))");
+      }
+    }
     const sqlParams: any[] = [];
 
     if (effectiveBranchId) {
