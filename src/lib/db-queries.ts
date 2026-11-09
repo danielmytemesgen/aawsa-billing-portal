@@ -3745,7 +3745,10 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             `SELECT
                 b.name as branch_name,
                 COUNT(CASE WHEN bi.payment_status = 'Paid' THEN 1 END) as paid,
-                COUNT(CASE WHEN bi.payment_status = 'Unpaid' THEN 1 END) as unpaid
+                COUNT(CASE WHEN bi.payment_status = 'Unpaid' THEN 1 END) as unpaid,
+                COALESCE(SUM(bi."TOTALBILLAMOUNT"), 0)::numeric as total_amount_sent,
+                COALESCE(SUM(bi."OUTSTANDINGAMT"), 0)::numeric as outstanding_amount,
+                COALESCE(SUM(bi."THISMONTHBILLAMT"), 0)::numeric as current_bill_amount
              FROM branches b
              LEFT JOIN (
                  SELECT
@@ -3755,7 +3758,10 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
                          (SELECT branch_id FROM individual_customers ic WHERE ic."customerKeyNumber" = bills.individual_customer_id LIMIT 1),
                          (SELECT id FROM branches br WHERE TRIM(BOTH '\t' FROM TRIM(br.name)) = TRIM(BOTH '\t' FROM TRIM(bills."CUSTOMERBRANCH")) LIMIT 1)
                      ) as effective_branch_id,
-                     payment_status
+                     payment_status,
+                     COALESCE("TOTALBILLAMOUNT", (COALESCE("THISMONTHBILLAMT", base_water_charge, 0) + COALESCE("OUTSTANDINGAMT", 0) + COALESCE("PENALTYAMT", 0))) as "TOTALBILLAMOUNT",
+                     COALESCE("OUTSTANDINGAMT", 0) as "OUTSTANDINGAMT",
+                     COALESCE("THISMONTHBILLAMT", base_water_charge, 0) as "THISMONTHBILLAMT"
                  FROM bills
                  WHERE month_year = $1 AND status = 'Posted' AND deleted_at IS NULL
              ) bi ON bi.effective_branch_id = b.id
@@ -3842,6 +3848,9 @@ export const dbGetDashboardMetrics = async (branchId?: string) => {
             branch: bp.branch_name,
             paid: parseInt(bp.paid || 0),
             unpaid: parseInt(bp.unpaid || 0),
+            totalAmountSent: Number(bp.total_amount_sent || 0),
+            outstandingAmount: Number(bp.outstanding_amount || 0),
+            currentBillAmount: Number(bp.current_bill_amount || 0),
         })),
         usageTrend: usageTrend.reverse().map((ut: any) => ({
             month: ut.month,

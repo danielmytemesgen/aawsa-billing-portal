@@ -290,7 +290,14 @@ export default function AdminDashboardPage() {
   const [dynamicTotalCustomerCount, setDynamicTotalCustomerCount] = React.useState(0);
   const [dynamicTotalBulkMeterCount, setDynamicTotalBulkMeterCount] = React.useState(0);
 
-  const [dynamicBranchPerformanceData, setDynamicBranchPerformanceData] = React.useState<{ branch: string; paid: number; unpaid: number }[]>([]);
+  const [dynamicBranchPerformanceData, setDynamicBranchPerformanceData] = React.useState<{
+    branch: string;
+    paid: number;
+    unpaid: number;
+    totalAmountSent?: number;
+    outstandingAmount?: number;
+    currentBillAmount?: number;
+  }[]>([]);
   const [dynamicWaterUsageTrendData, setDynamicWaterUsageTrendData] = React.useState<{ month: string; usage: number }[]>([]);
 
   // New Revenue and Progress State
@@ -475,10 +482,24 @@ export default function AdminDashboardPage() {
       const currentMonthYear = selectedMonth;
 
       // Branch Performance Data Fallback
-      const performanceMap = new Map<string, { branchName: string, paid: number, unpaid: number }>();
+      const performanceMap = new Map<string, {
+        branchName: string;
+        paid: number;
+        unpaid: number;
+        totalAmountSent: number;
+        outstandingAmount: number;
+        currentBillAmount: number;
+      }>();
       const displayableBranches = currentBranches.filter(branch => branch.name.toLowerCase() !== 'head office');
       displayableBranches.forEach(branch => {
-        performanceMap.set(branch.id, { branchName: branch.name, paid: 0, unpaid: 0 });
+        performanceMap.set(branch.id, {
+          branchName: branch.name,
+          paid: 0,
+          unpaid: 0,
+          totalAmountSent: 0,
+          outstandingAmount: 0,
+          currentBillAmount: 0,
+        });
       });
       const currentMonthBMs = currentBulkMeters.filter(bm => bm.month === currentMonthYear);
       currentMonthBMs.forEach(bm => {
@@ -486,11 +507,21 @@ export default function AdminDashboardPage() {
           const entry = performanceMap.get(bm.branchId)!;
           if (bm.paymentStatus === 'Paid') entry.paid++;
           else if (bm.paymentStatus === 'Unpaid') entry.unpaid++;
+          entry.totalAmountSent += Number((bm as any).totalAmount || (bm as any).totalBulkBill || (bm as any).outStandingbill || 0);
+          entry.outstandingAmount += Number((bm as any).outStandingbill || 0);
+          entry.currentBillAmount += Number((bm as any).totalBulkBill || 0);
           performanceMap.set(bm.branchId, entry);
         }
       });
       if (displayableBranches.length > 0) {
-        setDynamicBranchPerformanceData(Array.from(performanceMap.values()).map(p => ({ branch: p.branchName.replace(/ Branch$/i, ""), paid: p.paid, unpaid: p.unpaid })));
+        setDynamicBranchPerformanceData(Array.from(performanceMap.values()).map(p => ({
+          branch: p.branchName.replace(/ Branch$/i, ""),
+          paid: p.paid,
+          unpaid: p.unpaid,
+          totalAmountSent: p.totalAmountSent,
+          outstandingAmount: p.outstandingAmount,
+          currentBillAmount: p.currentBillAmount,
+        })));
       }
       // Usage Trend Fallback
       const usageMap = new Map<string, number>();
@@ -988,7 +1019,7 @@ export default function AdminDashboardPage() {
           <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gray-50/50 border-b pb-4">
             <div>
               <CardTitle className="text-lg font-bold text-gray-900">Branch Performance (Bulk Meters - {selectedMonth})</CardTitle>
-              <CardDescription>Paid vs. Unpaid status for bulk meters across branches.</CardDescription>
+              <CardDescription>Total amount sent, outstanding amount, and current bill amount across branches.</CardDescription>
             </div>
             <Button variant="secondary" size="sm" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')} className="bg-white shadow-sm border">
               {branchPerformanceView === 'chart' ? <TableIcon className="mr-2 h-4 w-4" /> : <BarChartIcon className="mr-2 h-4 w-4" />}
@@ -1131,48 +1162,100 @@ export default function AdminDashboardPage() {
               </div>
             )}
             {branchPerformanceView === 'chart' ? (
-              <div className="h-[300px]">
-                {isClient && dynamicBranchPerformanceData.length > 0 ? (
-                  <ChartContainer config={chartConfig} className="w-full h-full">
-                      <BarChart data={dynamicBranchPerformanceData}>
-                        <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                        <XAxis dataKey="branch" tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 500 }} />
-                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fontWeight: 500 }} />
-                        <Tooltip content={<ChartTooltipContent />} />
-                        <Legend content={<ChartLegendContent />} />
-                        <Bar dataKey="paid" fill="#10b981" radius={[4, 4, 0, 0]} name="Paid" />
-                        <Bar dataKey="unpaid" fill="#ef4444" radius={[4, 4, 0, 0]} name="Unpaid" />
-                      </BarChart>
-                  </ChartContainer>
-                ) : (
-                  <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">
-                    No branch performance data available for chart.
+              <div className="space-y-3">
+                {/* ── Top Legend Banner matching exact reference ── */}
+                <div className="flex items-center gap-6 pt-1 pl-1 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-6 h-3 bg-[#55B7C2] border border-slate-300" />
+                    <span className="text-xs font-medium text-slate-600">Total Amount Sent</span>
                   </div>
-                )}
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-6 h-3 bg-[#5E5E5E] border border-slate-300" />
+                    <span className="text-xs font-medium text-slate-600">Outstanding Amount</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-6 h-3 bg-[#E11D48] border border-slate-300" />
+                    <span className="text-xs font-medium text-slate-600">Current Bill amount</span>
+                  </div>
+                </div>
+
+                <div className="h-[320px]">
+                  {isClient && dynamicBranchPerformanceData.length > 0 ? (
+                    <ChartContainer config={chartConfig} className="w-full h-full">
+                        <BarChart data={dynamicBranchPerformanceData} margin={{ top: 10, right: 20, left: 10, bottom: 25 }}>
+                          <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                          <XAxis
+                            dataKey="branch"
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 11, fontWeight: 500 }}
+                            angle={-15}
+                            textAnchor="end"
+                            interval={0}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 11, fontWeight: 500 }}
+                            tickFormatter={(val) => val >= 1000000 ? `${(val / 1000000).toFixed(1)}M` : val >= 1000 ? `${(val / 1000).toFixed(0)}k` : `${val}`}
+                          />
+                          <Tooltip
+                            content={<ChartTooltipContent />}
+                            formatter={(value: any, name: any) => [
+                              `ETB ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                              name === "totalAmountSent" ? "Total Amount Sent"
+                                : name === "outstandingAmount" ? "Outstanding Amount"
+                                : name === "currentBillAmount" ? "Current Bill amount"
+                                : name
+                            ]}
+                          />
+                          <Bar dataKey="totalAmountSent" fill="#55B7C2" radius={[4, 4, 0, 0]} name="Total Amount Sent" />
+                          <Bar dataKey="outstandingAmount" fill="#5E5E5E" radius={[4, 4, 0, 0]} name="Outstanding Amount" />
+                          <Bar dataKey="currentBillAmount" fill="#E11D48" radius={[4, 4, 0, 0]} name="Current Bill amount" />
+                        </BarChart>
+                    </ChartContainer>
+                  ) : (
+                    <div className="flex h-[320px] items-center justify-center text-xs text-muted-foreground italic">
+                      No branch performance data available for chart.
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
-              <ScrollArea className="h-[300px] rounded-md border">
+              <ScrollArea className="h-[340px] rounded-md border">
                 {dynamicBranchPerformanceData.length > 0 ? (
                   <Table>
                     <TableHeader className="bg-gray-50">
                       <TableRow>
                         <TableHead className="font-bold">Branch</TableHead>
-                        <TableHead className="text-right font-bold">Paid</TableHead>
-                        <TableHead className="text-right font-bold">Unpaid</TableHead>
+                        <TableHead className="text-right font-bold text-[#55B7C2]">Total Amount Sent (ETB)</TableHead>
+                        <TableHead className="text-right font-bold text-slate-700">Outstanding Amount (ETB)</TableHead>
+                        <TableHead className="text-right font-bold text-[#E11D48]">Current Bill Amount (ETB)</TableHead>
+                        <TableHead className="text-right font-bold text-emerald-600">Paid Bills</TableHead>
+                        <TableHead className="text-right font-bold text-red-600">Unpaid Bills</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {dynamicBranchPerformanceData.map((item) => (
                         <TableRow key={item.branch} className="hover:bg-gray-50/50">
                           <TableCell className="font-medium text-gray-900">{item.branch}</TableCell>
-                          <TableCell className="text-right text-emerald-600 font-bold">{item.paid}</TableCell>
-                          <TableCell className="text-right text-red-600 font-bold">{item.unpaid}</TableCell>
+                          <TableCell className="text-right font-bold text-[#2A9D8F]">
+                            {(item.totalAmountSent ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-slate-700">
+                            {(item.outstandingAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-[#E11D48]">
+                            {(item.currentBillAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right text-emerald-600 font-semibold">{item.paid}</TableCell>
+                          <TableCell className="text-right text-red-600 font-semibold">{item.unpaid}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 ) : (
-                  <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">
+                  <div className="flex h-[340px] items-center justify-center text-xs text-muted-foreground italic">
                     No branch performance data available.
                   </div>
                 )}
