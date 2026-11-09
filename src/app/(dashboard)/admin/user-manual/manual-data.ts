@@ -33,6 +33,8 @@ export type ContentBlock = {
   callouts?: Callout[];
 };
 
+export type UserRoleCategory = 'admin' | 'billing' | 'reader' | 'branch_manager' | 'support';
+
 export type Section = {
   id: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -44,6 +46,8 @@ export type Section = {
   color: string;
   gradient: string;
   accentLight: string;
+  targetRoles?: UserRoleCategory[];
+  routeUrl?: string;
   content: ContentBlock[];
 };
 
@@ -83,6 +87,30 @@ export const BILINGUAL_GLOSSARY: GlossaryTerm[] = [
     category: "Metering",
     definitionEn: "Current numeric index recorded from the physical meter dial by a field reader.",
     definitionAm: "በመስክ ቆጣሪ አንባቢዎች ከቆጣሪው ላይ ተመልክተው የሚመዘገብ የፍጆታ አሀዝ።",
+  },
+  {
+    english: "Difference Apportionment",
+    amharic: "የልዩነት ክፍፍል (አፖርሽንመንት)",
+    phonetic: "Ye-liyunet Kififil",
+    category: "Billing",
+    definitionEn: "Equitable distribution of volumetric or billing difference between master bulk meter inflow and sum of sub-meter readings across individual tenants.",
+    definitionAm: "በዋናው የጅምላ ቆጣሪ ፍጆታ እና በነዋሪዎች ንዑስ ቆጣሪዎች ድምር መካከል ያለውን ልዩነት በነዋሪዎች ላይ በፍትሃዊ ስሌት የማከፋፈያ አሰራር።",
+  },
+  {
+    english: "Standardized Monthly Bill Export",
+    amharic: "መደበኛ ወርሃዊ የቢል ኤክስፖርት",
+    phonetic: "Medebegna Werhawi Ye-bill Export",
+    category: "Billing",
+    definitionEn: "Standardized 15-column billing ledger formatted for external banking integration (CBE, Telebirr, and national banking switch) with separated VAT audit files.",
+    definitionAm: "ለባንኮች፣ ለቴሌብር እና ለክፍያ ስዊች ውህደት የተዘጋጀ ባለ 15 ዓምድ ወርሃዊ የቢል መዝገብ ከነሙሉ የታክስ (VAT) መረጃ ጋር።",
+  },
+  {
+    english: "Reading Correction & Audit",
+    amharic: "የንባብ ማስተካከያና ኦዲት",
+    phonetic: "Ye-nibab Mastekakya ena Audit",
+    category: "Workflow",
+    definitionEn: "Formal supervisory audit and override procedure to rectify inaccurate readings, reversed meters, or typographical errors before posting bills.",
+    definitionAm: "ቢል ከመለጠፉ በፊት በስህተት የገባን የቆጣሪ ንባብ በቅርንጫፍ የበላይ ኃላፊ ተገምግሞና ተረጋግጦ የሚታረምበት የአሰራር ሂደት።",
   },
   {
     english: "Water Consumption",
@@ -341,6 +369,64 @@ export const CATEGORY_NAMES: Record<string, { en: string; am: string }> = {
   "System": { en: "System", am: "የስርዓት" },
 };
 
+export const ROLE_CONFIG: Record<UserRoleCategory, {
+  label: string;
+  amharicLabel: string;
+  badge: string;
+  amharicBadge: string;
+  description: string;
+  amharicDescription: string;
+  color: string;
+}> = {
+  reader: {
+    label: "Field Meter Reader",
+    amharicLabel: "የመስክ ቆጣሪ አንባቢ",
+    badge: "Reader",
+    amharicBadge: "አንባቢ",
+    description: "Assigned routes, meter reading entries, meter swaps, and fault logs.",
+    amharicDescription: "የተመደቡ የንባብ መስመሮች፣ የቆጣሪ ንባብ ምዝገባ፣ የቆጣሪ ቅያሬ እና የብልሽት ሪፖርት።",
+    color: "bg-teal-600 text-white",
+  },
+  billing: {
+    label: "Billing & Finance",
+    amharicLabel: "ቢሊንግ እና ፋይናንስ",
+    badge: "Billing",
+    amharicBadge: "ቢሊንግ",
+    description: "Cycle processing, difference apportionment, payment reconciliation, and export ledgers.",
+    amharicDescription: "የቢል ዑደት ማስላት፣ የልዩነት ክፍፍል፣ የባንክ ክፍያዎች ማወራረድ እና ወርሃዊ የኤክስፖርት መዛግብት።",
+    color: "bg-blue-600 text-white",
+  },
+  branch_manager: {
+    label: "Branch Operations",
+    amharicLabel: "የቅርንጫፍ ስራዎች",
+    badge: "Branch Manager",
+    amharicBadge: "ቅርንጫፍ ስራ አስኪያጅ",
+    description: "Route supervision, reader monitoring, customer approvals, and branch performance.",
+    amharicDescription: "የንባብ መስመር ቁጥጥር፣ የአንባቢዎች ክትትል፣ የደንበኞች ማጽደቅ እና የቅርንጫፍ አፈፃፀም።",
+    color: "bg-emerald-600 text-white",
+  },
+  admin: {
+    label: "System Administration",
+    amharicLabel: "የስርዓት አስተዳዳሪ",
+    badge: "Admin",
+    amharicBadge: "አድሚን",
+    description: "Security, user management, tariffs, system maintenance, and global configurations.",
+    amharicDescription: "ደህንነት፣ የሰራተኞችና ሚናዎች አስተዳደር፣ ታሪፍ፣ የሲስተም ጥገና እና አጠቃላይ ቅንብሮች።",
+    color: "bg-slate-700 text-white",
+  },
+  support: {
+    label: "Customer Support",
+    amharicLabel: "የደንበኞች አገልግሎት",
+    badge: "Support",
+    amharicBadge: "ድጋፍ",
+    description: "Help desk ticketing, customer inquiries, SLA monitoring, and knowledge base lookups.",
+    amharicDescription: "የደንበኞች ቅሬታና ጥያቄዎች ምዝገባ፣ የቲኬት አስተዳደር እና የእውቀት ማዕከል ሰነዶች።",
+    color: "bg-amber-600 text-white",
+  },
+};
+
+export const ROLE_KEYS: UserRoleCategory[] = ["reader", "billing", "branch_manager", "admin", "support"];
+
 // ─── 30 Modules (All Sections with Full Amharic Translations) ─────────────────
 
 export const SECTIONS: Section[] = [
@@ -349,6 +435,8 @@ export const SECTIONS: Section[] = [
     id: "dashboard", icon: BarChart2, title: "Dashboard", amharicTitle: "ዳሽቦርድ (አጠቃላይ እይታ)",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Dashboard", color: "bg-indigo-600", gradient: "from-indigo-50 to-purple-50", accentLight: "border-indigo-200 bg-indigo-50",
+    targetRoles: ["admin","billing","branch_manager","reader","support"],
+    routeUrl: "/admin/dashboard",
     content: [
       {
         heading: "Overview",
@@ -415,6 +503,8 @@ export const SECTIONS: Section[] = [
     id: "my-routes", icon: MapPin, title: "My Routes", amharicTitle: "የእኔ የንባብ መስመሮች",
     badge: "Meter Reader", amharicBadge: "ቆጣሪ አንባቢ",
     group: "Field Operations", color: "bg-teal-600", gradient: "from-teal-50 to-cyan-50", accentLight: "border-teal-200 bg-teal-50",
+    targetRoles: ["reader","branch_manager"],
+    routeUrl: "/staff/my-routes",
     content: [
       {
         heading: "Overview",
@@ -467,6 +557,8 @@ export const SECTIONS: Section[] = [
     id: "meter-readings", icon: ClipboardList, title: "Meter Readings", amharicTitle: "የቆጣሪ ንባቦች ምዝገባ",
     badge: "Admin / Staff / Reader", amharicBadge: "አድሚን / ሰራተኛ / አንባቢ",
     group: "Field Operations", color: "bg-teal-700", gradient: "from-teal-50 to-green-50", accentLight: "border-teal-200 bg-teal-50",
+    targetRoles: ["reader","branch_manager","admin"],
+    routeUrl: "/admin/meter-readings",
     content: [
       {
         heading: "Overview",
@@ -559,6 +651,8 @@ export const SECTIONS: Section[] = [
     id: "reader-monitoring", icon: Activity, title: "Reader Monitoring", amharicTitle: "የአንባቢዎች የስራ ክትትል",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Field Operations", color: "bg-cyan-600", gradient: "from-cyan-50 to-sky-50", accentLight: "border-cyan-200 bg-cyan-50",
+    targetRoles: ["branch_manager","admin"],
+    routeUrl: "/admin/routes",
     content: [
       {
         heading: "Overview",
@@ -610,6 +704,8 @@ export const SECTIONS: Section[] = [
     id: "meter-change", icon: RefreshCcw, title: "Meter Change", amharicTitle: "የቆጣሪ ቅያሬ",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Field Operations", color: "bg-amber-600", gradient: "from-amber-50 to-yellow-50", accentLight: "border-amber-200 bg-amber-50",
+    targetRoles: ["reader","branch_manager","admin"],
+    routeUrl: "/admin/meter-change",
     content: [
       {
         heading: "Overview",
@@ -671,6 +767,8 @@ export const SECTIONS: Section[] = [
     id: "branches", icon: Building, title: "Branch Management", amharicTitle: "የቅርንጫፎች አስተዳደር",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "Management", color: "bg-slate-600", gradient: "from-slate-50 to-gray-50", accentLight: "border-slate-200 bg-slate-50",
+    targetRoles: ["admin","branch_manager"],
+    routeUrl: "/admin/branches",
     content: [
       {
         heading: "Overview",
@@ -726,6 +824,8 @@ export const SECTIONS: Section[] = [
     id: "staff-management", icon: UserCog, title: "Staff Management", amharicTitle: "የሰራተኞች ምዝገባና አስተዳደር",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "Management", color: "bg-violet-600", gradient: "from-violet-50 to-purple-50", accentLight: "border-violet-200 bg-violet-50",
+    targetRoles: ["admin","branch_manager"],
+    routeUrl: "/admin/staff-management",
     content: [
       {
         heading: "Overview",
@@ -782,6 +882,8 @@ export const SECTIONS: Section[] = [
     id: "approvals", icon: UserCheck, title: "Approvals", amharicTitle: "የቢል ማጽደቂያዎች",
     badge: "Admin / Supervisor", amharicBadge: "አድሚን / ተቆጣጣሪ",
     group: "Management", color: "bg-blue-600", gradient: "from-blue-50 to-indigo-50", accentLight: "border-blue-200 bg-blue-50",
+    targetRoles: ["branch_manager","billing","admin"],
+    routeUrl: "/admin/approvals",
     content: [
       {
         heading: "Overview",
@@ -858,6 +960,8 @@ export const SECTIONS: Section[] = [
     id: "roles", icon: ShieldCheck, title: "Roles & Permissions", amharicTitle: "የስራ ሚናዎችና ፈቃዶች",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "Management", color: "bg-purple-700", gradient: "from-purple-50 to-indigo-50", accentLight: "border-purple-200 bg-purple-50",
+    targetRoles: ["admin"],
+    routeUrl: "/admin/roles-and-permissions",
     content: [
       {
         heading: "Overview",
@@ -917,6 +1021,8 @@ export const SECTIONS: Section[] = [
     id: "notifications", icon: Bell, title: "Notifications", amharicTitle: "ማሳወቂያዎች",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Management", color: "bg-yellow-500", gradient: "from-yellow-50 to-amber-50", accentLight: "border-yellow-200 bg-yellow-50",
+    targetRoles: ["admin","branch_manager","billing","support"],
+    routeUrl: "/admin/notifications",
     content: [
       {
         heading: "Overview",
@@ -972,6 +1078,8 @@ export const SECTIONS: Section[] = [
     id: "tariffs", icon: LibraryBig, title: "Tariff Management", amharicTitle: "የታሪፍ ተመን አስተዳደር",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "Management", color: "bg-orange-600", gradient: "from-orange-50 to-red-50", accentLight: "border-orange-200 bg-orange-50",
+    targetRoles: ["admin","billing"],
+    routeUrl: "/admin/tariffs",
     content: [
       {
         heading: "Overview",
@@ -1024,6 +1132,8 @@ export const SECTIONS: Section[] = [
     id: "route-management", icon: Map, title: "Route Management", amharicTitle: "የንባብ መስመሮች አስተዳደር",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Management", color: "bg-green-700", gradient: "from-green-50 to-emerald-50", accentLight: "border-green-200 bg-green-50",
+    targetRoles: ["branch_manager","admin"],
+    routeUrl: "/admin/routes",
     content: [
       {
         heading: "Overview",
@@ -1080,6 +1190,8 @@ export const SECTIONS: Section[] = [
     id: "knowledge-base", icon: BookText, title: "Knowledge Base", amharicTitle: "የእውቀት ማዕከል / ሰነዶች",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Management", color: "bg-sky-600", gradient: "from-sky-50 to-blue-50", accentLight: "border-sky-200 bg-sky-50",
+    targetRoles: ["support","billing","reader","branch_manager","admin"],
+    routeUrl: "/admin/knowledge-base",
     content: [
       {
         heading: "Overview",
@@ -1123,6 +1235,8 @@ export const SECTIONS: Section[] = [
     id: "bill-management", icon: FileText, title: "Bill Management", amharicTitle: "የቢል አስተዳደር",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Management", color: "bg-rose-600", gradient: "from-rose-50 to-pink-50", accentLight: "border-rose-200 bg-rose-50",
+    targetRoles: ["billing","branch_manager","admin"],
+    routeUrl: "/admin/bill-management",
     content: [
       {
         heading: "Overview",
@@ -1275,6 +1389,8 @@ export const SECTIONS: Section[] = [
     id: "fault-codes", icon: AlertOctagon, title: "Fault Codes", amharicTitle: "የብልሽት ኮዶች",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Management", color: "bg-red-600", gradient: "from-red-50 to-orange-50", accentLight: "border-red-200 bg-red-50",
+    targetRoles: ["reader","support","branch_manager","admin"],
+    routeUrl: "/admin/fault-codes",
     content: [
       {
         heading: "Overview",
@@ -1326,6 +1442,8 @@ export const SECTIONS: Section[] = [
     id: "support", icon: LifeBuoy, title: "Customer Support", amharicTitle: "የደንበኞች አገልግሎትና ቅሬታ",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Management", color: "bg-pink-600", gradient: "from-pink-50 to-rose-50", accentLight: "border-pink-200 bg-pink-50",
+    targetRoles: ["support","branch_manager","admin"],
+    routeUrl: "/admin/support",
     content: [
       {
         heading: "Overview",
@@ -1383,6 +1501,8 @@ export const SECTIONS: Section[] = [
     id: "bulk-meters", icon: Gauge, title: "Bulk Meters", amharicTitle: "የጅምላ ውሃ ቆጣሪዎች",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Customer & Metering", color: "bg-amber-600", gradient: "from-amber-50 to-yellow-50", accentLight: "border-amber-200 bg-amber-50",
+    targetRoles: ["billing","branch_manager","admin","reader"],
+    routeUrl: "/admin/bulk-meters",
     content: [
       {
         heading: "Overview",
@@ -1466,6 +1586,8 @@ export const SECTIONS: Section[] = [
     id: "individual-customers", icon: Users, title: "Individual Customers", amharicTitle: "የግል ደንበኞች (ንዑስ ቆጣሪዎች)",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Customer & Metering", color: "bg-blue-700", gradient: "from-blue-50 to-indigo-50", accentLight: "border-blue-200 bg-blue-50",
+    targetRoles: ["billing","branch_manager","admin","support"],
+    routeUrl: "/admin/individual-customers",
     content: [
       {
         heading: "Overview",
@@ -1520,6 +1642,8 @@ export const SECTIONS: Section[] = [
     id: "data-entry", icon: FileDown, title: "Data Entry", amharicTitle: "የመረጃ ማስገቢያ (CSV)",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Data & Reports", color: "bg-teal-700", gradient: "from-teal-50 to-green-50", accentLight: "border-teal-200 bg-teal-50",
+    targetRoles: ["billing","admin"],
+    routeUrl: "/admin/data-entry",
     content: [
       {
         heading: "Overview",
@@ -1576,6 +1700,8 @@ export const SECTIONS: Section[] = [
     id: "reports", icon: BarChart3, title: "Reports", amharicTitle: "አጠቃላይ ሪፖርቶች",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Data & Reports", color: "bg-cyan-600", gradient: "from-cyan-50 to-sky-50", accentLight: "border-cyan-200 bg-cyan-50",
+    targetRoles: ["billing","branch_manager","admin"],
+    routeUrl: "/admin/reports",
     content: [
       {
         heading: "Overview",
@@ -1657,6 +1783,8 @@ export const SECTIONS: Section[] = [
     id: "paid-bills", icon: CheckCircle2, title: "List of Paid Bills", amharicTitle: "የተከፈሉ ቢሎች ዝርዝር",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Data & Reports", color: "bg-green-600", gradient: "from-green-50 to-emerald-50", accentLight: "border-green-200 bg-green-50",
+    targetRoles: ["billing","branch_manager","admin"],
+    routeUrl: "/admin/reports/paid-bills",
     content: [
       {
         heading: "View and Export Paid Bills",
@@ -1687,6 +1815,8 @@ export const SECTIONS: Section[] = [
     id: "sent-bills", icon: Send, title: "List of Sent Bills", amharicTitle: "የተላኩ / የተለጠፉ ቢሎች",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Data & Reports", color: "bg-blue-500", gradient: "from-blue-50 to-sky-50", accentLight: "border-blue-200 bg-blue-50",
+    targetRoles: ["billing","branch_manager","admin"],
+    routeUrl: "/admin/reports/sent-bills",
     content: [
       {
         heading: "View and Export Sent Bills",
@@ -1717,6 +1847,8 @@ export const SECTIONS: Section[] = [
     id: "unsettled-bills", icon: FileClock, title: "List of Unsettled Bills", amharicTitle: "ያልተከፈሉ / የቀሩ ቢሎች ዝርዝር",
     badge: "Admin / Staff", amharicBadge: "አድሚን / ሰራተኛ",
     group: "Data & Reports", color: "bg-orange-600", gradient: "from-orange-50 to-red-50", accentLight: "border-orange-200 bg-orange-50",
+    targetRoles: ["billing","branch_manager","admin"],
+    routeUrl: "/admin/reports/unsettled-bills",
     content: [
       {
         heading: "View Unsettled (Unpaid / Overdue) Bills",
@@ -1749,6 +1881,8 @@ export const SECTIONS: Section[] = [
     id: "gl-audit", icon: Scale, title: "GL Reports & Audit", amharicTitle: "የጠቅላላ ሂሳብ (GL) ሪፖርቶችና ኦዲት",
     badge: "Admin / Finance", amharicBadge: "አድሚን / ፋይናንስ",
     group: "Data & Reports", color: "bg-indigo-600", gradient: "from-indigo-50 to-blue-50", accentLight: "border-indigo-200 bg-indigo-50",
+    targetRoles: ["billing","admin"],
+    routeUrl: "/admin/reports/gl-audit",
     content: [
       {
         heading: "General Ledger Financial Summary & Audit Workspace",
@@ -1778,6 +1912,8 @@ export const SECTIONS: Section[] = [
     id: "credit-notes-report", icon: Wallet, title: "Credit Note Report", amharicTitle: "የክሬዲት ኖትና ተቀማጭ ሂሳብ ሪፖርት",
     badge: "Billing / Audit", amharicBadge: "ቢሊንግ / ኦዲት",
     group: "Data & Reports", color: "bg-emerald-600", gradient: "from-emerald-50 to-green-50", accentLight: "border-emerald-200 bg-emerald-50",
+    targetRoles: ["billing","admin"],
+    routeUrl: "/admin/reports/credit-notes",
     content: [
       {
         heading: "Credit Note & Deposit Financial Tracking",
@@ -1809,6 +1945,8 @@ export const SECTIONS: Section[] = [
     id: "settings", icon: Settings, title: "Settings", amharicTitle: "የስርዓት ቅንብሮች",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "System", color: "bg-slate-700", gradient: "from-slate-50 to-gray-50", accentLight: "border-slate-200 bg-slate-50",
+    targetRoles: ["admin"],
+    routeUrl: "/admin/settings",
     content: [
       {
         heading: "System Settings",
@@ -1851,6 +1989,8 @@ export const SECTIONS: Section[] = [
     id: "promotions", icon: Megaphone, title: "Promotions", amharicTitle: "ቅናሾችና ማበረታቻዎች",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "System", color: "bg-pink-500", gradient: "from-pink-50 to-rose-50", accentLight: "border-pink-200 bg-pink-50",
+    targetRoles: ["admin","branch_manager"],
+    routeUrl: "/admin/settings/promotions",
     content: [
       {
         heading: "Manage Promotions",
@@ -1883,6 +2023,8 @@ export const SECTIONS: Section[] = [
     id: "security-logs", icon: Shield, title: "Security Logs", amharicTitle: "የደህንነት ምዝግብ ማስታወሻ",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "System", color: "bg-red-700", gradient: "from-red-50 to-orange-50", accentLight: "border-red-200 bg-red-50",
+    targetRoles: ["admin"],
+    routeUrl: "/admin/security-logs",
     content: [
       {
         heading: "Overview",
@@ -1949,6 +2091,8 @@ export const SECTIONS: Section[] = [
     id: "recycle-bin", icon: Trash2, title: "Recycle Bin", amharicTitle: "የተሰረዙ መረጃዎች ማከማቻ",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "System", color: "bg-orange-600", gradient: "from-orange-50 to-amber-50", accentLight: "border-orange-200 bg-orange-50",
+    targetRoles: ["admin","branch_manager"],
+    routeUrl: "/admin/recycle-bin",
     content: [
       {
         heading: "Overview",
@@ -2019,6 +2163,8 @@ export const SECTIONS: Section[] = [
     id: "backup", icon: Database, title: "Database Backup", amharicTitle: "የመረጃ ቋት ምትኬ",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "System", color: "bg-indigo-700", gradient: "from-indigo-50 to-blue-50", accentLight: "border-indigo-200 bg-indigo-50",
+    targetRoles: ["admin"],
+    routeUrl: "/admin/backup",
     content: [
       {
         heading: "Overview",
@@ -2060,6 +2206,8 @@ export const SECTIONS: Section[] = [
     id: "maintenance", icon: Activity, title: "System Maintenance", amharicTitle: "የሲስተም ጥገና",
     badge: "Admin", amharicBadge: "አድሚን",
     group: "System", color: "bg-yellow-700", gradient: "from-yellow-50 to-amber-50", accentLight: "border-yellow-200 bg-yellow-50",
+    targetRoles: ["admin"],
+    routeUrl: "/admin/maintenance",
     content: [
       {
         heading: "System Maintenance Tasks",
@@ -2099,6 +2247,8 @@ export const SECTIONS: Section[] = [
     id: "errors", icon: AlertOctagon, title: "Common Errors & Fixes", amharicTitle: "የተለመዱ ስህተቶችና መፍትሄዎች",
     badge: "All Users", amharicBadge: "ሁሉም ተጠቃሚዎች",
     group: "System", color: "bg-red-600", gradient: "from-red-50 to-rose-50", accentLight: "border-red-200 bg-red-50",
+    targetRoles: ["admin","billing","reader","branch_manager","support"],
+    routeUrl: "/admin/support",
     content: [
       {
         heading: "Error Reference Table",
@@ -2139,4 +2289,238 @@ export const SECTIONS: Section[] = [
       },
     ],
   },
+  // ── DATA & REPORTS: STANDARDIZED MONTHLY BILL EXPORT ────────────────────────
+  {
+    id: "monthly-bill-export",
+    icon: FileDown,
+    title: "Monthly Bill Export (Standardized CBE & Switch Ledger)",
+    amharicTitle: "መደበኛ ወርሃዊ የቢል ኤክስፖርት (CBE እና ስዊች)",
+    badge: "Billing & Finance",
+    amharicBadge: "ቢሊንግ እና ፋይናንስ",
+    group: "Data & Reports",
+    color: "bg-emerald-600",
+    gradient: "from-emerald-50 to-teal-50",
+    accentLight: "border-emerald-200 bg-emerald-50",
+    targetRoles: ["billing", "admin", "branch_manager"],
+    routeUrl: "/admin/reports/monthly-bill-export",
+    content: [
+      {
+        heading: "Overview",
+        amharicHeading: "አጠቃላይ መግለጫ",
+        body: "Generates standardized 15-column billing ledgers formatted for automated integration with external banking interfaces (Commercial Bank of Ethiopia, Telebirr, and national banking switch networks). Automatically separates standard commercial bills from VAT-exempt or zero-rated accounts into dual CSV files (Bill_<month>.csv and VAT_<month>.csv).",
+        amharicBody: "ለኢትዮጵያ ንግድ ባንክ (CBE)፣ ለቴሌብር እና ለብሄራዊ የክፍያ ስዊች ውህደት የተዘጋጀ ባለ 15 ዓምድ ወርሃዊ የቢል መዝገብ ያዘጋጃል። የታክስና የቢል መረጃዎችን በሁለት የተለያዩ ፋይሎች (Bill_<month>.csv ያለ ቫት እና VAT_<month>.csv ከነሙሉ ቫት) በራስ-ሰር ይለያል።",
+      },
+      {
+        heading: "Procedural Steps (SOP)",
+        amharicHeading: "የአሰራር ቅደም ተከተል (SOP)",
+        steps: [
+          "Navigate to Reports > Monthly Bill Export in the navigation menu.",
+          "Select the Target Billing Month (e.g., 2026-10) and choose a specific Branch or 'All Branches'.",
+          "Review the pre-export summary: Total Records, Total Bill Amount (ETB), Total VAT (ETB), and Valid TIN count.",
+          "Click 'Export Standard Bill CSV' to generate the 15-column switch ledger (Bill_YYYY-MM.csv).",
+          "Click 'Export VAT Ledger CSV' to generate the matching audit statement (VAT_YYYY-MM.csv).",
+          "Upload the generated Bill_YYYY-MM.csv to CBE Birr / EthSwitch batch SFTP portal and verify checksum.",
+        ],
+        amharicSteps: [
+          "በግራ አሞሌው ላይ ሪፖርቶች > ወርሃዊ የቢል ኤክስፖርት የሚለውን ይጫኑ።",
+          "የታለመውን የቢል ወር (ለምሳሌ 2026-10) ይምረጡ እና የተወሰነ ቅርንጫፍ ወይም 'ሁሉንም ቅርንጫፎች' ይምረጡ።",
+          "የቅድመ-ኤክስፖርት ማጠቃለያውን ይገምግሙ፡ አጠቃላይ መዛግብት፣ የቢል ድምር (ብር)፣ የቫት ድምር (ብር) እና ህጋዊ የTIN ብዛት።",
+          "ባለ 15-ዓምድ የስዊች መዝገብ (Bill_YYYY-MM.csv) ለማመንጨት 'መደበኛ ቢል ኤክስፖርት' የሚለውን ይጫኑ።",
+          "ተጓዳኝ የኦዲት መግለጫ (VAT_YYYY-MM.csv) ለማውጣት 'የቫት መዝገብ ኤክስፖርት' የሚለውን ይጫኑ።",
+          "የወጣውን Bill_YYYY-MM.csv ወደ CBE Birr / EthSwitch የባንክ ማዕከል ይጫኑ እና ቁጥሩን ያረጋግጡ።",
+        ],
+        callouts: [
+          {
+            type: "info",
+            text: "The 15th column CUSTOMERTIN is intentionally left blank for individual residential customers without an active commercial TIN to avoid banking switch validation rejection.",
+            amharicText: "የባንክ ስዊች ስህተት እንዳይፈጥር ለግል ነዋሪዎች የTIN ቁጥር ከሌላቸው 15ኛው ዓምድ CUSTOMERTIN ባዶ ሆኖ ይወጣል።",
+          },
+          {
+            type: "warning",
+            text: "Always verify that the Total Bill Count matches the branch active posted bills count before submitting files to the CBE or Telebirr switch.",
+            amharicText: "ፋይሎችን ወደ CBE ወይም ቴሌብር ስዊች ከመላክዎ በፊት አጠቃላይ የቢል ብዛት በቅርንጫፉ ከጸደቁት ቢሎች ጋር እኩል መሆኑን ያረጋግጡ።",
+          },
+        ],
+        table: {
+          headers: ["Column Index", "Field Name", "Specification / Format", "Sample Value"],
+          rows: [
+            ["1", "CUSTOMERKEY", "Numeric 12-digit contract ID", "001200458921"],
+            ["2", "BILLINGPERIOD", "YYYYMM billing cycle format", "202610"],
+            ["3", "CUSTOMERNAME", "Full legal customer name", "Addis Ababa Univ. 4 Kilo"],
+            ["4", "MOBILENO", "National 10-digit phone", "0911223344"],
+            ["5", "CURRENTREADING", "Meter index in m³ (1 decimal)", "14520.5"],
+            ["6", "PREVIOUSREADING", "Prior cycle index in m³", "14100.0"],
+            ["7", "CONSUMPTION", "Current - Previous reading", "420.5"],
+            ["8", "WATERCHARGE", "Tiered water charge before VAT", "28594.00"],
+            ["9", "SEWERCHARGE", "Sewerage / sanitation surcharge", "5718.80"],
+            ["10", "MAINTENANCEFEE", "Fixed pipeline maintenance levy", "125.00"],
+            ["11", "METERRATE", "Equipment lease fee", "80.00"],
+            ["12", "TOTALAMOUNT", "Payable sum without VAT (ETB)", "34517.80"],
+            ["13", "PREVIOUSBALANCE", "Carried unpaid balance", "0.00"],
+            ["14", "NETAMOUNT", "Final payable switch amount", "34517.80"],
+            ["15", "CUSTOMERTIN", "9-10 digit TIN (or blank if personal)", "0045891234"],
+          ],
+        },
+        amharicTable: {
+          headers: ["የዓምድ ቁጥር", "የመስክ ስም", "ቅርጸት / ዝርዝር", "ምሳሌ"],
+          rows: [
+            ["1", "CUSTOMERKEY", "ባለ 12 አሃዝ የውል መለያ ቁጥር", "001200458921"],
+            ["2", "BILLINGPERIOD", "የቢል ዑደት (ዓ.ም.ወር)", "202610"],
+            ["3", "CUSTOMERNAME", "ሙሉ የደንበኛ ስም", "አዲስ አበባ ዩኒቨርሲቲ 4 ኪሎ"],
+            ["4", "MOBILENO", "ባለ 10 አሃዝ ስልክ ቁጥር", "0911223344"],
+            ["5", "CURRENTREADING", "የአሁኑ የቆጣሪ ንባብ በኪ.ሜ", "14520.5"],
+            ["6", "PREVIOUSREADING", "የቀድሞው ንባብ በኪ.ሜ", "14100.0"],
+            ["7", "CONSUMPTION", "ፍጆታ (አሁን - የቀድሞ)", "420.5"],
+            ["8", "WATERCHARGE", "የውሃ ክፍያ ያለ ቫት", "28594.00"],
+            ["9", "SEWERCHARGE", "የፍሳሽና ሳኒቴሽን ክፍያ", "5718.80"],
+            ["10", "MAINTENANCEFEE", "የመስመር ጥገና ክፍያ", "125.00"],
+            ["11", "METERRATE", "የቆጣሪ ኪራይ ክፍያ", "80.00"],
+            ["12", "TOTALAMOUNT", "የክፍያ ድምር ያለ ቫት (ብር)", "34517.80"],
+            ["13", "PREVIOUSBALANCE", "ካለፈው የተሸጋገረ ቀሪ ዕዳ", "0.00"],
+            ["14", "NETAMOUNT", "የመጨረሻ የሚከፈል ሂሳብ", "34517.80"],
+            ["15", "CUSTOMERTIN", "የግብር ከፋይ መለያ (TIN)", "0045891234"],
+          ],
+        },
+      },
+    ],
+  },
+
+  // ── CUSTOMER & METERING: DIFFERENCE APPORTIONMENT ───────────────────────────
+  {
+    id: "difference-apportionment",
+    icon: Scale,
+    title: "Difference Apportionment & Master Variance",
+    amharicTitle: "የልዩነት ክፍፍልና ዋና ቆጣሪ ቁጥጥር",
+    badge: "Billing / Operations",
+    amharicBadge: "ቢሊንግ / ኦፕሬሽን",
+    group: "Customer & Metering",
+    color: "bg-indigo-600",
+    gradient: "from-indigo-50 to-blue-50",
+    accentLight: "border-indigo-200 bg-indigo-50",
+    targetRoles: ["billing", "branch_manager", "admin"],
+    routeUrl: "/admin/reports/overall-difference-usage-trend",
+    content: [
+      {
+        heading: "Overview",
+        amharicHeading: "አጠቃላይ መግለጫ",
+        body: "Difference Apportionment manages volumetric and billing discrepancies between master bulk meter inflow and the sum of individual sub-meter customer readings. The system allocates net variances equitably across active sub-meter accounts using configured distribution rules.",
+        amharicBody: "የልዩነት ክፍፍል (አፖርሽንመንት) በዋናው የጅምላ ቆጣሪ ፍጆታ እና በግል ንዑስ ቆጣሪዎች ድምር መካከል የሚፈጠርን ልዩነት በነዋሪዎች ወይም በተጠቃሚዎች ላይ በህጋዊ ቀመር የማከፋፈያ አሰራር ነው።",
+      },
+      {
+        heading: "Procedural Steps (SOP)",
+        amharicHeading: "የአሰራር ቅደም ተከተል (SOP)",
+        steps: [
+          "Open Customer & Metering > Bulk Meters or Reports > Overall Difference Usage Trend.",
+          "Select the Bulk Meter installation (e.g., Bole Arabsa Site A) and the current billing cycle.",
+          "Review Master Meter Consumption vs Aggregate Sub-meter Consumption.",
+          "Identify Variance Percentage (Loss / Under-registration vs Over-registration).",
+          "Apply Apportionment Algorithm: Pro-Rata by Sub-meter Consumption or Equal Split.",
+          "Verify calculated Difference Charges on individual draft statements before batch posting.",
+        ],
+        amharicSteps: [
+          "ደንበኞችና ቆጣሪዎች > የጅምላ ቆጣሪዎች ወይም ሪፖርቶች > የልዩነት አጠቃቀም አዝማሚያ ገጽ ይክፈቱ።",
+          "የተፈለገውን የጅምላ ቆጣሪ ጣቢያ (ለምሳሌ ቦሌ አራብሳ ሳይት A) እና የወቅቱን የቢል ዑደት ይምረጡ።",
+          "የዋናው ቆጣሪ ፍጆታን ከግል ንዑስ ቆጣሪዎች ድምር ፍጆታ ጋር ያወዳድሩ።",
+          "የልዩነት መቶኛን (የውሃ ብክነት ወይም የንባብ ልዩነት) ይለዩ።",
+          "የክፍፍል ስሌት ቀመር ይምረጡ፡ በፍጆታ መጠን ተመጣጣኝ (Pro-Rata) ወይም እኩል ክፍፍል (Equal Split)።",
+          "ቢሉ ከመለጠፉ በፊት በእያንዳንዱ የግል ረቂቅ ደረሰኝ ላይ የተመደበውን የልዩነት ክፍያ ያረጋግጡ።",
+        ],
+        callouts: [
+          {
+            type: "tip",
+            text: "If Volume Variance exceeds 20%, inspect the physical pipeline for underground burst leaks or bypass connections prior to running the apportionment billing cycle.",
+            amharicText: "የፍጆታ ልዩነቱ ከ 20% በላይ ከሆነ የቢል ዑደቱን ከማስላትዎ በፊት የመስመር ላይ ፍሳሽ ወይም ህገ-ወጥ መስመር መኖሩን በመስክ ያረጋግጡ።",
+          },
+        ],
+        table: {
+          headers: ["Metric / Parameter", "Calculation Rule", "Threshold / Normal Range", "Corrective Action"],
+          rows: [
+            ["Volume Variance (ΔV)", "Master Reading - Σ(Sub-meter Readings)", "-2% to +5%", "System flags for physical inspection if > 15%"],
+            ["Pro-Rata Share", "ΔV × (Sub-meter Usage / Total Sub-meter Usage)", "Proportional", "Apportioned as supplemental line item"],
+            ["Equal Division", "ΔV / Number of Active Sub-meters", "Fixed per Tenant", "Used for communal landscape/lighting taps"],
+            ["Loss Surcharge", "Volume Variance × Base Tariff Tier", "Cost Recovery", "Billed to condominium management committee"],
+          ],
+        },
+        amharicTable: {
+          headers: ["መለኪያ / መስፈርት", "የስሌት ቀመር", "መደበኛ ክልል", "የማስተካከያ እርምጃ"],
+          rows: [
+            ["የፍጆታ ልዩነት (ΔV)", "ዋና ቆጣሪ - የንዑስ ቆጣሪዎች ድምር", "-2% እስከ +5%", "ልዩነቱ ከ 15% በላይ ከሆነ በመስክ እንዲመረመር ምልክት ይደረጋል"],
+            ["ተመጣጣኝ ድርሻ (Pro-Rata)", "ΔV × (የግል ፍጆታ / አጠቃላይ የግል ፍጆታ)", "ተመጣጣኝ", "እንደ ተጨማሪ የልዩነት ሂሳብ በቢል ላይ ይሰላል"],
+            ["እኩል ክፍፍል", "ΔV / የንቁ ንዑስ ቆጣሪዎች ብዛት", "ለእያንዳንዱ እኩል", "ለጋራ አገልግሎት መታጠቢያና መናፈሻዎች ያገለግላል"],
+            ["የብክነት ክፍያ", "የልዩነት መጠን × የመነሻ ታሪፍ ተመን", "ወጪ ማካካሻ", "ለኮንዶሚኒየም አስተዳደር ኮሚቴ እንዲከፈል ይደረጋል"],
+          ],
+        },
+      },
+    ],
+  },
+
+  // ── DATA & REPORTS: READING CORRECTIONS & AUDIT ─────────────────────────────
+  {
+    id: "reading-corrections",
+    icon: ClipboardList,
+    title: "Reading Corrections & Adjustment Audit",
+    amharicTitle: "የንባብ ማስተካከያና ኦዲት",
+    badge: "Audit & Operations",
+    amharicBadge: "ኦዲት እና ኦፕሬሽን",
+    group: "Data & Reports",
+    color: "bg-teal-600",
+    gradient: "from-teal-50 to-cyan-50",
+    accentLight: "border-teal-200 bg-teal-50",
+    targetRoles: ["billing", "branch_manager", "admin"],
+    routeUrl: "/admin/reports/reading-corrections",
+    content: [
+      {
+        heading: "Overview",
+        amharicHeading: "አጠቃላይ መግለጫ",
+        body: "Provides formal audit oversight, anomaly tracking, and supervisory approval for meter reading corrections. Prevents undetected meter tampering, typo regressions, or manual dial transcription errors while keeping an immutable log of prior and revised readings.",
+        amharicBody: "በስህተት የተመዘገቡ የቆጣሪ ንባቦችን በቅርንጫፍ ኃላፊ ተገምግመው እንዲስተካከሉ የሚያስችል የኦዲትና የቁጥጥር ስርዓት ነው። የቀድሞውንና የታረመውን ንባብ፣ ያረመውን ሰራተኛ እና ምክንያቱን ሙሉ በሙሉ ይመዘግባል።",
+      },
+      {
+        heading: "Procedural Steps (SOP)",
+        amharicHeading: "የአሰራር ቅደም ተከተል (SOP)",
+        steps: [
+          "Go to Reports > Reading Corrections in the left sidebar.",
+          "Filter records by Branch, Date Range, or Reader Name to identify flagged reading discrepancies.",
+          "Inspect the Delta (New Reading vs Previous Reading) and attached meter face photograph if uploaded.",
+          "If justified, click 'Approve Correction' to trigger automatic recalculation of consumption and bill charges.",
+          "If incorrect or unverified, click 'Reject' and dispatch a field re-inspection task to a different reader.",
+          "Export the monthly Correction Audit Log for internal financial control compliance.",
+        ],
+        amharicSteps: [
+          "በግራ አሞሌው ላይ ሪፖርቶች > የንባብ ማስተካከያ የሚለውን ገጽ ይክፈቱ።",
+          "በስህተት የተመዘገቡ ንባቦችን ለመለየት በቅርንጫፍ፣ በቀን ወይም በአንባቢ ስም ያጣሩ።",
+          "የንባብ ልዩነቱን (አዲሱ ንባብ ከቀድሞው ጋር) እና ከተያያዘ የቆጣሪውን ፎቶግራፍ ይመልከቱ።",
+          "ተገቢ ሆኖ ከተገኘ 'ማስተካከያውን አጽድቅ' የሚለውን በመጫን የፍጆታና የቢል ስሌቱ በራስ-ሰር እንዲስተካከል ያድርጉ።",
+          "ስህተት ከሆነ 'ውድቅ አድርግ' በማለት ቆጣሪው በሌላ አንባቢ እንደገና እንዲነበብ ትዕዛዝ ይላኩ።",
+          "ለውስጥ ቁጥጥርና ለፋይናንስ ኦዲት ወርሃዊ የንባብ ማስተካከያ ሪፖርትን ወደ ኤክሴል ያውርዱ።",
+        ],
+        callouts: [
+          {
+            type: "warning",
+            text: "Never approve a negative consumption reading (Current < Previous) without an official Meter Change record confirming dial rollover or physical meter replacement.",
+            amharicText: "የቆጣሪ ቅያሬ ሰነድ በሲስተሙ ሳይረጋገጥ አዲሱ ንባብ ከቀድሞው ያነሰ (አሉታዊ ፍጆታ) የሆነ ንባብ ፈጽሞ ማጽደቅ አይቻልም።",
+          },
+        ],
+        table: {
+          headers: ["Correction Status", "Definition", "System Behavior", "Permitted Role"],
+          rows: [
+            ["PENDING_REVIEW", "Correction submitted by reader/clerk awaiting verification", "Associated draft bill is held in draft state", "Branch Manager / Supervisor"],
+            ["APPROVED", "Verified against physical dial or photographic proof", "Consumption is updated and bill recalculation triggers", "Branch Manager / Admin"],
+            ["REJECTED", "Correction disallowed due to insufficient documentation", "Original reading is retained; re-reading dispatched", "Branch Manager"],
+            ["AUTO_FLAGGED", "New reading is lower than previous or spike > 300%", "System places automatic lock on billing cycle", "System Audit Engine"],
+          ],
+        },
+        amharicTable: {
+          headers: ["የማስተካከያ ሁኔታ", "ትርጓሜ", "የሲስተም እርምጃ", "የተፈቀደለት የስራ ሚና"],
+          rows: [
+            ["PENDING_REVIEW", "በአንባቢ የተላከ ማረጋገጫ የሚጠብቅ ማስተካከያ", "የተያያዘው ረቂቅ ቢል እንዳይጸድቅ ይያዛል", "የቅርንጫፍ ስራ አስኪያጅ / ተቆጣጣሪ"],
+            ["APPROVED", "በፎቶ ወይም በአካል ተረጋግጦ የጸደቀ", "ፍጆታው ይስተካከላል፣ ቢሉ እንደገና ይሰላል", "የቅርንጫፍ ስራ አስኪያጅ / አድሚን"],
+            ["REJECTED", "በቂ ማስረጃ ባለመኖሩ ውድቅ የተደረገ", "የቀድሞው ንባብ ይቀጥላል፤ አዲስ ንባብ ይታዘዛል", "የቅርንጫፍ ስራ አስኪያጅ"],
+            ["AUTO_FLAGGED", "ንባቡ ከቀድሞው የቀነሰ ወይም ከ300% በላይ የጨመረ", "ሲስተሙ በቢል ዑደቱ ላይ ጊዜያዊ ዕገዳ ይጥላል", "የሲስተም አውቶማቲክ ኦዲት"],
+          ],
+        },
+      },
+    ],
+  },
+
 ];

@@ -4,7 +4,8 @@ import * as React from "react";
 import {
   BookOpen, Search, BookMarked, Printer, Info, AlertTriangle,
   ArrowRight, GitBranch, Languages, Sparkles, FileDown,
-  Maximize, Minimize, CheckCircle2,
+  Maximize, Minimize, CheckCircle2, ExternalLink, RotateCcw,
+  Users, UserCog, Shield, Briefcase, Headphones,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +15,14 @@ import {
   type LanguageMode,
   type Callout,
   type Section,
+  type UserRoleCategory,
   SECTIONS,
   BILINGUAL_GLOSSARY,
   GROUP_CONFIG,
   GROUPS,
   CATEGORY_NAMES,
+  ROLE_CONFIG,
+  ROLE_KEYS,
 } from "./manual-data";
 import { StepScreenshotPreview } from "./step-screenshots";
 
@@ -365,11 +369,14 @@ export default function UserManualPage() {
   const [search, setSearch] = React.useState("");
   const [activeGroup, setActiveGroup] = React.useState<string | null>(null);
   const [activeSection, setActiveSection] = React.useState<string | null>(null);
+  const [activeRole, setActiveRole] = React.useState<"all" | UserRoleCategory>("all");
   const [language, setLanguage] = React.useState<LanguageMode>("am");
   const [glossaryCategory, setGlossaryCategory] = React.useState<string>("All");
   const [glossarySearch, setGlossarySearch] = React.useState<string>("");
   const [printDate, setPrintDate] = React.useState("October 2026");
   const [isFullscreen, setIsFullscreen] = React.useState(false);
+  const [checkedSteps, setCheckedSteps] = React.useState<Record<string, boolean>>({});
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   // Track browser fullscreen state
   React.useEffect(() => {
@@ -398,7 +405,28 @@ export default function UserManualPage() {
         setLanguage(saved);
       }
     } catch {}
+    // Load persisted step checklist from localStorage
+    try {
+      const savedSteps = localStorage.getItem("aawsa_manual_steps");
+      if (savedSteps) setCheckedSteps(JSON.parse(savedSteps));
+    } catch {}
     setPrintDate(new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }));
+  }, []);
+
+  // Ctrl+K / "/" keyboard shortcut to focus search
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey && e.key === "k") || (e.key === "/" && !["INPUT","TEXTAREA"].includes((e.target as HTMLElement).tagName))) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+      if (e.key === "Escape" && document.activeElement === searchInputRef.current) {
+        searchInputRef.current?.blur();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   const handleLanguageChange = (mode: LanguageMode) => {
@@ -406,6 +434,39 @@ export default function UserManualPage() {
     try {
       localStorage.setItem("aawsa_manual_language", mode);
     } catch {}
+  };
+
+  // Checklist helpers
+  const toggleStep = (key: string) => {
+    setCheckedSteps((prev) => {
+      const updated = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem("aawsa_manual_steps", JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+  };
+  const resetSectionSteps = (sectionId: string, stepCount: number) => {
+    setCheckedSteps((prev) => {
+      const updated = { ...prev };
+      for (let i = 0; i < stepCount; i++) delete updated[`${sectionId}:${i}`];
+      try { localStorage.setItem("aawsa_manual_steps", JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+  };
+  const getSectionCheckedCount = (sectionId: string) =>
+    Object.keys(checkedSteps).filter((k) => k.startsWith(`${sectionId}:`) && checkedSteps[k]).length;
+
+  // Search term highlight helper
+  const highlight = (text: string, q: string): React.ReactNode => {
+    if (!q.trim() || !text) return text;
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark className="bg-yellow-200 text-yellow-900 rounded px-0.5">{text.slice(idx, idx + q.length)}</mark>
+        {highlight(text.slice(idx + q.length), q)}
+      </>
+    );
   };
 
   const handleDownloadPdf = async (mode: "all" | "filtered" = "all") => {
@@ -441,9 +502,10 @@ export default function UserManualPage() {
 
   const filtered = SECTIONS.filter((s) => {
     const groupOk = !activeGroup || s.group === activeGroup;
-    if (!search.trim()) return groupOk;
+    const roleOk = activeRole === "all" || !s.targetRoles || s.targetRoles.includes(activeRole as UserRoleCategory);
+    if (!search.trim()) return groupOk && roleOk;
     const q = search.toLowerCase();
-    return groupOk && (
+    return groupOk && roleOk && (
       s.title.toLowerCase().includes(q) ||
       s.amharicTitle.toLowerCase().includes(q) ||
       s.group.toLowerCase().includes(q) ||
@@ -665,17 +727,21 @@ export default function UserManualPage() {
             <div className="relative min-w-[220px] max-w-sm">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <Input
+                ref={searchInputRef}
                 placeholder={
                   language === "am"
-                    ? "መመሪያውን ይፈልጉ (በአማርኛ ወይም በእንግሊዝኛ)..."
+                    ? "ይፈልጉ... (Ctrl+K)"
                     : language === "en"
-                    ? "Search manual (English)..."
-                    : "Search manual (English / አማርኛ)…"
+                    ? "Search manual... (Ctrl+K)"
+                    : "Search / ፈልጉ… (Ctrl+K)"
                 }
-                className="pl-8 h-8 text-sm bg-slate-50 border-slate-200 rounded-lg"
+                className="pl-8 pr-16 h-8 text-sm bg-slate-50 border-slate-200 rounded-lg"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+              <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:flex items-center gap-0.5 text-[9px] font-mono text-slate-400 bg-slate-100 border border-slate-200 rounded px-1 py-0.5 pointer-events-none">
+                Ctrl+K
+              </kbd>
             </div>
             <div className="flex flex-wrap gap-1.5">
               <button
@@ -747,6 +813,51 @@ export default function UserManualPage() {
               Both
             </button>
           </div>
+        </div>
+
+        {/* ── Role Filter Pills Row ────────────────────────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-slate-100">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1 shrink-0">
+            {language === "am" ? "ሚና:" : "Role:"}
+          </span>
+          <button
+            onClick={() => setActiveRole("all")}
+            className={cn(
+              "flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all",
+              activeRole === "all"
+                ? "bg-slate-800 text-white border-slate-800"
+                : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+            )}
+          >
+            <Users className="h-2.5 w-2.5" />
+            {language === "am" ? `ሁሉም ሚናዎች (${SECTIONS.length})` : `All Roles (${SECTIONS.length})`}
+          </button>
+          {ROLE_KEYS.map((roleKey) => {
+            const rc = ROLE_CONFIG[roleKey];
+            const count = SECTIONS.filter((s) => s.targetRoles?.includes(roleKey)).length;
+            const isActive = activeRole === roleKey;
+            const roleIcons: Record<string, React.ComponentType<{className?: string}>> = {
+              reader: Users, billing: Briefcase, branch_manager: UserCog, admin: Shield, support: Headphones,
+            };
+            const RIcon = roleIcons[roleKey] || Users;
+            return (
+              <button
+                key={roleKey}
+                onClick={() => setActiveRole(isActive ? "all" : roleKey)}
+                className={cn(
+                  "flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all",
+                  isActive
+                    ? `${rc.color} border-transparent`
+                    : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+                )}
+              >
+                <RIcon className="h-2.5 w-2.5" />
+                <span className={language === "am" ? "amharic-font" : ""}>
+                  {language === "am" ? `${rc.amharicBadge} (${count})` : `${rc.badge} (${count})`}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -932,10 +1043,52 @@ export default function UserManualPage() {
                                 </span>
                               )}
                             </div>
+                            {/* Step progress bar */}
+                            {(() => {
+                              const totalSteps = section.content.reduce((a, c) => a + (c.steps?.length || 0), 0);
+                              const doneSteps = getSectionCheckedCount(section.id);
+                              if (totalSteps === 0) return null;
+                              return (
+                                <div className="flex items-center gap-2 mt-1 print:hidden">
+                                  <div className="flex-1 h-1 rounded-full bg-slate-200/70 max-w-[80px]">
+                                    <div
+                                      className={cn("h-1 rounded-full transition-all", doneSteps === totalSteps ? "bg-emerald-500" : "bg-blue-400")}
+                                      style={{ width: `${Math.round((doneSteps / totalSteps) * 100)}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-[9px] font-bold text-slate-500">
+                                    {doneSteps}/{totalSteps}
+                                  </span>
+                                  {doneSteps > 0 && (
+                                    <button
+                                      onClick={() => resetSectionSteps(section.id, totalSteps)}
+                                      title="Reset all steps"
+                                      className="text-[9px] text-slate-400 hover:text-rose-500 flex items-center gap-0.5 transition-colors"
+                                    >
+                                      <RotateCcw className="h-2.5 w-2.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
-                          <Badge className={cn("shrink-0 text-[10px] font-semibold bg-white/70 text-slate-600 border-0 shadow-sm px-2.5 py-0.5", language === "am" && "amharic-font")}>
-                            {language === "am" ? section.amharicBadge : section.badge}
-                          </Badge>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {section.routeUrl && (
+                              <a
+                                href={section.routeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="print:hidden flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-slate-600 bg-white/70 hover:bg-white border border-slate-200/70 hover:border-slate-300 transition-all shadow-xs"
+                                title="Open this page in the portal"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                <span>{language === "am" ? "ክፈት ↗" : "Open ↗"}</span>
+                              </a>
+                            )}
+                            <Badge className={cn("shrink-0 text-[10px] font-semibold bg-white/70 text-slate-600 border-0 shadow-sm px-2.5 py-0.5", language === "am" && "amharic-font")}>
+                              {language === "am" ? section.amharicBadge : section.badge}
+                            </Badge>
+                          </div>
                         </div>
 
                         {/* Section body */}
@@ -1017,21 +1170,35 @@ export default function UserManualPage() {
                                       </span>
                                     </div>
                                     <ol className="space-y-2.5">
-                                      {((language === "am" ? (block.amharicSteps || block.steps) : block.steps) || []).map((step, si) => (
+                                      {((language === "am" ? (block.amharicSteps || block.steps) : block.steps) || []).map((step, si) => {
+                                        const stepKey = `${section.id}:${si}`;
+                                        const isDone = !!checkedSteps[stepKey];
+                                        return (
                                         <li key={si} className="flex gap-3 text-[13px] group">
-                                          <span className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white text-[10px] font-black mt-0.5 shadow-2xs transition-transform group-hover:scale-110", section.color)}>
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleStep(stepKey)}
+                                            className={cn(
+                                              "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white text-[10px] font-black mt-0.5 shadow-2xs transition-all group-hover:scale-110 print:hidden",
+                                              isDone ? "bg-emerald-500 ring-2 ring-emerald-200" : section.color
+                                            )}
+                                            title={isDone ? "Mark as incomplete" : "Mark as complete"}
+                                          >
+                                            {isDone ? "✓" : si + 1}
+                                          </button>
+                                          <span className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white text-[10px] font-black mt-0.5 shadow-2xs hidden print:flex", section.color)}>
                                             {si + 1}
                                           </span>
-                                          <div className="flex-1 leading-5">
+                                          <div className={cn("flex-1 leading-5", isDone && "line-through opacity-50 print:no-underline print:opacity-100")}>
                                             {language === "en" && (
-                                              <span className="text-slate-700">{step}</span>
+                                              <span className="text-slate-700">{search ? highlight(step, search) : step}</span>
                                             )}
                                             {language === "am" && (
                                               <span className="text-slate-800 amharic-font">{step}</span>
                                             )}
                                             {language === "both" && (
                                               <>
-                                                <div className="text-slate-800 font-medium">{step}</div>
+                                                <div className="text-slate-800 font-medium">{search ? highlight(step, search) : step}</div>
                                                 {block.amharicSteps?.[si] && (
                                                   <div className="text-[12px] text-slate-500 amharic-font mt-0.5">
                                                     {block.amharicSteps[si]}
@@ -1041,7 +1208,8 @@ export default function UserManualPage() {
                                             )}
                                           </div>
                                         </li>
-                                      ))}
+                                        );
+                                      })}
                                     </ol>
                                   </div>
 

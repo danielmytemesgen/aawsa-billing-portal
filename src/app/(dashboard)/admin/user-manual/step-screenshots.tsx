@@ -56,6 +56,9 @@ const SCREENSHOT_MAP: Record<string, string> = {
   promotions:              "promotions.png",
   // Reports
   reports:                 "reports.png",
+  "monthly-bill-export":   "monthly-bill-export.png",
+  "difference-apportionment": "difference-apportionment.png",
+  "reading-corrections":   "reading-corrections.png",
   // Support
   support:                 "support.png",
   "knowledge-base":        "knowledge-base.png",
@@ -92,6 +95,9 @@ const URL_MAP: Record<string, string> = {
   notifications:           "admin/notifications",
   promotions:              "admin/settings",
   reports:                 "admin/reports",
+  "monthly-bill-export":   "admin/reports/monthly-bill-export",
+  "difference-apportionment": "admin/reports/overall-difference-usage-trend",
+  "reading-corrections":   "admin/reports/reading-corrections",
   support:                 "admin/support",
   "knowledge-base":        "admin/knowledge-base",
   settings:                "admin/settings",
