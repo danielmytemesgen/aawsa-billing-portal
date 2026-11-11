@@ -161,29 +161,26 @@ export function ReaderReport({
         const collectedCount = Math.min(uniqueMetersRead.size, totalCustomers > 0 ? totalCustomers : uniqueMetersRead.size);
         const pendingCount = Math.max(0, totalCustomers - collectedCount);
 
-        // Charts: Reading Type Ratio
-        const zeroReadings = scopedCycleReadings.filter(r => {
+        // Charts: Reading Type Ratio & Fault Breakdown (Single pass over scopedCycleReadings)
+        let zeroReadings = 0;
+        let faultReadings = 0;
+        let increaseReadings = 0;
+        let decreaseReadings = 0;
+        const faultCodeCounts = new Map<string, number>();
+
+        for (const r of scopedCycleReadings) {
+            const fault = r.faultCode || (r as any).FAULT_CODE;
+            if (fault && fault !== '') {
+                faultReadings++;
+                faultCodeCounts.set(fault, (faultCodeCounts.get(fault) || 0) + 1);
+            }
             const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
             const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
-            return classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE) === 'Zero';
-        }).length;
-
-        const faultReadings = scopedCycleReadings.filter(r => {
-            const code = (r as any).FAULT_CODE || r.faultCode;
-            return code && code !== '';
-        }).length;
-
-        const increaseReadings = scopedCycleReadings.filter(r => {
-            const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
-            const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
-            return classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE) === 'Increase';
-        }).length;
-
-        const decreaseReadings = scopedCycleReadings.filter(r => {
-            const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
-            const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
-            return classifyReadingCategory(prev, curr, r.faultCode || (r as any).FAULT_CODE) === 'Decrease';
-        }).length;
+            const cat = classifyReadingCategory(prev, curr, fault);
+            if (cat === 'Zero') zeroReadings++;
+            else if (cat === 'Increase') increaseReadings++;
+            else if (cat === 'Decrease') decreaseReadings++;
+        }
 
         const readingTypes = [
             { category: 'Zero', count: zeroReadings, color: '#94a3b8' },
@@ -194,14 +191,6 @@ export function ReaderReport({
 
         // Fault Code Breakdown
         const faultCodeBreakdown: { code: string; label: string; count: number; color: string; percentage: number }[] = [];
-        const faultReadingsInCycle = scopedCycleReadings.filter(r => ((r as any).FAULT_CODE && (r as any).FAULT_CODE !== '') || (r.faultCode && r.faultCode !== ''));
-
-        const faultCodeCounts = new Map<string, number>();
-        faultReadingsInCycle.forEach((r: any) => {
-            const code = r.FAULT_CODE || r.faultCode || 'UNKNOWN';
-            faultCodeCounts.set(code, (faultCodeCounts.get(code) || 0) + 1);
-        });
-
         faultCodeCounts.forEach((count: number, code: string) => {
             faultCodeBreakdown.push({
                 code,
@@ -255,10 +244,27 @@ export function ReaderReport({
                 ? `${(currentMonthUsage / 1000).toFixed(1)}K`
                 : currentMonthUsage.toFixed(0);
 
+        // ── Pre-index customers/bulk-meters by branchId for O(1) branch lookups ──
+        // Without this, the .some() calls inside the branch map are O(branches × readings × meters)
+        const bulkByBranch = new Map<string, Set<string>>();
+        const indByBranch = new Map<string, Set<string>>();
+        for (const bm of activeBulkMeters) {
+            if (!bm.branchId) continue;
+            if (!bulkByBranch.has(bm.branchId)) bulkByBranch.set(bm.branchId, new Set());
+            bulkByBranch.get(bm.branchId)!.add(bm.customerKeyNumber);
+        }
+        for (const c of activeCustomers) {
+            if (!c.branchId) continue;
+            if (!indByBranch.has(c.branchId)) indByBranch.set(c.branchId, new Set());
+            indByBranch.get(c.branchId)!.add(c.customerKeyNumber);
+        }
+
         // Branch Detail Table Data
         const branchDetails = (branches || []).filter(b => b.name.toLowerCase() !== 'head office').map(branch => {
-            const bBulk = activeBulkMeters.filter(bm => bm.branchId === branch.id);
-            const bInd = activeCustomers.filter(c => c.branchId === branch.id);
+            const bBulkSet = bulkByBranch.get(branch.id) || new Set<string>();
+            const bIndSet  = indByBranch.get(branch.id)  || new Set<string>();
+            const bBulk    = activeBulkMeters.filter(bm => bBulkSet.has(bm.customerKeyNumber));
+            const bInd     = activeCustomers.filter(c  => bIndSet.has(c.customerKeyNumber));
 
             let totalInBranch = 0;
             if (meterScope === 'all') totalInBranch = bBulk.length + bInd.length;
@@ -268,15 +274,13 @@ export function ReaderReport({
             const branchReaders = (staff || []).filter(s => s.branchId === branch.id && isReaderStaff(s)).length;
             const branchRoutes = (routes || []).filter(r => r.branchId === branch.id).length;
 
+            // O(1) lookup using pre-built Sets instead of nested .some()
             const branchReadings = scopedCycleReadings.filter(r => {
                 const meterId = r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber;
-                if (meterScope === 'all') {
-                    return bBulk.some(b => b.customerKeyNumber === meterId) || bInd.some(c => c.customerKeyNumber === meterId);
-                } else if (meterScope === 'bulk') {
-                    return bBulk.some(b => b.customerKeyNumber === meterId);
-                } else {
-                    return bInd.some(c => c.customerKeyNumber === meterId);
-                }
+                if (!meterId) return false;
+                if (meterScope === 'all') return bBulkSet.has(meterId) || bIndSet.has(meterId);
+                if (meterScope === 'bulk') return bBulkSet.has(meterId);
+                return bIndSet.has(meterId);
             });
             const uniqueBranchMetersRead = new Set(branchReadings.map(r => r.meterId || r.CUSTOMERKEY || r.bulkMeterId || r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber).filter(Boolean));
             const collected = Math.min(uniqueBranchMetersRead.size, totalInBranch > 0 ? totalInBranch : uniqueBranchMetersRead.size);

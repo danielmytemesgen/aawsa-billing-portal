@@ -1579,13 +1579,20 @@ async function fetchAllIndividualCustomerReadings() {
     const { data, error } = await getAllIndividualCustomerReadingsAction();
     if (data) {
       individualCustomerReadings = data.map(mapDbIndividualReadingToDomain);
-      // Cache for offline use
-      if (typeof window !== 'undefined') {
-        offlineDb.cacheHistoricalReadings(individualCustomerReadings, 'individual').catch(err =>
-          console.error("DataStore: Failed to cache individual readings:", err)
-        );
-      }
+      // Notify listeners immediately — do NOT await the IndexedDB write
       notifyIndividualCustomerReadingListeners();
+      // Defer the heavy IndexedDB bulk-put to browser idle time so it never blocks UI
+      if (typeof window !== 'undefined') {
+        const doCache = () =>
+          offlineDb.cacheHistoricalReadings(individualCustomerReadings, 'individual').catch(err =>
+            console.error("DataStore: Failed to cache individual readings:", err)
+          );
+        if ('requestIdleCallback' in window) {
+          (window as any).requestIdleCallback(doCache, { timeout: 10000 });
+        } else {
+          setTimeout(doCache, 2000);
+        }
+      }
     } else {
       console.error("DataStore: Failed to fetch individual customer readings. Database error:", JSON.stringify(error, null, 2));
     }
@@ -1606,13 +1613,20 @@ async function fetchAllBulkMeterReadings() {
     const { data, error } = await getAllBulkMeterReadingsAction();
     if (data) {
       bulkMeterReadings = data.map(mapDbBulkReadingToDomain);
-      // Cache for offline use
-      if (typeof window !== 'undefined') {
-        offlineDb.cacheHistoricalReadings(bulkMeterReadings, 'bulk').catch(err =>
-          console.error("DataStore: Failed to cache bulk readings:", err)
-        );
-      }
+      // Notify listeners immediately — do NOT await the IndexedDB write
       notifyBulkMeterReadingListeners();
+      // Defer the heavy IndexedDB bulk-put to browser idle time so it never blocks UI
+      if (typeof window !== 'undefined') {
+        const doCache = () =>
+          offlineDb.cacheHistoricalReadings(bulkMeterReadings, 'bulk').catch(err =>
+            console.error("DataStore: Failed to cache bulk readings:", err)
+          );
+        if ('requestIdleCallback' in window) {
+          (window as any).requestIdleCallback(doCache, { timeout: 10000 });
+        } else {
+          setTimeout(doCache, 2000);
+        }
+      }
     } else {
       console.error("DataStore: Failed to fetch bulk meter readings. Database error:", JSON.stringify(error, null, 2));
     }

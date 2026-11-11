@@ -179,24 +179,61 @@ export function ReadingAnalyticsReportView({
         setIsDetailsOpen(true);
     };
 
-    const processReading = (
-        r: any,
-        type: 'Individual' | 'Bulk',
+    // ─── Indexed lookup helpers ────────────────────────────────────────────────
+    // Build O(1) Maps from raw arrays so processReading never re-scans a list.
+    const buildLookupMaps = (
         customers: any[],
         staff: any[],
         branches: any[],
         bulkMeters: any[]
+    ) => {
+        // Individual customers: indexed by customerKeyNumber AND id
+        const customerMap = new Map<string, any>();
+        for (const c of customers) {
+            if (c.customerKeyNumber) customerMap.set(c.customerKeyNumber, c);
+            if (c.id && c.id !== c.customerKeyNumber) customerMap.set(c.id, c);
+        }
+        // Bulk meters: indexed by customerKeyNumber AND id
+        const bulkMeterMap = new Map<string, any>();
+        for (const bm of bulkMeters) {
+            if (bm.customerKeyNumber) bulkMeterMap.set(bm.customerKeyNumber, bm);
+            if (bm.id && bm.id !== bm.customerKeyNumber) bulkMeterMap.set(bm.id, bm);
+        }
+        // Staff: indexed by id AND email
+        const staffMap = new Map<string, any>();
+        for (const s of staff) {
+            if (s.id) staffMap.set(s.id, s);
+            if (s.email && s.email !== s.id) staffMap.set(s.email, s);
+        }
+        // Branches: indexed by id
+        const branchMap = new Map<string, any>();
+        for (const b of branches) {
+            if (b.id) branchMap.set(b.id, b);
+        }
+        return { customerMap, bulkMeterMap, staffMap, branchMap };
+    };
+
+    // O(1) processReading — uses pre-built Maps, zero linear scans
+    const processReadingFast = (
+        r: any,
+        type: 'Individual' | 'Bulk',
+        customerMap: Map<string, any>,
+        bulkMeterMap: Map<string, any>,
+        staffMap: Map<string, any>,
+        branchMap: Map<string, any>
     ): ReadingRecord => {
-        const customerKey = type === 'Individual' 
-            ? (r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber) 
+        const customerKey = type === 'Individual'
+            ? (r.individualCustomerId || r.CUST_KEY || r.customerKeyNumber)
             : (r.CUSTOMERKEY || r.CUST_KEY || r.customerKeyNumber || r.bulkMeterId);
-        
-        const customer = type === 'Individual' 
-            ? customers.find(c => c.customerKeyNumber === customerKey || c.id === customerKey)
-            : bulkMeters.find(bm => bm.customerKeyNumber === customerKey || bm.id === customerKey);
-            
-        const reader = staff.find(s => s.id === r.readerStaffId || s.email === r.readerStaffId);
-        const branch = branches.find(b => b.id === (customer?.branchId || (r as any).branchId));
+
+        const customer = type === 'Individual'
+            ? customerMap.get(customerKey)
+            : bulkMeterMap.get(customerKey);
+
+        const readerKey = r.readerStaffId;
+        const reader = readerKey ? staffMap.get(readerKey) : undefined;
+        const branchId = customer?.branchId || (r as any).branchId;
+        const branch = branchId ? branchMap.get(branchId) : undefined;
 
         const prev = Number(r.previousReading ?? (r as any).PREV_READING) || 0;
         const curr = Number(r.readingValue ?? (r as any).READING_VALUE ?? (r as any).METER_READING) || 0;
@@ -209,36 +246,36 @@ export function ReadingAnalyticsReportView({
             date: r.readingDate || (r as any).READING_DATE || (r as any).createdAt,
             month: r.monthYear || (r as any).MONTH_YEAR || (r.readingDate ? String(r.readingDate).substring(0, 7) : ''),
             customerKey: customerKey || 'N/A',
-            customerName: type === 'Individual' 
-                ? (customer?.name || (r as any).custName || (r as any).customerName || 'Individual Customer') 
+            customerName: type === 'Individual'
+                ? (customer?.name || (r as any).custName || (r as any).customerName || 'Individual Customer')
                 : (customer?.name || (r as any).customerName || 'Bulk Meter'),
             previousReading: prev,
             currentReading: curr,
-            usage: usage,
-            category: category,
+            usage,
+            category,
             faultCode: fault,
             readerName: reader?.name || (r as any).readerName || r.readerStaffId || 'System',
             readerPhone: reader?.phone || (r as any).readerPhone,
             branchName: branch?.name || (r as any).branchName || 'N/A',
-            branchId: customer?.branchId || (r as any).branchId,
-            route: type === 'Individual' 
-                ? (r.roundKey || (customer as any)?.bookNumber || (customer as any)?.routeKey || 'N/A') 
+            branchId,
+            route: type === 'Individual'
+                ? (r.roundKey || (customer as any)?.bookNumber || (customer as any)?.routeKey || 'N/A')
                 : (r.roundKey || (customer as any)?.routeKey || 'N/A'),
             meterType: type,
             hasPhoto: Boolean(r.hasPhoto || (r as any).meter_photo || (r as any).photo_url)
         };
     };
 
-    const fetchData = React.useCallback(async () => {
+    const fetchData = React.useCallback(async (force: boolean = false) => {
         setIsLoading(true);
         try {
             await Promise.all([
-                initializeIndividualCustomerReadings(true),
-                initializeBulkMeterReadings(true),
-                initializeBranches(true),
-                initializeCustomers(true),
-                initializeBulkMeters(true),
-                initializeStaffMembers(true)
+                initializeIndividualCustomerReadings(force),
+                initializeBulkMeterReadings(force),
+                initializeBranches(force),
+                initializeCustomers(force),
+                initializeBulkMeters(force),
+                initializeStaffMembers(force)
             ]);
 
             const indReadings = getIndividualCustomerReadings();
@@ -248,8 +285,17 @@ export function ReadingAnalyticsReportView({
             const staff = getStaffMembers();
             const branches = getBranches();
 
-            const indProcessed = indReadings.map(r => processReading(r, 'Individual', customers, staff, branches, []));
-            const bulkProcessed = bulkReadings.map(r => processReading(r, 'Bulk', [], staff, branches, bms));
+            // Build O(1) lookup Maps ONCE — avoids ~1 billion array comparisons
+            const { customerMap, bulkMeterMap, staffMap, branchMap } = buildLookupMaps(
+                customers, staff, branches, bms
+            );
+
+            const indProcessed = indReadings.map(r =>
+                processReadingFast(r, 'Individual', customerMap, bulkMeterMap, staffMap, branchMap)
+            );
+            const bulkProcessed = bulkReadings.map(r =>
+                processReadingFast(r, 'Bulk', customerMap, bulkMeterMap, staffMap, branchMap)
+            );
 
             let processed = [...indProcessed, ...bulkProcessed];
 
@@ -283,12 +329,12 @@ export function ReadingAnalyticsReportView({
     }, [isAdmin, staffBranchId, hasPermission, toast]);
 
     React.useEffect(() => {
-        fetchData();
+        fetchData(false);
     }, [fetchData]);
 
     // Auto-refresh when system signals new data
     React.useEffect(() => {
-        const handleDataRefreshed = () => { fetchData(); };
+        const handleDataRefreshed = () => { fetchData(true); };
         window.addEventListener('data-refreshed', handleDataRefreshed);
         return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
     }, [fetchData]);
@@ -533,7 +579,7 @@ export function ReadingAnalyticsReportView({
                     <div className="flex items-center gap-2.5 flex-wrap">
                         <Button 
                             variant="outline" 
-                            onClick={fetchData} 
+                            onClick={() => fetchData(true)} 
                             disabled={isLoading} 
                             className="h-10 rounded-xl bg-white border-slate-200 hover:bg-slate-50 text-slate-700 shadow-xs"
                         >

@@ -161,7 +161,7 @@ export default function AdminMeterReadingsPage() {
   const bgInitStartedRef = React.useRef(false);
 
   const loadFullReadingsForAnalytics = React.useCallback(async (force = false) => {
-    if (!force && allIndividualReadings.length > 0 && allBulkReadings.length > 0) return;
+    if (!force && (allIndividualReadings.length > 0 || allBulkReadings.length > 0)) return;
     setIsAnalyticsLoading(true);
     try {
       await Promise.all([
@@ -607,7 +607,7 @@ export default function AdminMeterReadingsPage() {
                 onClick={() => {
                   const next = activeTab === 'report' ? 'individual' : 'report';
                   setActiveTab(next);
-                  if (next === 'report') loadFullReadingsForAnalytics();
+
                 }}
               >
                 <FileSpreadsheet className="mr-2 h-4 w-4" /> Reading Analytics Report
@@ -833,7 +833,7 @@ export default function AdminMeterReadingsPage() {
 
       <Tabs value={activeTab} onValueChange={(val) => {
         setActiveTab(val);
-        if (val === 'analytics' || val === 'report') loadFullReadingsForAnalytics();
+        if (val === 'analytics') loadFullReadingsForAnalytics();
       }}>
         <TabsList className={`grid w-full grid-cols-2 md:grid-cols-${Math.max(2, tabGridCols)} lg:grid-cols-${tabGridCols} p-1.5 bg-slate-100/90 rounded-2xl h-auto gap-1 border border-slate-200/80 shadow-xs`}>
           {canViewIndividualReadings && (

@@ -88,11 +88,13 @@ const STAFF_PAGE_NAME_MAP: Record<string, string> = {
   '/admin/reports/gl-audit': 'GL Financial & Audit Report',
   '/admin/reports/delivery-summary': 'Delivery Summary Report',
   '/admin/reports/billing-summary': 'Billing Summary Report',
+  '/admin/support': 'Customer Support',
   '/admin/settings': 'Settings',
   '/admin/settings/promotions': 'Promotions',
   '/admin/security-logs': 'Security Logs',
   '/admin/recycle-bin': 'Recycle Bin',
   '/admin/maintenance': 'System Maintenance',
+  '/admin/user-manual': 'User Manual',
   // Staff
   '/staff/dashboard': 'Dashboard',
   '/staff/staff-management-dashboard': 'Staff Management Dashboard',
@@ -120,7 +122,9 @@ const STAFF_PAGE_NAME_MAP: Record<string, string> = {
   '/staff/reports/gl-audit': 'GL Financial & Audit Report',
   '/staff/reports/delivery-summary': 'Delivery Summary Report',
   '/staff/reports/billing-summary': 'Billing Summary Report',
+  '/staff/support': 'Customer Support',
   '/staff/settings': 'Settings',
+  '/staff/user-manual': 'User Manual',
 };
 
 interface AppHeaderContentProps {
