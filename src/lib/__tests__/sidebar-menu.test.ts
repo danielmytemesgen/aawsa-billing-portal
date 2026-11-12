@@ -129,6 +129,7 @@ describe("Sidebar Navigation Menu Configuration", () => {
     expect(fieldOpsGroup).toBeDefined();
     const fieldOpsTitles = fieldOpsGroup?.items.map((i) => i.title);
     expect(fieldOpsTitles).toContain("Route Management");
+    expect(fieldOpsTitles).toContain("Offline Metrics");
 
     // Verify all 5 promoted sections exist as top-level sections
     expect(groupTitles).toContain("Bill Management");
@@ -142,8 +143,10 @@ describe("Sidebar Navigation Menu Configuration", () => {
     expect(billGroup?.items[0].href).toBe("/admin/bill-management");
 
     const notifGroup = navItems.find((g) => g.title === "Notifications");
-    expect(notifGroup?.items).toHaveLength(1);
+    expect(notifGroup?.items).toHaveLength(2);
     expect(notifGroup?.items[0].href).toBe("/admin/notifications");
+    expect(notifGroup?.items[1].href).toBe("/admin/notifications/sms");
+    expect(notifGroup?.items[1].title).toBe("SMS Notifications");
 
     const tariffGroup = navItems.find((g) => g.title === "Tariff Management");
     expect(tariffGroup?.items).toHaveLength(1);
@@ -169,6 +172,11 @@ describe("Sidebar Navigation Menu Configuration", () => {
     expect(manualGroup?.items[0].href).toBe("/admin/user-manual");
     expect(manualGroup?.items[0].iconName).toBe("BookOpen");
     expect(manualGroup?.iconName).toBe("BookOpen");
+
+    // Verify Reading Classification is available in Reports
+    const reportsGroup = navItems.find((g) => g.title === "Reports");
+    const reportsTitles = reportsGroup?.items.map((i) => i.title);
+    expect(reportsTitles).toContain("Reading Classification");
   });
 
   it("should assign an icon to every titled navigation group in the sidebar", async () => {

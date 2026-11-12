@@ -46,6 +46,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import * as XLSX from 'xlsx';
+import { arrayToCsvBlob, downloadFile } from "@/lib/xlsx";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { getAllFaultCodes, getFaultCodeLabel } from "@/lib/fault-codes";
@@ -137,6 +138,7 @@ export function ReadingAnalyticsReportView({
     const [selectedRoute, setSelectedRoute] = React.useState<string>('all');
     const [selectedCustomerType, setSelectedCustomerType] = React.useState<'all' | 'Individual' | 'Bulk'>('all');
     const [photoFilter, setPhotoFilter] = React.useState<'all' | 'with-photo' | 'no-photo'>('all');
+    const hasUserSelectedMonthRef = React.useRef(false);
 
     const [page, setPage] = React.useState(0);
     const [rowsPerPage, setRowsPerPage] = React.useState(10);
@@ -315,6 +317,12 @@ export function ReadingAnalyticsReportView({
             });
 
             setReadings(processed);
+            if (!hasUserSelectedMonthRef.current) {
+                const uniqueMonths = Array.from(new Set(processed.map(r => r.month))).filter(Boolean).sort().reverse();
+                if (uniqueMonths.length > 0) {
+                    setSelectedMonth(uniqueMonths[0]);
+                }
+            }
             setFilteredReadings(processed);
         } catch (error) {
             console.error("Failed to fetch reading data for report:", error);
@@ -397,15 +405,19 @@ export function ReadingAnalyticsReportView({
 
     // KPI Summary Calculations
     const kpiSummary = React.useMemo(() => {
-        const total = readings.length;
-        const increaseCount = readings.filter(r => r.category === 'Increase').length;
-        const decreaseCount = readings.filter(r => r.category === 'Decrease').length;
-        const zeroCount = readings.filter(r => r.category === 'Zero').length;
-        const faultCount = readings.filter(r => r.category === 'Fault').length;
-        const photoCount = readings.filter(r => r.hasPhoto).length;
+        const scopedReadings = selectedMonth === 'all'
+            ? readings
+            : readings.filter(r => r.month === selectedMonth);
 
-        const individualCount = readings.filter(r => r.meterType === 'Individual').length;
-        const bulkCount = readings.filter(r => r.meterType === 'Bulk').length;
+        const total = scopedReadings.length;
+        const increaseCount = scopedReadings.filter(r => r.category === 'Increase').length;
+        const decreaseCount = scopedReadings.filter(r => r.category === 'Decrease').length;
+        const zeroCount = scopedReadings.filter(r => r.category === 'Zero').length;
+        const faultCount = scopedReadings.filter(r => r.category === 'Fault').length;
+        const photoCount = scopedReadings.filter(r => r.hasPhoto).length;
+
+        const individualCount = scopedReadings.filter(r => r.meterType === 'Individual').length;
+        const bulkCount = scopedReadings.filter(r => r.meterType === 'Bulk').length;
 
         return {
             total,
@@ -422,13 +434,27 @@ export function ReadingAnalyticsReportView({
             individualCount,
             bulkCount
         };
-    }, [readings]);
+    }, [readings, selectedMonth]);
+
+    const months = React.useMemo(
+        () => Array.from(new Set(readings.map(r => r.month))).filter(Boolean).sort().reverse(),
+        [readings]
+    );
+    const latestMonth = months[0] || '';
+    const branches = React.useMemo(
+        () => Array.from(new Set(readings.map(r => r.branchName))).filter(b => b && b !== 'N/A').sort(),
+        [readings]
+    );
+    const routes = React.useMemo(
+        () => Array.from(new Set(readings.map(r => r.route))).filter(r => r && r !== 'N/A').sort(),
+        [readings]
+    );
 
     const activeFilterCount = [
         searchTerm !== "",
         selectedCategory !== 'all',
         selectedFaultCode !== 'all',
-        selectedMonth !== 'all',
+        selectedMonth !== (latestMonth || 'all'),
         selectedBranch !== 'all',
         selectedRoute !== 'all',
         selectedCustomerType !== 'all',
@@ -439,7 +465,8 @@ export function ReadingAnalyticsReportView({
         setSearchTerm("");
         setSelectedCategory('all');
         setSelectedFaultCode('all');
-        setSelectedMonth('all');
+        setSelectedMonth(latestMonth || 'all');
+        hasUserSelectedMonthRef.current = false;
         setSelectedBranch('all');
         setSelectedRoute('all');
         setSelectedCustomerType('all');
@@ -481,6 +508,48 @@ export function ReadingAnalyticsReportView({
         toast({
             title: "Export Successful",
             description: `Exported ${filteredReadings.length} reading record(s) to Excel.`
+        });
+    };
+
+    const handleExportCsv = () => {
+        if (filteredReadings.length === 0) {
+            toast({
+                title: "No Data",
+                description: "There is no data matching the current filters to export."
+            });
+            return;
+        }
+
+        const headers = [
+            'Date', 'Month', 'Customer Key', 'Customer Name', 'Meter Type',
+            'Previous Reading', 'Current Reading', 'Usage (m³)', 'Category',
+            'Fault Code', 'Reader', 'Reader Phone', 'Branch', 'Route', 'Photo Proof'
+        ];
+
+        const exportData = filteredReadings.map(r => ({
+            'Date': r.date ? format(new Date(r.date), 'dd/MM/yyyy') : '',
+            'Month': r.month,
+            'Customer Key': r.customerKey,
+            'Customer Name': r.customerName,
+            'Meter Type': r.meterType,
+            'Previous Reading': r.previousReading,
+            'Current Reading': r.currentReading,
+            'Usage (m³)': r.usage,
+            'Category': r.category,
+            'Fault Code': r.faultCode ? `${r.faultCode} - ${getFaultCodeLabel(r.faultCode)}` : '',
+            'Reader': r.readerName,
+            'Reader Phone': r.readerPhone || 'N/A',
+            'Branch': r.branchName,
+            'Route': r.route,
+            'Photo Proof': r.hasPhoto ? 'Yes' : 'No'
+        }));
+
+        const blob = arrayToCsvBlob(exportData, headers);
+        downloadFile(blob, `Reading_Analytics_Report_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+
+        toast({
+            title: "CSV Export Successful",
+            description: `Exported ${filteredReadings.length} reading record(s) to CSV.`
         });
     };
 
@@ -541,9 +610,7 @@ export function ReadingAnalyticsReportView({
         }
     };
 
-    const months = Array.from(new Set(readings.map(r => r.month))).filter(Boolean).sort().reverse();
-    const branches = Array.from(new Set(readings.map(r => r.branchName))).filter(b => b && b !== 'N/A').sort();
-    const routes = Array.from(new Set(readings.map(r => r.route))).filter(r => r && r !== 'N/A').sort();
+
 
     return (
         <>
@@ -587,12 +654,21 @@ export function ReadingAnalyticsReportView({
                             Refresh
                         </Button>
                         <Button 
+                            variant="outline"
+                            onClick={handleExportCsv} 
+                            disabled={isLoading || filteredReadings.length === 0}
+                            className="h-10 rounded-xl border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:text-purple-800 shadow-xs transition-all px-3.5"
+                        >
+                            <FileSpreadsheet className="h-4 w-4 mr-1.5" />
+                            Export CSV
+                        </Button>
+                        <Button 
                             onClick={handleExport} 
                             disabled={isLoading || filteredReadings.length === 0}
                             className="h-10 rounded-xl bg-purple-700 hover:bg-purple-800 text-white shadow-md shadow-purple-200 transition-all px-4"
                         >
                             <Download className="h-4 w-4 mr-1.5" />
-                            Export to Excel ({filteredReadings.length})
+                            Export Excel ({filteredReadings.length})
                         </Button>
                         {isEmbedded && fullscreenUrl && (
                             <a href={fullscreenUrl} target="_blank" rel="noreferrer">
@@ -795,14 +871,22 @@ export function ReadingAnalyticsReportView({
                                 </Select>
 
                                 {/* Month */}
-                                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                                    <SelectTrigger className="w-[130px] h-10 bg-white rounded-xl border-slate-200 text-xs font-semibold shadow-xs">
+                                <Select 
+                                    value={selectedMonth} 
+                                    onValueChange={(val) => {
+                                        hasUserSelectedMonthRef.current = true;
+                                        setSelectedMonth(val);
+                                    }}
+                                >
+                                    <SelectTrigger className="w-[145px] h-10 bg-white rounded-xl border-slate-200 text-xs font-semibold shadow-xs">
                                         <SelectValue placeholder="Month" />
                                     </SelectTrigger>
                                     <SelectContent className="rounded-xl max-h-60">
                                         <SelectItem value="all">All Months</SelectItem>
-                                        {months.map(m => (
-                                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                                        {months.map((m, idx) => (
+                                            <SelectItem key={m} value={m}>
+                                                {m} {idx === 0 ? '(Latest)' : ''}
+                                            </SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>

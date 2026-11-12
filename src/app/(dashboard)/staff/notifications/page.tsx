@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Bell, Send, Lock, Trash2, Edit, MessageSquareWarning } from "lucide-react";
+import { Bell, Send, Lock, Trash2, Edit } from "lucide-react";
 import Link from "next/link";
 import {
     addNotification,
@@ -209,7 +209,6 @@ export default function StaffNotificationsPage() {
     const canEditNotifications = hasPermission('notifications_edit');
     const canDeleteNotifications = hasPermission('notifications_delete');
     const isBranchManager = (user?.role?.toLowerCase().includes('management') || user?.role?.toLowerCase().includes('manager')) && user.branchId;
-    const canCreateSms = hasPermission('sms_send') || hasPermission('notifications_create');
 
     if (!canViewNotifications) {
         return (
@@ -228,24 +227,6 @@ export default function StaffNotificationsPage() {
         <div className="space-y-6">
             <h1 className="text-2xl md:text-3xl font-bold">Send Notifications</h1>
 
-            {canCreateSms && (
-                <Card className="shadow-lg">
-                    <CardHeader>
-                        <div className="flex items-center gap-3">
-                            <MessageSquareWarning className="h-8 w-8 text-primary" />
-                            <div>
-                                <CardTitle>SMS Notifications</CardTitle>
-                                <CardDescription>Send SMS messages to bulk meter customers.</CardDescription>
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent>
-                        <Link href="/staff/notifications/sms">
-                            <Button>Go to SMS Page</Button>
-                        </Link>
-                    </CardContent>
-                </Card>
-            )}
 
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
                 {canCreateNotifications && (

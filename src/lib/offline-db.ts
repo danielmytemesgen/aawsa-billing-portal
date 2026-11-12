@@ -120,6 +120,10 @@ class MockTable {
       equals: () => ({
         toArray: async () => []
       }),
+      below: () => ({
+        delete: async () => 0,
+        toArray: async () => []
+      }),
       toArray: async () => []
     };
   }
@@ -577,6 +581,15 @@ export async function cacheHistoricalReadings(readings: any[], type: 'individual
     data: r,
     lastUpdated: Date.now()
   }));
+
+  // Auto-prune cached readings older than 60 days (2 cycles) to protect client IndexedDB quota
+  try {
+    const twoMonthsAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
+    await db.cached_readings.where('lastUpdated').below(twoMonthsAgo).delete();
+  } catch (e) {
+    console.warn('offlineDb: auto-pruning stale cache entries failed', e);
+  }
+
   return await db.cached_readings.bulkPut(cached);
 }
 

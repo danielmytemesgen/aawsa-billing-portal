@@ -580,40 +580,6 @@ export default function AdminMeterReadingsPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          {canViewAnalytics && (
-            <div className="flex items-center gap-2">
-              <Button
-                className={cn(
-                  "text-white shadow-md transition-all",
-                  activeTab === 'analytics'
-                    ? "bg-blue-700 ring-2 ring-blue-300 shadow-blue-300"
-                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-200"
-                )}
-                onClick={() => {
-                  const next = activeTab === 'analytics' ? 'individual' : 'analytics';
-                  setActiveTab(next);
-                  if (next === 'analytics') loadFullReadingsForAnalytics();
-                }}
-              >
-                <BarChart className="mr-2 h-4 w-4" /> Reading Analytics
-              </Button>
-              <Button 
-                className={cn(
-                  "text-white shadow-md transition-all",
-                  activeTab === 'report'
-                    ? "bg-purple-700 ring-2 ring-purple-300 shadow-purple-300"
-                    : "bg-purple-600 hover:bg-purple-700 shadow-purple-200"
-                )}
-                onClick={() => {
-                  const next = activeTab === 'report' ? 'individual' : 'report';
-                  setActiveTab(next);
-
-                }}
-              >
-                <FileSpreadsheet className="mr-2 h-4 w-4" /> Reading Analytics Report
-              </Button>
-            </div>
-          )}
           {(hasPermission(PERMISSIONS.METER_READINGS_CREATE) || 
             hasPermission(PERMISSIONS.METER_READINGS_CREATE_BULK) || 
             hasPermission(PERMISSIONS.METER_READINGS_CREATE_INDIVIDUAL) || 
@@ -990,10 +956,36 @@ export default function AdminMeterReadingsPage() {
                       <div className="h-3 flex-1 rounded bg-slate-100" />
                     </div>
                   ))}
-                </div>
-              ) : bulkReadings.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground text-sm">
-                  No bulk readings found for the selected period.
+                </div>              ) : bulkReadings.length === 0 ? (
+                <div className="py-12 px-4 text-center">
+                  <div className="h-12 w-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-3 shadow-xs border border-amber-200/60">
+                    <ListPlus className="h-6 w-6" />
+                  </div>
+                  <h4 className="text-base font-bold text-slate-800">No Bulk Readings Recorded</h4>
+                  <p className="text-slate-500 text-sm max-w-md mx-auto mt-1 mb-4">
+                    There are no recorded readings for bulk meters in the selected cycle ({selectedMonthYear}). You can upload bulk readings via CSV or review individual customer readings.
+                  </p>
+                  <div className="flex items-center justify-center gap-3 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-blue-200 text-blue-700 hover:bg-blue-50"
+                      onClick={() => setActiveTab('individual')}
+                    >
+                      <Activity className="h-4 w-4 mr-1.5" />
+                      View Individual Readings ({individualTotalCount})
+                    </Button>
+                    {(hasPermission(PERMISSIONS.METER_READINGS_UPLOAD_BULK) || hasPermission(PERMISSIONS.METER_READINGS_CREATE)) && (
+                      <Button
+                        size="sm"
+                        className="bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
+                        onClick={() => setIsBulkCsvModalOpen(true)}
+                      >
+                        <FileSpreadsheet className="h-4 w-4 mr-1.5" />
+                        Upload Bulk Readings CSV
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <MeterReadingsTable data={bulkReadings} onReadingUpdated={() => { fetchReadings(); fetchMonthTotals(selectedMonthYear); }} />

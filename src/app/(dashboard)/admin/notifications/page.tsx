@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Bell, Send, Lock, Trash2, Edit, MessageSquareWarning, Megaphone, CheckCircle2, History, PlusCircle, ArrowRight } from "lucide-react";
+import { Bell, Send, Lock, Trash2, Edit, Megaphone, CheckCircle2, History, PlusCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import {
@@ -212,7 +212,6 @@ export default function AdminNotificationsPage() {
   const canEditNotifications = hasPermission('notifications_edit');
   const canDeleteNotifications = hasPermission('notifications_delete');
   const isBranchManager = (user?.role?.toLowerCase().includes('management') || user?.role?.toLowerCase().includes('manager')) && user.branchId;
-  const canCreateSms = hasPermission('sms_send') || hasPermission('notifications_create');
 
   if (!canViewNotifications) {
     return (
@@ -298,29 +297,6 @@ export default function AdminNotificationsPage() {
           </CardContent>
         </Card>
       </div>
-
-      {canCreateSms && (
-        <Card className="shadow-lg border-none bg-gradient-to-br from-white to-slate-50 group hover:shadow-xl transition-all duration-300">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-xl bg-orange-100 flex items-center justify-center text-orange-600">
-                  <MessageSquareWarning className="h-6 w-6" />
-                </div>
-                <div>
-                  <CardTitle className="text-xl font-bold text-slate-900">SMS Notifications</CardTitle>
-                  <CardDescription className="text-slate-500">Engage bulk meter customers directly via SMS.</CardDescription>
-                </div>
-              </div>
-              <Link href="/admin/notifications/sms">
-                <Button className="bg-orange-600 hover:bg-orange-700 shadow-md group-hover:scale-105 transition-all">
-                  Go to SMS Page <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
-            </div>
-          </CardHeader>
-        </Card>
-      )}
 
       <div className="grid gap-8 lg:grid-cols-5">
         {canCreateNotifications && (

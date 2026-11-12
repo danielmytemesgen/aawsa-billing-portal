@@ -108,6 +108,22 @@ export const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] =
     routeOpsItems.push({ title: "Route Management", href: "/admin/routes", iconName: "Map" });
   }
 
+  const canAccessOfflineMetrics = hasAny(
+    PERMISSIONS.METER_READINGS_OFFLINE_METRICS,
+    PERMISSIONS.READER_PROGRESS_VIEW,
+    PERMISSIONS.ROUTES_VIEW_ALL,
+    PERMISSIONS.METER_READINGS_VIEW_ALL,
+    PERMISSIONS.SETTINGS_VIEW,
+    PERMISSIONS.SETTINGS_MANAGE
+  );
+  if (canAccessOfflineMetrics) {
+    routeOpsItems.push({
+      title: "Offline Metrics",
+      href: "/admin/offline-metrics",
+      iconName: "WifiOff"
+    });
+  }
+
   if (routeOpsItems.length > 0) {
     navItems.push({
       title: "Field Operations",
@@ -169,15 +185,33 @@ export const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] =
   // 5. Dedicated Notifications Section
   const canAccessNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)
     || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW_ALL);
+  const canAccessSms = hasPermission('sms_send')
+    || hasPermission(PERMISSIONS.NOTIFICATIONS_CREATE)
+    || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)
+    || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW_ALL);
+
+  const notifItems: NavItem[] = [];
   if (canAccessNotifications) {
+    notifItems.push({
+      title: "Notifications",
+      href: isAdmin ? "/admin/notifications" : "/staff/notifications",
+      iconName: "Bell",
+      matcher: (path, href) => path === href || (path.startsWith(href + '/') && !path.startsWith(`${href}/sms`)),
+    });
+  }
+  if (canAccessSms) {
+    notifItems.push({
+      title: "SMS Notifications",
+      href: isAdmin ? "/admin/notifications/sms" : "/staff/notifications/sms",
+      iconName: "MessageSquare",
+    });
+  }
+
+  if (notifItems.length > 0) {
     navItems.push({
       title: "Notifications",
       iconName: "Bell",
-      items: [{
-        title: "Notifications",
-        href: isAdmin ? "/admin/notifications" : "/staff/notifications",
-        iconName: "Bell",
-      }]
+      items: notifItems,
     });
   }
 
@@ -421,6 +455,21 @@ export const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] =
       title: "Reading Corrections",
       href: isAdmin ? "/admin/reports/reading-corrections" : "/staff/reports/reading-corrections",
       iconName: "FileEdit"
+    });
+  }
+
+  const canViewReadingClassificationReport = hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL)
+    || hasPermission(PERMISSIONS.METER_READINGS_VIEW_BRANCH)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL)
+    || hasPermission(PERMISSIONS.REPORTS_GENERATE_BRANCH)
+    || hasPermission(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW)
+    || hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+  if (canViewReadingClassificationReport) {
+    reportsItems.push({
+      title: "Reading Classification",
+      href: isAdmin ? "/admin/reports/reading-classification" : "/staff/reports/reading-classification",
+      iconName: "PieChart"
     });
   }
 

@@ -202,7 +202,23 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/notifications') || currentPath.startsWith('/staff/notifications'),
-      requiredPermissions: [PERMISSIONS.NOTIFICATIONS_VIEW],
+      anyOf: [
+        PERMISSIONS.NOTIFICATIONS_VIEW,
+        PERMISSIONS.NOTIFICATIONS_VIEW_ALL,
+        PERMISSIONS.NOTIFICATIONS_CREATE,
+        'sms_send',
+      ],
+    },
+    {
+      match: (currentPath) => currentPath.startsWith('/admin/offline-metrics'),
+      anyOf: [
+        PERMISSIONS.METER_READINGS_OFFLINE_METRICS,
+        PERMISSIONS.READER_PROGRESS_VIEW,
+        PERMISSIONS.METER_READINGS_VIEW_ALL,
+        PERMISSIONS.SETTINGS_VIEW,
+        PERMISSIONS.SETTINGS_MANAGE,
+        PERMISSIONS.DASHBOARD_VIEW_ALL,
+      ],
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/knowledge-base') || currentPath.startsWith('/staff/knowledge-base'),
