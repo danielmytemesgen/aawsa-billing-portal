@@ -184,6 +184,10 @@ export const buildSidebarNavItems = (user: UserProfile | null, options?: { pendi
 
   // 4b. Invoices Section
   const canAccessInvoices = hasAny(
+    PERMISSIONS.INVOICE_VIEW,
+    PERMISSIONS.INVOICE_PRINT,
+    PERMISSIONS.INVOICE_BATCH,
+    PERMISSIONS.INVOICE_CUSTOMER_STATEMENT,
     PERMISSIONS.BILL_VIEW_ALL,
     PERMISSIONS.BILL_VIEW_BRANCH,
     PERMISSIONS.BILL_CREATE,

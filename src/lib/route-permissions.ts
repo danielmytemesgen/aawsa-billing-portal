@@ -126,6 +126,17 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       ],
     },
     {
+      match: (currentPath) => currentPath.includes('/print-invoices'),
+      anyOf: [
+        PERMISSIONS.INVOICE_PRINT,
+        PERMISSIONS.INVOICE_VIEW,
+        PERMISSIONS.BILL_VIEW_ALL,
+        PERMISSIONS.BILL_VIEW_BRANCH,
+        PERMISSIONS.BULK_METERS_VIEW_ALL,
+        PERMISSIONS.BULK_METERS_VIEW_BRANCH,
+      ],
+    },
+    {
       match: (currentPath) => currentPath.startsWith('/admin/bulk-meters') || currentPath.startsWith('/staff/bulk-meters'),
       anyOf: [
         PERMISSIONS.BULK_METERS_VIEW_ALL,
@@ -151,6 +162,10 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
     {
       match: (currentPath) => currentPath.startsWith('/admin/invoices') || currentPath.startsWith('/staff/invoices'),
       anyOf: [
+        PERMISSIONS.INVOICE_VIEW,
+        PERMISSIONS.INVOICE_PRINT,
+        PERMISSIONS.INVOICE_BATCH,
+        PERMISSIONS.INVOICE_CUSTOMER_STATEMENT,
         PERMISSIONS.BILL_VIEW_ALL,
         PERMISSIONS.BILL_VIEW_BRANCH,
         PERMISSIONS.BILL_CREATE,

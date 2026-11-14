@@ -208,20 +208,20 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
             hasPermission: (permission: string) => {
                 if (!user) return false;
                 if (isWildcard) return true;
-                if (hasBillManageAll && (permission.startsWith('bill:') || permission === 'billing:close_cycle')) return true;
+                if (hasBillManageAll && (permission.startsWith('bill:') || permission.startsWith('invoice:') || permission === 'billing:close_cycle')) return true;
                 return permSet.has(permission);
             },
             hasAnyPermission: (...pList: string[]) => {
                 if (!user) return false;
                 if (isWildcard) return true;
-                if (hasBillManageAll && pList.some(p => p.startsWith('bill:') || p === 'billing:close_cycle')) return true;
+                if (hasBillManageAll && pList.some(p => p.startsWith('bill:') || p.startsWith('invoice:') || p === 'billing:close_cycle')) return true;
                 return pList.some(p => permSet.has(p));
             },
             hasAllPermissions: (...pList: string[]) => {
                 if (!user) return false;
                 if (isWildcard) return true;
                 return pList.every(p => {
-                    if (hasBillManageAll && (p.startsWith('bill:') || p === 'billing:close_cycle')) return true;
+                    if (hasBillManageAll && (p.startsWith('bill:') || p.startsWith('invoice:') || p === 'billing:close_cycle')) return true;
                     return permSet.has(p);
                 });
             },

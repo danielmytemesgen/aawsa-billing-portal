@@ -7,21 +7,14 @@ import {
   FileSpreadsheet,
   Download,
   Search,
-  Filter,
   RefreshCcw,
   Eye,
   CheckCircle2,
   Clock,
-  Building2,
-  Calendar,
-  AlertCircle,
   FileText,
   Users,
-  Check,
-  ChevronRight,
-  ArrowUpDown,
   CreditCard,
-  DollarSign
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +38,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import {
   getDistinctBillingMonthsAction,
   getBranchesLookupAction,
@@ -65,9 +60,33 @@ export function InvoiceGeneratorView({
   printRoute = "/staff/bulk-meters/print-invoices",
 }: InvoiceGeneratorViewProps) {
   const { toast } = useToast();
+  const { hasPermission, hasAnyPermission } = usePermissions();
+
+  // ── Permission flags ────────────────────────────────────────────────────
+  // bill:manage_all users get all invoice permissions automatically
+  const isFullAdmin = hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+
+  const canViewInvoices      = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_VIEW);
+  const canPrint             = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_PRINT);
+  const canExportCSV         = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_EXPORT_CSV);
+  const canExportExcel       = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_EXPORT_EXCEL);
+  const canAccessBatch       = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_BATCH);
+  const canAccessStatement   = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_CUSTOMER_STATEMENT);
+
+  // Determine default tab based on what this user can access
+  const defaultTab: "batch" | "customer" = canAccessBatch ? "batch" : "customer";
 
   // Mode: batch or customer statement
-  const [activeTab, setActiveTab] = React.useState<"batch" | "customer">("batch");
+  const [activeTab, setActiveTab] = React.useState<"batch" | "customer">(defaultTab);
+
+  // Dynamically auto-flip active tab if current tab becomes unassigned or newly assigned
+  React.useEffect(() => {
+    if (activeTab === "batch" && !canAccessBatch && canAccessStatement) {
+      setActiveTab("customer");
+    } else if (activeTab === "customer" && !canAccessStatement && canAccessBatch) {
+      setActiveTab("batch");
+    }
+  }, [canAccessBatch, canAccessStatement, activeTab]);
 
   // Filters
   const [months, setMonths] = React.useState<string[]>([]);
@@ -659,6 +678,24 @@ export function InvoiceGeneratorView({
     };
   }, [filteredBills, selectedBillIds]);
 
+  // ── Access guard: user has no invoice view permission at all ──────────────
+  if (!canViewInvoices) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4 text-center p-8">
+        <div className="p-4 rounded-full bg-rose-100 dark:bg-rose-900/30">
+          <Lock className="h-10 w-10 text-rose-500" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">
+          Access Restricted
+        </h2>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          You do not have permission to access the Invoice Generator.
+          Contact your administrator to request the <strong>invoice:view</strong> permission.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 sm:p-6 space-y-6">
       {/* Header */}
@@ -677,27 +714,46 @@ export function InvoiceGeneratorView({
           </div>
         </div>
 
-        {/* Mode switcher tabs */}
-        <Tabs
-          value={activeTab}
-          onValueChange={(val) => setActiveTab(val as any)}
-          className="w-auto"
-        >
-          <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            <TabsTrigger value="batch" className="gap-2 text-xs font-semibold">
-              <Users className="h-3.5 w-3.5" />
-              Batch Invoices
-            </TabsTrigger>
-            <TabsTrigger value="customer" className="gap-2 text-xs font-semibold">
-              <FileText className="h-3.5 w-3.5" />
-              Customer Statements
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        {/* Mode switcher tabs – only show tabs the user has permission for */}
+        {(canAccessBatch || canAccessStatement) && (
+          <Tabs
+            value={activeTab}
+            onValueChange={(val) => setActiveTab(val as any)}
+            className="w-auto"
+          >
+            <TabsList className="bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+              {canAccessBatch && (
+                <TabsTrigger value="batch" className="gap-2 text-xs font-semibold">
+                  <Users className="h-3.5 w-3.5" />
+                  Batch Invoices
+                </TabsTrigger>
+              )}
+              {canAccessStatement && (
+                <TabsTrigger value="customer" className="gap-2 text-xs font-semibold">
+                  <FileText className="h-3.5 w-3.5" />
+                  Customer Statements
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </Tabs>
+        )}
       </div>
 
+      {/* Neither tab assigned fallback */}
+      {!canAccessBatch && !canAccessStatement && (
+        <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-12 text-center bg-slate-50/50 dark:bg-slate-900/50">
+          <Receipt className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-60" />
+          <h3 className="font-semibold text-base text-slate-800 dark:text-slate-200">
+            No Invoice Views Assigned
+          </h3>
+          <p className="text-xs text-muted-foreground max-w-md mx-auto mt-1">
+            You have permission to view invoices, but neither the <strong>Batch Invoices</strong> nor <strong>Customer Statements</strong> view is assigned to your role. Ask an administrator to assign <code>invoice:batch</code> or <code>invoice:customer_statement</code>.
+          </p>
+        </div>
+      )}
+
       {/* Mode A: Batch Invoices */}
-      {activeTab === "batch" && (
+      {activeTab === "batch" && canAccessBatch && (
         <div className="space-y-6">
           {/* KPI Metric Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -859,61 +915,77 @@ export function InvoiceGeneratorView({
           {/* Action Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSelectAllFiltered}
-                className="h-8 text-xs font-medium"
-              >
-                Select All ({filteredBills.length})
-              </Button>
-              {selectedBillIds.size > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleClearSelection}
-                  className="h-8 text-xs text-muted-foreground hover:text-slate-900"
-                >
-                  Clear Selection
-                </Button>
+              {canPrint && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectAllFiltered}
+                    className="h-8 text-xs font-medium"
+                  >
+                    Select All ({filteredBills.length})
+                  </Button>
+                  {selectedBillIds.size > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClearSelection}
+                      className="h-8 text-xs text-muted-foreground hover:text-slate-900"
+                    >
+                      Clear Selection
+                    </Button>
+                  )}
+                  <span className="text-xs text-muted-foreground ml-2">
+                    <strong>{selectedBillIds.size}</strong> invoice(s) selected
+                  </span>
+                </>
               )}
-              <span className="text-xs text-muted-foreground ml-2">
-                <strong>{selectedBillIds.size}</strong> invoice(s) selected
-              </span>
+              {!canPrint && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Lock className="h-3.5 w-3.5" />
+                  View only — printing requires the <strong className="ml-1">invoice:print</strong> permission
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportCSV}
-                disabled={filteredBills.length === 0}
-                className="h-8 text-xs gap-1.5"
-              >
-                <Download className="h-3.5 w-3.5 text-emerald-600" />
-                Export CSV
-              </Button>
+              {canExportCSV && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportCSV}
+                  disabled={filteredBills.length === 0}
+                  className="h-8 text-xs gap-1.5"
+                >
+                  <Download className="h-3.5 w-3.5 text-emerald-600" />
+                  Export CSV
+                </Button>
+              )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportXLSX}
-                disabled={filteredBills.length === 0}
-                className="h-8 text-xs gap-1.5"
-              >
-                <FileSpreadsheet className="h-3.5 w-3.5 text-blue-600" />
-                Export Excel
-              </Button>
+              {canExportExcel && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportXLSX}
+                  disabled={filteredBills.length === 0}
+                  className="h-8 text-xs gap-1.5"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-blue-600" />
+                  Export Excel
+                </Button>
+              )}
 
-              <Button
-                size="sm"
-                onClick={handlePrintBatch}
-                disabled={selectedBillIds.size === 0}
-                className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-white font-semibold shadow-sm"
-              >
-                <Printer className="h-3.5 w-3.5" />
-                Print Invoices ({selectedBillIds.size})
-              </Button>
+              {canPrint && (
+                <Button
+                  size="sm"
+                  onClick={handlePrintBatch}
+                  disabled={selectedBillIds.size === 0}
+                  className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-white font-semibold shadow-sm"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Print Invoices ({selectedBillIds.size})
+                </Button>
+              )}
             </div>
           </div>
 
@@ -1116,15 +1188,17 @@ export function InvoiceGeneratorView({
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-emerald-600 hover:bg-emerald-50"
-                              onClick={() => handleQuickPrint(row)}
-                              title="Quick Print Invoice"
-                            >
-                              <Printer className="h-4 w-4" />
-                            </Button>
+                            {canPrint && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-emerald-600 hover:bg-emerald-50"
+                                onClick={() => handleQuickPrint(row)}
+                                title="Quick Print Invoice"
+                              >
+                                <Printer className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1172,7 +1246,7 @@ export function InvoiceGeneratorView({
       )}
 
       {/* Mode B: Customer Statements */}
-      {activeTab === "customer" && (
+      {activeTab === "customer" && canAccessStatement && (
         <div className="space-y-6">
           <Card className="shadow-sm border-slate-200 dark:border-slate-800">
             <CardHeader className="pb-3">
@@ -1226,25 +1300,34 @@ export function InvoiceGeneratorView({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedCustomerBillIds(new Set(customerBills.map((b) => String(b.id))));
-                    }}
-                    className="h-8 text-xs font-medium"
-                  >
-                    Select All ({customerBills.length})
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handlePrintCustomerBills}
-                    disabled={selectedCustomerBillIds.size === 0}
-                    className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-white font-semibold"
-                  >
-                    <Printer className="h-3.5 w-3.5" />
-                    Print Selected Invoices ({selectedCustomerBillIds.size})
-                  </Button>
+                  {canPrint && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setSelectedCustomerBillIds(new Set(customerBills.map((b) => String(b.id))));
+                      }}
+                      className="h-8 text-xs font-medium"
+                    >
+                      Select All ({customerBills.length})
+                    </Button>
+                  )}
+                  {canPrint ? (
+                    <Button
+                      size="sm"
+                      onClick={handlePrintCustomerBills}
+                      disabled={selectedCustomerBillIds.size === 0}
+                      className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-white font-semibold"
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                      Print Selected Invoices ({selectedCustomerBillIds.size})
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Lock className="h-3.5 w-3.5" />
+                      Print requires <strong className="ml-1">invoice:print</strong>
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1364,15 +1447,17 @@ export function InvoiceGeneratorView({
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-emerald-600 hover:bg-emerald-50"
-                                onClick={() => handleQuickPrint(row)}
-                                title="Print Invoice"
-                              >
-                                <Printer className="h-4 w-4" />
-                              </Button>
+                              {canPrint && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-emerald-600 hover:bg-emerald-50"
+                                  onClick={() => handleQuickPrint(row)}
+                                  title="Print Invoice"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -1395,6 +1480,7 @@ export function InvoiceGeneratorView({
           bill={previewItem.bill}
           branchName={getBranchLabel(previewItem.meter.branchId, previewItem.meter.subCity)}
           printRoute={printRoute}
+          canPrint={canPrint}
         />
       )}
     </div>

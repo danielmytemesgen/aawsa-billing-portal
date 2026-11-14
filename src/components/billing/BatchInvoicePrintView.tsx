@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { getBranchesLookupAction } from "@/lib/actions";
 import { AawsaInvoiceDocument } from "./AawsaInvoiceDocument";
 import { Button } from "@/components/ui/button";
-import { Printer, ArrowLeft, Receipt } from "lucide-react";
+import { Printer, ArrowLeft, Receipt, Lock } from "lucide-react";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 interface BatchInvoicePrintViewProps {
   fallbackRoute: string;
@@ -13,6 +15,10 @@ interface BatchInvoicePrintViewProps {
 
 export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewProps) {
   const router = useRouter();
+  const { hasPermission } = usePermissions();
+  const isFullAdmin = hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+  const canPrint = isFullAdmin || hasPermission(PERMISSIONS.INVOICE_PRINT);
+
   const [invoiceData, setInvoiceData] = React.useState<{ meter: any; bill: any }[]>([]);
   const [branchMap, setBranchMap] = React.useState<Record<string, string>>({});
   const [currentDateTime, setCurrentDateTime] = React.useState('');
@@ -21,6 +27,8 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
   const [hasNoData, setHasNoData] = React.useState(false);
 
   React.useEffect(() => {
+    if (!canPrint) return;
+
     const loadData = async () => {
       const dataStr = sessionStorage.getItem('batchInvoiceData');
       if (!dataStr) {
@@ -67,12 +75,34 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
     };
 
     loadData();
-  }, [router, fallbackRoute]);
+  }, [router, fallbackRoute, canPrint]);
 
   const getBranchName = (branchId?: string, fallback?: string) => {
     if (branchId && branchMap[branchId]) return branchMap[branchId];
     return fallback || "N/A";
   };
+
+  if (!canPrint) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-slate-50 dark:bg-slate-900 text-center">
+        <div className="max-w-md p-8 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border space-y-4">
+          <div className="p-3 bg-rose-50 rounded-full w-fit mx-auto text-rose-600">
+            <Lock className="h-10 w-10" />
+          </div>
+          <h2 className="text-xl font-bold">Print Access Restricted</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            You do not have permission to print invoices. Contact your administrator to request the <strong>invoice:print</strong> permission.
+          </p>
+          <div className="flex justify-center pt-2">
+            <Button variant="outline" onClick={() => router.push(fallbackRoute)}>
+              <ArrowLeft className="h-4 w-4 mr-1.5" />
+              Return
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (hasNoData) {
     const isStaff = typeof window !== 'undefined' && window.location.pathname.startsWith('/staff');

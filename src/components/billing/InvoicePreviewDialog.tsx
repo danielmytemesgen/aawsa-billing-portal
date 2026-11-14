@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from "react";
-import { Printer, Download, X } from "lucide-react";
+import { Printer, Download, X, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -9,6 +9,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { AawsaInvoiceDocument } from "./AawsaInvoiceDocument";
 
 interface InvoicePreviewDialogProps {
@@ -19,6 +21,7 @@ interface InvoicePreviewDialogProps {
   branchName?: string;
   penaltyEnabled?: boolean;
   printRoute?: string;
+  canPrint?: boolean;
 }
 
 export function InvoicePreviewDialog({
@@ -29,7 +32,14 @@ export function InvoicePreviewDialog({
   branchName,
   penaltyEnabled = true,
   printRoute = "/staff/bulk-meters/print-invoices",
+  canPrint: canPrintProp,
 }: InvoicePreviewDialogProps) {
+  const { hasPermission } = usePermissions();
+  const isFullAdmin = hasPermission(PERMISSIONS.BILL_VIEW_ALL);
+  const canPrint = canPrintProp !== undefined 
+    ? canPrintProp 
+    : (isFullAdmin || hasPermission(PERMISSIONS.INVOICE_PRINT));
+
   if (!meter || !bill) return null;
 
   const handlePrint = () => {
@@ -53,10 +63,17 @@ export function InvoicePreviewDialog({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={handlePrint} className="bg-primary hover:bg-primary/90">
-              <Printer className="h-4 w-4 mr-1.5" />
-              Print Invoice
-            </Button>
+            {canPrint ? (
+              <Button size="sm" onClick={handlePrint} className="bg-primary hover:bg-primary/90">
+                <Printer className="h-4 w-4 mr-1.5" />
+                Print Invoice
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground flex items-center gap-1.5 px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-md">
+                <Lock className="h-3.5 w-3.5" />
+                Print Disabled
+              </span>
+            )}
           </div>
         </DialogHeader>
 

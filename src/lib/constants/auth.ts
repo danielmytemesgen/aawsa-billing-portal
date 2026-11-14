@@ -205,6 +205,14 @@ export const PERMISSIONS = {
     METER_CHANGE_VIEW: 'meter_change_view',
     METER_CHANGE_CREATE: 'meter_change_create',
     METER_CHANGE_MANAGE: 'meter_change_manage',
+
+    // Invoices
+    INVOICE_VIEW: 'invoice:view',                       // Can access the Invoice Generator page
+    INVOICE_PRINT: 'invoice:print',                     // Can print single or batch invoices
+    INVOICE_EXPORT_CSV: 'invoice:export_csv',           // Can export invoice data to CSV
+    INVOICE_EXPORT_EXCEL: 'invoice:export_excel',       // Can export invoice data to Excel
+    INVOICE_BATCH: 'invoice:batch',                     // Can access Batch Invoices tab
+    INVOICE_CUSTOMER_STATEMENT: 'invoice:customer_statement', // Can access Customer Statements tab
 } as const;
 
 export const BRANCHES = {
