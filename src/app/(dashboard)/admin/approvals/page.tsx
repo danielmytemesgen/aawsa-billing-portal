@@ -67,16 +67,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-
-export const AMENDMENT_REASONS = [
-  "🏷️ Meter Key Mismatch",
-  "🏷️ GPS / Location Error",
-  "🏷️ Missing Document",
-  "🏷️ Wrong Tariff Category",
-  "🏷️ Duplicate Record",
-  "🏷️ Customer Info Incomplete",
-  "🏷️ Other",
-] as const;
+import { AMENDMENT_REASONS } from "@/lib/constants/amendment-reasons";
 
 /** Approve items in parallel, capped at concurrency of 5 at a time */
 async function batchApprove<T>(

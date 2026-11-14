@@ -67,7 +67,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AMENDMENT_REASONS } from "@/app/(dashboard)/admin/approvals/page";
+import { AMENDMENT_REASONS } from "@/lib/constants/amendment-reasons";
 
 /** Approve items in parallel, capped at concurrency of 5 */
 async function batchApprove<T>(
