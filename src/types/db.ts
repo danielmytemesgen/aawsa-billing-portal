@@ -284,7 +284,7 @@ export type Database = {
           previousReading: number
           sewerage_connection: "Yes" | "No"
           specificArea: string
-          status: "Active" | "Maintenance" | "Pending Approval" | "Rejected"
+          status: "Active" | "Maintenance" | "Pending Approval" | "Pending Amendment" | "Rejected"
           subCity: string
           total_bulk_bill: number | null
           updatedAt: string | null
@@ -314,7 +314,7 @@ export type Database = {
           previousReading: number
           sewerage_connection: "Yes" | "No"
           specificArea: string
-          status: "Active" | "Maintenance" | "Pending Approval" | "Rejected"
+          status: "Active" | "Maintenance" | "Pending Approval" | "Pending Amendment" | "Rejected"
           subCity: string
           total_bulk_bill?: number | null
           updatedAt?: string | null
@@ -344,7 +344,7 @@ export type Database = {
           previousReading?: number
           sewerage_connection?: "Yes" | "No"
           specificArea?: string
-          status?: "Active" | "Maintenance" | "Pending Approval" | "Rejected"
+          status?: "Active" | "Maintenance" | "Pending Approval" | "Pending Amendment" | "Rejected"
           subCity?: string
           total_bulk_bill?: number | null
           updatedAt?: string | null
@@ -445,7 +445,7 @@ export type Database = {
           previousReading: number
           sewerageConnection: "Yes" | "No"
           specificArea: string
-          status: "Active" | "Inactive" | "Suspended" | "Pending Approval" | "Rejected"
+          status: "Active" | "Inactive" | "Suspended" | "Pending Approval" | "Pending Amendment" | "Rejected"
           subCity: string
           updated_at: string | null
           woreda: string
@@ -471,7 +471,7 @@ export type Database = {
           previousReading: number
           sewerageConnection: "Yes" | "No"
           specificArea: string
-          status?: "Active" | "Inactive" | "Suspended" | "Pending Approval" | "Rejected"
+          status?: "Active" | "Inactive" | "Suspended" | "Pending Approval" | "Pending Amendment" | "Rejected"
           subCity: string
           updated_at?: string | null
           woreda: string
@@ -497,7 +497,7 @@ export type Database = {
           previousReading?: number
           sewerageConnection?: "Yes" | "No"
           specificArea?: string
-          status?: "Active" | "Inactive" | "Suspended" | "Pending Approval" | "Rejected"
+          status?: "Active" | "Inactive" | "Suspended" | "Pending Approval" | "Pending Amendment" | "Rejected"
           subCity?: string
           updated_at?: string | null
           woreda?: string
@@ -1120,7 +1120,8 @@ export type BillCorrection = {
   metadata: any | null;
   created_at: string;
   updated_at: string;
-};
+};
+
 export type ReadingCorrection = {
   id: string;
   reading_id: string;

@@ -3,7 +3,7 @@ import type { z } from "zod";
 import type { baseBulkMeterDataSchema } from "@/app/(dashboard)/admin/data-entry/customer-data-entry-types";
 import type { PaymentStatus, CustomerType, SewerageConnection } from "@/lib/billing-calculations"; // Import CustomerType
 
-export const bulkMeterStatuses = ['Active', 'Maintenance', 'Pending Approval', 'Rejected'] as const;
+export const bulkMeterStatuses = ['Active', 'Maintenance', 'Pending Approval', 'Pending Amendment', 'Rejected'] as const;
 export type BulkMeterStatus = (typeof bulkMeterStatuses)[number];
 
 // This type represents the data structure for a bulk meter entity.
@@ -28,6 +28,7 @@ export type BulkMeter = z.infer<typeof baseBulkMeterDataSchema> & {
   sewerageConnection: SewerageConnection;
   approved_by?: string | null;
   approved_at?: string | null;
+  amendment_reason?: string | null;
   woreda: string;
   location?: string;
   routeKey?: string | null;

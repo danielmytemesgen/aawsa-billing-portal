@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { IndividualCustomer } from "./individual-customer-types";
-import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "./individual-customer-form-dialog";
+import { IndividualCustomerFormDialog, type IndividualCustomerFormValues, type BulkMeterOption } from "./individual-customer-form-dialog";
 import { IndividualCustomerTable } from "./individual-customer-table";
 import { IndividualCustomerDetailsSheet } from "@/components/customers/IndividualCustomerDetailsSheet";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -44,7 +44,7 @@ export default function IndividualCustomersPage() {
   const { toast } = useToast();
   const [currentUser, setCurrentUser] = React.useState<StaffMember | null>(null);
   const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
-  const [bulkMetersList, setBulkMetersList] = React.useState<{ customerKeyNumber: string, name: string }[]>([]);
+  const [bulkMetersList, setBulkMetersList] = React.useState<BulkMeterOption[]>([]);
   const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -126,12 +126,22 @@ export default function IndividualCustomersPage() {
       initializeBranches(),
       initializeTariffs()
     ]).then(() => {
-      setBulkMetersList(getBulkMeters().filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBulkMetersList(getBulkMeters().filter(bm => bm.status === 'Active').map(bm => ({
+        customerKeyNumber: bm.customerKeyNumber,
+        name: bm.name,
+        contractNumber: bm.contractNumber,
+        meterNumber: bm.meterNumber,
+      })));
       setBranches(getBranches());
     });
 
     const unsubscribeBulkMeters = subscribeToBulkMeters((updatedBulkMeters) => {
-      setBulkMetersList(updatedBulkMeters.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBulkMetersList(updatedBulkMeters.filter(bm => bm.status === 'Active').map(bm => ({
+        customerKeyNumber: bm.customerKeyNumber,
+        name: bm.name,
+        contractNumber: bm.contractNumber,
+        meterNumber: bm.meterNumber,
+      })));
     });
     const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
       setBranches(updatedBranches);

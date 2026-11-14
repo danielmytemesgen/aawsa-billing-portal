@@ -88,11 +88,16 @@ function NavItemLink({ item, pathname }: { item: NavItem; pathname: string }) {
       >
         {item.title}
       </span>
+      {item.label && currentDisplayState === 'collapsed' && (
+        <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-background" />
+      )}
       {item.label && currentDisplayState === 'expanded' && (
         <span
           className={cn(
-            "ml-auto text-xs px-2 py-0.5 rounded-full font-medium",
-            isActive ? "bg-white/20 text-white" : "bg-slate-100 text-muted-foreground"
+            "ml-auto text-[11px] px-2 py-0.5 rounded-full font-bold",
+            isActive
+              ? "bg-white/20 text-white"
+              : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
           )}
         >
           {item.label}

@@ -501,10 +501,14 @@ export const dbCreateIndividualCustomer = async (customer: any, client?: any) =>
 };
 
 export const dbUpdateCustomer = async (customerKeyNumber: string, customer: any, client?: any) => {
-    const keys = Object.keys(customer);
+    const cleanCust = { ...customer };
+    // amendment_reason (snake_case) is a real DB column — keep it.
+    // amendmentReason (camelCase) is a domain-object alias — strip it to avoid SQL errors.
+    delete cleanCust.amendmentReason;
+    const keys = Object.keys(cleanCust);
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const sql = `UPDATE individual_customers SET ${setClause} WHERE "customerKeyNumber" = $${keys.length + 1} RETURNING *`;
-    const params = [...keys.map(k => customer[k]), customerKeyNumber];
+    const sql = `UPDATE individual_customers SET ${setClause} WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($${keys.length + 1})) RETURNING *`;
+    const params = [...keys.map(k => cleanCust[k]), customerKeyNumber];
     
     if (client) {
         const res = await client.query(sql, params);
@@ -676,13 +680,16 @@ export const dbGetBulkMeterById = async (customerKeyNumber: string, client?: any
 
 export const dbUpdateBulkMeter = async (customerKeyNumber: string, bulkMeter: any, client?: any) => {
     const cleanBm = { ...bulkMeter };
+    // amendment_reason (snake_case) is a real DB column — keep it.
+    // amendmentReason (camelCase) is a domain-object alias — strip it to avoid SQL errors.
+    delete cleanBm.amendmentReason;
     if (cleanBm.routeKey !== undefined) {
         cleanBm.ROUTE_KEY = cleanBm.routeKey;
         delete cleanBm.routeKey;
     }
     const keys = Object.keys(cleanBm);
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    const sql = `UPDATE bulk_meters SET ${setClause} WHERE "customerKeyNumber" = $${keys.length + 1} RETURNING *`;
+    const sql = `UPDATE bulk_meters SET ${setClause} WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($${keys.length + 1})) RETURNING *`;
     const params = [...keys.map(k => cleanBm[k]), customerKeyNumber];
 
     if (client) {
@@ -926,6 +933,89 @@ export const dbGetMostRecentBillsForBulkMeters = async (customerKeys: string[], 
       ORDER BY b."CUSTOMERKEY", b.month_year DESC, b.created_at DESC
     `;
     const params = branchId ? [...customerKeys, branchId] : customerKeys;
+    return await query(queryStr, params);
+};
+
+export const dbGetInvoiceBills = async (options: {
+    monthYear?: string;
+    branchId?: string;
+    paymentStatus?: string;
+    customerKey?: string;
+}) => {
+    const { monthYear, branchId, paymentStatus, customerKey } = options;
+    const params: any[] = [];
+    let pIdx = 1;
+
+    const whereClauses: string[] = ['b.deleted_at IS NULL', "bm.status != 'Rejected'"];
+
+    if (customerKey) {
+        whereClauses.push(`b."CUSTOMERKEY" = $${pIdx++}`);
+        params.push(customerKey);
+    } else if (monthYear && monthYear !== 'latest') {
+        whereClauses.push(`b.month_year = $${pIdx++}`);
+        params.push(monthYear);
+    }
+
+    if (branchId) {
+        whereClauses.push(`(bm.branch_id = $${pIdx} OR b.branch_id = $${pIdx})`);
+        params.push(branchId);
+        pIdx++;
+    }
+
+    if (paymentStatus === 'Unpaid') {
+        whereClauses.push(`(b.payment_status = 'Unpaid' OR b.payment_status IS NULL)`);
+    } else if (paymentStatus === 'Paid') {
+        whereClauses.push(`b.payment_status = 'Paid'`);
+    }
+
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    if (!customerKey && (!monthYear || monthYear === 'latest')) {
+        const queryStr = `
+            SELECT DISTINCT ON (b."CUSTOMERKEY")
+                b.*,
+                bm.name,
+                bm."phoneNumber",
+                bm."contractNumber",
+                bm."METER_KEY" as "meterNumber",
+                bm."meterSize",
+                bm."specificArea",
+                bm."subCity",
+                bm.woreda,
+                bm.charge_group,
+                bm.sewerage_connection,
+                COALESCE(b.branch_id, bm.branch_id) as branch_id,
+                bm."approved_by",
+                bm."approved_at"
+            FROM bills b
+            JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+            ${whereStr}
+            ORDER BY b."CUSTOMERKEY", b.month_year DESC, b.created_at DESC
+        `;
+        return await query(queryStr, params);
+    }
+
+    const queryStr = `
+        SELECT
+            b.*,
+            bm.name,
+            bm."phoneNumber",
+            bm."contractNumber",
+            bm."METER_KEY" as "meterNumber",
+            bm."meterSize",
+            bm."specificArea",
+            bm."subCity",
+            bm.woreda,
+            bm.charge_group,
+            bm.sewerage_connection,
+            COALESCE(b.branch_id, bm.branch_id) as branch_id,
+            bm."approved_by",
+            bm."approved_at"
+        FROM bills b
+        JOIN bulk_meters bm ON b."CUSTOMERKEY" = bm."customerKeyNumber"
+        ${whereStr}
+        ORDER BY b.month_year DESC, b.created_at DESC
+    `;
     return await query(queryStr, params);
 };
 

@@ -25,6 +25,8 @@ import {
   createCustomerAction,
   updateCustomerAction,
   deleteCustomerAction,
+  approveCustomerAction,
+  rejectCustomerAction,
   getCustomerByKeyAction,
   getAllBulkMetersAction,
   getBulkMetersCountAction,
@@ -32,6 +34,8 @@ import {
   createBulkMeterAction,
   updateBulkMeterAction,
   deleteBulkMeterAction,
+  approveBulkMeterAction,
+  rejectBulkMeterAction,
   getBulkMeterByIdAction,
   getAllStaffMembersAction,
   createStaffMemberAction,
@@ -716,6 +720,7 @@ const mapDbBulkMeterToDomain = async (dbBulkMeter: BulkMeterRow): Promise<BulkMe
     zCoordinate: dbBulkMeter.z_coordinate ? Number(dbBulkMeter.z_coordinate) : undefined,
     approved_by: dbBulkMeter.approvedBy,
     approved_at: dbBulkMeter.approvedAt,
+    amendment_reason: (dbBulkMeter as any).amendment_reason || null,
     location: dbBulkMeter.subCity,
   };
 };
@@ -1815,7 +1820,7 @@ export const initializeBranches = async (force: boolean = false) => {
   }
 };
 
-export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string }) => {
+export const initializeCustomers = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string; branchId?: string }) => {
   if (force || !customersFetched || customers.length === 0 || options) {
     // If offline, attempt to load from cache first using fast B-Tree index if routeKey is specified
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
@@ -1883,7 +1888,7 @@ export const initializeCustomers = async (force: boolean = false, options?: { li
   }
 };
 
-export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string }) => {
+export const initializeBulkMeters = async (force: boolean = false, options?: { limit?: number; offset?: number; searchTerm?: string; routeKey?: string; status?: string; branchId?: string }) => {
   if (force || !bulkMetersFetched || bulkMeters.length === 0 || options) {
     // If offline, attempt to load from cache first using fast B-Tree index if routeKey is specified
     if (typeof window !== 'undefined' && !window.navigator.onLine) {
@@ -3384,6 +3389,13 @@ export const addTariff = async (tariffData: Omit<TariffInfo, 'id'>): Promise<Sto
 
 // --- Approval Workflow Functions ---
 export const approveCustomer = async (customerKeyNumber: string, approverId: string): Promise<StoreOperationResult<void>> => {
+  const { data: updatedDbCustomer, error } = await approveCustomerAction(customerKeyNumber);
+  if (!error && updatedDbCustomer) {
+    const updatedCustomer = await mapDbCustomerToDomain(updatedDbCustomer);
+    customers = customers.map(c => c.customerKeyNumber === customerKeyNumber ? updatedCustomer : c);
+    notifyCustomerListeners();
+    return { success: true };
+  }
   const updatePayload: Partial<DomainIndividualCustomer> = {
     status: 'Active',
     approved_by: approverId,
@@ -3392,35 +3404,65 @@ export const approveCustomer = async (customerKeyNumber: string, approverId: str
   return await updateCustomer(customerKeyNumber, updatePayload);
 };
 
-export const rejectCustomer = async (customerKeyNumber: string, rejectorId: string): Promise<StoreOperationResult<void>> => {
-  const updatePayload: Partial<DomainIndividualCustomer> = {
-    status: 'Rejected',
-    approved_by: rejectorId, // Log who rejected it
+export const rejectCustomer = async (customerKeyNumber: string, rejectorId: string, reason?: string): Promise<StoreOperationResult<void>> => {
+  const { data: updatedDbCustomer, error } = await rejectCustomerAction(customerKeyNumber, reason);
+  if (!error && updatedDbCustomer) {
+    const updatedCustomer = await mapDbCustomerToDomain(updatedDbCustomer);
+    if (reason) (updatedCustomer as any).amendment_reason = reason;
+    customers = customers.map(c => c.customerKeyNumber === customerKeyNumber ? updatedCustomer : c);
+    notifyCustomerListeners();
+    return { success: true };
+  }
+  const updatePayload: any = {
+    status: 'Pending Amendment',
+    approved_by: rejectorId, // Log who requested amendment
     approved_at: new Date().toISOString(),
+    ...(reason ? { amendment_reason: reason } : {}),
   };
   return await updateCustomer(customerKeyNumber, updatePayload);
 };
 
 export const approveBulkMeter = async (customerKeyNumber: string, approverId: string): Promise<StoreOperationResult<void>> => {
+  const { data: updatedDbBulkMeter, error } = await approveBulkMeterAction(customerKeyNumber);
+  if (!error && updatedDbBulkMeter) {
+    const updatedBulkMeter = await mapDbBulkMeterToDomain(updatedDbBulkMeter);
+    bulkMeters = bulkMeters.map(bm => bm.customerKeyNumber === customerKeyNumber ? updatedBulkMeter : bm);
+    notifyBulkMeterListeners();
+    return { success: true };
+  }
   const updatePayload: Partial<BulkMeter> = {
     status: 'Active',
     approved_by: approverId,
     approved_at: new Date().toISOString(),
   };
-  // callers expect a void result for approve/reject flows; we call the existing updateBulkMeter and ignore its returned data
-  await updateBulkMeter(customerKeyNumber, updatePayload);
+  const result = await updateBulkMeter(customerKeyNumber, updatePayload);
+  if (!result.success) {
+    return { success: false, message: result.message || 'Failed to approve bulk meter.' } as StoreOperationResult<void>;
+  }
   return { success: true } as StoreOperationResult<void>;
-}
+};
 
-export const rejectBulkMeter = async (customerKeyNumber: string, rejectorId: string): Promise<StoreOperationResult<void>> => {
-  const updatePayload: Partial<BulkMeter> = {
-    status: 'Rejected',
+export const rejectBulkMeter = async (customerKeyNumber: string, rejectorId: string, reason?: string): Promise<StoreOperationResult<void>> => {
+  const { data: updatedDbBulkMeter, error } = await rejectBulkMeterAction(customerKeyNumber, reason);
+  if (!error && updatedDbBulkMeter) {
+    const updatedBulkMeter = await mapDbBulkMeterToDomain(updatedDbBulkMeter);
+    if (reason) (updatedBulkMeter as any).amendment_reason = reason;
+    bulkMeters = bulkMeters.map(bm => bm.customerKeyNumber === customerKeyNumber ? updatedBulkMeter : bm);
+    notifyBulkMeterListeners();
+    return { success: true };
+  }
+  const updatePayload: any = {
+    status: 'Pending Amendment',
     approved_by: rejectorId,
     approved_at: new Date().toISOString(),
+    ...(reason ? { amendment_reason: reason } : {}),
   };
-  await updateBulkMeter(customerKeyNumber, updatePayload);
+  const result = await updateBulkMeter(customerKeyNumber, updatePayload);
+  if (!result.success) {
+    return { success: false, message: result.message || error || 'Failed to request amendment for bulk meter.' } as StoreOperationResult<void>;
+  }
   return { success: true } as StoreOperationResult<void>;
-}
+};
 
 
 export const subscribeToBranches = (listener: Listener<DomainBranch>): (() => void) => {

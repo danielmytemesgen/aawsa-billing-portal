@@ -7,13 +7,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import AdminLayoutClient from '@/app/(dashboard)/admin/admin-layout-client';
 
 interface UserProfile {
-  id: string; 
-  email: string;
-  role: string;
-  permissions?: string[];
-  branchName?: string;
-  branchId?: string;
-  name?: string;
+    id: string;
+    email: string;
+    role: string;
+    permissions?: string[];
+    branchName?: string;
+    branchId?: string;
+    name?: string;
 }
 
 export default function StaffLayout({ children }: { children: React.ReactNode }) {
@@ -39,11 +39,11 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
     }, [router, pathname]);
 
     if (isLoading) {
-       return (
-         <div className="flex items-center justify-center h-screen">
-           <Skeleton className="h-16 w-16 rounded-full" />
-         </div>
-       );
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <Skeleton className="h-16 w-16 rounded-full" />
+            </div>
+        );
     }
 
     if (!user) {
@@ -54,3 +54,7 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
     const safeUser = user ? JSON.parse(JSON.stringify(user)) : null;
     return <AdminLayoutClient user={safeUser}>{children}</AdminLayoutClient>;
 }
+
+
+
+

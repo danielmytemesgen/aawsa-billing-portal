@@ -149,6 +149,19 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
       ],
     },
     {
+      match: (currentPath) => currentPath.startsWith('/admin/invoices') || currentPath.startsWith('/staff/invoices'),
+      anyOf: [
+        PERMISSIONS.BILL_VIEW_ALL,
+        PERMISSIONS.BILL_VIEW_BRANCH,
+        PERMISSIONS.BILL_CREATE,
+        PERMISSIONS.BILL_POST,
+        PERMISSIONS.BILL_SEND,
+        PERMISSIONS.BILL_APPROVE,
+        PERMISSIONS.BILL_VIEW_PAID,
+        PERMISSIONS.BILL_VIEW_UNPAID,
+      ],
+    },
+    {
       match: (currentPath) => currentPath.startsWith('/admin/bill-management') || currentPath.startsWith('/staff/bill-management'),
       anyOf: [
         PERMISSIONS.BILL_VIEW_ALL,

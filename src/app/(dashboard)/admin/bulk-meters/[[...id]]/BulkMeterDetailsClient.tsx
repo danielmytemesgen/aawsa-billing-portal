@@ -1546,6 +1546,7 @@ export default function BulkMeterDetailsPage() {
                   <div className="space-y-0 text-[9px] font-medium">
                     <div>Paid/Unpaid: {billForPrintView?.paymentStatus || (billForPrintView as any)?.payment_status || 'Unpaid'}</div>
                     <div>Month: {billForPrintView?.monthYear || (billForPrintView as any)?.month_year || billCardDetails.month}</div>
+                    <div className="text-gray-500 pt-0.5">Present bill key at any CBE, AWASH, Telebirr branch to pay.</div>
                   </div>
                   <div className="print-status-box scale-[0.6] origin-bottom-right">
                     {billForPrintView?.paymentStatus || (billForPrintView as any)?.payment_status || 'Unpaid'}
@@ -2519,7 +2520,7 @@ export default function BulkMeterDetailsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {selectedCustomer && (<IndividualCustomerFormDialog open={isCustomerFormOpen} onOpenChange={setIsCustomerFormOpen} onSubmit={handleSubmitCustomerForm} defaultValues={selectedCustomer} bulkMeters={[{ customerKeyNumber: currentBulkMeter.customerKeyNumber, name: currentBulkMeter.name }]} />)}
+      {selectedCustomer && (<IndividualCustomerFormDialog open={isCustomerFormOpen} onOpenChange={setIsCustomerFormOpen} onSubmit={handleSubmitCustomerForm} defaultValues={selectedCustomer} bulkMeters={[{ customerKeyNumber: currentBulkMeter.customerKeyNumber, name: currentBulkMeter.name, contractNumber: currentBulkMeter.contractNumber, meterNumber: currentBulkMeter.meterNumber }]} />)}
       <AlertDialog open={isCustomerDeleteDialogOpen} onOpenChange={setIsCustomerDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Delete Customer?</AlertDialogTitle><AlertDialogDescription>This will permanently delete {customerToDelete?.name}.</AlertDialogDescription></AlertDialogHeader>

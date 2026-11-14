@@ -29,7 +29,7 @@ import { type CustomerType, type SewerageConnection, type PaymentStatus, type Bi
 import { getAssignedCustomerReadingsAction } from "@/lib/actions";
 // calculateBillAction & closeBillingCycleAction removed — replaced with synchronous calculateBillFromTariff + local tariff cache
 import { BulkMeterFormDialog, type BulkMeterFormValues } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-form-dialog";
-import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
+import { IndividualCustomerFormDialog, type IndividualCustomerFormValues, type BulkMeterOption } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { IndividualCustomerDetailsSheet } from "@/components/customers/IndividualCustomerDetailsSheet";
 import { AddReadingDialog } from "@/features/billing/components/add-reading-dialog";
 import { cn } from "@/lib/utils";
@@ -172,7 +172,7 @@ export default function StaffBulkMeterDetailsPage() {
   const [isManageCustomersOpen, setIsManageCustomersOpen] = React.useState(false);
   const [isAddReadingOpen, setIsAddReadingOpen] = React.useState(false);
 
-  const [branchBulkMetersForCustomerForm, setBranchBulkMetersForCustomerForm] = useState<{ customerKeyNumber: string, name: string }[]>([]);
+  const [branchBulkMetersForCustomerForm, setBranchBulkMetersForCustomerForm] = useState<BulkMeterOption[]>([]);
 
   const [isBillDeleteDialogOpen, setIsBillDeleteDialogOpen] = React.useState(false);
   const [billToDelete, setBillToDelete] = React.useState<DomainBill | null>(null);
@@ -638,7 +638,12 @@ export default function StaffBulkMeterDetailsPage() {
           setAssociatedCustomers(currentGlobalCustomers.filter(c => c.assignedBulkMeterId === bulkMeterKey));
           setIsAuthorized(true);
 
-          const branchMeters = currentGlobalMeters.filter(bm => bm.branchId === localBranchId).map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
+          const branchMeters = currentGlobalMeters.filter(bm => bm.branchId === localBranchId).map(bm => ({
+            customerKeyNumber: bm.customerKeyNumber,
+            name: bm.name,
+            contractNumber: bm.contractNumber,
+            meterNumber: bm.meterNumber,
+          }));
           setBranchBulkMetersForCustomerForm(branchMeters);
 
           setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
@@ -698,7 +703,12 @@ export default function StaffBulkMeterDetailsPage() {
           setAssociatedCustomers(currentGlobalCustomers.filter(c => c.assignedBulkMeterId === bulkMeterKey));
           setIsAuthorized(true);
 
-          const branchMeters = currentGlobalMeters.filter(bm => bm.branchId === localBranchId).map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
+          const branchMeters = currentGlobalMeters.filter(bm => bm.branchId === localBranchId).map(bm => ({
+            customerKeyNumber: bm.customerKeyNumber,
+            name: bm.name,
+            contractNumber: bm.contractNumber,
+            meterNumber: bm.meterNumber,
+          }));
           setBranchBulkMetersForCustomerForm(branchMeters);
 
           setMeterReadingHistory(getBulkMeterReadings().filter(r => r.CUSTOMERKEY === foundBM.customerKeyNumber).sort((a, b) => {
@@ -1479,6 +1489,7 @@ export default function StaffBulkMeterDetailsPage() {
                   <div className="space-y-2">
                     <div className="text-xs text-slate-500 font-bold uppercase tracking-widest leading-none">Billing Cycle</div>
                     <div className="text-lg font-bold text-slate-900">{billForPrintView?.monthYear || (billForPrintView as any)?.month_year || billCardDetails.month}</div>
+                    <div className="text-[11px] text-gray-500">Present bill key at any CBE, AWASH, Telebirr branch to pay.</div>
                   </div>
                   <div className="print-status-box">
                     {billForPrintView?.paymentStatus || (billForPrintView as any)?.payment_status || 'Unpaid'}
@@ -2369,7 +2380,7 @@ export default function StaffBulkMeterDetailsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {selectedCustomer && (<IndividualCustomerFormDialog open={isCustomerFormOpen} onOpenChange={setIsCustomerFormOpen} onSubmit={handleSubmitCustomerForm} defaultValues={selectedCustomer} bulkMeters={branchBulkMetersForCustomerForm.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }))} />)}
+      {selectedCustomer && (<IndividualCustomerFormDialog open={isCustomerFormOpen} onOpenChange={setIsCustomerFormOpen} onSubmit={handleSubmitCustomerForm} defaultValues={selectedCustomer} bulkMeters={branchBulkMetersForCustomerForm.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name, contractNumber: bm.contractNumber, meterNumber: bm.meterNumber }))} />)}
       <AlertDialog open={isCustomerDeleteDialogOpen} onOpenChange={setIsCustomerDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Delete Customer?</AlertDialogTitle><AlertDialogDescription>This will permanently delete {customerToDelete?.name}.</AlertDialogDescription></AlertDialogHeader>

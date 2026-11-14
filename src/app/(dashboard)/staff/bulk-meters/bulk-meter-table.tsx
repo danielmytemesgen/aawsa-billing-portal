@@ -25,7 +25,8 @@ import {
   XCircle,
   Key,
   Phone,
-  Clock
+  Clock,
+  AlertTriangle
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -183,8 +184,8 @@ export function BulkMeterTable({
           </TableHeader>
           <TableBody>
             {data.map((bulkMeter) => (
+              <React.Fragment key={bulkMeter.customerKeyNumber}>
               <TableRow 
-                key={bulkMeter.customerKeyNumber} 
                 className={`group transition-colors border-b last:border-0 hover:bg-slate-50/70 ${selectedMeters?.has(bulkMeter.customerKeyNumber) ? "bg-blue-50/40" : ""}`}
               >
                 {showSelection && (
@@ -262,7 +263,13 @@ export function BulkMeterTable({
                       Rejected
                     </span>
                   )}
-                  {!['Active', 'Maintenance', 'Pending Approval', 'Rejected'].includes(bulkMeter.status) && (
+                  {bulkMeter.status === 'Pending Amendment' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-orange-500 text-white shadow-sm shadow-orange-200">
+                      <AlertTriangle className="h-3 w-3" />
+                      Needs Fix
+                    </span>
+                  )}
+                  {!['Active', 'Maintenance', 'Pending Approval', 'Pending Amendment', 'Rejected'].includes(bulkMeter.status) && (
                     <Badge variant="outline" className="text-xs">{bulkMeter.status}</Badge>
                   )}
                 </TableCell>
@@ -296,6 +303,19 @@ export function BulkMeterTable({
                   </div>
                 </TableCell>
               </TableRow>
+              {/* Amendment reason banner — shown below the row when status is Pending Amendment */}
+              {bulkMeter.status === 'Pending Amendment' && bulkMeter.amendment_reason && (
+                <TableRow className="bg-orange-50/60 border-b border-orange-200/60 hover:bg-orange-50/80">
+                  <TableCell colSpan={9} className="py-2 px-4">
+                    <div className="flex items-center gap-2 text-orange-800">
+                      <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />
+                      <span className="text-xs font-semibold">Amendment required:</span>
+                      <span className="text-xs font-medium">{bulkMeter.amendment_reason}</span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </React.Fragment>
             ))}
           </TableBody>
         </Table>
@@ -319,9 +339,19 @@ export function BulkMeterTable({
                   <CardDescription className="text-[10px]">Key: {bulkMeter.customerKeyNumber}</CardDescription>
                 </div>
               </div>
-              <Badge variant={bulkMeter.status === 'Active' ? 'default' : 'secondary'} className="text-[10px] px-1.5">{bulkMeter.status}</Badge>
+              <Badge variant={bulkMeter.status === 'Active' ? 'default' : bulkMeter.status === 'Pending Amendment' ? 'outline' : 'secondary'} className={`text-[10px] px-1.5 ${bulkMeter.status === 'Pending Amendment' ? 'border-orange-400 text-orange-700 bg-orange-50' : ''}`}>{bulkMeter.status === 'Pending Amendment' ? '⚠ Needs Fix' : bulkMeter.status}</Badge>
             </CardHeader>
             <CardContent className="p-4 space-y-3">
+              {/* Amendment reason banner for mobile */}
+              {bulkMeter.status === 'Pending Amendment' && bulkMeter.amendment_reason && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-100 border border-orange-300 text-orange-800">
+                  <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold block">Amendment required</span>
+                    <span className="text-xs">{bulkMeter.amendment_reason}</span>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div><span className="text-muted-foreground uppercase font-semibold">Key:</span> {bulkMeter.customerKeyNumber}</div>
                 <div><span className="text-muted-foreground uppercase font-semibold">Phone:</span> {bulkMeter.phoneNumber || "-"}</div>

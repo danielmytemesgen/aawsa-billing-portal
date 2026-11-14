@@ -32,7 +32,16 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
 import { customerTypes, sewerageConnections, paymentStatuses } from "@/lib/billing-calculations";
 import type { Branch } from "../branches/branch-types";
-import { Globe } from "lucide-react";
+import { Globe, Search, X, Check, ChevronsUpDown, CheckCircle2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+
+export interface BulkMeterOption {
+  customerKeyNumber: string;
+  name: string;
+  contractNumber?: string | null;
+  meterNumber?: string | null;
+}
 
 const individualCustomerFormObjectSchema = baseIndividualCustomerDataSchema.extend({
   status: z.enum(individualCustomerStatuses, { errorMap: () => ({ message: "Please select a valid status." }) }),
@@ -47,7 +56,7 @@ interface IndividualCustomerFormDialogProps {
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: IndividualCustomerFormValues) => void;
   defaultValues?: IndividualCustomer | null;
-  bulkMeters?: { customerKeyNumber: string; name: string }[];
+  bulkMeters?: BulkMeterOption[];
   staffBranchName?: string;
 }
 
@@ -55,7 +64,11 @@ const UNASSIGNED_BULK_METER_VALUE = "_SELECT_NONE_BULK_METER_";
 const BRANCH_UNASSIGNED_VALUE = "_SELECT_BRANCH_INDIVIDUAL_DIALOG_";
 
 export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, defaultValues, bulkMeters: propBulkMeters, staffBranchName }: IndividualCustomerFormDialogProps) {
-  const [dynamicBulkMeters, setDynamicBulkMeters] = React.useState<{ customerKeyNumber: string; name: string }[]>(propBulkMeters || []);
+  const [dynamicBulkMeters, setDynamicBulkMeters] = React.useState<BulkMeterOption[]>(propBulkMeters || []);
+  const [bulkMeterSearch, setBulkMeterSearch] = React.useState("");
+  const [isBulkMeterPickerOpen, setIsBulkMeterPickerOpen] = React.useState(false);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
   const [availableBranches, setAvailableBranches] = React.useState<Branch[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = React.useState(true);
   const [isLoadingBulkMeters, setIsLoadingBulkMeters] = React.useState(true);
@@ -122,7 +135,12 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
     setIsLoadingBulkMeters(true);
     if (!propBulkMeters) {
       initializeBulkMeters().then(() => {
-        const fetchedBms = getBulkMeters().map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name }));
+        const fetchedBms = getBulkMeters().map(bm => ({
+          customerKeyNumber: bm.customerKeyNumber,
+          name: bm.name,
+          contractNumber: bm.contractNumber,
+          meterNumber: bm.meterNumber,
+        }));
         setDynamicBulkMeters(fetchedBms);
         setIsLoadingBulkMeters(false);
       });
@@ -134,7 +152,12 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
     let unsubscribeBMs = () => { };
     if (!propBulkMeters) {
       unsubscribeBMs = subscribeToBulkMeters((updatedBulkMeters) => {
-        setDynamicBulkMeters(updatedBulkMeters.map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+        setDynamicBulkMeters(updatedBulkMeters.map(bm => ({
+          customerKeyNumber: bm.customerKeyNumber,
+          name: bm.name,
+          contractNumber: bm.contractNumber,
+          meterNumber: bm.meterNumber,
+        })));
         setIsLoadingBulkMeters(false);
       });
     }
@@ -143,6 +166,51 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
       unsubscribeBMs();
     }
   }, [propBulkMeters, open]);
+
+  React.useEffect(() => {
+    if (propBulkMeters) {
+      const bms = [...propBulkMeters];
+      const assignedId = defaultValues?.assignedBulkMeterId;
+      if (
+        assignedId &&
+        assignedId !== UNASSIGNED_BULK_METER_VALUE &&
+        !bms.some((b) => b.customerKeyNumber === assignedId)
+      ) {
+        const found = getBulkMeters().find((b) => b.customerKeyNumber === assignedId);
+        if (found) {
+          bms.unshift({
+            customerKeyNumber: found.customerKeyNumber,
+            name: found.name,
+            contractNumber: found.contractNumber,
+            meterNumber: found.meterNumber,
+          });
+        } else {
+          bms.unshift({
+            customerKeyNumber: assignedId,
+            name: `${assignedId} (Current)`,
+          });
+        }
+      }
+      setDynamicBulkMeters(bms);
+    }
+  }, [propBulkMeters, defaultValues?.assignedBulkMeterId]);
+
+  const filteredBulkMeters = React.useMemo(() => {
+    if (!bulkMeterSearch.trim()) return dynamicBulkMeters;
+    const term = bulkMeterSearch.toLowerCase().trim();
+    return dynamicBulkMeters.filter((bm) => {
+      const key = (bm.customerKeyNumber || "").toLowerCase();
+      const name = (bm.name || "").toLowerCase();
+      const contract = (bm.contractNumber || "").toLowerCase();
+      const meterNo = (bm.meterNumber || "").toLowerCase();
+      return (
+        key.includes(term) ||
+        name.includes(term) ||
+        contract.includes(term) ||
+        meterNo.includes(term)
+      );
+    });
+  }, [dynamicBulkMeters, bulkMeterSearch]);
 
   React.useEffect(() => {
     const effectiveBranchId = defaultValues?.branchId || (!isHeadOffice && userBranchId ? userBranchId : undefined);
@@ -214,7 +282,7 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
   };
 
   const handleBulkMeterChange = (value: string | undefined) => {
-    form.setValue("assignedBulkMeterId", value);
+    form.setValue("assignedBulkMeterId", value, { shouldDirty: true, shouldValidate: true });
   };
 
   const handleBranchChange = (branchIdValue: string) => {
@@ -296,38 +364,197 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
               <FormField
                 control={form.control}
                 name="assignedBulkMeterId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Assign to Bulk Meter</FormLabel>
-                    <Select
-                      onValueChange={handleBulkMeterChange}
-                      value={field.value || UNASSIGNED_BULK_METER_VALUE}
-                      disabled={isLoadingBulkMeters}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder={isLoadingBulkMeters ? "Loading..." : "None"} />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value={UNASSIGNED_BULK_METER_VALUE}>None</SelectItem>
-                        {dynamicBulkMeters.length === 0 && !isLoadingBulkMeters && (
-                          <SelectItem value="no-bms-available" disabled>
-                            No bulk meters available
-                          </SelectItem>
-                        )}
-                        {dynamicBulkMeters.map((bm) => (
-                          bm.customerKeyNumber && String(bm.customerKeyNumber).trim() !== "" ? (
-                            <SelectItem key={String(bm.customerKeyNumber)} value={String(bm.customerKeyNumber)}>
-                            {bm.customerKeyNumber} - {bm.name}
-                          </SelectItem>
-                          ) : null
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  const isAssigned =
+                    field.value && field.value !== UNASSIGNED_BULK_METER_VALUE;
+                  const selectedBm = dynamicBulkMeters.find(
+                    (bm) => bm.customerKeyNumber === field.value
+                  );
+
+                  return (
+                    <FormItem className="flex flex-col">
+                      <FormLabel>Assign to Bulk Meter</FormLabel>
+                      <Popover
+                        open={isBulkMeterPickerOpen}
+                        onOpenChange={(o) => {
+                          setIsBulkMeterPickerOpen(o);
+                          if (o) {
+                            setTimeout(() => searchInputRef.current?.focus(), 80);
+                          } else {
+                            setBulkMeterSearch("");
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={isBulkMeterPickerOpen}
+                              disabled={isLoadingBulkMeters}
+                              className={cn(
+                                "w-full h-10 px-3 justify-between font-normal text-left truncate border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900",
+                                !isAssigned && "text-muted-foreground"
+                              )}
+                            >
+                              <span className="truncate flex-1">
+                                {isLoadingBulkMeters ? (
+                                  "Loading bulk meters..."
+                                ) : isAssigned ? (
+                                  selectedBm ? (
+                                    <span className="flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
+                                      <span className="font-semibold">{selectedBm.customerKeyNumber}</span>
+                                      <span className="text-muted-foreground">•</span>
+                                      <span className="truncate">{selectedBm.name}</span>
+                                    </span>
+                                  ) : (
+                                    field.value
+                                  )
+                                ) : (
+                                  "None (Unassigned)"
+                                )}
+                              </span>
+                              <div className="flex items-center gap-1 ml-2 shrink-0">
+                                {isAssigned && (
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleBulkMeterChange(UNASSIGNED_BULK_METER_VALUE);
+                                    }}
+                                    className="p-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-muted-foreground hover:text-slate-900 cursor-pointer"
+                                    title="Unassign bulk meter"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </span>
+                                )}
+                                <ChevronsUpDown className="h-4 w-4 opacity-50" />
+                              </div>
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+
+                        <PopoverContent
+                          className="w-[360px] sm:w-[420px] p-0 shadow-2xl z-[100] border-slate-200 dark:border-slate-800"
+                          align="start"
+                        >
+                          {/* Search Header */}
+                          <div className="flex items-center border-b px-3 py-2 gap-2 bg-slate-50 dark:bg-slate-900">
+                            <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <input
+                              ref={searchInputRef}
+                              value={bulkMeterSearch}
+                              onChange={(e) => setBulkMeterSearch(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (filteredBulkMeters.length > 0) {
+                                    handleBulkMeterChange(filteredBulkMeters[0].customerKeyNumber);
+                                    setIsBulkMeterPickerOpen(false);
+                                    setBulkMeterSearch("");
+                                  }
+                                }
+                              }}
+                              placeholder="Search by Key (BM-...), Contract, or Name..."
+                              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground text-foreground"
+                              autoComplete="off"
+                            />
+                            {bulkMeterSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setBulkMeterSearch("")}
+                                className="text-muted-foreground hover:text-foreground p-0.5"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Options List */}
+                          <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                            {/* Option: None / Unassigned */}
+                            <button
+                              type="button"
+                              className={cn(
+                                "w-full text-left px-3.5 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-center justify-between",
+                                !isAssigned && "bg-blue-50/80 dark:bg-blue-950/40 font-semibold text-blue-700 dark:text-blue-300"
+                              )}
+                              onClick={() => {
+                                handleBulkMeterChange(UNASSIGNED_BULK_METER_VALUE);
+                                setIsBulkMeterPickerOpen(false);
+                                setBulkMeterSearch("");
+                              }}
+                            >
+                              <span className="italic text-muted-foreground">None (Unassigned)</span>
+                              {!isAssigned && <Check className="h-4 w-4 text-blue-600" />}
+                            </button>
+
+                            {/* Filtered list */}
+                            {filteredBulkMeters.length === 0 ? (
+                              <div className="text-center py-6 px-4 text-xs text-muted-foreground">
+                                No bulk meters match &ldquo;{bulkMeterSearch}&rdquo;.
+                              </div>
+                            ) : (
+                              filteredBulkMeters.map((bm) => {
+                                const isSelected = field.value === bm.customerKeyNumber;
+                                return (
+                                  <button
+                                    key={bm.customerKeyNumber}
+                                    type="button"
+                                    className={cn(
+                                      "w-full text-left px-3.5 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors flex items-start justify-between gap-2",
+                                      isSelected && "bg-blue-50/80 dark:bg-blue-950/40"
+                                    )}
+                                    onClick={() => {
+                                      handleBulkMeterChange(bm.customerKeyNumber);
+                                      setIsBulkMeterPickerOpen(false);
+                                      setBulkMeterSearch("");
+                                    }}
+                                  >
+                                    <div className="flex-1 min-w-0">
+                                      <p className={cn("font-bold truncate text-slate-900 dark:text-slate-100", isSelected && "text-blue-700 dark:text-blue-300")}>
+                                        {bm.name}
+                                      </p>
+                                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-muted-foreground font-mono">
+                                        <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                                          🔑 {bm.customerKeyNumber}
+                                        </span>
+                                        {bm.contractNumber && (
+                                          <span className="text-slate-700 dark:text-slate-300">
+                                            • Contract: <span className="font-semibold">{bm.contractNumber}</span>
+                                          </span>
+                                        )}
+                                        {bm.meterNumber && (
+                                          <span>• Meter: {bm.meterNumber}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {isSelected && (
+                                      <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                                    )}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          {/* Footer Count */}
+                          <div className="px-3 py-1.5 border-t bg-slate-50 dark:bg-slate-900 text-[10px] text-muted-foreground flex justify-between items-center">
+                            <span>
+                              {bulkMeterSearch
+                                ? `Found ${filteredBulkMeters.length} matching`
+                                : `Total: ${dynamicBulkMeters.length} bulk meters`}
+                            </span>
+                            <span className="italic">Type key or contract to search</span>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
             </div>
 

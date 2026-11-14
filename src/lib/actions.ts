@@ -126,6 +126,7 @@ import {
   dbGetBillsByMonth,
   dbGetBillsWithBulkMeterInfoByMonth,
   dbGetMostRecentBillsForBulkMeters,
+  dbGetInvoiceBills,
   dbGetRecycleBinItems,
   dbRestoreFromRecycleBin,
   dbRestoreFromRecycleBinBulk,
@@ -480,6 +481,9 @@ function getEffectiveBranchId(session: any, optionsBranchId?: string, permission
 type RoleInsert = PublicTables['roles']['Insert'];
 type PermissionInsert = PublicTables['permissions']['Insert'];
 type PermissionUpdate = PublicTables['permissions']['Update'];
+
+const isValidUuid = (val?: string | null): boolean =>
+  typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
 
 // FaultCode and Route types are defined in action-types.ts — imported above.
@@ -858,7 +862,7 @@ export async function createCustomerAction(customer: IndividualCustomerInsert) {
 }
 export async function updateCustomerAction(customerKeyNumber: string, customer: IndividualCustomerUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.CUSTOMERS_UPDATE);
+    const session = await checkPermissionAny(PERMISSIONS.CUSTOMERS_UPDATE, PERMISSIONS.CUSTOMERS_APPROVE);
     const existing = await dbGetCustomerById(customerKeyNumber);
     if (!existing) {
       throw new Error('Customer not found');
@@ -917,29 +921,43 @@ export async function approveCustomerAction(customerKeyNumber: string) {
     if (existing) {
       verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
     }
+    const approverUuid = isValidUuid(session?.id) ? session.id : null;
     const result = await dbUpdateCustomer(customerKeyNumber, {
       status: 'Active',
-      approved_by: session.id,
+      approved_by: approverUuid,
       approved_at: new Date().toISOString()
     });
+    if (!result) {
+      throw new Error(`Customer "${customerKeyNumber}" could not be found to approve.`);
+    }
     await logSecurityEventAction({ event: 'Approve Customer', customerKeyNumber });
     return result;
   });
 }
 
-export async function rejectCustomerAction(customerKeyNumber: string) {
+export async function rejectCustomerAction(customerKeyNumber: string, reason?: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.CUSTOMERS_APPROVE);
     const existing = await dbGetCustomerById(customerKeyNumber);
     if (existing) {
       verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.CUSTOMERS_VIEW_ALL, 'customer');
     }
+    const approverUuid = isValidUuid(session?.id) ? session.id : null;
     const result = await dbUpdateCustomer(customerKeyNumber, {
-      status: 'Rejected',
-      approved_by: session.id,
+      status: 'Pending Amendment',
+      amendment_reason: reason || null,
+      approved_by: approverUuid,
       approved_at: new Date().toISOString()
     });
-    await logSecurityEventAction({ event: 'Reject Customer', severity: 'warning', customerKeyNumber });
+    if (!result) {
+      throw new Error(`Customer "${customerKeyNumber}" could not be found to send for amendment.`);
+    }
+    await logSecurityEventAction({
+      event: 'Request Amendment Customer',
+      severity: 'warning',
+      customerKeyNumber,
+      details: { reason }
+    });
     return result;
   });
 }
@@ -1054,7 +1072,7 @@ export async function createBulkMeterAction(bulkMeter: BulkMeterInsert) {
 }
 export async function updateBulkMeterAction(customerKeyNumber: string, bulkMeter: BulkMeterUpdate) {
   return await wrap(async () => {
-    const session = await checkPermission(PERMISSIONS.BULK_METERS_UPDATE);
+    const session = await checkPermissionAny(PERMISSIONS.BULK_METERS_UPDATE, PERMISSIONS.BULK_METERS_APPROVE);
     const existing = await dbGetBulkMeterById(customerKeyNumber);
     if (!existing) {
       throw new Error('Bulk meter not found');
@@ -1114,11 +1132,15 @@ export async function approveBulkMeterAction(customerKeyNumber: string) {
     if (existing) {
       verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
     }
+    const approverUuid = isValidUuid(session?.id) ? session.id : null;
     const result = await dbUpdateBulkMeter(customerKeyNumber, {
       status: 'Active',
-      approved_by: session.id,
+      approved_by: approverUuid,
       approved_at: new Date().toISOString()
     });
+    if (!result) {
+      throw new Error(`Bulk meter "${customerKeyNumber}" could not be found to approve.`);
+    }
     await logSecurityEventAction({
       event: 'Approve Bulk Meter',
       customerKeyNumber
@@ -1127,22 +1149,28 @@ export async function approveBulkMeterAction(customerKeyNumber: string) {
   });
 }
 
-export async function rejectBulkMeterAction(customerKeyNumber: string) {
+export async function rejectBulkMeterAction(customerKeyNumber: string, reason?: string) {
   return await wrap(async () => {
     const session = await checkPermission(PERMISSIONS.BULK_METERS_APPROVE);
     const existing = await dbGetBulkMeterById(customerKeyNumber);
     if (existing) {
       verifyEntityBranchAccess(existing.branch_id || existing.branchId, session, PERMISSIONS.BULK_METERS_VIEW_ALL, 'bulk meter');
     }
+    const approverUuid = isValidUuid(session?.id) ? session.id : null;
     const result = await dbUpdateBulkMeter(customerKeyNumber, {
-      status: 'Rejected',
-      approved_by: session.id,
+      status: 'Pending Amendment',
+      amendment_reason: reason || null,
+      approved_by: approverUuid,
       approved_at: new Date().toISOString()
     });
+    if (!result) {
+      throw new Error(`Bulk meter "${customerKeyNumber}" could not be found to send for amendment.`);
+    }
     await logSecurityEventAction({
-      event: 'Reject Bulk Meter',
+      event: 'Request Amendment Bulk Meter',
       severity: 'warning',
-      customerKeyNumber
+      customerKeyNumber,
+      details: { reason }
     });
     return result;
   });
@@ -7017,6 +7045,46 @@ export async function getMostRecentBillsForBulkMetersAction(customerKeys: string
     const branchId = !hasManageAll ? session.branchId : undefined;
 
     return await dbGetMostRecentBillsForBulkMeters(customerKeys, branchId);
+  });
+}
+
+export async function getInvoiceBillsAction(options: {
+  monthYear?: string;
+  branchId?: string;
+  paymentStatus?: string;
+  customerKey?: string;
+}) {
+  return await wrap(async () => {
+    const session = await getSession();
+    if (!session || !session.id) throw new Error('Unauthorized');
+
+    const perms = session.permissions || [];
+    const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin');
+
+    const canView = isSuperAdmin ||
+      perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_DRAFTS) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_PENDING) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_APPROVED) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_PAID) ||
+      perms.includes(PERMISSIONS.BILL_VIEW_UNPAID) ||
+      perms.includes(PERMISSIONS.BILL_CREATE) ||
+      perms.includes('bill:manage_all') ||
+      perms.includes('bill:view_branch');
+
+    if (!canView) {
+      throw new Error('Forbidden: Missing invoice or bill view permissions');
+    }
+
+    const effectiveBranchId = getEffectiveBranchId(session, options.branchId, PERMISSIONS.BILL_VIEW_ALL);
+
+    return await dbGetInvoiceBills({
+      monthYear: options.monthYear,
+      branchId: effectiveBranchId,
+      paymentStatus: options.paymentStatus,
+      customerKey: options.customerKey,
+    });
   });
 }
 

@@ -23,11 +23,26 @@ import {
   Target,
   CheckCircle2,
   XCircle,
-  Activity
+  Activity,
+  Download,
+  FileSpreadsheet,
+  ImageIcon,
+  ChevronDown,
 } from 'lucide-react';
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
+import { arrayToCsvBlob, arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
 import { Alert, AlertTitle, AlertDescription as UIAlertDescription } from "@/components/ui/alert";
 import { ChartContainer, ChartTooltipContent, ChartLegend, ChartLegendContent } from '@/components/ui/chart';
 import {
@@ -108,8 +123,182 @@ export default function HeadOfficeDashboardPage() {
   const [pendingApprovalsCount, setPendingApprovalsCount] = React.useState(0);
 
   // State for toggling views
+    const [branchPerformanceSeries, setBranchPerformanceSeries] = React.useState({
+    totalAmountSent: true,
+    outstandingAmount: true,
+    currentBillAmount: true,
+  });
   const [branchPerformanceView, setBranchPerformanceView] = React.useState<'chart' | 'table'>('chart');
   const [waterUsageView, setWaterUsageView] = React.useState<'chart' | 'table'>('chart');
+  const { toast } = useToast();
+  const branchChartContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const downloadChartAsPng = React.useCallback(() => {
+    try {
+      const container = branchChartContainerRef.current;
+      if (!container) return;
+      const svg = container.querySelector("svg");
+      if (!svg) {
+        toast({
+          title: "Chart Not Ready",
+          description: "Could not find chart to export.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const bbox = svg.getBoundingClientRect();
+      const width = bbox.width || 800;
+      const height = bbox.height || 360;
+
+      const clonedSvg = svg.cloneNode(true) as SVGSVGElement;
+      clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      clonedSvg.setAttribute("width", String(width));
+      clonedSvg.setAttribute("height", String(height));
+
+      const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      bgRect.setAttribute("width", "100%");
+      bgRect.setAttribute("height", "100%");
+      bgRect.setAttribute("fill", "#ffffff");
+      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
+
+      const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+      style.textContent = "text { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; }";
+      clonedSvg.insertBefore(style, clonedSvg.firstChild);
+
+      const serializer = new XMLSerializer();
+      const svgStr = serializer.serializeToString(clonedSvg);
+      const svgBlob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
+      const blobUrl = URL.createObjectURL(svgBlob);
+
+      const img = new Image();
+      img.onload = () => {
+        const scale = 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = width * scale;
+        canvas.height = height * scale;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.scale(scale, scale);
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob((blob) => {
+            if (blob) {
+              downloadFile(blob, `Branch_Performance_Chart_${selectedMonth}.png`);
+              toast({
+                title: "Chart Downloaded",
+                description: "Saved Branch Performance chart as PNG image.",
+              });
+            }
+            URL.revokeObjectURL(blobUrl);
+          }, "image/png");
+        } else {
+          URL.revokeObjectURL(blobUrl);
+        }
+      };
+      img.onerror = () => {
+        downloadFile(svgBlob, `Branch_Performance_Chart_${selectedMonth}.svg`);
+        URL.revokeObjectURL(blobUrl);
+      };
+      img.src = blobUrl;
+    } catch (err) {
+      console.error("Failed to export chart:", err);
+      toast({
+        title: "Export Error",
+        description: "Failed to export chart image.",
+        variant: "destructive",
+      });
+    }
+  }, [selectedMonth, toast]);
+
+  const downloadBranchDataCsv = React.useCallback(() => {
+    if (dynamicBranchPerformanceData.length === 0) {
+      toast({
+        title: "No Data",
+        description: "No branch performance data to export.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const headers: string[] = ["Branch"];
+    if (branchPerformanceSeries.totalAmountSent) headers.push("Total Amount Sent (ETB)");
+    if (branchPerformanceSeries.outstandingAmount) headers.push("Outstanding Amount (ETB)");
+    if (branchPerformanceSeries.currentBillAmount) headers.push("Current Bill Amount (ETB)");
+    headers.push("Paid Bills", "Unpaid Bills", "Total Bills", "Collection Rate (%)");
+
+    const data = dynamicBranchPerformanceData.map(item => {
+      const row: Record<string, any> = { "Branch": item.branch };
+      if (branchPerformanceSeries.totalAmountSent) {
+        row["Total Amount Sent (ETB)"] = (item.totalAmountSent ?? 0).toFixed(2);
+      }
+      if (branchPerformanceSeries.outstandingAmount) {
+        row["Outstanding Amount (ETB)"] = (item.outstandingAmount ?? 0).toFixed(2);
+      }
+      if (branchPerformanceSeries.currentBillAmount) {
+        row["Current Bill Amount (ETB)"] = (item.currentBillAmount ?? 0).toFixed(2);
+      }
+      row["Paid Bills"] = item.paid;
+      row["Unpaid Bills"] = item.unpaid;
+      row["Total Bills"] = item.paid + item.unpaid;
+      row["Collection Rate (%)"] = item.paid + item.unpaid > 0
+        ? `${Math.round((item.paid / (item.paid + item.unpaid)) * 100)}%`
+        : "0%";
+      return row;
+    });
+
+    const blob = arrayToCsvBlob(data, headers);
+    downloadFile(blob, `Branch_Performance_${selectedMonth}.csv`);
+    toast({
+      title: "CSV Export Complete",
+      description: `Exported ${data.length} branch record(s) to CSV.`,
+    });
+  }, [dynamicBranchPerformanceData, branchPerformanceSeries, selectedMonth, toast]);
+
+  const downloadBranchDataXlsx = React.useCallback(() => {
+    if (dynamicBranchPerformanceData.length === 0) {
+      toast({
+        title: "No Data",
+        description: "No branch performance data to export.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const headers: string[] = ["Branch"];
+    if (branchPerformanceSeries.totalAmountSent) headers.push("Total Amount Sent (ETB)");
+    if (branchPerformanceSeries.outstandingAmount) headers.push("Outstanding Amount (ETB)");
+    if (branchPerformanceSeries.currentBillAmount) headers.push("Current Bill Amount (ETB)");
+    headers.push("Paid Bills", "Unpaid Bills", "Total Bills", "Collection Rate (%)");
+
+    const data = dynamicBranchPerformanceData.map(item => {
+      const row: Record<string, any> = { "Branch": item.branch };
+      if (branchPerformanceSeries.totalAmountSent) {
+        row["Total Amount Sent (ETB)"] = Number((item.totalAmountSent ?? 0).toFixed(2));
+      }
+      if (branchPerformanceSeries.outstandingAmount) {
+        row["Outstanding Amount (ETB)"] = Number((item.outstandingAmount ?? 0).toFixed(2));
+      }
+      if (branchPerformanceSeries.currentBillAmount) {
+        row["Current Bill Amount (ETB)"] = Number((item.currentBillAmount ?? 0).toFixed(2));
+      }
+      row["Paid Bills"] = item.paid;
+      row["Unpaid Bills"] = item.unpaid;
+      row["Total Bills"] = item.paid + item.unpaid;
+      row["Collection Rate (%)"] = item.paid + item.unpaid > 0
+        ? `${Math.round((item.paid / (item.paid + item.unpaid)) * 100)}%`
+        : "0%";
+      return row;
+    });
+
+    const blob = arrayToXlsxBlob(data, headers, "Branch Performance");
+    downloadFile(blob, `Branch_Performance_${selectedMonth}.xlsx`);
+    toast({
+      title: "Excel Export Complete",
+      description: `Exported ${data.length} branch record(s) to Excel.`,
+    });
+  }, [dynamicBranchPerformanceData, branchPerformanceSeries, selectedMonth, toast]);
 
   React.useEffect(() => {
     setIsClient(true);
@@ -666,33 +855,201 @@ export default function HeadOfficeDashboardPage() {
               <CardTitle className="text-lg font-bold text-gray-900">Branch Performance (Bulk Meters - {selectedMonth})</CardTitle>
               <CardDescription>Total amount sent, outstanding amount, and current bill amount across branches.</CardDescription>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')} className="bg-white shadow-sm border">
-              {branchPerformanceView === 'chart' ? <TableIcon className="mr-2 h-4 w-4" /> : <BarChartIcon className="mr-2 h-4 w-4" />}
-              View {branchPerformanceView === 'chart' ? 'Table' : 'Chart'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 sm:h-9 px-2.5 bg-white border border-slate-200 shadow-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 gap-1.5 rounded-lg"
+                    title="Download Branch Performance"
+                  >
+                    <Download className="h-3.5 w-3.5 text-purple-600" />
+                    <span className="text-xs font-semibold">Download</span>
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 rounded-xl p-1.5 shadow-lg border-slate-200">
+                  <DropdownMenuLabel className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
+                    Chart Download
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem onClick={downloadChartAsPng} className="cursor-pointer gap-2.5 rounded-lg text-xs py-2">
+                    <ImageIcon className="h-4 w-4 text-purple-600" />
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-slate-800">Chart Image (.png)</span>
+                      <span className="text-[10px] text-slate-400">High-resolution graphic</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator className="my-1" />
+                  <DropdownMenuLabel className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
+                    Table / Data Download
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem onClick={downloadBranchDataXlsx} className="cursor-pointer gap-2.5 rounded-lg text-xs py-2">
+                    <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-slate-800">Excel Spreadsheet (.xlsx)</span>
+                      <span className="text-[10px] text-slate-400">All visible branch metrics</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={downloadBranchDataCsv} className="cursor-pointer gap-2.5 rounded-lg text-xs py-2">
+                    <FileText className="h-4 w-4 text-blue-600" />
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-slate-800">CSV Spreadsheet (.csv)</span>
+                      <span className="text-[10px] text-slate-400">Comma-separated data</span>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button variant="secondary" size="sm" onClick={() => setBranchPerformanceView(prev => prev === 'chart' ? 'table' : 'chart')} className="bg-white shadow-xs border h-8 sm:h-9 px-3 rounded-lg text-xs font-semibold">
+                {branchPerformanceView === 'chart' ? <TableIcon className="mr-1.5 h-4 w-4" /> : <BarChartIcon className="mr-1.5 h-4 w-4" />}
+                View {branchPerformanceView === 'chart' ? 'Table' : 'Chart'}
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="pt-6">
             {branchPerformanceView === 'chart' ? (
               <div className="space-y-3">
-                {/* ── Top Legend Banner matching exact reference ── */}
-                <div className="flex items-center gap-6 pt-1 pl-1 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-6 h-3 bg-[#55B7C2] border border-slate-300" />
-                    <span className="text-xs font-medium text-slate-600">Total Amount Sent</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-6 h-3 bg-[#5E5E5E] border border-slate-300" />
-                    <span className="text-xs font-medium text-slate-600">Outstanding Amount</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-6 h-3 bg-[#E11D48] border border-slate-300" />
-                    <span className="text-xs font-medium text-slate-600">Current Bill amount</span>
-                  </div>
+                {/* ── Top Legend Banner with Interactive On/Off Toggle ── */}
+                <div className="flex items-center gap-2 sm:gap-3 pt-1 pl-1 flex-wrap">
+                  <span className="text-xs font-semibold text-slate-500 mr-0.5">
+                    Toggle Metrics:
+                  </span>
+
+                  {/* Total Amount Sent */}
+                  <button
+                    type="button"
+                    onClick={() => setBranchPerformanceSeries(prev => ({ ...prev, totalAmountSent: !prev.totalAmountSent }))}
+                    title={branchPerformanceSeries.totalAmountSent ? "Click to turn off Total Amount Sent" : "Click to turn on Total Amount Sent"}
+                    className={cn(
+                      "group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200 cursor-pointer select-none",
+                      branchPerformanceSeries.totalAmountSent
+                        ? "bg-white border-[#55B7C2]/60 text-slate-800 shadow-xs hover:border-[#55B7C2] hover:bg-[#55B7C2]/5"
+                        : "bg-slate-50/80 border-slate-200 text-slate-400 opacity-60 hover:opacity-85 hover:bg-slate-100"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block w-5 h-2.5 rounded-xs border transition-all",
+                        branchPerformanceSeries.totalAmountSent
+                          ? "bg-[#55B7C2] border-[#44a2ad]"
+                          : "bg-slate-300 border-slate-400"
+                      )}
+                    />
+                    <span className={cn("transition-colors", branchPerformanceSeries.totalAmountSent ? "font-semibold text-slate-800" : "line-through text-slate-400")}>
+                      Total Amount Sent
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider transition-colors",
+                        branchPerformanceSeries.totalAmountSent
+                          ? "bg-[#55B7C2]/15 text-[#1b7681]"
+                          : "bg-slate-200 text-slate-500"
+                      )}
+                    >
+                      {branchPerformanceSeries.totalAmountSent ? "ON" : "OFF"}
+                    </span>
+                  </button>
+
+                  {/* Outstanding Amount */}
+                  <button
+                    type="button"
+                    onClick={() => setBranchPerformanceSeries(prev => ({ ...prev, outstandingAmount: !prev.outstandingAmount }))}
+                    title={branchPerformanceSeries.outstandingAmount ? "Click to turn off Outstanding Amount" : "Click to turn on Outstanding Amount"}
+                    className={cn(
+                      "group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200 cursor-pointer select-none",
+                      branchPerformanceSeries.outstandingAmount
+                        ? "bg-white border-[#5E5E5E]/60 text-slate-800 shadow-xs hover:border-[#5E5E5E] hover:bg-[#5E5E5E]/5"
+                        : "bg-slate-50/80 border-slate-200 text-slate-400 opacity-60 hover:opacity-85 hover:bg-slate-100"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block w-5 h-2.5 rounded-xs border transition-all",
+                        branchPerformanceSeries.outstandingAmount
+                          ? "bg-[#5E5E5E] border-[#474747]"
+                          : "bg-slate-300 border-slate-400"
+                      )}
+                    />
+                    <span className={cn("transition-colors", branchPerformanceSeries.outstandingAmount ? "font-semibold text-slate-800" : "line-through text-slate-400")}>
+                      Outstanding Amount
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider transition-colors",
+                        branchPerformanceSeries.outstandingAmount
+                          ? "bg-[#5E5E5E]/15 text-[#333333]"
+                          : "bg-slate-200 text-slate-500"
+                      )}
+                    >
+                      {branchPerformanceSeries.outstandingAmount ? "ON" : "OFF"}
+                    </span>
+                  </button>
+
+                  {/* Current Bill amount */}
+                  <button
+                    type="button"
+                    onClick={() => setBranchPerformanceSeries(prev => ({ ...prev, currentBillAmount: !prev.currentBillAmount }))}
+                    title={branchPerformanceSeries.currentBillAmount ? "Click to turn off Current Bill amount" : "Click to turn on Current Bill amount"}
+                    className={cn(
+                      "group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200 cursor-pointer select-none",
+                      branchPerformanceSeries.currentBillAmount
+                        ? "bg-white border-[#E11D48]/60 text-slate-800 shadow-xs hover:border-[#E11D48] hover:bg-[#E11D48]/5"
+                        : "bg-slate-50/80 border-slate-200 text-slate-400 opacity-60 hover:opacity-85 hover:bg-slate-100"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block w-5 h-2.5 rounded-xs border transition-all",
+                        branchPerformanceSeries.currentBillAmount
+                          ? "bg-[#E11D48] border-[#b81438]"
+                          : "bg-slate-300 border-slate-400"
+                      )}
+                    />
+                    <span className={cn("transition-colors", branchPerformanceSeries.currentBillAmount ? "font-semibold text-slate-800" : "line-through text-slate-400")}>
+                      Current Bill amount
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider transition-colors",
+                        branchPerformanceSeries.currentBillAmount
+                          ? "bg-[#E11D48]/15 text-[#9f1239]"
+                          : "bg-slate-200 text-slate-500"
+                      )}
+                    >
+                      {branchPerformanceSeries.currentBillAmount ? "ON" : "OFF"}
+                    </span>
+                  </button>
+
+                  {/* Quick Reset All ON Button */}
+                  {(!branchPerformanceSeries.totalAmountSent || !branchPerformanceSeries.outstandingAmount || !branchPerformanceSeries.currentBillAmount) && (
+                    <button
+                      type="button"
+                      onClick={() => setBranchPerformanceSeries({ totalAmountSent: true, outstandingAmount: true, currentBillAmount: true })}
+                      className="text-[11px] font-semibold text-purple-600 hover:text-purple-800 underline underline-offset-2 ml-1 cursor-pointer transition-colors"
+                    >
+                      Reset All ON
+                    </button>
+                  )}
                 </div>
 
-                <div className="h-[320px]">
+                <div ref={branchChartContainerRef} className="h-[320px]">
                   {isClient && dynamicBranchPerformanceData.length > 0 ? (
-                    <ChartContainer config={chartConfig} className="w-full h-full">
+                    !branchPerformanceSeries.totalAmountSent && !branchPerformanceSeries.outstandingAmount && !branchPerformanceSeries.currentBillAmount ? (
+                      <div className="flex flex-col h-[320px] items-center justify-center text-xs text-muted-foreground gap-2 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                        <p className="font-semibold text-slate-700">All metrics are currently turned OFF.</p>
+                        <p className="text-[11px] text-slate-500">Click any metric above to display it on the chart.</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setBranchPerformanceSeries({ totalAmountSent: true, outstandingAmount: true, currentBillAmount: true })}
+                          className="mt-1 text-xs h-8 bg-white border-slate-200 hover:bg-slate-100"
+                        >
+                          Show All Metrics
+                        </Button>
+                      </div>
+                    ) : (
+                      <ChartContainer config={chartConfig} className="w-full h-full">
                         <BarChart data={dynamicBranchPerformanceData} margin={{ top: 10, right: 20, left: 10, bottom: 25 }}>
                           <CartesianGrid vertical={false} strokeDasharray="3 3" />
                           <XAxis
@@ -720,11 +1077,18 @@ export default function HeadOfficeDashboardPage() {
                                 : name
                             ]}
                           />
-                          <Bar dataKey="totalAmountSent" fill="#55B7C2" radius={[4, 4, 0, 0]} name="Total Amount Sent" />
-                          <Bar dataKey="outstandingAmount" fill="#5E5E5E" radius={[4, 4, 0, 0]} name="Outstanding Amount" />
-                          <Bar dataKey="currentBillAmount" fill="#E11D48" radius={[4, 4, 0, 0]} name="Current Bill amount" />
+                          {branchPerformanceSeries.totalAmountSent && (
+                            <Bar dataKey="totalAmountSent" fill="#55B7C2" radius={[4, 4, 0, 0]} name="Total Amount Sent" />
+                          )}
+                          {branchPerformanceSeries.outstandingAmount && (
+                            <Bar dataKey="outstandingAmount" fill="#5E5E5E" radius={[4, 4, 0, 0]} name="Outstanding Amount" />
+                          )}
+                          {branchPerformanceSeries.currentBillAmount && (
+                            <Bar dataKey="currentBillAmount" fill="#E11D48" radius={[4, 4, 0, 0]} name="Current Bill amount" />
+                          )}
                         </BarChart>
-                    </ChartContainer>
+                      </ChartContainer>
+                    )
                   ) : (
                     <div className="flex h-[320px] items-center justify-center text-xs text-muted-foreground italic">
                       No branch performance data available for chart.
@@ -739,9 +1103,15 @@ export default function HeadOfficeDashboardPage() {
                     <TableHeader className="bg-gray-50">
                       <TableRow>
                         <TableHead className="font-bold">Branch</TableHead>
-                        <TableHead className="text-right font-bold text-[#55B7C2]">Total Amount Sent (ETB)</TableHead>
-                        <TableHead className="text-right font-bold text-slate-700">Outstanding Amount (ETB)</TableHead>
-                        <TableHead className="text-right font-bold text-[#E11D48]">Current Bill Amount (ETB)</TableHead>
+                        {branchPerformanceSeries.totalAmountSent && (
+                          <TableHead className="text-right font-bold text-[#55B7C2]">Total Amount Sent (ETB)</TableHead>
+                        )}
+                        {branchPerformanceSeries.outstandingAmount && (
+                          <TableHead className="text-right font-bold text-slate-700">Outstanding Amount (ETB)</TableHead>
+                        )}
+                        {branchPerformanceSeries.currentBillAmount && (
+                          <TableHead className="text-right font-bold text-[#E11D48]">Current Bill Amount (ETB)</TableHead>
+                        )}
                         <TableHead className="text-right font-bold text-emerald-600">Paid Bills</TableHead>
                         <TableHead className="text-right font-bold text-red-600">Unpaid Bills</TableHead>
                       </TableRow>
@@ -750,15 +1120,21 @@ export default function HeadOfficeDashboardPage() {
                       {dynamicBranchPerformanceData.map((item) => (
                         <TableRow key={item.branch} className="hover:bg-gray-50/50">
                           <TableCell className="font-medium text-gray-900">{item.branch}</TableCell>
-                          <TableCell className="text-right font-bold text-[#2A9D8F]">
-                            {(item.totalAmountSent ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </TableCell>
-                          <TableCell className="text-right font-bold text-slate-700">
-                            {(item.outstandingAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </TableCell>
-                          <TableCell className="text-right font-bold text-[#E11D48]">
-                            {(item.currentBillAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </TableCell>
+                          {branchPerformanceSeries.totalAmountSent && (
+                            <TableCell className="text-right font-bold text-[#2A9D8F]">
+                              {(item.totalAmountSent ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                          )}
+                          {branchPerformanceSeries.outstandingAmount && (
+                            <TableCell className="text-right font-bold text-slate-700">
+                              {(item.outstandingAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                          )}
+                          {branchPerformanceSeries.currentBillAmount && (
+                            <TableCell className="text-right font-bold text-[#E11D48]">
+                              {(item.currentBillAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                          )}
                           <TableCell className="text-right text-emerald-600 font-semibold">{item.paid}</TableCell>
                           <TableCell className="text-right text-red-600 font-semibold">{item.unpaid}</TableCell>
                         </TableRow>

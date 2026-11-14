@@ -11,7 +11,7 @@ export interface UserProfile {
   name?: string;
 }
 
-export const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] => {
+export const buildSidebarNavItems = (user: UserProfile | null, options?: { pendingApprovalsCount?: number }): NavItemGroup[] => {
   if (!user) return [];
 
   const permissions = new Set(user.permissions || []);
@@ -182,6 +182,31 @@ export const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] =
     });
   }
 
+  // 4b. Invoices Section
+  const canAccessInvoices = hasAny(
+    PERMISSIONS.BILL_VIEW_ALL,
+    PERMISSIONS.BILL_VIEW_BRANCH,
+    PERMISSIONS.BILL_CREATE,
+    PERMISSIONS.BILL_POST,
+    PERMISSIONS.BILL_SEND,
+    PERMISSIONS.BILL_APPROVE,
+    PERMISSIONS.BILL_VIEW_PAID,
+    PERMISSIONS.BILL_VIEW_UNPAID
+  );
+  if (canAccessInvoices) {
+    navItems.push({
+      title: "Invoices",
+      iconName: "Receipt",
+      items: [
+        {
+          title: "Invoice Generator",
+          href: isAdmin ? "/admin/invoices" : "/staff/invoices",
+          iconName: "Receipt",
+        },
+      ],
+    });
+  }
+
   // 5. Dedicated Notifications Section
   const canAccessNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)
     || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW_ALL);
@@ -270,14 +295,18 @@ export const buildSidebarNavItems = (user: UserProfile | null): NavItemGroup[] =
     || hasPermission(PERMISSIONS.BILL_APPROVE);
 
   if (canAccessApprovals) {
+    const approvalItem: NavItem = {
+      title: "Approvals",
+      href: isAdmin ? "/admin/approvals" : "/staff/approvals",
+      iconName: "UserCheck",
+    };
+    if (options?.pendingApprovalsCount && options.pendingApprovalsCount > 0) {
+      approvalItem.label = String(options.pendingApprovalsCount);
+    }
     navItems.push({
       title: "Approvals",
       iconName: "UserCheck",
-      items: [{
-        title: "Approvals",
-        href: isAdmin ? "/admin/approvals" : "/staff/approvals",
-        iconName: "UserCheck",
-      }]
+      items: [approvalItem]
     });
   }
 

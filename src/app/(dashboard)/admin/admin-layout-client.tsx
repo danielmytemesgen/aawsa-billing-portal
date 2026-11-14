@@ -13,6 +13,8 @@ import { useToast } from '@/hooks/use-toast';
 import { getRoutePermissionRule } from '@/lib/route-permissions';
 import { PenaltyEngineBanner } from '@/components/penalty-engine-banner';
 import { buildSidebarNavItems, type UserProfile } from '@/lib/nav-builder';
+import { getCustomers, subscribeToCustomers, getBulkMeters, subscribeToBulkMeters } from '@/lib/data-store';
+import { getEffectiveBranchId } from '@/lib/branch-permissions';
 
 export { buildSidebarNavItems, type UserProfile };
 
@@ -136,7 +138,66 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
         };
     }, [refreshPermissions]);
 
-    const navItems = buildSidebarNavItems(user);
+    const [pendingApprovalsCount, setPendingApprovalsCount] = React.useState<number>(0);
+
+    React.useEffect(() => {
+        if (!user) return;
+        const updateCount = () => {
+            const perms = new Set(user.permissions || []);
+            const isWildcard = perms.has('*') || perms.has('all');
+            const hasApprovePerm =
+                isWildcard ||
+                perms.has(PERMISSIONS.CUSTOMERS_APPROVE) ||
+                perms.has(PERMISSIONS.BULK_METERS_APPROVE) ||
+                perms.has(PERMISSIONS.BILL_APPROVE);
+
+            if (!hasApprovePerm) {
+                setPendingApprovalsCount(0);
+                return;
+            }
+
+            const hasPerm = (p: string) => isWildcard || perms.has(p);
+            const effectiveCustomerBranch = getEffectiveBranchId(hasPerm, 'customers', user.branchId);
+            const effectiveMeterBranch = getEffectiveBranchId(hasPerm, 'bulk_meters', user.branchId);
+
+            let count = 0;
+            const customers = getCustomers();
+            for (let i = 0; i < customers.length; i++) {
+                const c = customers[i];
+                if (c.status === 'Pending Approval') {
+                    if (!effectiveCustomerBranch || c.branchId === effectiveCustomerBranch) {
+                        count++;
+                    }
+                }
+            }
+
+            const meters = getBulkMeters();
+            for (let i = 0; i < meters.length; i++) {
+                const m = meters[i];
+                if (m.status === 'Pending Approval') {
+                    if (!effectiveMeterBranch || m.branchId === effectiveMeterBranch) {
+                        count++;
+                    }
+                }
+            }
+
+            setPendingApprovalsCount(count);
+        };
+
+        updateCount();
+        const unCust = subscribeToCustomers(() => updateCount());
+        const unMeter = subscribeToBulkMeters(() => updateCount());
+        const handleRefresh = () => updateCount();
+        window.addEventListener('data-refreshed', handleRefresh);
+
+        return () => {
+            unCust();
+            unMeter();
+            window.removeEventListener('data-refreshed', handleRefresh);
+        };
+    }, [user]);
+
+    const navItems = buildSidebarNavItems(user, { pendingApprovalsCount });
 
     const permissionsValue: PermissionsContextType = React.useMemo(() => {
         const permSet = new Set(user?.permissions || []);

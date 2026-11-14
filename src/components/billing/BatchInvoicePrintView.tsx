@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { getBranchesLookupAction } from "@/lib/actions";
-import { getPenaltyValue } from "@/lib/billing-utils";
-import { PaymentQRCode } from "./PaymentQRCode";
+import { AawsaInvoiceDocument } from "./AawsaInvoiceDocument";
+import { Button } from "@/components/ui/button";
+import { Printer, ArrowLeft, Receipt } from "lucide-react";
 
 interface BatchInvoicePrintViewProps {
   fallbackRoute: string;
@@ -18,41 +18,52 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
   const [currentDateTime, setCurrentDateTime] = React.useState('');
   const [penaltyEnabled, setPenaltyEnabled] = React.useState(true);
   const [isReady, setIsReady] = React.useState(false);
+  const [hasNoData, setHasNoData] = React.useState(false);
 
   React.useEffect(() => {
     const loadData = async () => {
       const dataStr = sessionStorage.getItem('batchInvoiceData');
       if (!dataStr) {
-        router.push(fallbackRoute);
+        setHasNoData(true);
         return;
       }
 
-      const data = JSON.parse(dataStr);
-      setInvoiceData(data);
-
-      const peStr = sessionStorage.getItem('batchInvoicePenaltyEnabled');
-      if (peStr !== null) {
-        try {
-          setPenaltyEnabled(Boolean(JSON.parse(peStr)));
-        } catch {
-          // ignore parsing error
+      try {
+        const data = JSON.parse(dataStr);
+        if (!Array.isArray(data) || data.length === 0) {
+          setHasNoData(true);
+          return;
         }
-      } else if (Array.isArray(data) && data[0]?.bill?.penaltyEnabled !== undefined) {
-        setPenaltyEnabled(Boolean(data[0].bill.penaltyEnabled));
+
+        setInvoiceData(data);
+
+        const peStr = sessionStorage.getItem('batchInvoicePenaltyEnabled');
+        if (peStr !== null) {
+          try {
+            setPenaltyEnabled(Boolean(JSON.parse(peStr)));
+          } catch {
+            // ignore parsing error
+          }
+        } else if (Array.isArray(data) && data[0]?.bill?.penaltyEnabled !== undefined) {
+          setPenaltyEnabled(Boolean(data[0].bill.penaltyEnabled));
+        }
+
+        // Load branch labels via the permission-lite lookup action.
+        const branchRes = await getBranchesLookupAction();
+        if (branchRes && Array.isArray(branchRes.data)) {
+          const map: Record<string, string> = {};
+          branchRes.data.forEach((b: any) => { if (b.id) map[b.id] = b.name; });
+          setBranchMap(map);
+        }
+
+        setCurrentDateTime(new Date().toLocaleString('en-US'));
+        setIsReady(true);
+
+        setTimeout(() => { window.print(); }, 600);
+      } catch (err) {
+        console.error("Failed to load invoice data:", err);
+        setHasNoData(true);
       }
-
-      // Load branch labels via the permission-lite lookup action.
-      const branchRes = await getBranchesLookupAction();
-      if (branchRes && Array.isArray(branchRes.data)) {
-        const map: Record<string, string> = {};
-        branchRes.data.forEach((b: any) => { if (b.id) map[b.id] = b.name; });
-        setBranchMap(map);
-      }
-
-      setCurrentDateTime(new Date().toLocaleString('en-US'));
-      setIsReady(true);
-
-      setTimeout(() => { window.print(); }, 600);
     };
 
     loadData();
@@ -63,12 +74,41 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
     return fallback || "N/A";
   };
 
+  if (hasNoData) {
+    const isStaff = typeof window !== 'undefined' && window.location.pathname.startsWith('/staff');
+    const invoiceGeneratorUrl = isStaff ? '/staff/invoices' : '/admin/invoices';
+
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-slate-50 dark:bg-slate-900 text-center">
+        <div className="max-w-md p-8 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border space-y-4">
+          <div className="p-3 bg-amber-50 rounded-full w-fit mx-auto text-amber-600">
+            <Receipt className="h-10 w-10" />
+          </div>
+          <h2 className="text-xl font-bold">No Invoices Selected</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Please use the Invoice Generator or Bulk Meters list to select customers and generate print-ready invoices.
+          </p>
+          <div className="flex gap-3 justify-center pt-2">
+            <Button variant="outline" onClick={() => router.push(fallbackRoute)}>
+              <ArrowLeft className="h-4 w-4 mr-1.5" />
+              Back
+            </Button>
+            <Button onClick={() => router.push(invoiceGeneratorUrl)}>
+              <Receipt className="h-4 w-4 mr-1.5" />
+              Go to Invoice Generator
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isReady) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Preparing invoices for printing...</p>
+          <p className="text-muted-foreground">Preparing {invoiceData.length} invoice(s) for printing...</p>
         </div>
       </div>
     );
@@ -82,6 +122,7 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
           .print-container { width: 100%; p-0 !important; margin: 0 !important; }
           .invoice-page-wrapper { page-break-after: always; page-break-inside: avoid; margin: 0 !important; padding: 0 !important; }
           .invoice-page-wrapper:last-child { page-break-after: auto; }
+          .no-print { display: none !important; }
           @page { margin: 0; size: A4; }
         }
         .non-printable-bg { background-color: #f3f4f6; }
@@ -92,148 +133,49 @@ export function BatchInvoicePrintView({ fallbackRoute }: BatchInvoicePrintViewPr
         }
       `}</style>
 
-      {invoiceData.map(({ meter, bill }) => {
-        const penalty = getPenaltyValue(Number(bill.PENALTYAMT || 0), penaltyEnabled);
-        const outstanding = Number(bill.OUTSTANDINGAMT || 0);
-        // Arrears is the debt base BEFORE this month's penalty
-        const arrears = Math.max(0, outstanding - penalty);
-        const current = Math.max(0, Number(bill.THISMONTHBILLAMT || 0));
-        const totalPayable = outstanding + current;
-
-        return (
-          <div key={meter.customerKeyNumber} className="invoice-page-wrapper">
-            <div className="printable-bill-card">
-              <div className="print-header">
-                <div className="print-header-top">
-                  <span>{currentDateTime}</span>
-                  <span></span>
-                </div>
-                <div className="print-header-main flex flex-col items-start text-left">
-                  <h1 className="font-bold tracking-wider uppercase">ADDIS ABABA WATER AND SEWERAGE AUTHORITY</h1>
-                  <hr className="my-2 w-full" />
-                  <div className="flex flex-row items-center justify-center gap-2 pt-1">
-                    <Image src="https://veiethiopia.com/photo/partner/par2.png" alt="AAWSA Logo" width={30} height={18} className="flex-shrink-0" />
-                    <h2 className="font-semibold">AAWSA INVOICE</h2>
-                  </div>
-                </div>
-              </div>
-
-            <div className="print-body">
-              <div className="print-section">
-                <div className="print-banner">BULK INFORMATION</div>
-                <table className="print-table">
-                  <tbody>
-                    <tr><td>Bulk meter name:</td><td>{meter.name}</td></tr>
-                    <tr><td>Customer key number:</td><td>{meter.customerKeyNumber}</td></tr>
-                    <tr><td>Contract No:</td><td>{meter.contractNumber ?? 'N/A'}</td></tr>
-                    <tr><td>Meter Number:</td><td>{meter.meterKey || meter.meterNumber || 'N/A'}</td></tr>
-                    <tr><td>Branch:</td><td>{getBranchName(meter.branchId, meter.subCity)}</td></tr>
-                    <tr><td>Sub-City:</td><td>{meter.subCity}</td></tr>
-                    <tr><td>Woreda:</td><td>{meter.woreda}</td></tr>
-                    <tr><td>Specific Area:</td><td>{meter.specificArea}</td></tr>
-                    <tr><td>Phone Number:</td><td>{meter.phoneNumber ?? 'N/A'}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="print-section">
-                <div className="print-banner">READING INFORMATION</div>
-                {(() => {
-                  const bulkUsageVal = Number(bill.CONS ?? (Number(bill.CURRREAD ?? 0) - Number(bill.PREVREAD ?? 0)));
-                  const diffUsageVal = Number(bill.differenceUsage ?? bill.difference_usage ?? 0);
-                  const totalIndivUsageVal = Number(
-                    bill.snapshot_data?.totalIndividualUsage ??
-                    bill.snapshot_data?.total_individual_usage ??
-                    Math.max(0, bulkUsageVal - diffUsageVal)
-                  );
-                  return (
-                    <table className="print-table">
-                      <tbody>
-                        <tr><td>Bulk Meter Category:</td><td>{meter.chargeGroup}</td></tr>
-                        <tr><td>Sewerage Connection:</td><td>{meter.sewerageConnection}</td></tr>
-                        <tr><td>Bill Month:</td><td>{bill.monthYear}</td></tr>
-                        <tr><td>Previous and current reading:</td><td>{Number(bill.PREVREAD ?? 0).toFixed(2)} / {Number(bill.CURRREAD ?? 0).toFixed(2)} m³</td></tr>
-                        <tr><td>Bulk usage:</td><td>{bulkUsageVal.toFixed(2)} m³</td></tr>
-                        <tr><td>Total Individual Usage:</td><td>{totalIndivUsageVal.toFixed(2)} m³</td></tr>
-                        <tr><td>Difference usage:</td><td>{diffUsageVal.toFixed(2)} m³</td></tr>
-                      </tbody>
-                    </table>
-                  );
-                })()}
-              </div>
-
-              <div className="print-section">
-                <div className="print-banner">CHARGES BREAKDOWN</div>
-                <table className="print-table">
-                  <tbody>
-                    <tr>
-                      <td>Base Water Charge (Rate/m³):</td>
-                      <td>ETB {Number(bill.base_water_charge ?? 0).toFixed(2)}</td>
-                    </tr>
-                    <tr><td>Maintenance Fee:</td><td>ETB {Number(bill.maintenanceFee ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>Sanitation Fee:</td><td>ETB {Number(bill.sanitationFee ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>Meter Rent:</td><td>ETB {Number(bill.meterRent ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>Sewerage Fee:</td><td>ETB {Number(bill.sewerageCharge ?? 0).toFixed(2)}</td></tr>
-                    <tr><td>VAT (15%):</td><td>ETB {Number(bill.vatAmount ?? 0).toFixed(2)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="print-section">
-                <div className="print-banner">Total Amount Payable:</div>
-                <table className="print-table">
-                  <tbody>
-                    <tr className="print-table-total"><td>Current Monthly Bill:</td><td>ETB {current.toFixed(2)}</td></tr>
-                    <tr><td>Penalty:</td><td>ETB {penalty.toFixed(2)}</td></tr>
-                    <tr><td>Debt Carried Forward (Arrears):</td><td>ETB {arrears.toFixed(2)}</td></tr>
-                    <tr className="print-table-total" style={{ fontSize: '14pt' }}>
-                      <td>Total Amount Payable:</td>
-                      <td>ETB {totalPayable.toFixed(2)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex justify-between items-end mt-4">
-                <div className="space-y-1">
-                  <div className="text-sm">Payment Status: Unpaid</div>
-                  <div className="text-sm">Month: {bill.monthYear}</div>
-                  {bill.BILLKEY && <div className="text-xs text-muted-foreground">Key: {bill.BILLKEY}</div>}
-                  <div className="text-[10px] text-gray-500 pt-1">
-                    Present bill key at any AAWSA branch or scan QR code to pay instantly.
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <PaymentQRCode
-                    customerKey={meter.customerKeyNumber || bill.CUSTOMERKEY || ''}
-                    billId={bill.id || bill.BILLKEY || ''}
-                    monthYear={bill.monthYear || ''}
-                    amount={totalPayable}
-                    size={76}
-                  />
-                  <div className="print-status-box">
-                    Unpaid
-                  </div>
-                </div>
-              </div>
-
-              <div className="print-signature-section grid grid-cols-3 gap-4 mt-8">
-                <div className="print-signature-item border-t border-black pt-2 flex flex-col text-center">
-                  <span className="text-xs uppercase font-bold">Prepared by</span>
-                  <span className="h-8"></span>
-                </div>
-                <div className="print-signature-item border-t border-black pt-2 flex flex-col text-center">
-                  <span className="text-xs uppercase font-bold">Checked by</span>
-                  <span className="h-8"></span>
-                </div>
-                <div className="print-signature-item border-t border-black pt-2 flex flex-col text-center">
-                  <span className="text-xs uppercase font-bold">Approved by</span>
-                  <span className="h-8"></span>
-                </div>
-              </div>
-            </div>
+      {/* Floating Action Bar (Hidden on print) */}
+      <div className="no-print sticky top-4 z-50 max-w-4xl mx-auto px-4 mb-4">
+        <div className="bg-slate-900/90 text-white backdrop-blur px-5 py-3 rounded-xl shadow-2xl flex items-center justify-between border border-slate-700">
+          <div className="flex items-center gap-2">
+            <Receipt className="h-5 w-5 text-emerald-400" />
+            <span className="font-semibold text-sm">
+              Batch Invoices Ready ({invoiceData.length} page{invoiceData.length > 1 ? 's' : ''})
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-white border-slate-600 hover:bg-slate-800"
+              onClick={() => router.back()}
+            >
+              <ArrowLeft className="h-4 w-4 mr-1.5" />
+              Back
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={() => window.print()}
+            >
+              <Printer className="h-4 w-4 mr-1.5" />
+              Print All Invoices
+            </Button>
           </div>
         </div>
+      </div>
+
+      {invoiceData.map(({ meter, bill }, index) => {
+        const uniqueKey = `${meter.customerKeyNumber || 'meter'}-${bill.id || bill.BILLKEY || bill.monthYear || index}`;
+        return (
+          <div key={uniqueKey} className="invoice-page-wrapper">
+            <AawsaInvoiceDocument
+              meter={meter}
+              bill={bill}
+              branchName={getBranchName(meter.branchId, meter.subCity)}
+              currentDateTime={currentDateTime}
+              penaltyEnabled={penaltyEnabled}
+            />
+          </div>
         );
       })}
     </div>

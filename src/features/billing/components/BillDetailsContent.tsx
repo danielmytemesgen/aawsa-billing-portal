@@ -245,6 +245,7 @@ const PrintableBill = ({ bill, relatedData, reconstructedAging, penaltyEnabled =
                         <div className="space-y-1">
                             <div className="text-sm">Paid/Unpaid: {bill.payment_status || 'Unpaid'}</div>
                             <div className="text-sm">Month: {bill.month_year}</div>
+                            <div className="text-[10px] text-gray-500 pt-0.5">Present bill key at any CBE, AWASH, Telebirr branch to pay.</div>
                         </div>
                         <div className="print-status-box">
                             {bill.payment_status || 'Unpaid'}

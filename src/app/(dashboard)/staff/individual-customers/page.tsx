@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { individualCustomerStatuses, type IndividualCustomer, type IndividualCustomerStatus } from "@/app/(dashboard)/admin/individual-customers/individual-customer-types";
-import { IndividualCustomerFormDialog, type IndividualCustomerFormValues } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
+import { IndividualCustomerFormDialog, type IndividualCustomerFormValues, type BulkMeterOption } from "@/app/(dashboard)/admin/individual-customers/individual-customer-form-dialog";
 import { IndividualCustomerTable } from "@/app/(dashboard)/admin/individual-customers/individual-customer-table";
 import { IndividualCustomerDetailsSheet } from "@/components/customers/IndividualCustomerDetailsSheet";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -43,7 +43,7 @@ export default function StaffIndividualCustomersPage() {
   const { currentUser, branchId, branchName, isStaffManagement } = useCurrentUser();
 
   const [customers, setCustomers] = React.useState<IndividualCustomer[]>([]);
-  const [bulkMetersList, setBulkMetersList] = React.useState<{ customerKeyNumber: string, name: string }[]>([]);
+  const [bulkMetersList, setBulkMetersList] = React.useState<BulkMeterOption[]>([]);
   const [branches, setBranches] = React.useState<Branch[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -129,13 +129,23 @@ export default function StaffIndividualCustomersPage() {
     ]).then(() => {
       const allBMs = getBulkMeters();
       const scopedBMs = effectiveBranchId ? allBMs.filter(bm => bm.branchId === effectiveBranchId) : allBMs;
-      setBulkMetersList(scopedBMs.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBulkMetersList(scopedBMs.filter(bm => bm.status === 'Active').map(bm => ({
+        customerKeyNumber: bm.customerKeyNumber,
+        name: bm.name,
+        contractNumber: bm.contractNumber,
+        meterNumber: bm.meterNumber,
+      })));
       setBranches(getBranches());
     });
 
     const unsubscribeBulkMeters = subscribeToBulkMeters((updatedBulkMeters) => {
       const scopedBMs = effectiveBranchId ? updatedBulkMeters.filter(bm => bm.branchId === effectiveBranchId) : updatedBulkMeters;
-      setBulkMetersList(scopedBMs.filter(bm => bm.status === 'Active').map(bm => ({ customerKeyNumber: bm.customerKeyNumber, name: bm.name })));
+      setBulkMetersList(scopedBMs.filter(bm => bm.status === 'Active').map(bm => ({
+        customerKeyNumber: bm.customerKeyNumber,
+        name: bm.name,
+        contractNumber: bm.contractNumber,
+        meterNumber: bm.meterNumber,
+      })));
     });
     const unsubscribeBranches = subscribeToBranches((updatedBranches) => {
       setBranches(updatedBranches);
@@ -351,7 +361,7 @@ export default function StaffIndividualCustomersPage() {
               <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-emerald-900 transition-colors">{summary.total}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total individual accounts</span>
+              <span className="flex items-center gap-1 font-semibold text-emerald-600 whitespace-nowrap">Total individual accounts</span>
             </div>
           </CardContent>
         </Card>
@@ -371,7 +381,7 @@ export default function StaffIndividualCustomersPage() {
               <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-blue-900 transition-colors">{summary.active}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Active services</span>
+              <span className="flex items-center gap-1 font-semibold text-blue-600 whitespace-nowrap">Active services</span>
             </div>
           </CardContent>
         </Card>
@@ -391,7 +401,7 @@ export default function StaffIndividualCustomersPage() {
               <div className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800 group-hover:text-amber-900 transition-colors">{summary.inactive}</div>
             </div>
             <div className="mt-4 flex items-center text-xs font-medium text-slate-500">
-               <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Requires review</span>
+              <span className="flex items-center gap-1 font-semibold text-amber-600 whitespace-nowrap">Requires review</span>
             </div>
           </CardContent>
         </Card>
@@ -481,9 +491,8 @@ export default function StaffIndividualCustomersPage() {
                 <button
                   key={status}
                   onClick={() => { setStatusFilter(status); setPage(0); }}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all duration-150 shadow-sm ${
-                    active ? colors[status] : inactiveColors[status]
-                  }`}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all duration-150 shadow-sm ${active ? colors[status] : inactiveColors[status]
+                    }`}
                 >
                   {status}
                   {active && status !== 'All' && (
@@ -507,10 +516,10 @@ export default function StaffIndividualCustomersPage() {
                 <TableSkeleton columns={7} rows={10} />
               </div>
             ) : customers.length === 0 ? (
-              <EmptyState 
-                icon={FileText} 
-                title={searchTerm ? "No Results Found" : "No Customers Found"} 
-                description={searchTerm ? "Try adjusting your search criteria." : "There are no individual customers registered for your branch."} 
+              <EmptyState
+                icon={FileText}
+                title={searchTerm ? "No Results Found" : "No Customers Found"}
+                description={searchTerm ? "Try adjusting your search criteria." : "There are no individual customers registered for your branch."}
                 className="m-4"
                 action={
                   (!searchTerm && canCreateCustomer) ? (
