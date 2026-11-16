@@ -565,8 +565,8 @@ export async function checkPermission(permission?: string) {
   const perms = await dbGetStaffPermissions(session.id);
   
   // Granular RBAC: Check if the permission exists in the user's assigned permissions.
-  // Bypass if user has 'bill:manage_all' and it's a bill-related permission
-  if (permission && perms.includes('bill:manage_all') && permission.startsWith('bill:')) {
+  // Bypass if user has 'bill:manage_all' and it's a bill-related or invoice-related permission
+  if (permission && perms.includes('bill:manage_all') && (permission.startsWith('bill:') || permission.startsWith('invoice:'))) {
     return { ...session, permissions: perms };
   }
 
@@ -597,8 +597,8 @@ export async function checkPermissionAny(...permissions: string[]) {
     return { ...session, permissions: perms };
   }
 
-  // bill:manage_all bypasses any bill: permission in the list
-  if (perms.includes('bill:manage_all') && permissions.some(p => p.startsWith('bill:'))) {
+  // bill:manage_all bypasses any bill: or invoice: permission in the list
+  if (perms.includes('bill:manage_all') && permissions.some(p => p.startsWith('bill:') || p.startsWith('invoice:'))) {
     return { ...session, permissions: perms };
   }
 
@@ -7071,7 +7071,15 @@ export async function getInvoiceBillsAction(options: {
       perms.includes(PERMISSIONS.BILL_VIEW_UNPAID) ||
       perms.includes(PERMISSIONS.BILL_CREATE) ||
       perms.includes('bill:manage_all') ||
-      perms.includes('bill:view_branch');
+      perms.includes('bill:view_branch') ||
+      // invoice:* permissions — grant access when user has any invoice permission
+      perms.includes(PERMISSIONS.INVOICE_VIEW) ||
+      perms.includes(PERMISSIONS.INVOICE_PRINT) ||
+      perms.includes(PERMISSIONS.INVOICE_BATCH) ||
+      perms.includes(PERMISSIONS.INVOICE_CUSTOMER_STATEMENT) ||
+      perms.includes(PERMISSIONS.INVOICE_EXPORT_CSV) ||
+      perms.includes(PERMISSIONS.INVOICE_EXPORT_EXCEL) ||
+      perms.some((p: string) => typeof p === 'string' && p.startsWith('invoice:'));
 
     if (!canView) {
       throw new Error('Forbidden: Missing invoice or bill view permissions');

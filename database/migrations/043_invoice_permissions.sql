@@ -74,6 +74,7 @@ CROSS JOIN permissions p
 WHERE LOWER(TRIM(r.role_name)) IN (
   'billing officer', 'data encoder', 'staff', 'clerk'
 )
+
   AND p.name IN (
     'invoice:view',
     'invoice:print',

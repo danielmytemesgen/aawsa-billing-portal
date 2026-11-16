@@ -179,5 +179,45 @@ describe('Invoice Generator RBAC & Dynamic UI Permissions', () => {
       expect(canPrint).toBe(false);
     });
   });
+
+  describe('Server Action Access Guard (getInvoiceBillsAction guard)', () => {
+    function canServerView(perms: string[]) {
+      const isSuperAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin');
+      return isSuperAdmin ||
+        perms.includes(PERMISSIONS.BILL_VIEW_ALL) ||
+        perms.includes(PERMISSIONS.BILL_VIEW_BRANCH) ||
+        perms.includes(PERMISSIONS.BILL_VIEW_DRAFTS) ||
+        perms.includes(PERMISSIONS.BILL_VIEW_PENDING) ||
+        perms.includes(PERMISSIONS.BILL_VIEW_APPROVED) ||
+        perms.includes(PERMISSIONS.BILL_VIEW_PAID) ||
+        perms.includes(PERMISSIONS.BILL_VIEW_UNPAID) ||
+        perms.includes(PERMISSIONS.BILL_CREATE) ||
+        perms.includes('bill:manage_all') ||
+        perms.includes('bill:view_branch') ||
+        perms.includes(PERMISSIONS.INVOICE_VIEW) ||
+        perms.includes(PERMISSIONS.INVOICE_PRINT) ||
+        perms.includes(PERMISSIONS.INVOICE_BATCH) ||
+        perms.includes(PERMISSIONS.INVOICE_CUSTOMER_STATEMENT) ||
+        perms.includes(PERMISSIONS.INVOICE_EXPORT_CSV) ||
+        perms.includes(PERMISSIONS.INVOICE_EXPORT_EXCEL) ||
+        perms.some((p: string) => typeof p === 'string' && p.startsWith('invoice:'));
+    }
+
+    it('allows non-admin role with only invoice:view to fetch invoice bills', () => {
+      expect(canServerView(['invoice:view'])).toBe(true);
+    });
+
+    it('allows non-admin role with invoice:batch and invoice:customer_statement', () => {
+      expect(canServerView(['invoice:batch', 'invoice:customer_statement'])).toBe(true);
+    });
+
+    it('allows non-admin role with only invoice:print', () => {
+      expect(canServerView(['invoice:print'])).toBe(true);
+    });
+
+    it('denies user without any bill or invoice permissions', () => {
+      expect(canServerView(['customer:view', 'reports:view'])).toBe(false);
+    });
+  });
 });
 
