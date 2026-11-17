@@ -68,7 +68,18 @@ export default function SentBillsReportPage() {
     hasPermission('admin')
   );
 
-  const canViewAllBranches = isAdmin;
+  const canViewAllBranches = Boolean(
+    isAdmin ||
+    hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+    hasPermission('reports_generate_all') ||
+    hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS) ||
+    hasPermission('report:list_of_sent_bills') ||
+    hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+    hasPermission('bill:manage_all') ||
+    hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    hasPermission('dashboard_view_all') ||
+    hasPermission(PERMISSIONS.BRANCHES_VIEW)
+  );
 
   const handleExport = async (type: 'csv' | 'xlsx') => {
     setIsExporting(true);
@@ -155,14 +166,23 @@ export default function SentBillsReportPage() {
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      const userIsAdmin = (
+      const userCanViewAll = (
         ((parsedUser as any)?.role || '').toLowerCase().trim() === 'admin' ||
         ((parsedUser as any)?.role || '').toLowerCase().trim() === 'system administrator' ||
         ((parsedUser as any)?.role || '').toLowerCase().trim() === 'super admin' ||
         hasPermission('*') ||
-        hasPermission('admin')
+        hasPermission('admin') ||
+        hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+        hasPermission('reports_generate_all') ||
+        hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS) ||
+        hasPermission('report:list_of_sent_bills') ||
+        hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+        hasPermission('bill:manage_all') ||
+        hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+        hasPermission('dashboard_view_all') ||
+        hasPermission(PERMISSIONS.BRANCHES_VIEW)
       );
-      if (parsedUser.branchId && !userIsAdmin) {
+      if (parsedUser.branchId && !userCanViewAll) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }

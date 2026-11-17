@@ -13,7 +13,8 @@ export type BranchFeatureDomain =
   | 'bills'
   | 'routes'
   | 'support'
-  | 'gl_audit';
+  | 'gl_audit'
+  | 'invoices';
 
 /**
  * Determines the effective branch scope for data access based on the user's permissions.
@@ -58,6 +59,11 @@ export function getEffectiveBranchId(
       PERMISSIONS.REPORT_GL_FINANCE_YEARLY,
       PERMISSIONS.REPORTS_GENERATE_ALL,
     ],
+    invoices: [
+      PERMISSIONS.BILL_VIEW_ALL,
+      'bill:manage_all',
+      PERMISSIONS.INVOICE_BATCH,
+    ],
   };
 
   const hasViewAll = viewAllPermissions[domain].some((p) => hasPermission(p));
@@ -75,4 +81,57 @@ export function getEffectiveBranchId(
   // Branch-restricted user has no assigned branch -> return non-matching sentinel UUID to prevent leaking all branches
   return '00000000-0000-0000-0000-000000000000';
 }
+
+/**
+ * Enterprise Hierarchical / Implied Permissions
+ * Defines explicit parent -> child capability inheritances.
+ */
+export const PERMISSION_IMPLICATIONS: Record<string, string[]> = {
+  [PERMISSIONS.ROUTES_MANAGE]: [
+    PERMISSIONS.ROUTES_VIEW,
+    PERMISSIONS.ROUTES_VIEW_ALL,
+    PERMISSIONS.ROUTES_CREATE,
+    PERMISSIONS.ROUTES_UPDATE,
+    PERMISSIONS.ROUTES_DELETE,
+  ],
+  [PERMISSIONS.SUPPORT_MANAGE]: [
+    PERMISSIONS.SUPPORT_VIEW_ALL,
+    PERMISSIONS.SUPPORT_VIEW_BRANCH,
+    PERMISSIONS.SUPPORT_CREATE,
+    PERMISSIONS.SUPPORT_ASSIGN,
+    PERMISSIONS.SUPPORT_RESOLVE,
+  ],
+  [PERMISSIONS.CUSTOMERS_VIEW_ALL]: [PERMISSIONS.CUSTOMERS_VIEW_BRANCH],
+  [PERMISSIONS.BULK_METERS_VIEW_ALL]: [PERMISSIONS.BULK_METERS_VIEW_BRANCH],
+  [PERMISSIONS.METER_READINGS_VIEW_ALL]: [PERMISSIONS.METER_READINGS_VIEW_BRANCH],
+  [PERMISSIONS.STAFF_VIEW_ALL]: [PERMISSIONS.STAFF_VIEW_BRANCH, PERMISSIONS.STAFF_VIEW],
+  [PERMISSIONS.BILL_VIEW_ALL]: [
+    PERMISSIONS.BILL_VIEW_BRANCH,
+    PERMISSIONS.BILL_VIEW_DRAFTS,
+    PERMISSIONS.BILL_VIEW_PENDING,
+    PERMISSIONS.BILL_VIEW_APPROVED,
+    PERMISSIONS.BILL_VIEW_PAID,
+    PERMISSIONS.BILL_VIEW_UNPAID,
+    PERMISSIONS.BILL_VIEW_OVERDUE,
+    PERMISSIONS.INVOICE_VIEW,
+    PERMISSIONS.INVOICE_BATCH,
+    PERMISSIONS.INVOICE_CUSTOMER_STATEMENT,
+  ],
+};
+
+/**
+ * Resolves whether a permission is satisfied directly or via hierarchy inheritance.
+ */
+export function hasImpliedPermission(permSet: Set<string>, targetPerm: string): boolean {
+  if (permSet.has('*') || permSet.has('all') || permSet.has('admin')) return true;
+  if (permSet.has(targetPerm)) return true;
+
+  for (const [parent, impliedList] of Object.entries(PERMISSION_IMPLICATIONS)) {
+    if (permSet.has(parent) && impliedList.includes(targetPerm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 

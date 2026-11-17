@@ -127,18 +127,20 @@ export const getStaffMemberForAuth = async (email: string, password?: string) =>
         SELECT
             sm.*,
             r.role_name,
-            STRING_AGG(p.name, ',') AS permissions
+            (
+                SELECT STRING_AGG(DISTINCT p.name, ',')
+                FROM role_permissions rp
+                JOIN permissions p ON rp.permission_id = p.id
+                WHERE rp.role_id = r.id
+            ) AS permissions
         FROM
             staff_members sm
         LEFT JOIN
             roles r ON (sm.role_id = r.id OR LOWER(r.role_name) = LOWER(sm.role))
-        LEFT JOIN
-            role_permissions rp ON r.id = rp.role_id
-        LEFT JOIN
-            permissions p ON rp.permission_id = p.id
         WHERE
             LOWER(TRIM(sm.email)) = LOWER(TRIM($1))
-        GROUP BY sm.id, r.role_name
+            AND sm.deleted_at IS NULL
+        LIMIT 1
     `;
 
     const rows: any = await query(sql, [email]);

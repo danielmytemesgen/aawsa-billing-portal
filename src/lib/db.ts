@@ -19,14 +19,16 @@ function getPool() {
     port: env.POSTGRES_PORT,
   };
 
+  const isRemote = env.POSTGRES_HOST !== '127.0.0.1' && env.POSTGRES_HOST !== 'localhost';
+
   pool = new Pool({
     ...params,
-    max: 30,
-    idleTimeoutMillis: 10000,
-    connectionTimeoutMillis: 5000,
+    max: isRemote ? 10 : 30,          // Neon free tier: keep connections low
+    idleTimeoutMillis: isRemote ? 30000 : 10000,
+    connectionTimeoutMillis: 10000,   // Neon cold-start can take a moment
     statement_timeout: 30000,
     allowExitOnIdle: true,
-    ssl: env.POSTGRES_HOST !== '127.0.0.1' && env.POSTGRES_HOST !== 'localhost' ? { rejectUnauthorized: false } : false,
+    ssl: isRemote ? { rejectUnauthorized: false } : false,
   });
   return pool;
 }

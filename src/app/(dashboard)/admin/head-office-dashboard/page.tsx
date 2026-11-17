@@ -64,6 +64,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDashboardMetricsAction } from "@/lib/actions";
 import { format } from 'date-fns';
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useDataRefresh } from "@/lib/data-refresh-context";
 import { getGreeting, getGreetingEmoji, getEthiopianDateString } from "@/lib/date-clock-utils";
@@ -532,7 +533,7 @@ export default function HeadOfficeDashboardPage() {
       <div className="flex flex-wrap gap-2.5">
         {[
           { label: 'Data Entry', icon: DatabaseZap, href: '/admin/data-entry', color: 'bg-blue-500 hover:bg-blue-600', perm: hasPermission('customers_create') || hasPermission('bulk_meters_create') },
-          { label: 'Bill Management', icon: FileText, href: '/admin/bill-management', color: 'bg-violet-500 hover:bg-violet-600', perm: hasPermission('bill_view_branch') || hasPermission('bill_view_all') || hasPermission('billing_view') },
+          { label: 'Bill Management', icon: FileText, href: '/admin/bill-management', color: 'bg-violet-500 hover:bg-violet-600', perm: hasPermission('bill_view_branch') || hasPermission(PERMISSIONS.BILL_VIEW_ALL) || hasPermission('bill_view_all') || hasPermission('billing_view') },
           { label: 'Reports', icon: BarChartIcon, href: '/admin/reports', color: 'bg-emerald-500 hover:bg-emerald-600', perm: hasPermission('reports_view_branch') || hasPermission('reports_view_all') },
           { label: 'Staff', icon: Users, href: '/admin/staff-management', color: 'bg-rose-500 hover:bg-rose-600', perm: hasPermission('staff_view_branch') || hasPermission('staff_view_all') || hasPermission('staff_view') },
           { label: 'Meter Readings', icon: Gauge, href: '/admin/meter-readings', color: 'bg-amber-500 hover:bg-amber-600', perm: hasPermission('meter_readings_view_branch') || hasPermission('meter_readings_view_all') || hasPermission('meter_readings_create') },

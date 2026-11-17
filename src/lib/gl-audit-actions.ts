@@ -343,7 +343,7 @@ async function authorizeGLReport() {
     || perms.includes(PERMISSIONS.BILL_CORRECT_VIEW)
     || isAuditEnv;
 
-  const isAdmin = session.role === 'admin' || isAuditEnv;
+  const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || isAuditEnv;
 
   return {
     session,

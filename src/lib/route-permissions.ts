@@ -1,4 +1,5 @@
 import { PERMISSIONS } from '@/lib/constants/auth';
+import { hasImpliedPermission } from '@/lib/branch-permissions';
 
 export interface RoutePermissionRule {
   match: (path: string) => boolean;
@@ -8,7 +9,8 @@ export interface RoutePermissionRule {
 }
 
 export function createPermissionGuard(permissions: string[]) {
-  const hasPerm = (p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p);
+  const permSet = new Set(permissions);
+  const hasPerm = (p: string) => hasImpliedPermission(permSet, p);
   const hasAnyPermission = (required: string[] = []) => required.some((permission) => hasPerm(permission));
   const hasAllPermissions = (required: string[] = []) => required.every((permission) => hasPerm(permission));
 
@@ -40,7 +42,7 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/settings') || currentPath.startsWith('/staff/settings'),
-      anyOf: [PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.SETTINGS_MANAGE, 'promotions_manage'],
+      anyOf: [PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.SETTINGS_MANAGE, PERMISSIONS.PROMOTIONS_MANAGE, PERMISSIONS.PROMOTIONS_VIEW],
     },
     {
       match: (currentPath) => currentPath.startsWith('/admin/tariffs') || currentPath.startsWith('/staff/tariffs'),
@@ -234,7 +236,7 @@ export function getRoutePermissionRule(path: string, permissions: string[]) {
         PERMISSIONS.NOTIFICATIONS_VIEW,
         PERMISSIONS.NOTIFICATIONS_VIEW_ALL,
         PERMISSIONS.NOTIFICATIONS_CREATE,
-        'sms_send',
+        PERMISSIONS.SMS_SEND,
       ],
     },
     {

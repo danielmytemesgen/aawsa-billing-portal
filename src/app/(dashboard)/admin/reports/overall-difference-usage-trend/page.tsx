@@ -27,7 +27,16 @@ export default function OverallDifferenceUsageTrendPage() {
     hasPermission('admin')
   );
 
-  const canViewAllBranches = isAdmin;
+  const canViewAllBranches = Boolean(
+    isAdmin ||
+    hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+    hasPermission('reports_generate_all') ||
+    hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+    hasPermission('bill:manage_all') ||
+    hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    hasPermission('dashboard_view_all') ||
+    hasPermission(PERMISSIONS.BRANCHES_VIEW)
+  );
 
   const [bulkMeters, setBulkMeters] = React.useState<BulkMeter[]>([]);
   const [branches, setBranches] = React.useState<Branch[]>([]);
@@ -42,14 +51,21 @@ export default function OverallDifferenceUsageTrendPage() {
     if (user) {
       const parsedUser = JSON.parse(user);
       setCurrentUser(parsedUser);
-      const userIsAdmin = (
+      const userCanViewAll = (
         ((parsedUser as any)?.role || '').toLowerCase().trim() === 'admin' ||
         ((parsedUser as any)?.role || '').toLowerCase().trim() === 'system administrator' ||
         ((parsedUser as any)?.role || '').toLowerCase().trim() === 'super admin' ||
         hasPermission('*') ||
-        hasPermission('admin')
+        hasPermission('admin') ||
+        hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+        hasPermission('reports_generate_all') ||
+        hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+        hasPermission('bill:manage_all') ||
+        hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+        hasPermission('dashboard_view_all') ||
+        hasPermission(PERMISSIONS.BRANCHES_VIEW)
       );
-      if (parsedUser.branchId && !userIsAdmin) {
+      if (parsedUser.branchId && !userCanViewAll) {
         setSelectedBranchId(parsedUser.branchId);
       }
     }

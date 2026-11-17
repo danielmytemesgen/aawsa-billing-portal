@@ -145,10 +145,10 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
     }, []);
 
     const isAdmin = (
-        currentUserRole === 'admin' ||
-        currentUserRole === 'system administrator' ||
-        currentUserRole === 'super admin' ||
-        (basePath.startsWith('/admin') && (hasPermission('*') || hasPermission('admin') || !currentUserRole))
+        hasPermission('*') ||
+        hasPermission('admin') ||
+        hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+        basePath.startsWith('/admin')
     );
 
     // Filter states

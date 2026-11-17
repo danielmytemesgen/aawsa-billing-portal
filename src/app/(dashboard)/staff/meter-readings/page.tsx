@@ -353,8 +353,6 @@ export default function StaffMeterReadingsPage() {
   React.useEffect(() => {
     const canViewAll = 
       hasPermission(PERMISSIONS.METER_READINGS_VIEW_ALL) ||
-      hasPermission('meter_readings_view_all') ||
-      hasPermission('meter_readings:view_all') ||
       hasPermission('*') ||
       hasPermission('all');
     const branchId = currentUser?.branchId;

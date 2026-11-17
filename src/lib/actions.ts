@@ -7629,8 +7629,7 @@ export async function getUnsettledBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     // Only administrators have global access across all branches.
     // Staff members are strictly restricted to their own assigned branch.
@@ -7659,8 +7658,7 @@ export async function getAgingSummaryAction(branchId?: string) {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     const effectiveBranchId = isAdmin
       ? (!branchId || branchId === 'all' ? undefined : branchId)
@@ -7714,8 +7712,7 @@ export async function getPaidBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     // Only administrators have global access across all branches.
     // Staff members are strictly restricted to their own assigned branch.
@@ -7746,9 +7743,7 @@ export async function getCorrectedBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin'
-      || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     const canView = isAdmin
       || perms.includes(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
@@ -7787,9 +7782,7 @@ export async function getCorrectedBillsKPIsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin'
-      || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     const canView = isAdmin
       || perms.includes(PERMISSIONS.REPORT_LIST_OF_CORRECTED_BILLS)
@@ -7823,8 +7816,7 @@ export async function getAllSentBillsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+    const canSelectBranch = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     const effectiveBranchId = canSelectBranch
       ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
@@ -7852,8 +7844,7 @@ export async function getBillsBranchSummaryAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+    const canSelectBranch = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     const effectiveBranchId = canSelectBranch
       ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
@@ -7907,8 +7898,7 @@ export async function getCombinedBillingSummaryAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+    const canSelectBranch = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     const effectiveBranchId = canSelectBranch
       ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
@@ -7940,8 +7930,7 @@ export async function getDeliverySummaryReportAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+    const canSelectBranch = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     const effectiveBranchId = canSelectBranch
       ? (!params.branchId || params.branchId === 'all' ? undefined : params.branchId)
@@ -7963,8 +7952,7 @@ export async function getDeliverySummaryPeriodsAction(branchId?: string) {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const canSelectBranch = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW);
+    const canSelectBranch = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BRANCHES_VIEW) || perms.includes(PERMISSIONS.BILL_VIEW_ALL) || perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL);
 
     const effectiveBranchId = canSelectBranch
       ? (!branchId || branchId === 'all' ? undefined : branchId)
@@ -7989,8 +7977,7 @@ export async function getMonthlyBillExportAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
     const hasPerm = perms.includes(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT) || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     if (!isAdmin && !hasPerm) {
@@ -8025,8 +8012,7 @@ export async function getAllMonthlyBillExportRecordsAction(params: {
     if (!session || !session.id) throw new Error('Unauthorized');
 
     const perms = session.permissions || [];
-    const role = (session.role || '').toLowerCase().trim();
-    const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin' || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+    const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
     const hasPerm = perms.includes(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT) || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL) || perms.includes(PERMISSIONS.BILL_VIEW_ALL);
 
     if (!isAdmin && !hasPerm) {

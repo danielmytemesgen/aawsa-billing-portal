@@ -63,7 +63,7 @@ export default function StaffBulkMetersPage() {
   const canCreateBulkMeter = hasPermission('bulk_meters_create') || hasPermission('bulk_meters_create_restricted');
 
   // Effective branch: if user is branch-scoped (e.g. branchId is set and no global view), lock to branchId
-  const isGlobal = hasPermission('bulk_meters_view_all') && !isStaffManagement;
+  const isGlobal = hasPermission('bulk_meters_view_all') || hasPermission('*') || hasPermission('admin');
   const effectiveBranchId = isGlobal ? undefined : branchId;
 
   const fetchData = React.useCallback(async (p: number, rpp: number, search: string, status?: string) => {

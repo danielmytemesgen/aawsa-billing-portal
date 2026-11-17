@@ -1,5 +1,5 @@
-
 "use client";
+
 import * as React from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -22,10 +22,20 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { createPermission, updatePermission } from "@/lib/data-store";
+import { createPermission, updatePermission, getPermissions } from "@/lib/data-store";
 import { Loader2, ShieldPlus, Pencil } from "lucide-react";
 import type { DomainPermission } from "@/lib/data-store";
+import { getCanonicalCategory, CANONICAL_CATEGORIES } from "@/lib/roles-permissions-utils";
+
+export { CANONICAL_CATEGORIES };
 
 interface CreateEditPermissionDialogProps {
   open: boolean;
@@ -35,7 +45,7 @@ interface CreateEditPermissionDialogProps {
 
 const formSchema = z.object({
   name: z.string().min(3, { message: "Permission name must be at least 3 characters." }),
-  category: z.string().min(3, { message: "Category must be at least 3 characters." }),
+  category: z.string().min(2, { message: "Category selection is required." }),
 });
 
 export function CreateEditPermissionDialog({ open, onOpenChange, permission }: CreateEditPermissionDialogProps) {
@@ -53,14 +63,34 @@ export function CreateEditPermissionDialog({ open, onOpenChange, permission }: C
 
   React.useEffect(() => {
     if (permission) {
-      form.reset(permission);
+      form.reset({
+        name: permission.name,
+        category: getCanonicalCategory(permission.category, permission.name),
+      });
     } else {
-      form.reset({ name: "", category: "" });
+      form.reset({ name: "", category: "Dashboard & Overview" });
     }
-  }, [permission, form]);
+  }, [permission, form, open]);
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     setIsSubmitting(true);
+
+    // Validate duplicate permission name
+    const existingPerms = getPermissions();
+    const isDuplicate = existingPerms.some(p => {
+      if (isEditMode && p.id === permission?.id) return false;
+      return p.name.trim().toLowerCase() === data.name.trim().toLowerCase();
+    });
+
+    if (isDuplicate) {
+      form.setError("name", {
+        type: "manual",
+        message: "A permission token with this name already exists.",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
     const result = isEditMode
       ? await updatePermission(permission.id, data)
       : await createPermission(data);
@@ -102,9 +132,14 @@ export function CreateEditPermissionDialog({ open, onOpenChange, permission }: C
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Permission Name</FormLabel>
+                  <FormLabel>Permission Name / Handle</FormLabel>
                   <FormControl>
-                    <Input {...field} disabled={isSubmitting} />
+                    <Input
+                      {...field}
+                      placeholder="e.g. report:billing_summary"
+                      className="font-mono text-sm"
+                      disabled={isSubmitting}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -115,15 +150,30 @@ export function CreateEditPermissionDialog({ open, onOpenChange, permission }: C
               name="category"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Category</FormLabel>
-                  <FormControl>
-                    <Input {...field} disabled={isSubmitting} />
-                  </FormControl>
+                  <FormLabel>Canonical Category</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    value={field.value}
+                    disabled={isSubmitting}
+                  >
+                    <FormControl>
+                      <SelectTrigger className="w-full bg-white">
+                        <SelectValue placeholder="Select a category..." />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent className="max-h-[250px]">
+                      {CANONICAL_CATEGORIES.map(category => (
+                        <SelectItem key={category} value={category}>
+                          {category}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            <DialogFooter>
+            <DialogFooter className="pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                 Cancel
               </Button>

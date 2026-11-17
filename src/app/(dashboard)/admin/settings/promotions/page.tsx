@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import {
     getAllPromotionsAction,
     createPromotionAction,
@@ -150,7 +151,7 @@ export default function PromotionsManagementPage() {
     }, [toast]);
 
     React.useEffect(() => {
-        if (hasPermission('promotions_manage') || hasPermission('settings_view')) {
+        if (hasPermission(PERMISSIONS.PROMOTIONS_MANAGE) || hasPermission(PERMISSIONS.SETTINGS_VIEW)) {
             fetchPromotions();
         }
     }, [hasPermission, fetchPromotions]);
@@ -158,7 +159,7 @@ export default function PromotionsManagementPage() {
     // Auto-refresh: re-fetch promotions when DataRefreshProvider signals new data
     React.useEffect(() => {
         const handleDataRefreshed = () => {
-            if (hasPermission('promotions_manage') || hasPermission('settings_view')) {
+            if (hasPermission(PERMISSIONS.PROMOTIONS_MANAGE) || hasPermission(PERMISSIONS.SETTINGS_VIEW)) {
                 fetchPromotions();
             }
         };
@@ -237,7 +238,7 @@ export default function PromotionsManagementPage() {
         (p.tag || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    if (!hasPermission('promotions_manage') && !hasPermission('settings_view')) {
+    if (!hasPermission(PERMISSIONS.PROMOTIONS_MANAGE) && !hasPermission(PERMISSIONS.SETTINGS_VIEW)) {
         return (
             <div className="flex items-center justify-center h-[60vh]">
                 <Card className="max-w-md text-center">

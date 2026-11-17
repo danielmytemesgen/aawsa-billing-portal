@@ -66,7 +66,7 @@ export default function StaffIndividualCustomersPage() {
 
   const canCreateCustomer = hasPermission('customers_create') || hasPermission('customers_create_restricted');
 
-  const isGlobal = hasPermission('customers_view_all') && !isStaffManagement;
+  const isGlobal = hasPermission('customers_view_all') || hasPermission('*') || hasPermission('admin');
   const effectiveBranchId = isGlobal ? undefined : branchId;
 
   const fetchSummaryStats = React.useCallback(async () => {

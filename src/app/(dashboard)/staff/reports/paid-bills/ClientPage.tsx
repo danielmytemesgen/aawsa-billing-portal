@@ -68,6 +68,26 @@ export default function StaffPaidBillsReportPage() {
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [selectedBranchId, setSelectedBranchId] = React.useState<string>("all");
+
+  const canViewAllBranches = Boolean(
+    hasPermission("*") ||
+    hasPermission("admin") ||
+    hasPermission("all") ||
+    hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+    hasPermission('reports_generate_all') ||
+    hasPermission(PERMISSIONS.REPORT_LIST_OF_PAID_BILLS) ||
+    hasPermission('report:list_of_paid_bills') ||
+    hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+    hasPermission('bill:manage_all') ||
+    hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    hasPermission('dashboard_view_all') ||
+    hasPermission(PERMISSIONS.BRANCHES_VIEW)
+  );
+
+  const effectiveBranchId = canViewAllBranches
+    ? (selectedBranchId === 'all' ? undefined : selectedBranchId)
+    : (currentUser?.branchId || '00000000-0000-0000-0000-000000000000');
 
   const monthOptions = React.useMemo(() => getAvailableMonthYearOptions(), []);
 
@@ -76,7 +96,7 @@ export default function StaffPaidBillsReportPage() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching paid bill records..." });
     try {
-      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -194,7 +214,7 @@ export default function StaffPaidBillsReportPage() {
 
     const fetchBills = async () => {
       setIsLoading(true);
-      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getPaidBillsAction({
@@ -219,7 +239,7 @@ export default function StaffPaidBillsReportPage() {
     };
 
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, refreshTrigger]);
+  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, selectedBranchId, effectiveBranchId, currentUser, refreshTrigger]);
 
   // Auto-refresh: re-fetch bills when DataRefreshProvider signals new data
   const staffPaidBillsRef = React.useRef<() => void>(() => {});
@@ -227,7 +247,7 @@ export default function StaffPaidBillsReportPage() {
     if (!currentUser) return;
     staffPaidBillsRef.current = async () => {
       setIsLoading(true);
-      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
       const result = await getPaidBillsAction({ page, limit: rowsPerPage, searchTerm: debouncedSearch, branchId: normalizedBranchId, monthYear: normalizedMonthYear });
       if (result?.success && result?.bills) { setBills(result.bills || []); setTotalBills(result.total || 0); }
@@ -235,13 +255,13 @@ export default function StaffPaidBillsReportPage() {
       else { setBills([]); setTotalBills(0); }
       setIsLoading(false);
     };
-  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
+  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, selectedBranchId, effectiveBranchId, currentUser, hasPermission]);
   // Fetch branch summary
   const fetchSummaryRef = React.useRef<() => void>(() => {});
   React.useEffect(() => {
     fetchSummaryRef.current = async () => {
       setIsSummaryLoading(true);
-      const normalizedBranchId = currentUser?.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       try {
@@ -262,7 +282,7 @@ export default function StaffPaidBillsReportPage() {
         setIsSummaryLoading(false);
       }
     };
-  }, [debouncedSearch, selectedMonthYear, currentUser]);
+  }, [debouncedSearch, selectedMonthYear, selectedBranchId, effectiveBranchId, currentUser]);
 
   React.useEffect(() => {
     if (!currentUser) return;
@@ -365,8 +385,8 @@ export default function StaffPaidBillsReportPage() {
             <div className="flex items-center gap-3">
               <CheckCircle2 className="h-8 w-8 text-primary" />
               <div>
-                <CardTitle>List of Paid Bills ({currentUser?.branchName || 'Your Branch'})</CardTitle>
-                <CardDescription>A real-time list of all bills marked as paid for your branch.</CardDescription>
+                <CardTitle>List of Paid Bills ({canViewAllBranches ? (selectedBranchId === 'all' ? 'All Branches' : branches.find(b => b.id === selectedBranchId)?.name || 'Selected Branch') : (currentUser?.branchName || 'Your Branch')})</CardTitle>
+                <CardDescription>A real-time list of all bills marked as paid {canViewAllBranches ? 'across branches' : 'for your branch'}.</CardDescription>
               </div>
             </div>
 
@@ -381,6 +401,20 @@ export default function StaffPaidBillsReportPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+
+              {canViewAllBranches && (
+                <Select value={selectedBranchId} onValueChange={(val) => { setSelectedBranchId(val); setPage(0); }}>
+                  <SelectTrigger className="w-full sm:w-[170px] h-10 bg-white rounded-lg border-slate-200">
+                    <SelectValue placeholder="All Branches" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-lg max-h-[300px]">
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
 
               <Select value={selectedMonthYear} onValueChange={(val) => { setSelectedMonthYear(val); setPage(0); }}>
                 <SelectTrigger className="w-full sm:w-[170px] h-10 bg-white rounded-lg border-slate-200">

@@ -33,6 +33,7 @@ import {
 import { generateBulkMeterKeys } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse } from "date-fns";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import type { Branch } from "../branches/branch-types";
 import { customerTypes, sewerageConnections } from "@/lib/billing-calculations";
 import { 
@@ -144,8 +145,8 @@ export function BulkMeterDataEntryForm() {
         branchId === 'all' ||
         permissions.includes('*') ||
         permissions.includes('all') ||
-        permissions.includes('admin') ||
-        permissions.includes('bulk_meters_view_all');
+        permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+        permissions.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
       if (!isGlobal && branchId) {
         setLockedBranchId(branchId);
         form.setValue('branchId', branchId);

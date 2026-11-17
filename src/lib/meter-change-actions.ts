@@ -100,14 +100,13 @@ function verifyBranchAccess(
   entityLabel = 'record'
 ) {
   const perms: string[] = session?.permissions || [];
-  const role = (session?.role || '').toLowerCase().trim();
   const isAdmin =
-    role === 'admin' ||
-    role === 'system administrator' ||
-    role === 'super admin' ||
     perms.includes('*') ||
     perms.includes('all') ||
-    perms.includes('admin');
+    perms.includes('admin') ||
+    perms.includes(PERMISSIONS.METER_CHANGE_MANAGE) ||
+    perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) ||
+    perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
 
   if (isAdmin) return;
 
@@ -154,15 +153,14 @@ export async function getMeterDetailsForChangeAction(meterType: 'individual' | '
 
     // Branch verification: staff can only lookup and change meters belonging to their branch
     const entityBranchId = (entity as any).branch_id || (entity as any).branchId;
-    const role = (session?.role || '').toLowerCase().trim();
     const perms: string[] = session?.permissions || [];
     const isAdmin =
-      role === 'admin' ||
-      role === 'system administrator' ||
-      role === 'super admin' ||
       perms.includes('*') ||
       perms.includes('all') ||
-      perms.includes('admin');
+      perms.includes('admin') ||
+      perms.includes(PERMISSIONS.METER_CHANGE_MANAGE) ||
+      perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
 
     if (!isAdmin) {
       const userBranchId = session?.branchId;
@@ -406,14 +404,13 @@ export async function getMeterChangeLogsAction(params?: GetMeterChangeLogsParams
     );
 
     const perms: string[] = session?.permissions || [];
-    const role = (session?.role || '').toLowerCase().trim();
     const isAdmin =
-      role === 'admin' ||
-      role === 'system administrator' ||
-      role === 'super admin' ||
       perms.includes('*') ||
       perms.includes('all') ||
-      perms.includes('admin');
+      perms.includes('admin') ||
+      perms.includes(PERMISSIONS.METER_CHANGE_MANAGE) ||
+      perms.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL) ||
+      perms.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
 
     const page = Math.max(1, params?.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, params?.pageSize ?? 20));

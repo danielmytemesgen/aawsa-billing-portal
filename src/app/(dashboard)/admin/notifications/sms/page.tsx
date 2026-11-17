@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getBulkMeters, initializeBulkMeters } from "@/lib/data-store";
 import type { BulkMeter } from "@/app/(dashboard)/admin/bulk-meters/bulk-meter-types";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { getDistinctBillingMonthsAction, getBillsByMonthAction } from "@/lib/actions";
 import { AlertCircle, MessageSquareWarning, Download, GripVertical, Megaphone, PlusCircle, History } from "lucide-react";
 import { arrayToXlsxBlob, downloadFile } from "@/lib/xlsx";
@@ -75,7 +76,7 @@ export default function SmsNotificationPage() {
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [cursorPosition, setCursorPosition] = React.useState<number>(0);
 
-  const canSendSms = hasPermission('sms_send') || hasPermission('notifications_create');
+  const canSendSms = hasPermission(PERMISSIONS.SMS_SEND) || hasPermission(PERMISSIONS.NOTIFICATIONS_CREATE);
 
   React.useEffect(() => {
     const fetchData = async () => {
@@ -187,7 +188,7 @@ export default function SmsNotificationPage() {
 
     const messages = bills.map(bill => {
       const phoneNumber = bill.phoneNumber || bill.phone_number || "_PHONE_NUMBER_";
-      
+
       // Calculate universal formula components
       const d30 = Number(bill.debit_30 || 0);
       const d30_60 = Number(bill.debit_30_60 || 0);
@@ -214,7 +215,7 @@ export default function SmsNotificationPage() {
         // Billing Amounts
         .replace(/{totalBulkBill}/g, totalPayable.toFixed(2))
         .replace(/{bulkUsage}/g, String(bill.CONS || 0))
-        .replace(/{differenceBill}/g, totalPayable.toFixed(2)) 
+        .replace(/{differenceBill}/g, totalPayable.toFixed(2))
         .replace(/{outStandingbill}/g, outstanding.toFixed(2))
         .replace(/{debit_30}/g, String(bill.debit_30 || 0))
         .replace(/{debit_30_60}/g, String(bill.debit_30_60 || 0))
@@ -378,16 +379,16 @@ export default function SmsNotificationPage() {
               </Select>
             </div>
             <div className="flex gap-4 w-full lg:w-auto">
-              <Button 
-                onClick={handleGenerateMessages} 
+              <Button
+                onClick={handleGenerateMessages}
                 disabled={isGenerating || !selectedMonth}
                 className="flex-grow lg:flex-none h-12 px-8 bg-blue-600 hover:bg-blue-700 font-extrabold text-base shadow-lg shadow-blue-100 rounded-xl"
               >
                 {isGenerating ? "Compiling..." : "Generate Messages"}
               </Button>
-              <Button 
-                onClick={handleExport} 
-                disabled={generatedMessages.length === 0} 
+              <Button
+                onClick={handleExport}
+                disabled={generatedMessages.length === 0}
                 variant="outline"
                 className="flex-grow lg:flex-none h-12 px-8 border-2 font-extrabold text-base rounded-xl hover:bg-slate-50 transition-colors"
               >
@@ -404,7 +405,7 @@ export default function SmsNotificationPage() {
                   <p className="text-slate-500 font-medium mt-2 italic">{generatedMessages.length} personalized messages ready for broadcast</p>
                 </div>
               </div>
-              
+
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/50">
                 <Table>
                   <TableHeader className="bg-slate-50">

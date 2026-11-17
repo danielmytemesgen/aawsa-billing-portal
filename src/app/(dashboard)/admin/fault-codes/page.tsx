@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { DomainFaultCode, getFaultCodes, subscribeToFaultCodes, removeFaultCode } from "@/lib/data-store";
 import { PlusCircle, MoreHorizontal, Pencil, Trash2, Search, AlertTriangle, ListFilter, Hash, Tag, Activity, ChevronLeft, ChevronRight } from "lucide-react";
 import { FaultCodeDialog } from "./fault-code-dialog";
@@ -120,11 +121,9 @@ export default function FaultCodesPage() {
         }
     };
 
-    // Assuming 'settings_view' and 'settings_update' control access for now, 
-    // or add specific permissions if needed.
-    const canManage = hasPermission('settings_update');
+    const canManage = hasPermission(PERMISSIONS.FAULT_CODES_MANAGE) || hasPermission(PERMISSIONS.SETTINGS_MANAGE);
 
-    if (!hasPermission('settings_view')) {
+    if (!hasPermission(PERMISSIONS.FAULT_CODES_VIEW) && !hasPermission(PERMISSIONS.SETTINGS_VIEW) && !canManage) {
         return (
             <div className="p-8 text-center text-muted-foreground">
                 You do not have permission to view this page.

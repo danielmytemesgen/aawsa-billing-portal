@@ -391,7 +391,8 @@ export default function StaffDashboardPage() {
       ];
 
       // Guard bills data
-      if (hasPermission('bill_view_all') || 
+      if (hasPermission(PERMISSIONS.BILL_VIEW_ALL) || 
+          hasPermission('bill_view_all') || 
           hasPermission('bill_view_branch') || 
           hasPermission('billing_view')) {
         // Dashboard metrics are computed on the server; avoid fetching full bill lists for initial page load.
@@ -934,7 +935,7 @@ export default function StaffDashboardPage() {
       </div>
 
       {/* ── Pending Approvals Banner ── */}
-      {processedStats.pendingApprovals > 0 && hasPermission('approvals_view') && (
+      {processedStats.pendingApprovals > 0 && (hasPermission(PERMISSIONS.CUSTOMERS_APPROVE) || hasPermission(PERMISSIONS.BULK_METERS_APPROVE) || hasPermission(PERMISSIONS.BILL_APPROVE)) && (
         <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3.5 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
@@ -959,7 +960,7 @@ export default function StaffDashboardPage() {
       <div className="flex flex-wrap gap-2.5">
         {[
           { label: 'Data Entry', icon: DatabaseZap, href: '/staff/data-entry', color: 'bg-blue-500 hover:bg-blue-600', perm: hasPermission('customers_create') || hasPermission('bulk_meters_create') },
-          { label: 'Bill Management', icon: FileText, href: '/staff/bill-management', color: 'bg-violet-500 hover:bg-violet-600', perm: hasPermission('bill_view_branch') || hasPermission('bill_view_all') || hasPermission('billing_view') },
+          { label: 'Bill Management', icon: FileText, href: '/staff/bill-management', color: 'bg-violet-500 hover:bg-violet-600', perm: hasPermission('bill_view_branch') || hasPermission(PERMISSIONS.BILL_VIEW_ALL) || hasPermission('bill_view_all') || hasPermission('billing_view') },
           { label: 'Reports', icon: BarChartIcon, href: '/staff/reports', color: 'bg-emerald-500 hover:bg-emerald-600', perm: hasPermission('reports_view_branch') || hasPermission('reports_view_all') },
           { label: 'Staff', icon: Users, href: '/staff/staff-management', color: 'bg-rose-500 hover:bg-rose-600', perm: hasPermission('staff_view_branch') || hasPermission('staff_view_all') || hasPermission('staff_view') },
           { label: 'Meter Readings', icon: Gauge, href: '/staff/meter-readings', color: 'bg-amber-500 hover:bg-amber-600', perm: hasPermission('meter_readings_view_branch') || hasPermission('meter_readings_view_all') || hasPermission('meter_readings_create') },

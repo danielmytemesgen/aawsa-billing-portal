@@ -153,6 +153,7 @@ export const PERMISSIONS = {
     NOTIFICATIONS_VIEW_ALL: 'notifications_view_all',
     NOTIFICATIONS_MANAGE: 'notifications_manage',
     NOTIFICATIONS_CREATE: 'notifications_create',
+    SMS_SEND: 'sms_send',
 
     // Knowledge Base
     KNOWLEDGE_BASE_VIEW: 'knowledge_base_view',
@@ -218,5 +219,10 @@ export const PERMISSIONS = {
 export const BRANCHES = {
     HEAD_OFFICE: 'Head Office',
 } as const;
+
+export type Permission =
+    | typeof PERMISSIONS[keyof typeof PERMISSIONS]
+    | '*'
+    | 'all';
 
 

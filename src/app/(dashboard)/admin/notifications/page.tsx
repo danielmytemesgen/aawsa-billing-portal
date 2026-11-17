@@ -32,6 +32,7 @@ import {
 import type { DomainNotification } from "@/lib/data-store";
 import type { Branch } from "../branches/branch-types";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -207,10 +208,10 @@ export default function AdminNotificationsPage() {
     return branches.find(b => b.id === targetId)?.name || `ID: ${targetId}`;
   };
 
-  const canCreateNotifications = hasPermission('notifications_create');
-  const canViewNotifications = hasPermission('notifications_view') || hasPermission('notifications_view_all');
-  const canEditNotifications = hasPermission('notifications_edit');
-  const canDeleteNotifications = hasPermission('notifications_delete');
+  const canCreateNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_CREATE);
+  const canViewNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW) || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW_ALL);
+  const canEditNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_MANAGE);
+  const canDeleteNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_MANAGE);
   const isBranchManager = (user?.role?.toLowerCase().includes('management') || user?.role?.toLowerCase().includes('manager')) && user.branchId;
 
   if (!canViewNotifications) {

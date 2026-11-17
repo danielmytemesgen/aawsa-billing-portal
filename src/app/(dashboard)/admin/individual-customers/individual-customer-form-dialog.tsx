@@ -33,6 +33,7 @@ import { format, parse, isValid } from "date-fns";
 import { customerTypes, sewerageConnections, paymentStatuses } from "@/lib/billing-calculations";
 import type { Branch } from "../branches/branch-types";
 import { Globe, Search, X, Check, ChevronsUpDown, CheckCircle2 } from "lucide-react";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -88,8 +89,8 @@ export function IndividualCustomerFormDialog({ open, onOpenChange, onSubmit, def
     userBranchId === 'all' ||
     permissions.includes('*') ||
     permissions.includes('all') ||
-    permissions.includes('admin') ||
-    permissions.includes('customers_view_all');
+    permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    permissions.includes(PERMISSIONS.CUSTOMERS_VIEW_ALL);
 
   const form = useForm<IndividualCustomerFormValues>({
     resolver: zodResolver(individualCustomerFormObjectSchema),

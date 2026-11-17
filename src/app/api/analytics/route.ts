@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { query } from '@/lib/db';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 /**
  * Analytics API — /api/analytics
@@ -20,12 +21,14 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Only admins can access analytics
-  const isAdmin =
-    session.role?.toLowerCase() === 'admin' ||
-    (Array.isArray(session.permissions) && session.permissions.includes('*'));
+  const perms = Array.isArray(session.permissions) ? session.permissions : [];
+  const canAccess =
+    perms.includes('*') ||
+    perms.includes('all') ||
+    perms.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    perms.includes(PERMISSIONS.METER_READINGS_ANALYTICS_VIEW);
 
-  if (!isAdmin) {
+  if (!canAccess) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

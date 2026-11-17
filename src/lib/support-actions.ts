@@ -160,8 +160,6 @@ function hasPermission(session: any, perms: string[], targetPerm: string): boole
   if (!session) return false;
   // Super admin wildcard privileges
   if (perms.includes('*') || perms.includes('all') || perms.includes('admin')) return true;
-  const role = (session.role || session.roleName || '').toLowerCase();
-  if (role === 'admin' || role === 'system administrator') return true;
 
   // Strict check from assigned role_permissions in PostgreSQL
   return perms.includes(targetPerm);

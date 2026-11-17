@@ -152,10 +152,13 @@ export function InvoiceGeneratorView({
       });
 
       if (res.error) {
+        const errorMsg = typeof res.error === 'object' && res.error?.message
+          ? res.error.message
+          : String(res.error || "Failed to load invoice records");
         toast({
           variant: "destructive",
           title: "Failed to Load Invoices",
-          description: res.error,
+          description: errorMsg,
         });
         setBills([]);
       } else {
@@ -198,10 +201,13 @@ export function InvoiceGeneratorView({
       });
 
       if (res.error) {
+        const errorMsg = typeof res.error === 'object' && res.error?.message
+          ? res.error.message
+          : String(res.error || "Failed to search customer bills");
         toast({
           variant: "destructive",
           title: "Error",
-          description: res.error,
+          description: errorMsg,
         });
         setCustomerBills([]);
       } else {

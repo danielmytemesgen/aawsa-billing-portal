@@ -4,9 +4,10 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PERMISSIONS } from '@/lib/constants/auth';
 
 // This page acts as a role-aware redirector to the correct staff dashboard.
-export default function StaffRedirectPage() { 
+export default function StaffRedirectPage() {
   const router = useRouter();
 
   useEffect(() => {
@@ -17,10 +18,11 @@ export default function StaffRedirectPage() {
         const user = JSON.parse(userString);
         const role = (user.role || '').toLowerCase();
         const assignedPermissions = Array.isArray(user.permissions) ? user.permissions : [];
-        const hasDashboardAccess = assignedPermissions.includes('dashboard_view_all') || assignedPermissions.includes('dashboard_view_branch');
-        const hasStaffManagementAccess = assignedPermissions.includes('staff_view') || assignedPermissions.includes('staff_view_all') || assignedPermissions.includes('staff_view_branch');
+        const hasDashboardAccess = assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || assignedPermissions.includes(PERMISSIONS.DASHBOARD_VIEW_BRANCH);
+        const hasStaffManagementAccess = assignedPermissions.includes(PERMISSIONS.STAFF_VIEW) || assignedPermissions.includes(PERMISSIONS.STAFF_VIEW_ALL) || assignedPermissions.includes(PERMISSIONS.STAFF_VIEW_BRANCH);
+        const hasBillManageAll = assignedPermissions.includes(PERMISSIONS.BILL_VIEW_ALL) || assignedPermissions.includes('bill_view_all') || assignedPermissions.includes('bill:manage_all') || assignedPermissions.includes('*') || assignedPermissions.includes('all');
 
-        if (hasStaffManagementAccess && !assignedPermissions.includes('bill_view_all')) {
+        if (hasStaffManagementAccess && !hasBillManageAll) {
           router.replace('/staff/staff-management-dashboard');
           return;
         }
@@ -31,7 +33,7 @@ export default function StaffRedirectPage() {
         }
 
         // If user has route permissions
-        const hasRouteAccess = assignedPermissions.some((p: string) => 
+        const hasRouteAccess = assignedPermissions.some((p: string) =>
           ['routes_view', 'routes_view_all', 'routes_view_branch', 'routes_view_assigned', 'routes_manage', 'routes_create', 'routes_update', 'routes_delete', 'meter_readings_create', 'meter_readings_create_bulk', 'meter_readings_create_individual', 'reader_progress_view'].includes(p)
         );
         if (hasRouteAccess) {
@@ -40,7 +42,7 @@ export default function StaffRedirectPage() {
         }
 
         // If user has data entry access
-        const hasDataEntryAccess = assignedPermissions.some((p: string) => 
+        const hasDataEntryAccess = assignedPermissions.some((p: string) =>
           ['data_entry_access', 'customers_create', 'bulk_meters_create', 'data_entry_bulk_form', 'data_entry_individual_form', 'data_entry_bulk_csv', 'data_entry_individual_csv'].includes(p)
         );
         if (hasDataEntryAccess) {
@@ -49,7 +51,7 @@ export default function StaffRedirectPage() {
         }
 
         // If user has reports access
-        const hasReportsAccess = assignedPermissions.some((p: string) => 
+        const hasReportsAccess = assignedPermissions.some((p: string) =>
           ['reports_generate_all', 'reports_generate_branch', 'report:list_of_paid_bills', 'report:list_of_sent_bills', 'bill:view_paid', 'bill:send', 'bill:view_unpaid'].includes(p)
         );
         if (hasReportsAccess) {

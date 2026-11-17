@@ -66,9 +66,7 @@ async function authorizeCreditNoteReport() {
   if (!session || !session.id) throw new Error('Unauthorized');
 
   const perms = session.permissions || [];
-  const role = (session.role || '').toLowerCase().trim();
-  const isAdmin = role === 'admin' || role === 'system administrator' || role === 'super admin'
-    || perms.includes('*') || perms.includes('all') || perms.includes('admin');
+  const isAdmin = perms.includes('*') || perms.includes('all') || perms.includes('admin') || perms.includes(PERMISSIONS.CREDIT_VIEW_ALL) || perms.includes(PERMISSIONS.REPORTS_GENERATE_ALL);
 
   const canView = isAdmin
     || perms.includes(PERMISSIONS.CREDIT_VIEW_ALL)

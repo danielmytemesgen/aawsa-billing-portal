@@ -25,11 +25,7 @@ export async function POST(request: Request) {
         const { dbGetStaffPermissions } = await import('@/lib/db-queries');
         const dbPerms = await dbGetStaffPermissions(session.id);
         const perms = new Set([...(session.permissions || []), ...dbPerms]);
-        const role = String(session.role || '').toLowerCase();
-
         const hasPerm =
-            role === 'admin' ||
-            role === 'super admin' ||
             perms.has('*') ||
             perms.has('all') ||
             perms.has('admin') ||

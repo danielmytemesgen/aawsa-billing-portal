@@ -32,8 +32,11 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
-WHERE LOWER(TRIM(r.role_name)) IN (
-  'admin', 'system administrator', 'staff admin', 'head office management'
+WHERE (
+  LOWER(TRIM(r.role_name)) IN (
+    'admin', 'system administrator', 'staff admin', 'head office management', 'head office'
+  )
+  OR LOWER(TRIM(r.role_name)) LIKE '%head office%'
 )
   AND p.name IN (
     'invoice:view',

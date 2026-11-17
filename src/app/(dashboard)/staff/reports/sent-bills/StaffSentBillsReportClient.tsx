@@ -61,6 +61,26 @@ export default function StaffSentBillsReportClient() {
 
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [selectedBranchId, setSelectedBranchId] = React.useState<string>("all");
+
+  const canViewAllBranches = Boolean(
+    hasPermission("*") ||
+    hasPermission("admin") ||
+    hasPermission("all") ||
+    hasPermission(PERMISSIONS.REPORTS_GENERATE_ALL) ||
+    hasPermission('reports_generate_all') ||
+    hasPermission(PERMISSIONS.REPORT_LIST_OF_SENT_BILLS) ||
+    hasPermission('report:list_of_sent_bills') ||
+    hasPermission(PERMISSIONS.BILL_VIEW_ALL) ||
+    hasPermission('bill:manage_all') ||
+    hasPermission(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    hasPermission('dashboard_view_all') ||
+    hasPermission(PERMISSIONS.BRANCHES_VIEW)
+  );
+
+  const effectiveBranchId = canViewAllBranches
+    ? (selectedBranchId === 'all' ? undefined : selectedBranchId)
+    : (currentUser?.branchId || '00000000-0000-0000-0000-000000000000');
 
   const monthOptions = React.useMemo(() => getAvailableMonthYearOptions(), []);
 
@@ -69,7 +89,7 @@ export default function StaffSentBillsReportClient() {
     setIsExporting(true);
     toast({ title: "Preparing Export", description: "Fetching matching bill records..." });
     try {
-      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -111,7 +131,7 @@ export default function StaffSentBillsReportClient() {
     setIsFetchingPrintData(true);
     toast({ title: "Preparing Print Summary", description: "Loading all matching records across all pages..." });
     try {
-      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -193,7 +213,7 @@ export default function StaffSentBillsReportClient() {
 
     const fetchBills = async () => {
       setIsLoading(true);
-      const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+      const normalizedBranchId = effectiveBranchId;
       const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
       const result = await getAllSentBillsAction({
@@ -213,7 +233,7 @@ export default function StaffSentBillsReportClient() {
 
     fetchBillsRef.current = fetchBills;
     fetchBills();
-  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, currentUser, hasPermission]);
+  }, [page, rowsPerPage, debouncedSearch, selectedMonthYear, selectedBranchId, effectiveBranchId, currentUser, hasPermission]);
 
   // Fetch branch summary
   const fetchSummaryRef = React.useRef<() => void>(() => {});
@@ -222,7 +242,7 @@ export default function StaffSentBillsReportClient() {
       if (!currentUser) return;
       setIsSummaryLoading(true);
       try {
-        const normalizedBranchId = currentUser.branchId || '00000000-0000-0000-0000-000000000000';
+        const normalizedBranchId = effectiveBranchId;
         const normalizedMonthYear = selectedMonthYear === 'all' ? undefined : selectedMonthYear;
 
         const res = await getSentBillsBranchSummaryAction({
@@ -241,7 +261,7 @@ export default function StaffSentBillsReportClient() {
         setIsSummaryLoading(false);
       }
     };
-  }, [debouncedSearch, selectedMonthYear, currentUser]);
+  }, [debouncedSearch, selectedMonthYear, selectedBranchId, effectiveBranchId, currentUser]);
 
   React.useEffect(() => {
     if (!currentUser) return;
@@ -298,8 +318,8 @@ export default function StaffSentBillsReportClient() {
             <div className="flex items-center gap-3">
               <Send className="h-8 w-8 text-primary" />
               <div>
-                <CardTitle>List of All Sent Bills ({currentUser?.branchName || 'Your Branch'})</CardTitle>
-                <CardDescription>A list of all generated bills for your branch.</CardDescription>
+                <CardTitle>List of All Sent Bills ({canViewAllBranches ? (selectedBranchId === 'all' ? 'All Branches' : branches.find(b => b.id === selectedBranchId)?.name || 'Selected Branch') : (currentUser?.branchName || 'Your Branch')})</CardTitle>
+                <CardDescription>A list of all generated bills {canViewAllBranches ? 'across branches' : 'for your branch'}.</CardDescription>
               </div>
             </div>
 
@@ -314,6 +334,20 @@ export default function StaffSentBillsReportClient() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+
+              {canViewAllBranches && (
+                <Select value={selectedBranchId} onValueChange={(val) => { setSelectedBranchId(val); setPage(0); }}>
+                  <SelectTrigger className="w-full sm:w-[170px] h-10 bg-white rounded-lg border-slate-200">
+                    <SelectValue placeholder="All Branches" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-lg max-h-[300px]">
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
 
               <Select value={selectedMonthYear} onValueChange={(val) => { setSelectedMonthYear(val); setPage(0); }}>
                 <SelectTrigger className="w-full sm:w-[170px] h-10 bg-white rounded-lg border-slate-200">

@@ -24,7 +24,13 @@ export const buildSidebarNavItems = (user: UserProfile | null, options?: { pendi
     PERMISSIONS.DASHBOARD_VIEW_ALL,
     PERMISSIONS.STAFF_VIEW_ALL,
     PERMISSIONS.BILL_VIEW_ALL,
-    PERMISSIONS.SETTINGS_MANAGE
+    PERMISSIONS.SETTINGS_MANAGE,
+    PERMISSIONS.CUSTOMERS_VIEW_ALL,
+    PERMISSIONS.BULK_METERS_VIEW_ALL,
+    PERMISSIONS.METER_READINGS_VIEW_ALL,
+    PERMISSIONS.REPORTS_GENERATE_ALL,
+    PERMISSIONS.ROUTES_VIEW_ALL,
+    PERMISSIONS.SUPPORT_VIEW_ALL
   );
   const isAdmin = isGlobalManager;
 
@@ -214,7 +220,7 @@ export const buildSidebarNavItems = (user: UserProfile | null, options?: { pendi
   // 5. Dedicated Notifications Section
   const canAccessNotifications = hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)
     || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW_ALL);
-  const canAccessSms = hasPermission('sms_send')
+  const canAccessSms = hasPermission(PERMISSIONS.SMS_SEND)
     || hasPermission(PERMISSIONS.NOTIFICATIONS_CREATE)
     || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW)
     || hasPermission(PERMISSIONS.NOTIFICATIONS_VIEW_ALL);

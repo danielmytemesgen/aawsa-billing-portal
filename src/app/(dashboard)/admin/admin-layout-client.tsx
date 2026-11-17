@@ -14,7 +14,7 @@ import { getRoutePermissionRule } from '@/lib/route-permissions';
 import { PenaltyEngineBanner } from '@/components/penalty-engine-banner';
 import { buildSidebarNavItems, type UserProfile } from '@/lib/nav-builder';
 import { getCustomers, subscribeToCustomers, getBulkMeters, subscribeToBulkMeters } from '@/lib/data-store';
-import { getEffectiveBranchId } from '@/lib/branch-permissions';
+import { getEffectiveBranchId, hasImpliedPermission } from '@/lib/branch-permissions';
 
 export { buildSidebarNavItems, type UserProfile };
 
@@ -48,7 +48,7 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
                     const rule = getRoutePermissionRule(currentPath, latestPermissions);
                     let lostAccess = false;
                     if (rule) {
-                        const hasPerm = (p: string) => latestPermissions.includes('*') || latestPermissions.includes('all') || latestPermissions.includes(p);
+                        const hasPerm = (p: string) => hasImpliedPermission(new Set(latestPermissions), p);
                         if (rule.requiredPermissions && !rule.requiredPermissions.every(p => hasPerm(p))) {
                             lostAccess = true;
                         } else if (rule.anyOf && !rule.anyOf.some(p => hasPerm(p))) {
@@ -209,20 +209,20 @@ export default function AdminLayoutClient({ children, user: initialUser }: Admin
                 if (!user) return false;
                 if (isWildcard) return true;
                 if (hasBillManageAll && (permission.startsWith('bill:') || permission.startsWith('invoice:') || permission === 'billing:close_cycle')) return true;
-                return permSet.has(permission);
+                return hasImpliedPermission(permSet, permission);
             },
             hasAnyPermission: (...pList: string[]) => {
                 if (!user) return false;
                 if (isWildcard) return true;
                 if (hasBillManageAll && pList.some(p => p.startsWith('bill:') || p.startsWith('invoice:') || p === 'billing:close_cycle')) return true;
-                return pList.some(p => permSet.has(p));
+                return pList.some(p => hasImpliedPermission(permSet, p));
             },
             hasAllPermissions: (...pList: string[]) => {
                 if (!user) return false;
                 if (isWildcard) return true;
                 return pList.every(p => {
                     if (hasBillManageAll && (p.startsWith('bill:') || p.startsWith('invoice:') || p === 'billing:close_cycle')) return true;
-                    return permSet.has(p);
+                    return hasImpliedPermission(permSet, p);
                 });
             },
             refreshPermissions

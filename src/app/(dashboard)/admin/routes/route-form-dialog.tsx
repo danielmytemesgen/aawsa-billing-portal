@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { useBranches, useStaffMembers } from "@/lib/data-store";
 import { type Route } from "../bulk-meters/bulk-meter-types";
 import { LayoutGrid, MapPin, Users, Info, Activity } from "lucide-react";
+import { PERMISSIONS } from "@/lib/constants/auth";
 
 const routeFormSchema = z.object({
     routeKey: z.string().min(1, "Route Key is required"),
@@ -75,8 +76,8 @@ export function RouteFormDialog({
         userBranchId === 'all' ||
         permissions.includes('*') ||
         permissions.includes('all') ||
-        permissions.includes('admin') ||
-        permissions.includes('routes_view_all');
+        permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+        permissions.includes(PERMISSIONS.ROUTES_VIEW_ALL);
 
     const form = useForm<RouteFormValues>({
         resolver: zodResolver(routeFormSchema),

@@ -17,7 +17,13 @@ const protectedRoutes = ['/admin', '/staff', '/customer/'];
 const adminRoutes = ['/admin'];
 const staffRoutes = ['/staff'];
 
-const hasPerm = (permissions: string[], p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes(p);
+const hasPerm = (permissions: string[], p: string) => {
+  if (permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p)) return true;
+  if (permissions.includes(PERMISSIONS.ROUTES_MANAGE) && p.startsWith('routes_')) return true;
+  if (permissions.includes(PERMISSIONS.SUPPORT_MANAGE) && p.startsWith('support:')) return true;
+  if (permissions.includes(PERMISSIONS.BILL_VIEW_ALL) && (p.startsWith('bill:') || p.startsWith('invoice:'))) return true;
+  return false;
+};
 const hasAny = (permissions: string[], ...perms: string[]) => perms.some(p => hasPerm(permissions, p));
 
 // ── BN-1 Fix: Live permissions cache ───────────────────────────────────────

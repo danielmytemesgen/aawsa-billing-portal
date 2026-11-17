@@ -70,7 +70,18 @@ export function PwaRegistry() {
         if (!resp.ok) throw new Error('no role');
         const data = await resp.json();
         const role = (data.role || '').toLowerCase();
-        if (role && !role.includes('reader') && !role.includes('field') && !role.includes('collector')) {
+        
+        const storedUser = localStorage.getItem('user');
+        const userObj = storedUser ? JSON.parse(storedUser) : null;
+        const perms: string[] = userObj?.permissions || [];
+        const isFieldReader = perms.some((p: string) => [
+          'routes_view_assigned',
+          'meter_readings_create',
+          'meter_readings_create_bulk',
+          'meter_readings_create_individual'
+        ].includes(p));
+
+        if (storedUser && !isFieldReader) {
           // Admin / management users don't need offline SW
           console.info('PWA: non-reader role, skipping SW registration');
           window.dispatchEvent(new CustomEvent('service-worker-unavailable'));

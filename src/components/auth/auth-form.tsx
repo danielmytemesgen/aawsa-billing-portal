@@ -156,14 +156,15 @@ export function AuthForm() {
               const permissions = user.permissions || [];
               const hasPerm = (p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p);
               const isManagement = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL);
-              const offlineRole = (user.role || '').toLowerCase().trim();
+              const isHeadOfficeView = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL) && !hasPerm(PERMISSIONS.STAFF_VIEW);
+              const isStaffManagementView = (hasPerm(PERMISSIONS.STAFF_VIEW) || hasPerm(PERMISSIONS.STAFF_VIEW_ALL)) && !hasPerm(PERMISSIONS.BILL_VIEW_ALL);
               
               setTimeout(() => {
                 if (isManagement) {
-                  if (offlineRole.includes('head office')) router.push("/admin/head-office-dashboard");
-                  else if (offlineRole.includes('management') || offlineRole.includes('manager')) router.push("/admin/staff-management-dashboard");
+                  if (isHeadOfficeView) router.push("/admin/head-office-dashboard");
+                  else if (isStaffManagementView) router.push("/admin/staff-management-dashboard");
                   else router.push("/admin/dashboard");
-                } else if (offlineRole.includes('management') || offlineRole.includes('manager')) router.push("/staff/staff-management-dashboard");
+                } else if (isStaffManagementView) router.push("/staff/staff-management-dashboard");
                 else router.push("/staff/dashboard");
               }, 500);
               
@@ -249,10 +250,12 @@ export function AuthForm() {
           }
         })();
 
-        const role = result.user.role.toLowerCase().trim();
         const permissions = result.user.permissions || [];
-        const isManagement = permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) || permissions.includes('*') || permissions.includes('all') || permissions.includes('admin');
-        const hasFieldReaderPerms = permissions.includes('meter_readings_create_bulk') || permissions.includes('meter_readings_create_individual') || permissions.includes('meter_readings_create') || permissions.includes('routes_view_assigned');
+        const hasPerm = (p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p);
+        const isManagement = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL);
+        const isHeadOfficeView = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL) && !hasPerm(PERMISSIONS.STAFF_VIEW);
+        const isStaffManagementView = (hasPerm(PERMISSIONS.STAFF_VIEW) || hasPerm(PERMISSIONS.STAFF_VIEW_ALL)) && !hasPerm(PERMISSIONS.BILL_VIEW_ALL);
+        const hasFieldReaderPerms = hasPerm('meter_readings_create_bulk') || hasPerm('meter_readings_create_individual') || hasPerm('meter_readings_create') || hasPerm('routes_view_assigned');
 
         if (isManagement) {
           // Automatically sync billing aging debt in the background for management users
@@ -260,17 +263,17 @@ export function AuthForm() {
             console.error("Background sync failed on login:", err);
           });
 
-          // Route to role-specific dashboard
-          if (role.includes('head office')) {
+          // Route to role-specific dashboard based on permissions
+          if (isHeadOfficeView) {
             router.push("/admin/head-office-dashboard");
-          } else if (role.includes('management') || role.includes('manager')) {
+          } else if (isStaffManagementView) {
             router.push("/admin/staff-management-dashboard");
           } else {
             router.push("/admin/dashboard");
           }
         } else {
           // Immediately redirect to staff dashboard without blocking the login experience
-          if (role.includes('management') || role.includes('manager')) {
+          if (isStaffManagementView) {
             router.push("/staff/staff-management-dashboard");
           } else {
             router.push("/staff/dashboard");

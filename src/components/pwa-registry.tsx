@@ -16,7 +16,17 @@ export function PwaRegistry() {
           const resp = await fetch('/api/user/role');
           const data = await resp.json();
           const role = (data.role || '').toLowerCase();
-          if (role && !role.includes('reader') && !role.includes('field') && !role.includes('collector')) {
+          const storedUser = localStorage.getItem('user');
+          const userObj = storedUser ? JSON.parse(storedUser) : null;
+          const perms: string[] = userObj?.permissions || [];
+          const isFieldReader = perms.some((p: string) => [
+            'routes_view_assigned',
+            'meter_readings_create',
+            'meter_readings_create_bulk',
+            'meter_readings_create_individual'
+          ].includes(p));
+
+          if (storedUser && !isFieldReader) {
             console.info('PWA: non‑reader role, skipping service worker registration');
             window.dispatchEvent(new CustomEvent('service-worker-unavailable'));
             return;

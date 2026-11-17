@@ -28,6 +28,7 @@ import { baseBulkMeterDataSchema, meterSizeOptions, subCityOptions, woredaOption
 import type { BulkMeter } from "./bulk-meter-types";
 import { bulkMeterStatuses } from "./bulk-meter-types";
 import { paymentStatuses, customerTypes, sewerageConnections } from "@/lib/billing-calculations";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { DatePicker } from "@/components/ui/date-picker";
 import { format, parse, isValid } from "date-fns";
 import { getBulkMeters, getBranches, subscribeToBranches, initializeBranches as initializeAdminBranches, useRoutes, fetchRoutes } from "@/lib/data-store";
@@ -82,8 +83,8 @@ export function BulkMeterFormDialog({ open, onOpenChange, onSubmit, defaultValue
     userBranchId === 'all' ||
     permissions.includes('*') ||
     permissions.includes('all') ||
-    permissions.includes('admin') ||
-    permissions.includes('bulk_meters_view_all');
+    permissions.includes(PERMISSIONS.DASHBOARD_VIEW_ALL) ||
+    permissions.includes(PERMISSIONS.BULK_METERS_VIEW_ALL);
 
 
   React.useEffect(() => {

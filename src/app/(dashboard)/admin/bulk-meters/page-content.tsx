@@ -93,11 +93,9 @@ export default function BulkMetersPage() {
     } catch {}
   }, []);
   const isAdmin = (
-    currentUserRole === 'admin' ||
-    currentUserRole === 'system administrator' ||
-    currentUserRole === 'super admin' ||
     hasPermission('*') ||
-    hasPermission('admin')
+    hasPermission('admin') ||
+    hasPermission('bulk_meters_view_all')
   );
 
 

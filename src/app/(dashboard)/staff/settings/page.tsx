@@ -12,6 +12,7 @@ import { Save, AlertTriangle, Info, DollarSign, Bell, FileDown, Lock, LogOut, Sh
 import { ChangePasswordDialog } from "@/components/auth/change-password-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
+import { PERMISSIONS } from "@/lib/constants/auth";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { BILLING_CYCLE_MODE_KEY, BILLING_DUE_DATE_OFFSET_KEY, BILLING_CYCLE_DAY_KEY } from "@/lib/billing-config";
 import { getSystemSettingsAction, getSessionSettingsAction, updateBillingSettingsAction } from '@/lib/actions';
@@ -92,7 +93,7 @@ export default function StaffSettingsPage() {
     const [isMounted, setIsMounted] = React.useState(false);
     const [isSigningOut, setIsSigningOut] = React.useState(false);
     const [isRevokingSessions, setIsRevokingSessions] = React.useState(false);
-    const canUpdateSettings = hasPermission('settings_update');
+    const canUpdateSettings = hasPermission(PERMISSIONS.SETTINGS_MANAGE);
 
     React.useEffect(() => {
         setIsMounted(true);
