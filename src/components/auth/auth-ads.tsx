@@ -24,17 +24,81 @@ const ICON_MAP: Record<string, React.ReactNode> = {
     'CheckCircle2': <CheckCircle2 className="h-8 w-8 text-green-300" />,
 };
 
+const FALLBACK_ADS: Ad[] = [
+    {
+        id: "default-utility",
+        title: "Save Water, Save Life",
+        description: "Reporting leaks promptly helps conserve our precious resources. Contact us at 9xx for any issues.",
+        icon_name: "Droplets",
+        tag: "UTILITY",
+        display_duration: 5000,
+    }
+];
+
+export interface LoginHeroStyles {
+    fontFamily: string;
+    fontWeight: string;
+    headlineColor: string;
+    highlightColor: string;
+    accentStyle: string;
+    descColor: string;
+    cardBg: string;
+    customCardBg?: string;
+    ambientGlow: string;
+}
+
 export function AuthAds() {
     const [ads, setAds] = React.useState<Ad[]>([]);
     const [currentAd, setCurrentAd] = React.useState(0);
     const [isLoading, setIsLoading] = React.useState(true);
+    const [heroSettings, setHeroSettings] = React.useState<{
+        title: string;
+        highlight: string;
+        description: string;
+        styles: LoginHeroStyles;
+    }>({
+        title: "Modernizing",
+        highlight: "Utility Services",
+        description: "Access your account, track consumption, and manage payments effortlessly in one unified portal.",
+        styles: {
+            fontFamily: "sans",
+            fontWeight: "extrabold",
+            headlineColor: "#ffffff",
+            highlightColor: "#60a5fa",
+            accentStyle: "underline",
+            descColor: "rgba(255, 255, 255, 0.7)",
+            cardBg: "glass",
+            customCardBg: "",
+            ambientGlow: "blue",
+        }
+    });
 
     React.useEffect(() => {
         async function loadAds() {
             try {
                 const result = await getActivePromotionsAction();
-                if (result?.success && result.data && result.data.length > 0) {
-                    setAds(result.data);
+                if (result?.success) {
+                    if (result.hero) {
+                        setHeroSettings({
+                            title: result.hero.title ?? "Modernizing",
+                            highlight: result.hero.highlight ?? "Utility Services",
+                            description: result.hero.description ?? "Access your account, track consumption, and manage payments effortlessly in one unified portal.",
+                            styles: {
+                                fontFamily: result.hero.styles?.fontFamily ?? "sans",
+                                fontWeight: result.hero.styles?.fontWeight ?? "extrabold",
+                                headlineColor: result.hero.styles?.headlineColor ?? "#ffffff",
+                                highlightColor: result.hero.styles?.highlightColor ?? "#60a5fa",
+                                accentStyle: result.hero.styles?.accentStyle ?? "underline",
+                                descColor: result.hero.styles?.descColor ?? "rgba(255, 255, 255, 0.7)",
+                                cardBg: result.hero.styles?.cardBg ?? "glass",
+                                customCardBg: result.hero.styles?.customCardBg ?? "",
+                                ambientGlow: result.hero.styles?.ambientGlow ?? "blue",
+                            }
+                        });
+                    }
+                    if (result.data && result.data.length > 0) {
+                        setAds(result.data);
+                    }
                 }
             } catch (err) {
                 console.warn('[auth-ads] Failed to load ads:', err);
@@ -45,16 +109,19 @@ export function AuthAds() {
         loadAds();
     }, []);
 
-    React.useEffect(() => {
-        if (ads.length <= 1) return;
+    const displayAds = ads.length > 0 ? ads : FALLBACK_ADS;
 
-        const duration = ads[currentAd].display_duration || 5000;
+    React.useEffect(() => {
+        if (displayAds.length <= 1) return;
+
+        const safeIndex = currentAd % displayAds.length;
+        const duration = displayAds[safeIndex]?.display_duration || 5000;
         const timer = setTimeout(() => {
-            setCurrentAd((prev) => (prev + 1) % ads.length);
+            setCurrentAd((prev) => (prev + 1) % displayAds.length);
         }, duration);
 
         return () => clearTimeout(timer);
-    }, [ads.length, currentAd, ads]);
+    }, [displayAds.length, currentAd, displayAds]);
 
     if (isLoading) {
         return (
@@ -66,25 +133,116 @@ export function AuthAds() {
         );
     }
 
-    if (ads.length === 0) return null;
+    const currentPromo = displayAds[currentAd % displayAds.length];
+    const styles = heroSettings.styles;
+
+    // Font Family class resolver
+    const fontFamilyClass =
+        styles.fontFamily === 'serif' ? 'font-serif' :
+        styles.fontFamily === 'mono' ? 'font-mono' :
+        styles.fontFamily === 'display' ? 'font-sans uppercase tracking-tight' :
+        'font-sans';
+
+    // Font Weight class resolver
+    const fontWeightClass =
+        styles.fontWeight === 'black' ? 'font-black' :
+        styles.fontWeight === 'extrabold' ? 'font-extrabold' :
+        styles.fontWeight === 'bold' ? 'font-bold' :
+        styles.fontWeight === 'semibold' ? 'font-semibold' :
+        styles.fontWeight === 'medium' ? 'font-medium' :
+        'font-extrabold';
+
+    // Card background resolver
+    const cardBgClass =
+        styles.cardBg === 'midnight' ? 'bg-slate-950/85 border border-slate-800 backdrop-blur-xl shadow-2xl' :
+        styles.cardBg === 'ocean' ? 'bg-gradient-to-br from-cyan-950/80 via-blue-950/85 to-slate-950/95 border border-blue-900/40 backdrop-blur-xl shadow-2xl' :
+        styles.cardBg === 'emerald' ? 'bg-gradient-to-br from-emerald-950/80 via-teal-950/85 to-slate-950/95 border border-emerald-900/40 backdrop-blur-xl shadow-2xl' :
+        styles.cardBg === 'indigo' ? 'bg-gradient-to-br from-indigo-950/80 via-purple-950/85 to-slate-950/95 border border-indigo-900/40 backdrop-blur-xl shadow-2xl' :
+        styles.cardBg === 'custom' ? 'border border-white/10 backdrop-blur-xl shadow-2xl' :
+        'glass-card border-none';
+
+    // Custom card inline style (when custom CSS is specified)
+    const customCardStyle = styles.cardBg === 'custom' && styles.customCardBg
+        ? { background: styles.customCardBg }
+        : undefined;
 
     return (
-        <div className="flex flex-col justify-center flex-1 pr-0 lg:pr-12 animate-in fade-in slide-in-from-left-8 duration-700 w-full">
+        <div className="flex flex-col justify-center flex-1 pr-0 lg:pr-12 animate-in fade-in slide-in-from-left-8 duration-700 w-full relative">
+            {/* Ambient background glow */}
+            {styles.ambientGlow !== 'none' && (
+                <div
+                    className={`absolute -top-16 -left-16 w-80 h-80 rounded-full blur-3xl pointer-events-none -z-10 opacity-30 ${
+                        styles.ambientGlow === 'cyan' ? 'bg-cyan-500' :
+                        styles.ambientGlow === 'emerald' ? 'bg-emerald-500' :
+                        styles.ambientGlow === 'purple' ? 'bg-purple-500' :
+                        'bg-blue-500'
+                    }`}
+                />
+            )}
+
             <div className="mb-8 lg:mb-12 text-center lg:text-left">
-                <h2 className="text-3xl lg:text-4xl font-extrabold text-white mb-4 tracking-tight">
-                    Modernizing <span className="text-blue-400 underline decoration-blue-500/30 underline-offset-8">Utility Services</span>
+                <h2
+                    className={`text-3xl lg:text-4xl mb-4 tracking-tight leading-tight ${fontFamilyClass} ${fontWeightClass}`}
+                    style={{ color: styles.headlineColor || '#ffffff' }}
+                >
+                    {heroSettings.title}{" "}
+                    {heroSettings.highlight && (
+                        styles.accentStyle === 'gradient' ? (
+                            <span
+                                className="bg-clip-text text-transparent font-black"
+                                style={{
+                                    backgroundImage: `linear-gradient(135deg, ${styles.highlightColor || '#60a5fa'}, #38bdf8)`
+                                }}
+                            >
+                                {heroSettings.highlight}
+                            </span>
+                        ) : styles.accentStyle === 'badge' ? (
+                            <span
+                                className="inline-block px-3 py-1 rounded-lg border text-lg align-middle ml-2 font-bold"
+                                style={{
+                                    color: styles.highlightColor || '#60a5fa',
+                                    backgroundColor: (styles.highlightColor || '#60a5fa') + '25',
+                                    borderColor: (styles.highlightColor || '#60a5fa') + '50',
+                                }}
+                            >
+                                {heroSettings.highlight}
+                            </span>
+                        ) : styles.accentStyle === 'plain' ? (
+                            <span style={{ color: styles.highlightColor || '#60a5fa' }}>
+                                {heroSettings.highlight}
+                            </span>
+                        ) : (
+                            <span
+                                className="underline underline-offset-8"
+                                style={{
+                                    color: styles.highlightColor || '#60a5fa',
+                                    textDecorationColor: (styles.highlightColor || '#60a5fa') + '66'
+                                }}
+                            >
+                                {heroSettings.highlight}
+                            </span>
+                        )
+                    )}
                 </h2>
-                <p className="text-lg lg:text-xl text-white/60 font-light leading-relaxed max-w-2xl mx-auto lg:mx-0">
-                    Access your account, track consumption, and manage payments effortlessly in one unified portal.
-                </p>
+                {heroSettings.description && (
+                    <p
+                        className="text-lg lg:text-xl font-light leading-relaxed max-w-2xl mx-auto lg:mx-0"
+                        style={{ color: styles.descColor || 'rgba(255, 255, 255, 0.7)' }}
+                    >
+                        {heroSettings.description}
+                    </p>
+                )}
             </div>
 
-            <Card className="glass-card p-8 border-none relative overflow-hidden group min-h-[220px]">
+            <Card
+                className={`p-8 relative overflow-hidden group min-h-[220px] transition-all duration-500 ${cardBgClass}`}
+                style={customCardStyle}
+            >
                 {/* Background Image if available */}
-                {ads[currentAd].image_url && (
+                {currentPromo?.image_url && (
                     <div className="absolute inset-0 z-0 transition-opacity duration-700">
                         <img
-                            src={ads[currentAd].image_url}
+                            src={currentPromo.image_url}
                             alt=""
                             className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500"
                         />
@@ -94,32 +252,32 @@ export function AuthAds() {
 
                 <div className="absolute top-6 right-6 z-20 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] group-hover:drop-shadow-[0_0_25px_rgba(255,255,255,0.8)] group-hover:scale-110">
                     <div className="animate-pulse">
-                        {ICON_MAP[ads[currentAd].icon_name] || <Megaphone className="h-8 w-8 text-blue-300" />}
+                        {ICON_MAP[currentPromo?.icon_name || ""] || <Megaphone className="h-8 w-8 text-blue-300" />}
                     </div>
                 </div>
 
                 <div className="relative z-10 transition-all duration-500 transform">
                     <div className="inline-block px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold uppercase tracking-widest mb-4">
-                        {ads[currentAd].tag}
+                        {currentPromo?.tag || "UTILITY"}
                     </div>
 
-                    {ads[currentAd].title && (
+                    {currentPromo?.title && (
                         <h3 className="text-2xl font-bold text-white mb-3 flex items-center gap-3">
-                            {ads[currentAd].title}
+                            {currentPromo.title}
                         </h3>
                     )}
 
-                    {ads[currentAd].description && (
+                    {currentPromo?.description && (
                         <p className="text-lg text-white/70 leading-relaxed min-h-[60px]">
-                            {ads[currentAd].description}
+                            {currentPromo.description}
                         </p>
                     )}
 
                     <div className="mt-8 flex gap-2">
-                        {ads.map((_, idx) => (
+                        {displayAds.map((_, idx) => (
                             <div
                                 key={idx}
-                                className={`h-1.5 rounded-full transition-all duration-300 ${idx === currentAd ? "w-8 bg-blue-400" : "w-1.5 bg-white/20"
+                                className={`h-1.5 rounded-full transition-all duration-300 ${idx === (currentAd % displayAds.length) ? "w-8 bg-blue-400" : "w-1.5 bg-white/20"
                                     }`}
                             />
                         ))}

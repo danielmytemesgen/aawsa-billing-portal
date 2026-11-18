@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import { MoreHorizontal, Edit, Trash2 } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, FileText, ExternalLink } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -50,6 +50,7 @@ export function KnowledgeBaseTable({ data, onEdit, onDelete, canEdit, canDelete 
           <TableRow>
             <TableHead>Title</TableHead>
             <TableHead>Category</TableHead>
+            <TableHead>Attachment</TableHead>
             <TableHead>Last Updated</TableHead>
             {showActionsColumn && <TableHead className="text-right">Actions</TableHead>}
           </TableRow>
@@ -57,9 +58,36 @@ export function KnowledgeBaseTable({ data, onEdit, onDelete, canEdit, canDelete 
         <TableBody>
           {data.map((article) => (
             <TableRow key={article.id}>
-              <TableCell className="font-medium">{article.title}</TableCell>
-              <TableCell>{article.category || "-"}</TableCell>
+              <TableCell className="font-medium max-w-xs truncate" title={article.title}>
+                {article.title}
+              </TableCell>
               <TableCell>
+                {article.category ? (
+                  <Badge variant="secondary" className="font-normal text-xs">
+                    {article.category}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground text-xs italic">Uncategorized</span>
+                )}
+              </TableCell>
+              <TableCell>
+                {article.pdf_url ? (
+                  <a
+                    href={article.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-950/60 border border-red-200 dark:border-red-900 transition-colors"
+                    title="Open PDF Attachment"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-red-500" />
+                    <span>PDF</span>
+                    <ExternalLink className="h-3 w-3 opacity-60" />
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground text-xs italic">None</span>
+                )}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                 {formatDistanceToNow(new Date(article.created_at), { addSuffix: true })}
               </TableCell>
               {showActionsColumn && (
@@ -73,6 +101,19 @@ export function KnowledgeBaseTable({ data, onEdit, onDelete, canEdit, canDelete 
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                      {article.pdf_url && (
+                        <DropdownMenuItem asChild>
+                          <a
+                            href={article.pdf_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center cursor-pointer"
+                          >
+                            <FileText className="mr-2 h-4 w-4 text-red-500" />
+                            View PDF Attachment
+                          </a>
+                        </DropdownMenuItem>
+                      )}
                       {canEdit && (
                         <DropdownMenuItem onClick={() => onEdit(article)}>
                           <Edit className="mr-2 h-4 w-4" />

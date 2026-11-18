@@ -534,6 +534,9 @@ export type Database = {
           id: number
           keywords: string[] | null
           title: string
+          pdf_url: string | null
+          deleted_at: string | null
+          deleted_by: string | null
         }
         Insert: {
           category?: string | null
@@ -542,6 +545,9 @@ export type Database = {
           id?: number
           keywords?: string[] | null
           title: string
+          pdf_url?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
         }
         Update: {
           category?: string | null
@@ -550,6 +556,9 @@ export type Database = {
           id?: number
           keywords?: string[] | null
           title?: string
+          pdf_url?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
         }
         Relationships: []
       }

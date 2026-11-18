@@ -4205,6 +4205,74 @@ export const dbRestoreFromRecycleBinBulk = async (recycleBinIds: string[]) => {
     });
 };
 
+const DEFAULT_HERO_STYLES = {
+    fontFamily: 'sans',
+    fontWeight: 'extrabold',
+    headlineColor: '#ffffff',
+    highlightColor: '#60a5fa',
+    accentStyle: 'underline',
+    descColor: 'rgba(255, 255, 255, 0.7)',
+    cardBg: 'glass',
+    customCardBg: '',
+    ambientGlow: 'blue',
+};
+
+export const dbGetLoginHeroSettings = async () => {
+    try {
+        const rows: any = await query(
+            `SELECT key, value FROM system_settings WHERE key IN ('login_hero_title', 'login_hero_highlight', 'login_hero_description', 'login_hero_styles')`
+        );
+        const map: Record<string, string> = {};
+        for (const row of rows || []) {
+            map[row.key] = row.value;
+        }
+        let parsedStyles: any = {};
+        if (map['login_hero_styles']) {
+            try {
+                parsedStyles = JSON.parse(map['login_hero_styles']);
+            } catch {}
+        }
+        return {
+            title: map['login_hero_title'] ?? 'Modernizing',
+            highlight: map['login_hero_highlight'] ?? 'Utility Services',
+            description: map['login_hero_description'] ?? 'Access your account, track consumption, and manage payments effortlessly in one unified portal.',
+            styles: {
+                fontFamily: parsedStyles.fontFamily || 'sans',
+                fontWeight: parsedStyles.fontWeight || 'extrabold',
+                headlineColor: parsedStyles.headlineColor || '#ffffff',
+                highlightColor: parsedStyles.highlightColor || '#60a5fa',
+                accentStyle: parsedStyles.accentStyle || 'underline',
+                descColor: parsedStyles.descColor || 'rgba(255, 255, 255, 0.7)',
+                cardBg: parsedStyles.cardBg || 'glass',
+                customCardBg: parsedStyles.customCardBg || '',
+                ambientGlow: parsedStyles.ambientGlow || 'blue',
+            }
+        };
+    } catch {
+        return {
+            title: 'Modernizing',
+            highlight: 'Utility Services',
+            description: 'Access your account, track consumption, and manage payments effortlessly in one unified portal.',
+            styles: DEFAULT_HERO_STYLES,
+        };
+    }
+};
+
+export const dbUpdateLoginHeroSettings = async (settings: {
+    title: string;
+    highlight?: string;
+    description: string;
+    styles?: any;
+}) => {
+    await dbUpdateSystemSetting('login_hero_title', settings.title?.trim() || 'Modernizing');
+    await dbUpdateSystemSetting('login_hero_highlight', settings.highlight !== undefined ? settings.highlight.trim() : 'Utility Services');
+    await dbUpdateSystemSetting('login_hero_description', settings.description?.trim() || '');
+    if (settings.styles) {
+        await dbUpdateSystemSetting('login_hero_styles', JSON.stringify(settings.styles));
+    }
+    return await dbGetLoginHeroSettings();
+};
+
 export const dbGetAllPromotions = async () => {
     return await query('SELECT * FROM promotions ORDER BY display_order ASC, created_at DESC');
 };

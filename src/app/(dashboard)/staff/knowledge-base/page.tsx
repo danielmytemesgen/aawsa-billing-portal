@@ -82,23 +82,22 @@ export default function StaffKnowledgeBasePage() {
     };
 
     const handleSubmitArticle = async (data: KnowledgeBaseFormValues) => {
-        const { pdfFile, ...articleData } = data;
-        let pdf_url = data.pdf_url || undefined; // Start with what the form says, default to undefined for type compatibility
+        const { pdfFile, removePdf, ...articleData } = data;
+        let pdf_url = selectedArticle?.pdf_url || null;
 
         try {
             if (pdfFile) {
                 // Upload new PDF file
                 pdf_url = await uploadPdfFile(pdfFile);
                 toast({ title: "PDF Uploaded", description: "The PDF file has been successfully uploaded." });
+            } else if (removePdf) {
+                // Explicitly clear PDF URL
+                pdf_url = null;
             }
-            // If explicit removal or existing URL logic is needed, it's now handled by the form passing `pdf_url`
-            // If the user cleared the PDF in the form, `data.pdf_url` will be null (as set by our update in the dialog).
-            // If they didn't touch it, it will be the existing URL.
-
 
             const articleToSave = {
                 ...articleData,
-                pdf_url: pdf_url, // Use the new or existing PDF URL
+                pdf_url: pdf_url,
             };
 
             if (selectedArticle) {

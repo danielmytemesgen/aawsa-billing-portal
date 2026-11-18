@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
-import { writeFile } from 'fs/promises';
+import { writeFile, mkdir } from 'fs/promises';
 import { join, basename } from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { checkPermission } from '@/lib/actions';
+import { checkPermissionAny } from '@/lib/actions';
 import { PERMISSIONS } from '@/lib/constants/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    // Only staff with bill knowledge-base upload permission can upload PDFs
-    const session = await checkPermission(PERMISSIONS.BILL_VIEW_ALL);
+    // Only staff with knowledge-base manage, settings manage, or bill view all permissions can upload PDFs
+    const session = await checkPermissionAny(
+      PERMISSIONS.KNOWLEDGE_BASE_MANAGE,
+      PERMISSIONS.SETTINGS_MANAGE,
+      PERMISSIONS.BILL_VIEW_ALL
+    );
     if (!session || !session.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -26,7 +30,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File size exceeds 5MB limit' }, { status: 400 });
     }
 
-    if (file.type !== 'application/pdf') {
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       return NextResponse.json({ error: 'Only PDF files are allowed' }, { status: 400 });
     }
 
@@ -37,6 +41,10 @@ export async function POST(request: NextRequest) {
     const safeBaseName = basename(file.name || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
     const fileName = `${uuidv4()}-${safeBaseName}`;
     const uploadDir = join(process.cwd(), 'public', 'uploads', 'pdf');
+    
+    // Ensure directory exists
+    await mkdir(uploadDir, { recursive: true });
+
     const filePath = join(uploadDir, fileName);
 
     if (!filePath.startsWith(uploadDir)) {

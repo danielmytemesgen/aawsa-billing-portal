@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Bot, X, Send, Loader2, MessageSquare, ChevronDown } from 'lucide-react';
+import { Bot, X, Send, Loader2, MessageSquare, ChevronDown, FileText, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
@@ -63,16 +63,36 @@ function findAnswer(query: string, articles: KnowledgeBaseArticle[]): string {
   if (article.category) {
     response += `\n\n*Category: ${article.category}*`;
   }
+  if (article.pdf_url) {
+    response += `\n\n[Download Attached Document (PDF)](${article.pdf_url})`;
+  }
   return response;
 }
 
-/** Minimal markdown-ish renderer: bold (**text**), newlines → <br /> */
+/** Markdown renderer: bold (**text**), links ([label](url)), newlines → <br /> */
 function renderMarkdown(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*|\n)/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|\n)/g);
   return parts.map((part, i) => {
     if (part === '\n') return <br key={i} />;
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (linkMatch) {
+      const [, label, url] = linkMatch;
+      return (
+        <a
+          key={i}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 my-1 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors border border-primary/20"
+        >
+          <FileText className="h-3.5 w-3.5 text-red-500" />
+          <span>{label}</span>
+          <ExternalLink className="h-3 w-3 opacity-70" />
+        </a>
+      );
     }
     return <span key={i}>{part}</span>;
   });

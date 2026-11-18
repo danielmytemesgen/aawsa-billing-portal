@@ -6,9 +6,11 @@ import {
     dbGetAllPromotions,
     dbCreatePromotion,
     dbUpdatePromotion,
-    dbDeletePromotion
+    dbDeletePromotion,
+    dbGetLoginHeroSettings,
+    dbUpdateLoginHeroSettings
 } from './db-queries';
-import { checkPermission } from './actions';
+import { checkPermission, checkPermissionAny } from './actions';
 import { PERMISSIONS } from './constants/auth';
 
 // NOTE: This action is intentionally public (used on the login screen
@@ -16,8 +18,37 @@ import { PERMISSIONS } from './constants/auth';
 // Only marketing/promotional fields should be exposed by dbGetActivePromotions.
 export async function getActivePromotionsAction() {
     try {
-        const promotions = await dbGetActivePromotions();
-        return { success: true, data: promotions };
+        const [promotions, hero] = await Promise.all([
+            dbGetActivePromotions(),
+            dbGetLoginHeroSettings()
+        ]);
+        return { success: true, data: promotions, hero };
+    } catch (error: any) {
+        return { success: false, message: error.message };
+    }
+}
+
+export async function getLoginHeroSettingsAction() {
+    try {
+        const hero = await dbGetLoginHeroSettings();
+        return { success: true, data: hero };
+    } catch (error: any) {
+        return { success: false, message: error.message };
+    }
+}
+
+export async function updateLoginHeroSettingsAction(settings: {
+    title: string;
+    highlight?: string;
+    description: string;
+    styles?: any;
+}) {
+    try {
+        await checkPermissionAny(PERMISSIONS.PROMOTIONS_MANAGE, PERMISSIONS.SETTINGS_MANAGE);
+        const hero = await dbUpdateLoginHeroSettings(settings);
+        revalidatePath('/');
+        revalidatePath('/customer-login');
+        return { success: true, data: hero };
     } catch (error: any) {
         return { success: false, message: error.message };
     }
