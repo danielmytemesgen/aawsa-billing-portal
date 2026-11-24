@@ -69,7 +69,7 @@ let staffReportCache: {
 
 const STAFF_REPORT_CACHE_TTL_MS = 30_000;
 
-export const clearStaffReportsCache = () => {
+const clearStaffReportsCache = () => {
   staffReportCache = {};
 };
 

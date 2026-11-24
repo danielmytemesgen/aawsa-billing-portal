@@ -54,7 +54,7 @@ let reportCache: {
 
 const REPORT_CACHE_TTL_MS = 30_000;
 
-export const clearReportsClientCache = () => {
+const clearReportsClientCache = () => {
   reportCache = {};
 };
 
