@@ -197,7 +197,7 @@ function setSecurityHeaders(res: NextResponse) {
 
 function getRoleDashboardFallback(permissions: string[], role: string, request: NextRequest): URL {
   const isGlobalAdmin = hasPerm(permissions, '*') || hasPerm(permissions, 'all') || hasPerm(permissions, PERMISSIONS.DASHBOARD_VIEW_ALL);
-  
+
   if (isGlobalAdmin) {
     return new URL('/admin/dashboard', request.url);
   }
@@ -210,26 +210,26 @@ function getRoleDashboardFallback(permissions: string[], role: string, request: 
   if (hasPerm(permissions, PERMISSIONS.DASHBOARD_VIEW_BRANCH)) {
     return new URL('/staff/dashboard', request.url);
   }
-  if (hasAny(permissions, 
-    PERMISSIONS.ROUTES_VIEW, 
-    PERMISSIONS.ROUTES_VIEW_ALL, 
-    PERMISSIONS.ROUTES_VIEW_BRANCH, 
-    PERMISSIONS.ROUTES_VIEW_ASSIGNED, 
-    PERMISSIONS.ROUTES_MANAGE, 
-    PERMISSIONS.ROUTES_CREATE, 
-    PERMISSIONS.ROUTES_UPDATE, 
-    PERMISSIONS.ROUTES_DELETE, 
+  if (hasAny(permissions,
+    PERMISSIONS.ROUTES_VIEW,
+    PERMISSIONS.ROUTES_VIEW_ALL,
+    PERMISSIONS.ROUTES_VIEW_BRANCH,
+    PERMISSIONS.ROUTES_VIEW_ASSIGNED,
+    PERMISSIONS.ROUTES_MANAGE,
+    PERMISSIONS.ROUTES_CREATE,
+    PERMISSIONS.ROUTES_UPDATE,
+    PERMISSIONS.ROUTES_DELETE,
     PERMISSIONS.READER_PROGRESS_VIEW
   )) {
     return new URL('/staff/my-routes', request.url);
   }
-  if (hasAny(permissions, 
-    PERMISSIONS.DATA_ENTRY_ACCESS, 
-    PERMISSIONS.CUSTOMERS_CREATE, 
-    PERMISSIONS.BULK_METERS_CREATE, 
-    PERMISSIONS.DATA_ENTRY_BULK_FORM, 
-    PERMISSIONS.DATA_ENTRY_INDIVIDUAL_FORM, 
-    PERMISSIONS.DATA_ENTRY_BULK_CSV, 
+  if (hasAny(permissions,
+    PERMISSIONS.DATA_ENTRY_ACCESS,
+    PERMISSIONS.CUSTOMERS_CREATE,
+    PERMISSIONS.BULK_METERS_CREATE,
+    PERMISSIONS.DATA_ENTRY_BULK_FORM,
+    PERMISSIONS.DATA_ENTRY_INDIVIDUAL_FORM,
+    PERMISSIONS.DATA_ENTRY_BULK_CSV,
     PERMISSIONS.DATA_ENTRY_INDIVIDUAL_CSV
   )) {
     return new URL(isGlobalAdmin ? '/admin/data-entry' : '/staff/data-entry', request.url);

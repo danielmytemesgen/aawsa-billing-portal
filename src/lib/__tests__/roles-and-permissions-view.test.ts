@@ -104,7 +104,7 @@ describe("Roles & Permissions: Canonical Normalization & Logic", () => {
 
   it("guarantees 100% metadata coverage for all constants in PERMISSIONS", () => {
     const allPermConstants = Object.values(PERMISSIONS);
-    expect(allPermConstants.length).toBe(163);
+    expect(allPermConstants.length).toBe(169);
 
     for (const perm of allPermConstants) {
       const meta = PERMISSION_METADATA_REGISTRY[perm];

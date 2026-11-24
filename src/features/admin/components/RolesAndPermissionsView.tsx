@@ -8,8 +8,9 @@ import {
   getRolePermissions, initializeRolePermissions, subscribeToRolePermissions,
   updateRolePermissions,
   deletePermission,
+  getStaffMembers, initializeStaffMembers, subscribeToStaffMembers,
 } from "@/lib/data-store";
-import type { DomainRole, DomainPermission, DomainRolePermission } from "@/lib/data-store";
+import type { DomainRole, DomainPermission, DomainRolePermission, StaffMember } from "@/lib/data-store";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -20,7 +21,8 @@ import { Button } from "@/components/ui/button";
 import {
   ShieldCheck, Save, Loader2, PlusCircle, Pencil, Trash2,
   ChevronLeft, ChevronRight, Search, Users, Check, AlertCircle,
-  Filter, Globe, Building2, Crown
+  Filter, Globe, Building2, Crown, Layers, X,
+  Copy, GitCompare, AlertTriangle, Wand2, ShieldAlert, FileText
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -30,6 +32,10 @@ import { Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateRoleDialog } from "@/features/admin/components/create-role-dialog";
 import { CreateEditPermissionDialog } from "@/features/admin/components/create-edit-permission-dialog";
+import { CloneRoleDialog } from "@/features/admin/components/CloneRoleDialog";
+import { CompareRolesDialog } from "@/features/admin/components/CompareRolesDialog";
+import { RoleImpactDialog } from "@/features/admin/components/RoleImpactDialog";
+import { RoleTemplateDialog } from "@/features/admin/components/RoleTemplateDialog";
 import { broadcastPermissionsUpdated } from "@/lib/permissions-sync";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -93,12 +99,19 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
   // Search & Filter
   const [assignmentSearchTerm, setAssignmentSearchTerm] = React.useState("");
   const [scopeFilter, setScopeFilter] = React.useState<ScopeFilterType>("all");
+  const [categoryFilter, setCategoryFilter] = React.useState<string>("all");
   const [tokenSearchTerm, setTokenSearchTerm] = React.useState("");
+  const [tokenCategoryFilter, setTokenCategoryFilter] = React.useState<string>("all");
   const [currentPage, setCurrentPage] = React.useState(1);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
 
   // Dialog states
   const [createRoleDialogOpen, setCreateRoleDialogOpen] = React.useState(false);
+  const [cloneDialogOpen, setCloneDialogOpen] = React.useState(false);
+  const [compareDialogOpen, setCompareDialogOpen] = React.useState(false);
+  const [impactDialogOpen, setImpactDialogOpen] = React.useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen] = React.useState(false);
+  const [staffMembersList, setStaffMembersList] = React.useState<StaffMember[]>([]);
   const [isPermissionDialogOpen, setPermissionDialogOpen] = React.useState(false);
   const [editingPermission, setEditingPermission] = React.useState<DomainPermission | undefined>(undefined);
   const [deletingPermission, setDeletingPermission] = React.useState<DomainPermission | undefined>(undefined);
@@ -117,11 +130,13 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
       await Promise.all([
         initializeRoles(),
         initializePermissions(),
-        initializeRolePermissions()
+        initializeRolePermissions(),
+        initializeStaffMembers(),
       ]);
       setRoles(getRoles());
       setPermissions(getPermissions());
       setRolePermissions(getRolePermissions());
+      setStaffMembersList(getStaffMembers());
       setIsLoading(false);
     };
     fetchData();
@@ -129,11 +144,13 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
     const unsubRoles = subscribeToRoles(setRoles);
     const unsubPerms = subscribeToPermissions(setPermissions);
     const unsubRolePerms = subscribeToRolePermissions(setRolePermissions);
+    const unsubStaff = subscribeToStaffMembers(setStaffMembersList);
 
     return () => {
       unsubRoles();
       unsubPerms();
       unsubRolePerms();
+      unsubStaff();
     };
   }, []);
 
@@ -143,6 +160,7 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
       setRoles(getRoles());
       setPermissions(getPermissions());
       setRolePermissions(getRolePermissions());
+      setStaffMembersList(getStaffMembers());
     };
     window.addEventListener('data-refreshed', handleDataRefreshed);
     return () => window.removeEventListener('data-refreshed', handleDataRefreshed);
@@ -192,6 +210,65 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
     setShowUnsavedDialog(false);
   };
 
+  // Active mutual exclusivity conflicts within currently selected permissions
+  const activeConflicts = React.useMemo(() => {
+    if (!selectedRoleId) return [];
+    const conflicts: Array<{ pair: [string, string]; permA: DomainPermission; permB: DomainPermission }> = [];
+    const currentPermNames = new Set(
+      Array.from(selectedPermissions).map(id => permissions.find(p => p.id === id)?.name).filter(Boolean) as string[]
+    );
+
+    for (const [scopeA, scopeB] of MUTUALLY_EXCLUSIVE_REPORT_PAIRS) {
+      if (currentPermNames.has(scopeA) && currentPermNames.has(scopeB)) {
+        const permA = permissions.find(p => p.name === scopeA);
+        const permB = permissions.find(p => p.name === scopeB);
+        if (permA && permB) {
+          conflicts.push({ pair: [scopeA, scopeB], permA, permB });
+        }
+      }
+    }
+    return conflicts;
+  }, [selectedRoleId, selectedPermissions, permissions]);
+
+  const handleAutoResolveConflicts = () => {
+    if (activeConflicts.length === 0) return;
+    setSelectedPermissions(prev => {
+      const newSet = new Set(prev);
+      activeConflicts.forEach(c => {
+        // City-wide (permA) supersedes branch-only (permB)
+        newSet.delete(c.permB.id);
+      });
+      return newSet;
+    });
+    toast({
+      title: "Conflicts Auto-Resolved",
+      description: `Resolved ${activeConflicts.length} mutually exclusive scope collision(s) in favor of city-wide scope.`,
+    });
+  };
+
+  // Diff of permissions: added & removed
+  const diffAdded = React.useMemo(() => {
+    return Array.from(selectedPermissions)
+      .filter(id => !initialPermissions.has(id))
+      .map(id => permissions.find(p => p.id === id))
+      .filter((p): p is DomainPermission => Boolean(p));
+  }, [selectedPermissions, initialPermissions, permissions]);
+
+  const diffRemoved = React.useMemo(() => {
+    return Array.from(initialPermissions)
+      .filter(id => !selectedPermissions.has(id))
+      .map(id => permissions.find(p => p.id === id))
+      .filter((p): p is DomainPermission => Boolean(p));
+  }, [selectedPermissions, initialPermissions, permissions]);
+
+  // Downstream affected staff count for currently selected role
+  const affectedStaffCount = React.useMemo(() => {
+    if (!selectedRoleId) return 0;
+    const currentRole = roles.find(r => r.id === parseInt(selectedRoleId, 10));
+    if (!currentRole) return 0;
+    return staffMembersList.filter(s => s.role.toLowerCase() === currentRole.role_name.toLowerCase()).length;
+  }, [selectedRoleId, roles, staffMembersList]);
+
   // Group permissions using Canonical Category Normalization in display order
   const groupedPermissions = React.useMemo(() => {
     const orderedGroups: PermissionGroup = {};
@@ -226,6 +303,11 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
 
     const filtered: PermissionGroup = {};
     for (const [cat, perms] of Object.entries(groupedPermissions)) {
+      // Category filter check
+      if (categoryFilter !== "all" && cat !== categoryFilter) {
+        continue;
+      }
+
       const matchingPerms = perms.filter(p => {
         // Scope filter
         const scope = getPermissionScope(p.name);
@@ -248,21 +330,24 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
       }
     }
     return filtered;
-  }, [groupedPermissions, assignmentSearchTerm, scopeFilter]);
+  }, [groupedPermissions, assignmentSearchTerm, scopeFilter, categoryFilter]);
 
   // Right column system tokens filtering and pagination
   const filteredTokens = React.useMemo(() => {
     const term = tokenSearchTerm.trim().toLowerCase();
     return permissions.filter(p => {
+      const canonical = getCanonicalCategory(p.category, p.name);
+      if (tokenCategoryFilter !== "all" && canonical !== tokenCategoryFilter) {
+        return false;
+      }
       if (!term) return true;
-      const canonical = getCanonicalCategory(p.category, p.name).toLowerCase();
       const friendly = formatPermissionName(p.name).toLowerCase();
       const desc = getPermissionDescription(p.name, p.description).toLowerCase();
       const raw = p.name.toLowerCase();
 
-      return raw.includes(term) || friendly.includes(term) || canonical.includes(term) || desc.includes(term);
+      return raw.includes(term) || friendly.includes(term) || canonical.toLowerCase().includes(term) || desc.includes(term);
     });
-  }, [permissions, tokenSearchTerm]);
+  }, [permissions, tokenSearchTerm, tokenCategoryFilter]);
 
   const paginatedTokens = React.useMemo(() => {
     const startIndex = (currentPage - 1) * rowsPerPage;
@@ -380,7 +465,7 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
   };
 
   // Save changes to database
-  const handleSaveChanges = async () => {
+  const handleSaveChanges = async (reason?: string) => {
     if (!selectedRoleId) {
       toast({ variant: "destructive", title: "No Role Selected", description: "Please select a role to update." });
       return;
@@ -407,6 +492,19 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
       toast({ variant: "destructive", title: "Update Failed", description: result.message || "An unexpected error occurred." });
     }
     setIsSaving(false);
+  };
+
+  // Open impact confirmation before committing changes
+  const handleInitiateSave = () => {
+    if (!selectedRoleId) {
+      toast({ variant: "destructive", title: "No Role Selected", description: "Please select a role to update." });
+      return;
+    }
+    if (!isDirty) {
+      toast({ title: "No Changes Detected", description: "The permissions for this role are already up to date." });
+      return;
+    }
+    setImpactDialogOpen(true);
   };
 
   // Permission Token CRUD handlers
@@ -493,8 +591,35 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
           </p>
         </div>
         {canManage && (
-          <div className="flex gap-2">
-            <Button onClick={() => setCreateRoleDialogOpen(true)} className="shadow-sm">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCompareDialogOpen(true)}
+              className="shadow-sm border-slate-200 hover:bg-slate-50 text-xs sm:text-sm"
+            >
+              <GitCompare className="mr-2 h-4 w-4 text-primary" />
+              Compare Roles
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setTemplateDialogOpen(true)}
+              className="shadow-sm border-slate-200 hover:bg-slate-50 text-xs sm:text-sm"
+            >
+              <FileText className="mr-2 h-4 w-4 text-primary" />
+              JSON Template
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCloneDialogOpen(true)}
+              className="shadow-sm border-slate-200 hover:bg-slate-50 text-xs sm:text-sm"
+            >
+              <Copy className="mr-2 h-4 w-4 text-primary" />
+              Clone / Template
+            </Button>
+            <Button onClick={() => setCreateRoleDialogOpen(true)} className="shadow-sm text-xs sm:text-sm">
               <PlusCircle className="mr-2 h-4 w-4" />
               Create Role
             </Button>
@@ -575,7 +700,22 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
             <CardContent className="space-y-6 pt-6">
               {/* Step 1: Role Dropdown */}
               <div className="space-y-3">
-                <Label htmlFor="role-select" className="text-sm font-semibold">Step 1: Choose a Role</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="role-select" className="text-sm font-semibold">Step 1: Choose a Role</Label>
+                  {selectedRoleId && canManage && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCloneDialogOpen(true)}
+                      className="h-6 text-xs text-slate-600 hover:text-primary px-2 font-medium"
+                      title="Clone this role into a new role"
+                    >
+                      <Copy className="h-3 w-3 mr-1" />
+                      Clone Role
+                    </Button>
+                  )}
+                </div>
                 <Select value={selectedRoleId} onValueChange={handleRoleSelectChange}>
                   <SelectTrigger id="role-select" className="w-full bg-white border-slate-200 focus:ring-primary/20">
                     <SelectValue placeholder="Select a role to manage..." />
@@ -599,15 +739,83 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
                       </Badge>
                     </div>
 
-                    {/* Instant Search Bar */}
-                    <div className="relative">
-                      <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                      <Input
-                        placeholder="Search by title, handle, or description..."
-                        value={assignmentSearchTerm}
-                        onChange={(e) => setAssignmentSearchTerm(e.target.value)}
-                        className="pl-8 h-9 text-xs border-slate-200 focus-visible:ring-primary/20"
-                      />
+                    {/* Active Conflicts Alert Banner */}
+                    {activeConflicts.length > 0 && (
+                      <div className="p-3 rounded-lg border border-red-200 bg-red-50/90 text-red-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-xs animate-in fade-in">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold">
+                              {activeConflicts.length} Conflicting Scope Permission{activeConflicts.length > 1 ? "s" : ""} Detected!
+                            </p>
+                            <p className="text-[11px] text-red-700 leading-tight mt-0.5">
+                              Both City-Wide and Branch-Scoped privileges are selected for the same report. This will cause ambiguous policy enforcement.
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={handleAutoResolveConflicts}
+                          className="h-7 text-xs border-red-300 text-red-800 bg-white hover:bg-red-100 shrink-0 self-end sm:self-center font-semibold"
+                        >
+                          <Wand2 className="h-3 w-3 mr-1 text-red-600" />
+                          Auto-Resolve
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Instant Search Bar & Category Filter */}
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                        <Input
+                          placeholder="Search by title, handle, or description..."
+                          value={assignmentSearchTerm}
+                          onChange={(e) => setAssignmentSearchTerm(e.target.value)}
+                          className="pl-8 h-9 text-xs border-slate-200 focus-visible:ring-primary/20"
+                        />
+                      </div>
+
+                      {/* Filter by Category Selector */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                            <SelectTrigger className="h-8 text-xs bg-white border-slate-200 focus:ring-primary/20">
+                              <div className="flex items-center gap-1.5 truncate">
+                                <Filter className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                                <span className="truncate">
+                                  {categoryFilter === "all" ? "Filter by Category (All)" : categoryFilter}
+                                </span>
+                              </div>
+                            </SelectTrigger>
+                            <SelectContent className="max-h-[300px]">
+                              <SelectItem value="all" className="text-xs font-semibold">
+                                All Categories ({Object.keys(groupedPermissions).length})
+                              </SelectItem>
+                              {Object.entries(groupedPermissions).map(([cat, perms]) => (
+                                <SelectItem key={cat} value={cat} className="text-xs">
+                                  {cat} ({perms.length})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {categoryFilter !== "all" && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setCategoryFilter("all")}
+                            className="h-8 text-xs text-slate-500 hover:text-slate-900 px-2 shrink-0 flex items-center gap-1"
+                            title="Clear category filter"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline text-[11px]">Clear</span>
+                          </Button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Quick Scope Filter Chips */}
@@ -654,12 +862,12 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
                     </div>
                   </div>
 
-                  {/* Accordion List */}
+                  {/* Accordion List — collapsed by default, auto-opens when filters/search are active */}
                   <div className="max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                     <Accordion
                       type="multiple"
-                      defaultValue={Object.keys(groupedPermissions)}
-                      value={assignmentSearchTerm.trim() || scopeFilter !== "all" ? Object.keys(filteredAssignmentGroups) : undefined}
+                      defaultValue={[]}
+                      value={assignmentSearchTerm.trim() || scopeFilter !== "all" || categoryFilter !== "all" ? Object.keys(filteredAssignmentGroups) : undefined}
                       className="w-full space-y-2"
                     >
                       {Object.entries(filteredAssignmentGroups).map(([category, perms]) => {
@@ -762,7 +970,22 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
 
                     {Object.keys(filteredAssignmentGroups).length === 0 && (
                       <div className="p-8 text-center text-slate-500 text-xs border border-dashed rounded-md bg-slate-50">
-                        No permissions found matching current search or scope filters.
+                        <p>No permissions found matching current search, category, or scope filters.</p>
+                        {(categoryFilter !== "all" || scopeFilter !== "all" || assignmentSearchTerm.trim()) && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-2 text-xs h-7"
+                            onClick={() => {
+                              setCategoryFilter("all");
+                              setScopeFilter("all");
+                              setAssignmentSearchTerm("");
+                            }}
+                          >
+                            Clear All Filters
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -778,7 +1001,7 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
                         <span className="text-slate-400">All changes saved</span>
                       )}
                     </div>
-                    <Button onClick={handleSaveChanges} disabled={isSaving || !canManage} className="w-full sm:w-auto shadow-sm">
+                    <Button onClick={handleInitiateSave} disabled={isSaving || !canManage} className="w-full sm:w-auto shadow-sm">
                       {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                       Update Role Privileges
                     </Button>
@@ -815,18 +1038,65 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
               )}
             </CardHeader>
             <CardContent className="pt-6 flex-grow flex flex-col">
-              {/* Token Search Bar */}
-              <div className="mb-4 relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                <Input
-                  placeholder="Search token handle, title, or category..."
-                  value={tokenSearchTerm}
-                  onChange={(e) => {
-                    setTokenSearchTerm(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="pl-9 h-10 border-slate-200 focus-visible:ring-primary/20"
-                />
+              {/* Token Search Bar & Category Filter */}
+              <div className="mb-4 grid grid-cols-1 sm:grid-cols-12 gap-2">
+                <div className="relative sm:col-span-7">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+                  <Input
+                    placeholder="Search token handle, title, or category..."
+                    value={tokenSearchTerm}
+                    onChange={(e) => {
+                      setTokenSearchTerm(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="pl-9 h-10 border-slate-200 focus-visible:ring-primary/20"
+                  />
+                </div>
+                <div className="sm:col-span-5 flex items-center gap-1.5">
+                  <div className="flex-1">
+                    <Select
+                      value={tokenCategoryFilter}
+                      onValueChange={(val) => {
+                        setTokenCategoryFilter(val);
+                        setCurrentPage(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-10 text-xs bg-white border-slate-200 focus:ring-primary/20">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <Filter className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                          <span className="truncate">
+                            {tokenCategoryFilter === "all" ? "All Categories" : tokenCategoryFilter}
+                          </span>
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[300px]">
+                        <SelectItem value="all" className="text-xs font-semibold">
+                          All Categories
+                        </SelectItem>
+                        {CANONICAL_CATEGORIES.map((cat) => (
+                          <SelectItem key={cat} value={cat} className="text-xs">
+                            {cat}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {tokenCategoryFilter !== "all" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setTokenCategoryFilter("all");
+                        setCurrentPage(1);
+                      }}
+                      className="h-10 text-xs text-slate-500 hover:text-slate-900 px-2 shrink-0"
+                      title="Clear category filter"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
 
               {/* Tokens Table */}
@@ -1016,6 +1286,55 @@ export function RolesAndPermissionsView({ mode = "admin" }: RolesAndPermissionsV
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Role Impact & Diff Review Dialog */}
+      <RoleImpactDialog
+        open={impactDialogOpen}
+        onOpenChange={setImpactDialogOpen}
+        role={roles.find(r => r.id === parseInt(selectedRoleId, 10)) || null}
+        addedPermissions={diffAdded}
+        removedPermissions={diffRemoved}
+        affectedStaffCount={affectedStaffCount}
+        conflicts={activeConflicts.map(c => ({ global: c.permA.name, branch: c.permB.name }))}
+        isSaving={isSaving}
+        onConfirm={async (reason) => {
+          await handleSaveChanges(reason);
+          setImpactDialogOpen(false);
+        }}
+      />
+
+      {/* Role Cloner & Preset Archetypes Dialog */}
+      <CloneRoleDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        roles={roles}
+        permissions={permissions}
+        rolePermissions={rolePermissions}
+        currentRoleId={selectedRoleId || undefined}
+        onRoleCloned={(newRoleId) => {
+          setSelectedRoleId(String(newRoleId));
+        }}
+      />
+
+      {/* Role Matrix & Comparison Dialog */}
+      <CompareRolesDialog
+        open={compareDialogOpen}
+        onOpenChange={setCompareDialogOpen}
+        roles={roles}
+        permissions={permissions}
+        rolePermissions={rolePermissions}
+        defaultRoleAId={selectedRoleId || undefined}
+      />
+
+      {/* Role Templates JSON Export & Import Dialog */}
+      <RoleTemplateDialog
+        open={templateDialogOpen}
+        onOpenChange={setTemplateDialogOpen}
+        roles={roles}
+        permissions={permissions}
+        rolePermissions={rolePermissions}
+        canManage={canManage}
+      />
     </div>
   );
 }

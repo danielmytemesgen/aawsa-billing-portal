@@ -70,6 +70,8 @@ import {
   Bar,
   LineChart,
   Line,
+  AreaChart,
+  Area,
 } from 'recharts';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1706,14 +1708,30 @@ export default function AdminDashboardPage() {
             <div className="h-[300px]">
               {isClient && dynamicWaterUsageTrendData.length > 0 ? (
                 <ChartContainer config={chartConfig} className="w-full h-full">
-                    <LineChart data={dynamicWaterUsageTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <AreaChart data={dynamicWaterUsageTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="waterUsageGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="month" tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
                       <YAxis tickFormatter={(value) => `${value.toLocaleString()}`} tick={{ fontSize: 11, fontWeight: 500 }} axisLine={false} tickLine={false} />
                       <Tooltip content={<ChartTooltipContent />} />
                       <Legend />
-                      <Line type="monotone" dataKey="usage" name="Water Usage (m³)" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', r: 4 }} activeDot={{ r: 6, strokeWidth: 0 }} />
-                    </LineChart>
+                      <Area
+                        type="monotone"
+                        dataKey="usage"
+                        name="Water Usage (m³)"
+                        stroke="#3b82f6"
+                        strokeWidth={3}
+                        fillOpacity={1}
+                        fill="url(#waterUsageGradient)"
+                        dot={{ fill: '#3b82f6', r: 4 }}
+                        activeDot={{ r: 6, strokeWidth: 0 }}
+                      />
+                    </AreaChart>
                 </ChartContainer>
               ) : (
                 <div className="flex h-[300px] items-center justify-center text-xs text-muted-foreground italic">

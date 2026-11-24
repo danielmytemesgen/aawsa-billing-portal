@@ -1034,6 +1034,44 @@ export const PERMISSION_METADATA_REGISTRY: Record<string, PermissionMetadata> = 
     scope: 'master',
   },
 
+  // Call Center Operations
+  'callcenter:access': {
+    label: 'Access Call Center Module',
+    description: 'Access the AAWSA Call Center workspace and caller inquiry console.',
+    category: 'Customer Support & Help Desk',
+    scope: 'action',
+  },
+  'callcenter:view_all': {
+    label: 'View All Call Center Logs (City-Wide)',
+    description: 'Monitor caller interaction history across all authority branches.',
+    category: 'Customer Support & Help Desk',
+    scope: 'all',
+  },
+  'callcenter:view_branch': {
+    label: 'View Branch Call Center Logs',
+    description: 'Access call logs for customers assigned to the agent’s branch.',
+    category: 'Customer Support & Help Desk',
+    scope: 'branch',
+  },
+  'callcenter:log_call': {
+    label: 'Log Customer Telephone Interaction',
+    description: 'Record customer inquiries, caller identity, and resolution notes.',
+    category: 'Customer Support & Help Desk',
+    scope: 'action',
+  },
+  'callcenter:dispatch_sms': {
+    label: 'Dispatch On-Call Bill SMS',
+    description: 'Instantly resend bill details and payment reference SMS to caller.',
+    category: 'Customer Support & Help Desk',
+    scope: 'action',
+  },
+  'callcenter:supervisor': {
+    label: 'Call Center Supervisor & Operations',
+    description: 'Oversight of call queues, agent interactions, and ticket escalations.',
+    category: 'Customer Support & Help Desk',
+    scope: 'master',
+  },
+
   // Notifications & SMS
   'notifications_view': {
     label: 'View Notification Bell & Alerts',
@@ -1158,7 +1196,7 @@ export function getCanonicalCategory(rawCategory?: string | null, permissionName
     if (permissionName.startsWith('meter_change') || permissionName.startsWith('data_entry')) return 'Field Operations & Data Entry';
     if (permissionName.startsWith('staff_') || permissionName === 'permissions_view' || permissionName === 'roles_manage') return 'Staff & Access Management';
     if (permissionName.startsWith('branches_')) return 'Branch Management';
-    if (permissionName.startsWith('support:')) return 'Customer Support & Help Desk';
+    if (permissionName.startsWith('support:') || permissionName.startsWith('callcenter:')) return 'Customer Support & Help Desk';
     if (permissionName.startsWith('notifications') || permissionName.startsWith('sms_')) return 'Notifications & SMS';
     if (permissionName.startsWith('settings_') || permissionName.startsWith('tariffs_') || permissionName.startsWith('fault_codes') || permissionName.startsWith('promotions') || permissionName.startsWith('knowledge_base')) return 'System Settings & Policies';
   }

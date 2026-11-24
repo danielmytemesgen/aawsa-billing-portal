@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import { MoreHorizontal, Edit, Trash2 } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, LogOut, History, ShieldAlert } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -27,11 +27,21 @@ interface StaffTableProps {
   data: StaffMember[];
   onEdit: (staff: StaffMember) => void;
   onDelete: (staff: StaffMember) => void;
+  onRevokeSessions?: (staff: StaffMember) => void;
+  onViewHistory?: (staff: StaffMember) => void;
   canEdit: boolean;
   canDelete: boolean;
 }
 
-export function StaffTable({ data, onEdit, onDelete, canEdit, canDelete }: StaffTableProps) {
+export function StaffTable({
+  data,
+  onEdit,
+  onDelete,
+  onRevokeSessions,
+  onViewHistory,
+  canEdit,
+  canDelete,
+}: StaffTableProps) {
   if (data.length === 0) {
     return (
       <div className="mt-4 p-4 border rounded-md bg-muted/50 text-center text-muted-foreground">
@@ -40,7 +50,7 @@ export function StaffTable({ data, onEdit, onDelete, canEdit, canDelete }: Staff
     );
   }
 
-  const showActionsColumn = canEdit || canDelete;
+  const showActionsColumn = canEdit || canDelete || !!onRevokeSessions || !!onViewHistory;
 
   return (
     <div className="rounded-md border mt-4">
@@ -85,10 +95,22 @@ export function StaffTable({ data, onEdit, onDelete, canEdit, canDelete }: Staff
                       {canEdit && (
                         <DropdownMenuItem onClick={() => onEdit(staff)}>
                           <Edit className="mr-2 h-4 w-4" />
-                          Edit
+                          Edit Staff
                         </DropdownMenuItem>
                       )}
-                      {canEdit && canDelete && <DropdownMenuSeparator />}
+                      {onViewHistory && (
+                        <DropdownMenuItem onClick={() => onViewHistory(staff)}>
+                          <History className="mr-2 h-4 w-4 text-blue-600" />
+                          Role & Access History
+                        </DropdownMenuItem>
+                      )}
+                      {onRevokeSessions && (
+                        <DropdownMenuItem onClick={() => onRevokeSessions(staff)} className="text-amber-700 focus:text-amber-700 focus:bg-amber-50">
+                          <LogOut className="mr-2 h-4 w-4 text-amber-600" />
+                          Revoke Sessions (Force Logout)
+                        </DropdownMenuItem>
+                      )}
+                      {(canEdit || onViewHistory || onRevokeSessions) && canDelete && <DropdownMenuSeparator />}
                       {canDelete && (
                         <DropdownMenuItem onClick={() => onDelete(staff)} className="text-destructive focus:text-destructive focus:bg-destructive/10">
                           <Trash2 className="mr-2 h-4 w-4" />

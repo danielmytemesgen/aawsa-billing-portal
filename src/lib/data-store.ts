@@ -72,6 +72,8 @@ import {
   updateNotificationAction,
   getAllRolesAction,
   createRoleAction,
+  deleteRoleAction,
+  updateRoleAction,
   getAllPermissionsAction,
   createPermissionAction,
   updatePermissionAction,
@@ -3162,6 +3164,45 @@ export const createRole = async (roleName: string): Promise<StoreOperationResult
   }
   console.error("DataStore: Failed to create role. Error:", JSON.stringify(error, null, 2));
   return { success: false, message: error?.message || "Failed to create role.", error };
+};
+
+export const deleteRole = async (roleId: number): Promise<StoreOperationResult<void>> => {
+  const { error } = await deleteRoleAction(roleId);
+  if (!error) {
+    roles = roles.filter(r => r.id !== roleId);
+    notifyRoleListeners();
+    try {
+      await addNotification({
+        title: "Role Deleted",
+        message: `A system role has been permanently removed.`,
+        senderName: "System",
+        targetBranchId: null,
+      });
+    } catch {}
+    return { success: true };
+  }
+  return {
+    success: false,
+    message: (error as any)?.message || "Failed to delete role.",
+    error,
+  };
+};
+
+export const updateRole = async (
+  roleId: number,
+  newName: string
+): Promise<StoreOperationResult<DomainRole>> => {
+  const { data, error } = await updateRoleAction(roleId, newName);
+  if (data && !error) {
+    roles = roles.map(r => r.id === roleId ? { ...r, role_name: newName } : r);
+    notifyRoleListeners();
+    return { success: true, data };
+  }
+  return {
+    success: false,
+    message: (error as any)?.message || "Failed to update role.",
+    error,
+  };
 };
 
 export const deletePermission = async (id: number): Promise<StoreOperationResult<void>> => {

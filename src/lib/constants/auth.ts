@@ -214,6 +214,14 @@ export const PERMISSIONS = {
     INVOICE_EXPORT_EXCEL: 'invoice:export_excel',       // Can export invoice data to Excel
     INVOICE_BATCH: 'invoice:batch',                     // Can access Batch Invoices tab
     INVOICE_CUSTOMER_STATEMENT: 'invoice:customer_statement', // Can access Customer Statements tab
+
+    // Call Center Operations
+    CALLCENTER_ACCESS: 'callcenter:access',
+    CALLCENTER_VIEW_ALL: 'callcenter:view_all',
+    CALLCENTER_VIEW_BRANCH: 'callcenter:view_branch',
+    CALLCENTER_LOG_CALL: 'callcenter:log_call',
+    CALLCENTER_DISPATCH_SMS: 'callcenter:dispatch_sms',
+    CALLCENTER_SUPERVISOR: 'callcenter:supervisor',
 } as const;
 
 export const BRANCHES = {

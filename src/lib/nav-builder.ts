@@ -30,7 +30,8 @@ export const buildSidebarNavItems = (user: UserProfile | null, options?: { pendi
     PERMISSIONS.METER_READINGS_VIEW_ALL,
     PERMISSIONS.REPORTS_GENERATE_ALL,
     PERMISSIONS.ROUTES_VIEW_ALL,
-    PERMISSIONS.SUPPORT_VIEW_ALL
+    PERMISSIONS.SUPPORT_VIEW_ALL,
+    PERMISSIONS.CALLCENTER_VIEW_ALL
   );
   const isAdmin = isGlobalManager;
 
@@ -353,6 +354,36 @@ export const buildSidebarNavItems = (user: UserProfile | null, options?: { pendi
         href: hasPermission(PERMISSIONS.SUPPORT_VIEW_ALL) ? "/admin/support" : "/staff/support",
         iconName: "LifeBuoy",
       }]
+    });
+  }
+
+  // Call Center
+  const canAccessCallCenter = hasAny(
+    PERMISSIONS.CALLCENTER_ACCESS,
+    PERMISSIONS.CALLCENTER_VIEW_ALL,
+    PERMISSIONS.CALLCENTER_VIEW_BRANCH,
+    PERMISSIONS.CALLCENTER_LOG_CALL,
+    PERMISSIONS.CALLCENTER_SUPERVISOR,
+    PERMISSIONS.CALLCENTER_DISPATCH_SMS
+  );
+
+  if (canAccessCallCenter) {
+    const callCenterBasePath = hasPermission(PERMISSIONS.CALLCENTER_VIEW_ALL) ? "/admin/call-center" : "/staff/call-center";
+    navItems.push({
+      title: "Call Center",
+      iconName: "Headphones",
+      items: [
+        {
+          title: "Caller 360° Console",
+          href: callCenterBasePath,
+          iconName: "PhoneCall",
+        },
+        {
+          title: "Call Logs & History",
+          href: `${callCenterBasePath}/logs`,
+          iconName: "History",
+        },
+      ]
     });
   }
 

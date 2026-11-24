@@ -17,7 +17,7 @@ export const dbGetSpatialRecord = async (entityId: string, entityType: 'individu
 export const dbUpsertSpatialRecord = async (entityId: string, entityType: 'individual_customer' | 'bulk_meter', data: any, client?: any) => {
     const { xCoordinate, yCoordinate, zCoordinate } = data;
     const qFunc = client ? client.query.bind(client) : query;
-    
+
     // Check if exists
     const checkSql = 'SELECT id FROM spatial_records WHERE entity_id = $1 AND entity_type = $2';
     const checkRes = await qFunc(checkSql, [entityId, entityType]);
@@ -79,16 +79,16 @@ export const dbGetSessionSettings = async () => {
     `;
     const rows: any = await query(sql);
     const row = rows[0] ?? null;
-    
+
     const sysDuration = await dbGetSessionSetting('session_duration_seconds');
     const sysWarning = await dbGetSessionSetting('session_warning_seconds');
 
     return {
-        session_duration_seconds: row?.session_duration_seconds != null 
-            ? String(row.session_duration_seconds) 
+        session_duration_seconds: row?.session_duration_seconds != null
+            ? String(row.session_duration_seconds)
             : (sysDuration ?? undefined),
-        session_warning_seconds: row?.warning_before_expiry_seconds != null 
-            ? String(row.warning_before_expiry_seconds) 
+        session_warning_seconds: row?.warning_before_expiry_seconds != null
+            ? String(row.warning_before_expiry_seconds)
             : (sysWarning ?? undefined),
     } as Record<string, string>;
 };
@@ -493,7 +493,7 @@ export const dbCreateIndividualCustomer = async (customer: any, client?: any) =>
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO individual_customers (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
     const params = keys.map(k => cleanCust[k]);
-    
+
     if (client) {
         const res = await client.query(sql, params);
         return res.rows[0] || cleanCust;
@@ -511,7 +511,7 @@ export const dbUpdateCustomer = async (customerKeyNumber: string, customer: any,
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
     const sql = `UPDATE individual_customers SET ${setClause} WHERE LOWER(TRIM("customerKeyNumber")) = LOWER(TRIM($${keys.length + 1})) RETURNING *`;
     const params = [...keys.map(k => cleanCust[k]), customerKeyNumber];
-    
+
     if (client) {
         const res = await client.query(sql, params);
         return res.rows[0] ?? null;
@@ -658,7 +658,7 @@ export const dbCreateBulkMeter = async (bulkMeter: any, client?: any) => {
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
     const sql = `INSERT INTO bulk_meters (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
     const params = keys.map(k => cleanBm[k]);
-    
+
     if (client) {
         const res = await client.query(sql, params);
         return res.rows[0] || cleanBm;
@@ -818,15 +818,15 @@ export const dbUpdateStaffMember = async (email: string, staffMember: any, branc
     const keys = Object.keys(toUpdate);
     if (keys.length === 0) return null;
     const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
-    
+
     let sql = `UPDATE staff_members SET ${setClause} WHERE LOWER(TRIM(email)) = LOWER(TRIM($${keys.length + 1}))`;
     const params = [...keys.map(k => toUpdate[k]), email];
-    
+
     if (branchId) {
         sql += ` AND branch_id = $${keys.length + 2}`;
         params.push(branchId);
     }
-    
+
     sql += ' RETURNING *';
     const rows = await query(sql, params);
     const res = rows[0] ?? null;
@@ -846,7 +846,7 @@ export const dbDeleteStaffMember = async (email: string, deletedBy?: string, bra
             selectSql += ' AND branch_id = $2';
             selectParams.push(branchId);
         }
-        
+
         const staffRes = await client.query(selectSql, selectParams);
         const staff = staffRes.rows[0];
         if (!staff) return false;
@@ -1023,7 +1023,7 @@ export const dbGetInvoiceBills = async (options: {
 
 
 
-export const dbGetAllBills = async (options?: { branchId?: string; readerId?: string; excludeUnfinalized?: boolean }) => {
+export const dbGetAllBills = async (options?: { branchId?: string; readerId?: string; excludeUnfinalized?: boolean; limit?: number; offset?: number }) => {
     let sql = `
         SELECT b.*,
                ic."customerType" as customer_type,
@@ -1056,6 +1056,17 @@ export const dbGetAllBills = async (options?: { branchId?: string; readerId?: st
 
     if (whereClauses.length > 0) {
         sql += ' WHERE ' + whereClauses.join(' AND ');
+    }
+
+    sql += ' ORDER BY b.created_at DESC';
+    const limit = options?.limit ?? 10000;
+    if (limit > 0) {
+        sql += ` LIMIT $${paramIndex++}`;
+        params.push(limit);
+    }
+    if (options?.offset) {
+        sql += ` OFFSET $${paramIndex++}`;
+        params.push(options.offset);
     }
 
     return await query(sql, params);
@@ -1191,7 +1202,7 @@ export const dbGetBillsStatusCounts = async (options: {
 
     sql += ` GROUP BY b.status`;
     const rows: any = await query(sql, params);
-    
+
     const counts: Record<string, number> = {
         Draft: 0,
         Pending: 0,
@@ -1916,12 +1927,12 @@ export const dbGetAllIndividualCustomerReadings = async (branchId?: string, read
         WHERE r.deleted_at IS NULL
     `;
     const params: any[] = [];
-    
+
     if (branchId) {
         params.push(branchId);
         sql += ` AND ic.branch_id = $${params.length}`;
     }
-    
+
     if (readerId) {
         params.push(readerId);
         sql += ` AND ro.reader_id = $${params.length}`;
@@ -2029,12 +2040,12 @@ export const dbGetAllBulkMeterReadings = async (branchId?: string, readerId?: st
         WHERE r.deleted_at IS NULL
     `;
     const params: any[] = [];
-    
+
     if (branchId) {
         params.push(branchId);
         sql += ` AND bm.branch_id = $${params.length}`;
     }
-    
+
     if (readerId) {
         params.push(readerId);
         sql += ` AND ro.reader_id = $${params.length}`;
@@ -2500,7 +2511,7 @@ export const dbCreateBulkMeterReading = async (reading: any, client?: any) => {
         const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
         const sql = `INSERT INTO bulk_meter_readings (${keys.map(k => `"${k}"`).join(',')}) VALUES (${placeholders}) RETURNING *`;
         const params = keys.map(k => safeFields[k]);
-        
+
         const res = await executor.query(sql, params);
         return (res.rows ? res.rows[0] : res[0]) || reading;
     } catch (error) {
@@ -2613,7 +2624,7 @@ export const dbGetMeterReadings = async (branchId?: string) => {
     return [...individualWithType, ...bulkWithType];
 };
 
-export const dbGetAllPayments = async (branchId?: string) => {
+export const dbGetAllPayments = async (branchId?: string, limit: number = 10000) => {
     if (branchId) {
         return await query(`
             SELECT p.* FROM payments p
@@ -2621,9 +2632,16 @@ export const dbGetAllPayments = async (branchId?: string) => {
             LEFT JOIN individual_customers ic ON p.individual_customer_id = ic."customerKeyNumber"
             WHERE p.deleted_at IS NULL 
             AND (b.branch_id = $1 OR ic.branch_id = $1)
-        `, [branchId]);
+            ORDER BY p.created_at DESC
+            LIMIT $2
+        `, [branchId, limit]);
     }
-    return await query('SELECT * FROM payments WHERE deleted_at IS NULL');
+    return await query(`
+        SELECT * FROM payments 
+        WHERE deleted_at IS NULL 
+        ORDER BY created_at DESC 
+        LIMIT $1
+    `, [limit]);
 };
 
 const normalizePaymentMethod = (rawMethod?: string | null): string | null => {
@@ -2631,7 +2649,7 @@ const normalizePaymentMethod = (rawMethod?: string | null): string | null => {
     if (!cleaned) return null;
 
     const normalized = cleaned.replace(/[_\s]+/g, ' ').toLowerCase();
-    const validChannels: {[key: string]: string} = {
+    const validChannels: { [key: string]: string } = {
         'cbe': 'Bank Transfer',
         'bank transfer': 'Bank Transfer',
         'bank_transfer': 'Bank Transfer',
@@ -2824,6 +2842,27 @@ export const dbCreateRole = async (role: any) => {
     return rows[0] || role;
 };
 
+export const dbDeleteRole = async (id: number) => {
+    await query('DELETE FROM roles WHERE id = $1', [id]);
+    return true;
+};
+
+export const dbUpdateRole = async (id: number, roleName: string) => {
+    const rows = await query(
+        'UPDATE roles SET role_name = $1 WHERE id = $2 RETURNING *',
+        [roleName, id]
+    );
+    return (rows as any[])[0] ?? null;
+};
+
+export const dbCountStaffByRoleId = async (roleId: number): Promise<number> => {
+    const rows: any = await query(
+        `SELECT COUNT(*) as count FROM staff_members WHERE role_id = $1 AND deleted_at IS NULL`,
+        [roleId]
+    );
+    return parseInt(rows[0]?.count ?? '0', 10);
+};
+
 export const dbGetAllPermissions = async () => await query('SELECT * FROM permissions');
 
 export const dbCreatePermission = async (permission: any) => {
@@ -2876,7 +2915,7 @@ export const dbRpcUpdateRolePermissions = async (roleId: number, permissionIds: 
 
 /** Fetches all tariff rows, served from a 10-minute server-side cache. */
 export const dbGetAllTariffs = async () =>
-  getCachedTariffs(() => query('SELECT * FROM tariffs ORDER BY effective_date DESC'));
+    getCachedTariffs(() => query('SELECT * FROM tariffs ORDER BY effective_date DESC'));
 
 
 export const dbGetTariffByTypeAndDate = async (customerType: string, date: string) => {
@@ -2985,45 +3024,112 @@ export const dbDeleteKnowledgeBaseArticle = async (id: number, deletedBy?: strin
     });
 };
 
-export const dbGetAllSecurityLogs = async (page: number = 1, pageSize: number = 10, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc', branchName?: string) => {
+export const dbGetAllSecurityLogs = async (
+    page: number = 1,
+    pageSize: number = 10,
+    sortBy: string = 'created_at',
+    sortOrder: 'asc' | 'desc' = 'desc',
+    branchName?: string,
+    search?: string,
+    severity?: string,
+    dateRange?: string
+) => {
     try {
         const offset = (page - 1) * pageSize;
-        const validSortColumns = ['id', 'created_at', 'event', 'staff_email', 'ip_address'];
+        const validSortColumns = ['id', 'created_at', 'event', 'staff_email', 'ip_address', 'branch_name', 'severity'];
         const validatedSortBy = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
         const validatedSortOrder = sortOrder === 'asc' ? 'ASC' : 'DESC';
 
-        let sql = `
-            SELECT id, created_at, event, branch_name, staff_email, customer_key_number, ip_address, severity, details
+        let whereClause = ' WHERE 1=1';
+        const filterParams: any[] = [];
+        let filterIndex = 1;
+
+        if (branchName) {
+            whereClause += ` AND branch_name = $${filterIndex++}`;
+            filterParams.push(branchName);
+        }
+
+        if (severity && severity !== 'all') {
+            whereClause += ` AND LOWER(severity) = $${filterIndex++}`;
+            filterParams.push(severity.toLowerCase());
+        }
+
+        if (search && search.trim()) {
+            whereClause += ` AND (event ILIKE $${filterIndex} OR staff_email ILIKE $${filterIndex} OR ip_address ILIKE $${filterIndex} OR branch_name ILIKE $${filterIndex})`;
+            filterParams.push(`%${search.trim()}%`);
+            filterIndex++;
+        }
+
+        if (dateRange && dateRange !== 'all') {
+            if (dateRange === 'today') {
+                whereClause += ` AND created_at >= CURRENT_DATE`;
+            } else if (dateRange === '24h') {
+                whereClause += ` AND created_at >= NOW() - INTERVAL '24 hours'`;
+            } else if (dateRange === '7d') {
+                whereClause += ` AND created_at >= NOW() - INTERVAL '7 days'`;
+            } else if (dateRange === '30d') {
+                whereClause += ` AND created_at >= NOW() - INTERVAL '30 days'`;
+            }
+        }
+
+        const queryParams = [...filterParams, offset, pageSize];
+        const offsetParamIdx = filterParams.length + 1;
+        const limitParamIdx = filterParams.length + 2;
+
+        const sql = `
+            SELECT id, created_at, event, branch_name, staff_email, ip_address, severity, details
             FROM security_logs
-            WHERE 1=1
+            ${whereClause}
+            ORDER BY ${validatedSortBy} ${validatedSortOrder}
+            LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}
         `;
-        const params: any[] = [offset, pageSize];
-        let paramIndex = 3;
 
+        const countSql = `SELECT COUNT(*) as total FROM security_logs ${whereClause}`;
+
+        // Summary metrics query (scoped to branchName if set)
+        let summaryWhere = ' WHERE 1=1';
+        const summaryParams: any[] = [];
         if (branchName) {
-            sql += ` AND branch_name = $${paramIndex++}`;
-            params.push(branchName);
+            summaryWhere += ' AND branch_name = $1';
+            summaryParams.push(branchName);
         }
 
-        sql += ` ORDER BY ${validatedSortBy} ${validatedSortOrder} LIMIT $2 OFFSET $1`;
-        
-        let countSql = `SELECT COUNT(*) as total FROM security_logs WHERE 1=1`;
-        const countParams: any[] = [];
-        if (branchName) {
-            countSql += ` AND branch_name = $1`;
-            countParams.push(branchName);
-        }
+        const summarySql = `
+            SELECT 
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE LOWER(severity) = 'critical') as critical_count,
+                COUNT(*) FILTER (WHERE LOWER(severity) = 'warning') as warning_count,
+                COUNT(*) FILTER (WHERE LOWER(severity) = 'info' OR severity IS NULL) as info_count,
+                COUNT(DISTINCT staff_email) FILTER (WHERE staff_email IS NOT NULL AND staff_email != 'Anonymous') as staff_count,
+                COUNT(DISTINCT ip_address) FILTER (WHERE ip_address IS NOT NULL AND ip_address != 'unknown') as ip_count
+            FROM security_logs
+            ${summaryWhere}
+        `;
 
-        const logs = await query(sql, params);
-        const totalResult: any = await query(countSql, countParams);
-        const total = totalResult[0].total;
+        const [logs, totalResult, summaryResult]: [any, any, any] = await Promise.all([
+            query(sql, queryParams),
+            query(countSql, filterParams),
+            query(summarySql, summaryParams)
+        ]);
+
+        const total = parseInt(totalResult[0]?.total ?? '0', 10);
+        const sumRow = summaryResult[0] || {};
+        const summary = {
+            total: parseInt(sumRow.total ?? '0', 10),
+            critical_count: parseInt(sumRow.critical_count ?? '0', 10),
+            warning_count: parseInt(sumRow.warning_count ?? '0', 10),
+            info_count: parseInt(sumRow.info_count ?? '0', 10),
+            staff_count: parseInt(sumRow.staff_count ?? '0', 10),
+            ip_count: parseInt(sumRow.ip_count ?? '0', 10),
+        };
 
         return {
             logs,
             total,
             page,
             pageSize,
-            lastPage: Math.ceil(total / pageSize),
+            lastPage: Math.max(1, Math.ceil(total / pageSize)),
+            summary,
         };
     } catch (error) {
         console.error('Error in dbGetAllSecurityLogs:', error);
@@ -3045,6 +3151,25 @@ export const dbUpdateSecurityLog = async (id: string, log: { event?: string; bra
 export const dbDeleteSecurityLog = async (id: string) => {
     await query('DELETE FROM security_logs WHERE id = $1', [id]);
     return true;
+};
+
+export const dbDeleteMultipleSecurityLogs = async (ids: string[]) => {
+    if (!ids || ids.length === 0) return true;
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    await query(`DELETE FROM security_logs WHERE id IN (${placeholders})`, ids);
+    return true;
+};
+
+export const dbPruneSecurityLogs = async (olderThanDays: number, severity?: string) => {
+    let sql = `DELETE FROM security_logs WHERE created_at < NOW() - ($1 || ' days')::INTERVAL`;
+    const params: any[] = [olderThanDays];
+    if (severity && severity !== 'all') {
+        sql += ` AND LOWER(severity) = $2`;
+        params.push(severity.toLowerCase());
+    }
+    sql += ` RETURNING id`;
+    const rows: any = await query(sql, params);
+    return rows.length;
 };
 
 export const dbLogSecurityEvent = async (event: string, staff_email?: string, branch_name?: string, ipAddress?: string, severity: 'info' | 'warning' | 'critical' = 'info', details: any = {}, customer_key_number?: string) => {
@@ -3080,10 +3205,122 @@ export const dbLogSecurityEvent = async (event: string, staff_email?: string, br
 
         const sql = 'INSERT INTO security_logs (event, staff_email, branch_name, ip_address, severity, details, customer_key_number) VALUES ($1, $2, $3, $4, $5, $6, $7)';
         await query(sql, [event, staff_email, branch_name, ip_address, dbSeverity, JSON.stringify(details), customer_key_number]);
+
+        // Automated Security Alerting: Dispatch instant alert notification for critical incidents
+        if (dbSeverity === 'critical') {
+            try {
+                await dbCreateNotification({
+                    title: `🚨 CRITICAL SECURITY ALERT: ${event}`,
+                    message: `Critical security anomaly detected. IP: ${ip_address}, Actor: ${staff_email || 'Unauthenticated/System'}. Event: ${event}.`,
+                    sender_name: 'AAWSA SIEM Security Guard'
+                });
+            } catch (alertErr) {
+                console.warn('Could not dispatch critical security alert notification:', alertErr);
+            }
+        }
+
         return { success: true };
     } catch (error) {
         console.error('Error logging security event:', error);
         return { success: false, message: 'Failed to log security event' };
+    }
+};
+
+// =====================================================
+// Blocked / Quarantined IPs Management
+// =====================================================
+
+export const dbEnsureBlockedIpsTable = async () => {
+    try {
+        await query(`
+            CREATE TABLE IF NOT EXISTS blocked_ips (
+                id SERIAL PRIMARY KEY,
+                ip_address TEXT UNIQUE NOT NULL,
+                reason TEXT,
+                blocked_by TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        `);
+    } catch (err) {
+        console.warn('Could not ensure blocked_ips table:', err);
+    }
+};
+
+export const dbGetBlockedIps = async () => {
+    await dbEnsureBlockedIpsTable();
+    try {
+        const rows = await query('SELECT * FROM blocked_ips ORDER BY created_at DESC');
+        return rows || [];
+    } catch (e) {
+        console.error('Error fetching blocked IPs:', e);
+        return [];
+    }
+};
+
+export const dbBlockIp = async (ip_address: string, reason: string = 'Security anomaly / Manual quarantine', blocked_by: string = 'Security Admin') => {
+    await dbEnsureBlockedIpsTable();
+    const cleanIp = (ip_address || '').trim();
+    if (!cleanIp) throw new Error('IP address is required');
+
+    const sql = `
+        INSERT INTO blocked_ips (ip_address, reason, blocked_by, created_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (ip_address)
+        DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by, created_at = NOW()
+        RETURNING *
+    `;
+    const rows: any = await query(sql, [cleanIp, reason, blocked_by]);
+    return rows[0];
+};
+
+export const dbUnblockIp = async (ip_address: string) => {
+    await dbEnsureBlockedIpsTable();
+    const cleanIp = (ip_address || '').trim();
+    await query('DELETE FROM blocked_ips WHERE ip_address = $1', [cleanIp]);
+    return true;
+};
+
+export const dbIsIpBlocked = async (ip_address: string): Promise<boolean> => {
+    await dbEnsureBlockedIpsTable();
+    const cleanIp = (ip_address || '').trim();
+    if (!cleanIp) return false;
+    const rows = await query('SELECT id FROM blocked_ips WHERE ip_address = $1 LIMIT 1', [cleanIp]);
+    return rows && rows.length > 0;
+};
+
+// =====================================================
+// Staff Role & Access Audit Trail
+// =====================================================
+
+export const dbGetStaffRoleAuditTrail = async (staffEmail: string) => {
+    try {
+        const email = (staffEmail || '').trim();
+        if (!email) return [];
+
+        const sql = `
+            SELECT id, created_at, event, branch_name, staff_email, ip_address, severity, details
+            FROM security_logs
+            WHERE (
+                LOWER(staff_email) = LOWER($1)
+                OR details->>'staff_email' ILIKE $1
+                OR details->>'email' ILIKE $1
+                OR event ILIKE '%' || $1 || '%'
+            )
+            AND (
+                event ILIKE '%role%'
+                OR event ILIKE '%staff%'
+                OR details->>'action' = 'role_change'
+                OR details->>'action' = 'staff_update'
+                OR details->>'action' = 'staff_created'
+            )
+            ORDER BY created_at DESC
+            LIMIT 50
+        `;
+        const rows = await query(sql, [email]);
+        return rows || [];
+    } catch (err) {
+        console.error('Error fetching staff role audit trail:', err);
+        return [];
     }
 };
 
@@ -3335,6 +3572,25 @@ export const dbRevokeOtherStaffSessions = async (staffId: string, currentSession
     }
     sql += ' RETURNING id';
     const rows: any = await query(sql, params);
+    return rows ?? [];
+};
+
+/**
+ * Revokes all active sessions for a staff member across any device (Force Logout).
+ */
+export const dbRevokeAllStaffSessions = async (staffIdentifier: string) => {
+    const idOrEmail = (staffIdentifier || '').trim();
+    if (!idOrEmail) return [];
+
+    const sql = `
+        UPDATE staff_sessions
+        SET logout_time = now(),
+            duration_seconds = EXTRACT(EPOCH FROM (now() - login_time))::int,
+            session_end_reason = 'revoked'
+        WHERE (staff_id = $1 OR LOWER(staff_email) = LOWER($1)) AND logout_time IS NULL
+        RETURNING id
+    `;
+    const rows: any = await query(sql, [idOrEmail]);
     return rows ?? [];
 };
 
@@ -4230,7 +4486,7 @@ export const dbGetLoginHeroSettings = async () => {
         if (map['login_hero_styles']) {
             try {
                 parsedStyles = JSON.parse(map['login_hero_styles']);
-            } catch {}
+            } catch { }
         }
         return {
             title: map['login_hero_title'] ?? 'Modernizing',
@@ -4437,47 +4693,47 @@ export const dbBatchInsertBills = async (bills: any[], client?: any) => {
     // Explicit types are REQUIRED for unnest() â€” without them PostgreSQL
     // cannot resolve the overload when the array contains only null values.
     const columnDefs: { name: string; pgType: string }[] = [
-        { name: 'id',                       pgType: 'uuid' },
-        { name: 'BILLKEY',                  pgType: 'text' },
-        { name: 'CUSTOMERKEY',              pgType: 'text' },
-        { name: 'CUSTOMERNAME',             pgType: 'text' },
-        { name: 'CUSTOMERTIN',              pgType: 'text' },
-        { name: 'CUSTOMERBRANCH',           pgType: 'text' },
-        { name: 'REASON',                   pgType: 'text' },
-        { name: 'CURRREAD',                 pgType: 'numeric' },
-        { name: 'PREVREAD',                 pgType: 'numeric' },
-        { name: 'CONS',                     pgType: 'numeric' },
-        { name: 'TOTALBILLAMOUNT',          pgType: 'numeric' },
-        { name: 'THISMONTHBILLAMT',         pgType: 'numeric' },
-        { name: 'OUTSTANDINGAMT',           pgType: 'numeric' },
-        { name: 'PENALTYAMT',              pgType: 'numeric' },
-        { name: 'DRACCTNO',                pgType: 'text' },
-        { name: 'CRACCTNO',                pgType: 'text' },
-        { name: 'individual_customer_id',  pgType: 'text' },
-        { name: 'bill_period_start_date',  pgType: 'date' },
-        { name: 'bill_period_end_date',    pgType: 'date' },
-        { name: 'month_year',              pgType: 'text' },
-        { name: 'difference_usage',        pgType: 'numeric' },
-        { name: 'base_water_charge',       pgType: 'numeric' },
-        { name: 'sewerage_charge',         pgType: 'numeric' },
-        { name: 'maintenance_fee',         pgType: 'numeric' },
-        { name: 'sanitation_fee',          pgType: 'numeric' },
-        { name: 'meter_rent',              pgType: 'numeric' },
+        { name: 'id', pgType: 'uuid' },
+        { name: 'BILLKEY', pgType: 'text' },
+        { name: 'CUSTOMERKEY', pgType: 'text' },
+        { name: 'CUSTOMERNAME', pgType: 'text' },
+        { name: 'CUSTOMERTIN', pgType: 'text' },
+        { name: 'CUSTOMERBRANCH', pgType: 'text' },
+        { name: 'REASON', pgType: 'text' },
+        { name: 'CURRREAD', pgType: 'numeric' },
+        { name: 'PREVREAD', pgType: 'numeric' },
+        { name: 'CONS', pgType: 'numeric' },
+        { name: 'TOTALBILLAMOUNT', pgType: 'numeric' },
+        { name: 'THISMONTHBILLAMT', pgType: 'numeric' },
+        { name: 'OUTSTANDINGAMT', pgType: 'numeric' },
+        { name: 'PENALTYAMT', pgType: 'numeric' },
+        { name: 'DRACCTNO', pgType: 'text' },
+        { name: 'CRACCTNO', pgType: 'text' },
+        { name: 'individual_customer_id', pgType: 'text' },
+        { name: 'bill_period_start_date', pgType: 'date' },
+        { name: 'bill_period_end_date', pgType: 'date' },
+        { name: 'month_year', pgType: 'text' },
+        { name: 'difference_usage', pgType: 'numeric' },
+        { name: 'base_water_charge', pgType: 'numeric' },
+        { name: 'sewerage_charge', pgType: 'numeric' },
+        { name: 'maintenance_fee', pgType: 'numeric' },
+        { name: 'sanitation_fee', pgType: 'numeric' },
+        { name: 'meter_rent', pgType: 'numeric' },
         { name: 'balance_carried_forward', pgType: 'numeric' },
-        { name: 'amount_paid',             pgType: 'numeric' },
-        { name: 'due_date',                pgType: 'date' },
-        { name: 'payment_status',          pgType: 'text' },
-        { name: 'status',                  pgType: 'text' },
-        { name: 'bill_number',             pgType: 'text' },
-        { name: 'notes',                   pgType: 'text' },
-        { name: 'vat_amount',              pgType: 'numeric' },
-        { name: 'additional_fees_charge',          pgType: 'numeric' },
-        { name: 'additional_fees_breakdown',       pgType: 'jsonb' },
-        { name: 'debit_30',                pgType: 'numeric' },
-        { name: 'debit_30_60',             pgType: 'numeric' },
-        { name: 'debit_60',                pgType: 'numeric' },
-        { name: 'branch_id',               pgType: 'uuid' },
-        { name: 'snapshot_data',           pgType: 'jsonb' },
+        { name: 'amount_paid', pgType: 'numeric' },
+        { name: 'due_date', pgType: 'date' },
+        { name: 'payment_status', pgType: 'text' },
+        { name: 'status', pgType: 'text' },
+        { name: 'bill_number', pgType: 'text' },
+        { name: 'notes', pgType: 'text' },
+        { name: 'vat_amount', pgType: 'numeric' },
+        { name: 'additional_fees_charge', pgType: 'numeric' },
+        { name: 'additional_fees_breakdown', pgType: 'jsonb' },
+        { name: 'debit_30', pgType: 'numeric' },
+        { name: 'debit_30_60', pgType: 'numeric' },
+        { name: 'debit_60', pgType: 'numeric' },
+        { name: 'branch_id', pgType: 'uuid' },
+        { name: 'snapshot_data', pgType: 'jsonb' },
     ];
 
     const colNames = columnDefs.map(c => `"${c.name}"`).join(', ');
@@ -4615,7 +4871,7 @@ export const dbEnsurePaymentColumnsExist = async () => {
             { name: 'walk_order', def: 'integer' },
             { name: 'meter_key', def: 'text' },
         ];
-        
+
         for (const col of columns) {
             try {
                 await query(`ALTER TABLE bills ADD COLUMN IF NOT EXISTS ${col.name} ${col.def}`);
@@ -5142,7 +5398,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
             const existingPaymentStatus = String(targetBill.payment_status || '').trim().toLowerCase();
             const existingReconStatus = String(targetBill.reconciliation_status || '').trim().toLowerCase();
             const existingBankRef = String(targetBill.bank_ref || '').trim();
-            
+
             // CSV is the source of truth â€” allow overwriting even if already paid & reconciled.
             if (existingPaymentStatus === 'paid' && existingReconStatus === 'reconciled') {
                 console.log(`Row ${rowNum} - Overwriting already paid+reconciled bill "${billIdent}":`, {
@@ -5250,22 +5506,22 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 continue;
             }
 
-            const amountPaid = rec.amount !== undefined && !isNaN(Number(rec.amount)) 
-                ? Number(rec.amount) 
+            const amountPaid = rec.amount !== undefined && !isNaN(Number(rec.amount))
+                ? Number(rec.amount)
                 : Number(targetBill.TOTALBILLAMOUNT || targetBill.amount_paid || 0);
 
             const paymentDate = rec.paymentDate ? new Date(rec.paymentDate) : new Date();
             const validPaymentDate = isNaN(paymentDate.getTime()) ? new Date() : paymentDate;
             const reconStatus = rec.reconciliationStatus?.trim() || targetBill.reconciliation_status || 'Not reconciled';
-            
+
             // Map payment channel to valid enum values: Cash, Bank Transfer, Mobile Money, Online Payment, Other
             const rawChannel = rec.paymentChannel?.trim() || targetBill.payment_channel || 'Bank Transfer';
             const channel = normalizePaymentMethod(rawChannel) || 'Bank Transfer';
-            
+
             const bankRef = rec.bankRef?.trim() || targetBill.bank_ref || null;
 
             const rawBranchName = rec.branch?.trim() || targetBill.CUSTOMERBRANCH || '';
-            
+
             console.log(`[CSV] Row ${rowNum} - Found bill: ${billIdent} (id: ${targetBill.id})`);
             console.log(`[CSV] Row ${rowNum} - Current state:`, {
                 payment_status: targetBill.payment_status,
@@ -5282,7 +5538,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 payment_channel: channel,
                 last_payment_date: validPaymentDate
             });
-            
+
             // Primary UPDATE attempt
             let updateRes: any = await query(`
                 UPDATE bills
@@ -5356,7 +5612,7 @@ export const dbBatchUpdatePaymentsFromCsv = async (records: Array<{
                 errors.push({ row: rowNum, error: `Failed to update database record for Bill "${targetBill.BILLKEY || targetBill.bill_number || rawBillKey || 'Bill'}" - UPDATE returned 0 rows` });
                 continue;
             }
-            
+
             console.log(`[CSV] Row ${rowNum} âœ… UPDATE SUCCESS:`, updateRes[0]);
 
             // Synchronize paymentStatus on individual_customers or bulk_meters
@@ -6303,16 +6559,16 @@ export const dbRunDataAudit = async (branchId?: string) => {
 
 export const dbGetReadingsForMonth = async (type: string, customerKeys: string[], monthYear: string) => {
     if (customerKeys.length === 0) return [];
-    
+
     // Use a date-range predicate instead of TO_CHAR() so PostgreSQL can use the
     // B-tree index on "READING_DATE" (idx_readings_date / idx_bulk_readings_date)
     // rather than performing a full sequential scan.
     const [year, month] = monthYear.split('-').map(Number);
     const startDate = new Date(year, month - 1, 1).toISOString();          // first day 00:00:00
-    const endDate   = new Date(year, month,     1).toISOString();          // first day of NEXT month
+    const endDate = new Date(year, month, 1).toISOString();          // first day of NEXT month
 
     const placeholders = customerKeys.map((_, i) => `$${i + 3}`).join(',');
-    
+
     let sql = '';
     if (type === 'bulk_meters') {
         sql = `SELECT "CUST_KEY", "METER_READING", "PREVIOUS_READING" 
@@ -6327,7 +6583,7 @@ export const dbGetReadingsForMonth = async (type: string, customerKeys: string[]
                AND "CUST_KEY" IN (${placeholders}) 
                AND deleted_at IS NULL`;
     }
-    
+
     const params = [startDate, endDate, ...customerKeys];
     const rows = await query(sql, params);
     return rows;
@@ -6482,17 +6738,17 @@ export const dbSyncAgingForCustomer = async (customerKey: string, client?: any) 
     for (const bill of bills) {
         // Only cancelled/deleted records are truly voided. Draft/Pending bills are active in-progress bills.
         const isVoided = bill.status === 'Deleted' || bill.status === 'Void' || bill.status === 'Reversed';
-        const billMonth = bill.month_year || (bill.created_at ? (bill.created_at instanceof Date ? bill.created_at.toISOString().slice(0,7) : String(bill.created_at).slice(0,7)) : '');
-        
+        const billMonth = bill.month_year || (bill.created_at ? (bill.created_at instanceof Date ? bill.created_at.toISOString().slice(0, 7) : String(bill.created_at).slice(0, 7)) : '');
+
         const activeTariff = findActiveTariff(billMonth);
         const threshold = activeTariff?.penalty_month_threshold ? Number(activeTariff.penalty_month_threshold) : 3;
         const bankRate = activeTariff?.bank_lending_rate ? Number(activeTariff.bank_lending_rate) : 0.15;
-        
+
         let tieredRates: any[] = [];
         if (activeTariff?.penalty_tiered_rates) {
             try {
-                tieredRates = typeof activeTariff.penalty_tiered_rates === 'string' 
-                    ? JSON.parse(activeTariff.penalty_tiered_rates) 
+                tieredRates = typeof activeTariff.penalty_tiered_rates === 'string'
+                    ? JSON.parse(activeTariff.penalty_tiered_rates)
                     : activeTariff.penalty_tiered_rates;
             } catch (e) {
                 console.error("Error parsing tiered rates in dbSyncAgingForCustomer", e);
@@ -9113,276 +9369,579 @@ export const dbGetReadingCorrectionKPIs = async (options: {
 
 
 // ============================================================================
-// Monthly Bill Export (CSV / XLSX) Reports
+// Monthly Bill Export (CSV / XLSX) Reports (Modularized)
+// ============================================================================
+export * from './monthly-bill-export-queries';
+
+// ============================================================================
+// Call Center Operations & Caller 360 Workspace
 // ============================================================================
 
-export interface MonthlyBillExportRow {
-    BILLKEY: string;
-    CUSTOMERKEY: string;
-    CUSTOMERNAME: string;
-    CUSTOMERTIN: string;
-    CUSTOMERBRANCH: string;
-    REASON: string;
-    CURRREAD: number;
-    PREVREAD: number;
-    CONS: number;
-    TOTALBILLAMOUNT: number;
-    THISMONTHBILLAMT: number;
-    OUTSTANDINGAMT: number;
-    PENALTYAMT: number;
-    VAT_AMOUNT: number;
-    DRACCTNO: string;
-    CRACCTNO: string;
-    id: string;
-    status: string;
-    payment_status: string;
-    charge_group: string;
-    month_year: string;
-}
-
-export interface MonthlyBillExportTotals {
-    totalBills: number;
-    totalAmount: number;
-    totalThisMonth: number;
-    totalOutstanding: number;
-    totalPenalty: number;
-    totalVat: number;
-}
-
-function buildMonthlyBillExportWhere(params: {
-    branchId?: string;
-    monthYear?: string;
-    chargeGroup?: string;
-    searchTerm?: string;
-}) {
-    let whereSql = ` WHERE b.deleted_at IS NULL`;
-    const queryParams: any[] = [];
-    let paramIndex = 1;
-
-    if (params.branchId && params.branchId !== 'all') {
-        whereSql += ` AND (
-            COALESCE(br.id::text, b.branch_id::text, '') ILIKE $${paramIndex}
-            OR br.id::text ILIKE $${paramIndex}
-            OR b.branch_id::text ILIKE $${paramIndex}
-            OR c.branch_id::text ILIKE $${paramIndex}
-            OR bm.branch_id::text ILIKE $${paramIndex}
-            OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $${paramIndex}
-            OR br.name ILIKE $${paramIndex}
-            OR b."CUSTOMERBRANCH" ILIKE $${paramIndex}
-        )`;
-        queryParams.push(params.branchId);
-        paramIndex++;
+export const dbEnsureCallCenterLogsTable = async () => {
+    try {
+        await query(`
+            CREATE TABLE IF NOT EXISTS call_center_logs (
+                id SERIAL PRIMARY KEY,
+                call_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                caller_phone TEXT NOT NULL,
+                caller_name TEXT,
+                customer_key_number TEXT,
+                branch_name TEXT,
+                call_type TEXT NOT NULL DEFAULT 'inbound',
+                category TEXT NOT NULL,
+                duration_seconds INTEGER DEFAULT 0,
+                resolution_status TEXT NOT NULL DEFAULT 'resolved_on_call',
+                notes TEXT,
+                agent_id TEXT,
+                agent_email TEXT NOT NULL,
+                ticket_id UUID REFERENCES support_tickets(id) ON DELETE SET NULL,
+                sms_sent BOOLEAN DEFAULT false,
+                sentiment TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+            ALTER TABLE call_center_logs ADD COLUMN IF NOT EXISTS sentiment TEXT;
+            CREATE INDEX IF NOT EXISTS idx_call_center_phone ON call_center_logs(caller_phone);
+            CREATE INDEX IF NOT EXISTS idx_call_center_customer_key ON call_center_logs(customer_key_number);
+            CREATE INDEX IF NOT EXISTS idx_call_center_created_at ON call_center_logs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_call_center_sentiment ON call_center_logs(sentiment);
+        `);
+    } catch (e) {
+        console.warn('Could not ensure call_center_logs table:', e);
     }
+};
 
-    if (params.monthYear && params.monthYear !== 'all') {
-        whereSql += ` AND b.month_year = $${paramIndex++}`;
-        queryParams.push(params.monthYear);
-    }
-
-    if (params.chargeGroup && params.chargeGroup !== 'all') {
-        whereSql += ` AND COALESCE(bm.charge_group, c."customerType", 'Domestic') ILIKE $${paramIndex++}`;
-        queryParams.push(params.chargeGroup);
-    }
-
-    if (params.searchTerm && params.searchTerm.trim() !== '') {
-        const term = `%${params.searchTerm.trim()}%`;
-        whereSql += ` AND (
-            b."BILLKEY" ILIKE $${paramIndex}
-            OR b."CUSTOMERKEY" ILIKE $${paramIndex}
-            OR b.individual_customer_id ILIKE $${paramIndex}
-            OR COALESCE(b."CUSTOMERNAME", bm.name, c.name, '') ILIKE $${paramIndex}
-            OR COALESCE(b."CUSTOMERTIN", bm."contractNumber", c."contractNumber", '') ILIKE $${paramIndex}
-            OR COALESCE(br.name, b."CUSTOMERBRANCH", '') ILIKE $${paramIndex}
-        )`;
-        queryParams.push(term);
-        paramIndex++;
-    }
-
-    return { whereSql, queryParams, paramIndex };
-}
-
-export const dbGetMonthlyBillExportPaginated = async (params: {
-    limit: number;
-    offset: number;
-    branchId?: string;
-    monthYear?: string;
-    chargeGroup?: string;
-    searchTerm?: string;
-}): Promise<{ rows: MonthlyBillExportRow[]; total: number; totals: MonthlyBillExportTotals }> => {
-    const { whereSql, queryParams, paramIndex } = buildMonthlyBillExportWhere(params);
-
-    const totalsSql = `
-        SELECT 
-            COUNT(*)::int AS total_bills,
-            COALESCE(SUM(COALESCE(b."TOTALBILLAMOUNT", (COALESCE(b."THISMONTHBILLAMT", b.base_water_charge, 0) + COALESCE(b."OUTSTANDINGAMT", 0) + COALESCE(b."PENALTYAMT", 0)))::numeric), 0)::numeric AS total_amount,
-            COALESCE(SUM(COALESCE(b."THISMONTHBILLAMT", b.base_water_charge, 0)::numeric), 0)::numeric AS total_this_month,
-            COALESCE(SUM(COALESCE(b."OUTSTANDINGAMT", 0)::numeric), 0)::numeric AS total_outstanding,
-            COALESCE(SUM(COALESCE(b."PENALTYAMT", 0)::numeric), 0)::numeric AS total_penalty,
-            COALESCE(SUM(COALESCE(b.vat_amount, 0)::numeric), 0)::numeric AS total_vat
-        FROM bills b
-        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
-        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
-        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
-        ${whereSql}
+export const dbLogCustomerCall = async (callData: {
+    caller_phone: string;
+    caller_name?: string;
+    customer_key_number?: string;
+    branch_name?: string;
+    call_type?: string;
+    category: string;
+    duration_seconds?: number;
+    resolution_status?: string;
+    notes?: string;
+    agent_id?: string;
+    agent_email: string;
+    ticket_id?: number | null;
+    sms_sent?: boolean;
+    sentiment?: string;
+}) => {
+    await dbEnsureCallCenterLogsTable();
+    const sql = `
+        INSERT INTO call_center_logs (
+            caller_phone, caller_name, customer_key_number, branch_name,
+            call_type, category, duration_seconds, resolution_status,
+            notes, agent_id, agent_email, ticket_id, sms_sent, sentiment, created_at
+        )
+        VALUES ($1, $2, $3, $4, COALESCE($5, 'inbound'), $6, COALESCE($7, 0), COALESCE($8, 'resolved_on_call'), $9, $10, $11, $12, COALESCE($13, false), $14, NOW())
+        RETURNING *
     `;
+    const params = [
+        callData.caller_phone,
+        callData.caller_name || null,
+        callData.customer_key_number || null,
+        callData.branch_name || null,
+        callData.call_type || 'inbound',
+        callData.category,
+        callData.duration_seconds || 0,
+        callData.resolution_status || 'resolved_on_call',
+        callData.notes || '',
+        callData.agent_id || null,
+        callData.agent_email,
+        callData.ticket_id || null,
+        callData.sms_sent || false,
+        callData.sentiment || null,
+    ];
+    const rows: any = await query(sql, params);
+    return rows[0];
+};
 
-    const dataSql = `
-        SELECT 
-            COALESCE(
-                NULLIF(b."BILLKEY", ''),
-                CONCAT('BBPT-', LPAD(RIGHT(REPLACE(b.id::text, '-', ''), 8), 10, '0') )
-            ) AS "BILLKEY",
-            COALESCE(b."CUSTOMERKEY", b.individual_customer_id, '') AS "CUSTOMERKEY",
-            COALESCE(b."CUSTOMERNAME", bm.name, c.name, 'N/A') AS "CUSTOMERNAME",
-            COALESCE(b."CUSTOMERTIN", bm."contractNumber", c."contractNumber", '') AS "CUSTOMERTIN",
-            COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office') AS "CUSTOMERBRANCH",
-            CASE 
-                WHEN b.month_year ~ '^[0-9]{4}-[0-9]{2}$' 
-                THEN TO_CHAR(TO_DATE(b.month_year, 'YYYY-MM'), 'Mon-YYYY')
-                ELSE COALESCE(b.month_year, b."REASON", '')
-            END AS "REASON",
-            COALESCE(b."CURRREAD", 0)::numeric AS "CURRREAD",
-            COALESCE(b."PREVREAD", 0)::numeric AS "PREVREAD",
-            COALESCE(b."CONS", 0)::numeric AS "CONS",
-            COALESCE(b."TOTALBILLAMOUNT", (COALESCE(b."THISMONTHBILLAMT", b.base_water_charge, 0) + COALESCE(b."OUTSTANDINGAMT", 0) + COALESCE(b."PENALTYAMT", 0)))::numeric AS "TOTALBILLAMOUNT",
-            COALESCE(b."THISMONTHBILLAMT", b.base_water_charge, 0)::numeric AS "THISMONTHBILLAMT",
-            COALESCE(b."OUTSTANDINGAMT", 0)::numeric AS "OUTSTANDINGAMT",
-            COALESCE(b."PENALTYAMT", 0)::numeric AS "PENALTYAMT",
-            COALESCE(b.vat_amount, 0)::numeric AS "VAT_AMOUNT",
-            COALESCE(b."DRACCTNO", '') AS "DRACCTNO",
-            COALESCE(b."CRACCTNO", '') AS "CRACCTNO",
-            b.id::text AS id,
-            COALESCE(b.status, 'Draft') AS status,
-            COALESCE(b.payment_status, 'Unpaid') AS payment_status,
-            COALESCE(bm.charge_group, c."customerType", 'Domestic') AS charge_group,
-            COALESCE(b.month_year, '') AS month_year
-        FROM bills b
-        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
-        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
-        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
-        ${whereSql}
-        ORDER BY b.created_at DESC, b.id DESC
-        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+export const dbGetCallLogs = async (options?: {
+    search?: string;
+    category?: string;
+    branchName?: string;
+    page?: number;
+    pageSize?: number;
+}) => {
+    await dbEnsureCallCenterLogsTable();
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, Math.min(100, options?.pageSize || 20));
+    const offset = (page - 1) * pageSize;
+
+    const whereConditions: string[] = [];
+    const params: any[] = [];
+    let pIdx = 1;
+
+    if (options?.search) {
+        whereConditions.push(`(
+            caller_phone ILIKE $${pIdx} OR 
+            caller_name ILIKE $${pIdx} OR 
+            customer_key_number ILIKE $${pIdx} OR 
+            notes ILIKE $${pIdx}
+        )`);
+        params.push(`%${options.search}%`);
+        pIdx++;
+    }
+
+    if (options?.category && options.category !== 'all') {
+        whereConditions.push(`category = $${pIdx}`);
+        params.push(options.category);
+        pIdx++;
+    }
+
+    if (options?.branchName) {
+        whereConditions.push(`(branch_name = $${pIdx} OR branch_name IS NULL)`);
+        params.push(options.branchName);
+        pIdx++;
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    const countSql = `SELECT COUNT(*) as count FROM call_center_logs ${whereClause}`;
+    const totalRes: any = await query(countSql, params);
+    const total = parseInt(totalRes[0]?.count || '0', 10);
+
+    const listSql = `
+        SELECT * FROM call_center_logs
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${pIdx} OFFSET $${pIdx + 1}
     `;
+    const rows: any = await query(listSql, [...params, pageSize, offset]);
 
-    const dataParams = [...queryParams, params.limit, params.offset];
-
-    const [totalsRows, dataRows]: [any, any] = await Promise.all([
-        query(totalsSql, queryParams),
-        query(dataSql, dataParams),
-    ]);
-
-    const totalRow = (totalsRows && totalsRows[0]) || {};
-    const total = Number(totalRow.total_bills || 0);
-
-    const totals: MonthlyBillExportTotals = {
-        totalBills: total,
-        totalAmount: Number(totalRow.total_amount || 0),
-        totalThisMonth: Number(totalRow.total_this_month || 0),
-        totalOutstanding: Number(totalRow.total_outstanding || 0),
-        totalPenalty: Number(totalRow.total_penalty || 0),
-        totalVat: Number(totalRow.total_vat || 0),
+    return {
+        logs: rows || [],
+        total,
+        page,
+        pageSize,
+        lastPage: Math.ceil(total / pageSize) || 1,
     };
-
-    const rows: MonthlyBillExportRow[] = (dataRows || []).map((r: any) => ({
-        BILLKEY: String(r.BILLKEY || ''),
-        CUSTOMERKEY: String(r.CUSTOMERKEY || ''),
-        CUSTOMERNAME: String(r.CUSTOMERNAME || ''),
-        CUSTOMERTIN: '',
-        CUSTOMERBRANCH: String(r.CUSTOMERBRANCH || ''),
-        REASON: String(r.REASON || ''),
-        CURRREAD: Number(r.CURRREAD || 0),
-        PREVREAD: Number(r.PREVREAD || 0),
-        CONS: Number(r.CONS || 0),
-        TOTALBILLAMOUNT: Number(r.TOTALBILLAMOUNT || 0),
-        THISMONTHBILLAMT: Number(r.THISMONTHBILLAMT || 0),
-        OUTSTANDINGAMT: Number(r.OUTSTANDINGAMT || 0),
-        PENALTYAMT: Number(r.PENALTYAMT || 0),
-        VAT_AMOUNT: Number(r.VAT_AMOUNT || 0),
-        DRACCTNO: String(r.DRACCTNO || ''),
-        CRACCTNO: String(r.CRACCTNO || ''),
-        id: String(r.id || ''),
-        status: String(r.status || ''),
-        payment_status: String(r.payment_status || ''),
-        charge_group: String(r.charge_group || ''),
-        month_year: String(r.month_year || ''),
-    }));
-
-    return { rows, total, totals };
 };
 
-export const dbGetMonthlyBillExportAll = async (params: {
-    branchId?: string;
-    monthYear?: string;
-    chargeGroup?: string;
-    searchTerm?: string;
-    limit?: number;
-}): Promise<MonthlyBillExportRow[]> => {
-    const { whereSql, queryParams, paramIndex } = buildMonthlyBillExportWhere(params);
-    const maxLimit = params.limit ?? 50000;
+export const dbUpdateCallerCustomerPhone = async (
+    customerKey: string,
+    newPhone: string,
+    updatedBy: string,
+    reasonNotes?: string
+) => {
+    await dbEnsureCallCenterLogsTable();
+    const cleanKey = (customerKey || '').trim();
+    const cleanPhone = (newPhone || '').trim();
 
-    const dataSql = `
-        SELECT 
-            COALESCE(
-                NULLIF(b."BILLKEY", ''),
-                CONCAT('BBPT-', LPAD(RIGHT(REPLACE(b.id::text, '-', ''), 8), 10, '0') )
-            ) AS "BILLKEY",
-            COALESCE(b."CUSTOMERKEY", b.individual_customer_id, '') AS "CUSTOMERKEY",
-            COALESCE(b."CUSTOMERNAME", bm.name, c.name, 'N/A') AS "CUSTOMERNAME",
-            COALESCE(b."CUSTOMERTIN", bm."contractNumber", c."contractNumber", '') AS "CUSTOMERTIN",
-            COALESCE(br.name, b."CUSTOMERBRANCH", 'Head Office') AS "CUSTOMERBRANCH",
-            CASE 
-                WHEN b.month_year ~ '^[0-9]{4}-[0-9]{2}$' 
-                THEN TO_CHAR(TO_DATE(b.month_year, 'YYYY-MM'), 'Mon-YYYY')
-                ELSE COALESCE(b.month_year, b."REASON", '')
-            END AS "REASON",
-            COALESCE(b."CURRREAD", 0)::numeric AS "CURRREAD",
-            COALESCE(b."PREVREAD", 0)::numeric AS "PREVREAD",
-            COALESCE(b."CONS", 0)::numeric AS "CONS",
-            COALESCE(b."TOTALBILLAMOUNT", (COALESCE(b."THISMONTHBILLAMT", b.base_water_charge, 0) + COALESCE(b."OUTSTANDINGAMT", 0) + COALESCE(b."PENALTYAMT", 0)))::numeric AS "TOTALBILLAMOUNT",
-            COALESCE(b."THISMONTHBILLAMT", b.base_water_charge, 0)::numeric AS "THISMONTHBILLAMT",
-            COALESCE(b."OUTSTANDINGAMT", 0)::numeric AS "OUTSTANDINGAMT",
-            COALESCE(b."PENALTYAMT", 0)::numeric AS "PENALTYAMT",
-            COALESCE(b.vat_amount, 0)::numeric AS "VAT_AMOUNT",
-            COALESCE(b."DRACCTNO", '') AS "DRACCTNO",
-            COALESCE(b."CRACCTNO", '') AS "CRACCTNO",
-            b.id::text AS id,
-            COALESCE(b.status, 'Draft') AS status,
-            COALESCE(b.payment_status, 'Unpaid') AS payment_status,
-            COALESCE(bm.charge_group, c."customerType", 'Domestic') AS charge_group,
-            COALESCE(b.month_year, '') AS month_year
-        FROM bills b
-        LEFT JOIN bulk_meters bm ON (b."CUSTOMERKEY" = bm."customerKeyNumber" OR b.individual_customer_id = bm."customerKeyNumber")
-        LEFT JOIN individual_customers c ON (b.individual_customer_id = c."customerKeyNumber" OR b."CUSTOMERKEY" = c."customerKeyNumber")
-        LEFT JOIN branches br ON COALESCE(b.branch_id, bm.branch_id, c.branch_id) = br.id
-        ${whereSql}
-        ORDER BY b.created_at DESC, b.id DESC
-        LIMIT $${paramIndex}
+    if (!cleanKey || !cleanPhone) {
+        throw new Error('Customer key and new phone number are required');
+    }
+
+    // 1. Try individual_customers
+    const indRes: any = await query(
+        `SELECT "customerKeyNumber", phone_number, name FROM individual_customers WHERE LOWER(TRIM("customerKeyNumber")) = LOWER($1) LIMIT 1`,
+        [cleanKey]
+    );
+
+    if (indRes && indRes.length > 0) {
+        const prevPhone = indRes[0].phone_number || '';
+        await query(
+            `UPDATE individual_customers SET phone_number = $1, updated_at = NOW() WHERE LOWER(TRIM("customerKeyNumber")) = LOWER($2)`,
+            [cleanPhone, cleanKey]
+        );
+
+        // Record log entry
+        await dbLogCustomerCall({
+            caller_phone: cleanPhone,
+            caller_name: indRes[0].name,
+            customer_key_number: cleanKey,
+            call_type: 'inbound',
+            category: 'phone_update',
+            duration_seconds: 0,
+            resolution_status: 'resolved_on_call',
+            notes: `Phone number updated from "${prevPhone || 'None'}" to "${cleanPhone}". ${reasonNotes ? 'Reason: ' + reasonNotes : ''}`,
+            agent_email: updatedBy,
+        }).catch(() => null);
+
+        return {
+            success: true,
+            customerKey: cleanKey,
+            customerType: 'individual',
+            previousPhone: prevPhone,
+            newPhone: cleanPhone,
+            customerName: indRes[0].name,
+        };
+    }
+
+    // 2. Try bulk_meters
+    const bmRes: any = await query(
+        `SELECT "customerKeyNumber", "phoneNumber", name FROM bulk_meters WHERE LOWER(TRIM("customerKeyNumber")) = LOWER($1) LIMIT 1`,
+        [cleanKey]
+    );
+
+    if (bmRes && bmRes.length > 0) {
+        const prevPhone = bmRes[0].phoneNumber || '';
+        await query(
+            `UPDATE bulk_meters SET "phoneNumber" = $1, "updatedAt" = NOW() WHERE LOWER(TRIM("customerKeyNumber")) = LOWER($2)`,
+            [cleanPhone, cleanKey]
+        );
+
+        // Record log entry
+        await dbLogCustomerCall({
+            caller_phone: cleanPhone,
+            caller_name: bmRes[0].name,
+            customer_key_number: cleanKey,
+            call_type: 'inbound',
+            category: 'phone_update',
+            duration_seconds: 0,
+            resolution_status: 'resolved_on_call',
+            notes: `Phone number updated from "${prevPhone || 'None'}" to "${cleanPhone}". ${reasonNotes ? 'Reason: ' + reasonNotes : ''}`,
+            agent_email: updatedBy,
+        }).catch(() => null);
+
+        return {
+            success: true,
+            customerKey: cleanKey,
+            customerType: 'bulk',
+            previousPhone: prevPhone,
+            newPhone: cleanPhone,
+            customerName: bmRes[0].name,
+        };
+    }
+
+    throw new Error(`Customer account with key "${cleanKey}" not found`);
+};
+
+export const dbGetCaller360Summary = async (identifier: string) => {
+    await dbEnsureCallCenterLogsTable();
+    const cleanId = (identifier || '').trim();
+    if (!cleanId) return null;
+
+    // Digits-only representation for phone matching
+    const digitsOnly = cleanId.replace(/\D/g, '');
+    const phoneVariant = digitsOnly.length >= 9 ? digitsOnly.slice(-9) : null;
+
+    // 1. Search individual_customers
+    const customerSql = `
+        SELECT ic.*, b.name as branch_name
+        FROM individual_customers ic
+        LEFT JOIN branches b ON ic.branch_id = b.id
+        WHERE LOWER(TRIM(ic."customerKeyNumber")) = LOWER($1)
+           OR LOWER(TRIM(ic."contractNumber")) = LOWER($1)
+           OR LOWER(TRIM(COALESCE(ic."METER_KEY", ''))) = LOWER($1)
+           OR LOWER(TRIM(ic.name)) ILIKE '%' || LOWER($1) || '%'
+           OR (ic.phone_number IS NOT NULL AND $2::text IS NOT NULL AND RIGHT(REGEXP_REPLACE(ic.phone_number, '\\D', '', 'g'), 9) = $2)
+        LIMIT 1
     `;
+    const custRows: any = await query(customerSql, [cleanId, phoneVariant]).catch(() => []);
+    let customer = custRows[0] || null;
 
-    const dataRows: any = await query(dataSql, [...queryParams, maxLimit]);
+    // 2. If not found, check bulk_meters
+    let bulkMeter = null;
+    if (!customer) {
+        const bmSql = `
+            SELECT bm.*, b.name as branch_name
+            FROM bulk_meters bm
+            LEFT JOIN branches b ON bm.branch_id = b.id
+            WHERE LOWER(TRIM(bm."customerKeyNumber")) = LOWER($1)
+               OR LOWER(TRIM(COALESCE(bm."METER_KEY", ''))) = LOWER($1)
+               OR LOWER(TRIM(bm.name)) ILIKE '%' || LOWER($1) || '%'
+               OR LOWER(TRIM(COALESCE(bm."contractNumber", ''))) = LOWER($1)
+               OR (bm."phoneNumber" IS NOT NULL AND $2::text IS NOT NULL AND RIGHT(REGEXP_REPLACE(bm."phoneNumber", '\\D', '', 'g'), 9) = $2)
+            LIMIT 1
+        `;
+        const bmRows: any = await query(bmSql, [cleanId, phoneVariant]).catch(() => []);
+        bulkMeter = bmRows[0] || null;
+    }
 
-    return (dataRows || []).map((r: any) => ({
-        BILLKEY: String(r.BILLKEY || ''),
-        CUSTOMERKEY: String(r.CUSTOMERKEY || ''),
-        CUSTOMERNAME: String(r.CUSTOMERNAME || ''),
-        CUSTOMERTIN: '',
-        CUSTOMERBRANCH: String(r.CUSTOMERBRANCH || ''),
-        REASON: String(r.REASON || ''),
-        CURRREAD: Number(r.CURRREAD || 0),
-        PREVREAD: Number(r.PREVREAD || 0),
-        CONS: Number(r.CONS || 0),
-        TOTALBILLAMOUNT: Number(r.TOTALBILLAMOUNT || 0),
-        THISMONTHBILLAMT: Number(r.THISMONTHBILLAMT || 0),
-        OUTSTANDINGAMT: Number(r.OUTSTANDINGAMT || 0),
-        PENALTYAMT: Number(r.PENALTYAMT || 0),
-        VAT_AMOUNT: Number(r.VAT_AMOUNT || 0),
-        DRACCTNO: String(r.DRACCTNO || ''),
-        CRACCTNO: String(r.CRACCTNO || ''),
-        id: String(r.id || ''),
-        status: String(r.status || ''),
-        payment_status: String(r.payment_status || ''),
-        charge_group: String(r.charge_group || ''),
-        month_year: String(r.month_year || ''),
-    }));
+    const resolvedKey = (
+        customer?.customerKeyNumber ||
+        customer?.customer_key_number ||
+        customer?.customerkeynumber ||
+        bulkMeter?.customerKeyNumber ||
+        bulkMeter?.customer_key_number ||
+        bulkMeter?.customerkeynumber ||
+        cleanId ||
+        ''
+    ).trim();
+    const resolvedPhone = customer?.phone_number || bulkMeter?.phoneNumber || bulkMeter?.phone_number || (digitsOnly.length >= 9 ? cleanId : '');
+
+    // 3. Bills & Invoices History (up to 36 records)
+    const billsSql = `
+        SELECT b.*
+        FROM bills b
+        WHERE (
+            LOWER(TRIM(COALESCE(b."CUSTOMERKEY", ''))) = LOWER(TRIM($1))
+            OR LOWER(TRIM(COALESCE(b.individual_customer_id, ''))) = LOWER(TRIM($1))
+            OR LOWER(TRIM(COALESCE(b."CUSTOMERKEY", ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(COALESCE(b.individual_customer_id, ''))) = LOWER(TRIM($2))
+        )
+          AND b.deleted_at IS NULL
+        ORDER BY b.month_year DESC, b.created_at DESC
+        LIMIT 36
+    `;
+    const bills: any = await query(billsSql, [resolvedKey, cleanId]).catch((err) => {
+        console.error("Caller 360 bills query error:", err);
+        return [];
+    });
+
+    // 3b. Associated Individual Customers (if bulk meter) or Parent Bulk Meter (if individual customer)
+    let associatedCustomers: any[] = [];
+    let parentBulkMeter: any = null;
+
+    if (bulkMeter) {
+        const assocSql = `
+            SELECT ic.*
+            FROM individual_customers ic
+            WHERE (ic."assignedBulkMeterId" = $1
+               OR ic."assignedBulkMeterId" = $2
+               OR ($2::text <> '' AND ic."assignedBulkMeterId" ILIKE '%' || $2 || '%'))
+            ORDER BY ic.name ASC
+            LIMIT 500
+        `;
+        const rawAssoc: any = await query(assocSql, [resolvedKey, cleanId]).catch((err) => {
+            console.error("Associated customers query error:", err);
+            return [];
+        });
+        associatedCustomers = (rawAssoc || []).map((ic: any) => ({
+            customer_key: ic.customerKeyNumber || ic.customer_key_number,
+            name: ic.name,
+            meter_number: ic.METER_KEY || ic.meterKey || ic.meter_number || '—',
+            contract_number: ic.contractNumber || ic.contract_number || '—',
+            month: ic.month || '—',
+            previous_reading: Number(ic.previousReading ?? ic.previous_reading ?? 0),
+            current_reading: Number(ic.currentReading ?? ic.current_reading ?? 0),
+            usage: Math.max(0, Number(ic.currentReading ?? ic.current_reading ?? 0) - Number(ic.previousReading ?? ic.previous_reading ?? 0)),
+            calculated_bill: Number(ic.calculatedBill ?? ic.calculated_bill ?? ic.outStandingbill ?? 0),
+            payment_status: ic.paymentStatus || ic.payment_status || 'Unpaid',
+            status: ic.status || 'Active',
+            phone_number: ic.phone_number || ic.phoneNumber || '—',
+        }));
+    } else if (customer && customer.assignedBulkMeterId) {
+        const parentSql = `
+            SELECT bm."customerKeyNumber" as customer_key,
+                   bm.name,
+                   bm."contractNumber" as contract_number,
+                   bm."METER_KEY" as meter_number,
+                   bm."phoneNumber" as phone_number,
+                   bm."paymentStatus" as payment_status,
+                   bm."outStandingbill" as outstanding_bill
+            FROM bulk_meters bm
+            WHERE bm."customerKeyNumber" = $1
+            LIMIT 1
+        `;
+        const pRows: any = await query(parentSql, [customer.assignedBulkMeterId]).catch(() => []);
+        parentBulkMeter = pRows[0] || null;
+
+        const siblingsSql = `
+            SELECT ic.*
+            FROM individual_customers ic
+            WHERE ic."assignedBulkMeterId" = $1 AND ic."customerKeyNumber" <> $2
+            ORDER BY ic.name ASC
+            LIMIT 50
+        `;
+        const rawSiblings: any = await query(siblingsSql, [customer.assignedBulkMeterId, resolvedKey]).catch(() => []);
+        associatedCustomers = (rawSiblings || []).map((ic: any) => ({
+            customer_key: ic.customerKeyNumber || ic.customer_key_number,
+            name: ic.name,
+            meter_number: ic.METER_KEY || ic.meterKey || ic.meter_number || '—',
+            contract_number: ic.contractNumber || ic.contract_number || '—',
+            month: ic.month || '—',
+            previous_reading: Number(ic.previousReading ?? ic.previous_reading ?? 0),
+            current_reading: Number(ic.currentReading ?? ic.current_reading ?? 0),
+            usage: Math.max(0, Number(ic.currentReading ?? ic.current_reading ?? 0) - Number(ic.previousReading ?? ic.previous_reading ?? 0)),
+            calculated_bill: Number(ic.calculatedBill ?? ic.calculated_bill ?? ic.outStandingbill ?? 0),
+            payment_status: ic.paymentStatus || ic.payment_status || 'Unpaid',
+            status: ic.status || 'Active',
+            phone_number: ic.phone_number || ic.phoneNumber || '—',
+        }));
+    }
+
+    // 4. Meter Readings History (up to 36 records)
+    let readings: any[] = [];
+    if (customer) {
+        const indReadingsSql = `
+            SELECT r.id,
+                   r."CUST_KEY"           AS customer_key,
+                   r."METER_READING"      AS current_reading,
+                   r."PREVIOUS_READING"   AS previous_reading,
+                   (r."METER_READING" - r."PREVIOUS_READING") AS consumption,
+                   r."READING_DATE"       AS reading_date,
+                   r."FAULT_CODE"         AS fault_code,
+                   r."BRANCH_NAME"        AS branch_name,
+                   r."CUST_NAME"          AS cust_name,
+                   r.created_at
+            FROM individual_customer_readings r
+            WHERE r."CUST_KEY" = $1 AND r.deleted_at IS NULL
+            ORDER BY r."READING_DATE" DESC, r.created_at DESC
+            LIMIT 36
+        `;
+        readings = await query(indReadingsSql, [resolvedKey]).catch(() => []);
+    } else if (bulkMeter) {
+        const bulkReadingsSql = `
+            SELECT r.id,
+                   r."CUST_KEY"           AS customer_key,
+                   r."METER_READING"      AS current_reading,
+                   r."PREVIOUS_READING"   AS previous_reading,
+                   (r."METER_READING" - r."PREVIOUS_READING") AS consumption,
+                   r."READING_DATE"       AS reading_date,
+                   r."FAULT_CODE"         AS fault_code,
+                   r."BRANCH_NAME"        AS branch_name,
+                   r."CUST_NAME"          AS cust_name,
+                   r.created_at
+            FROM bulk_meter_readings r
+            WHERE r."CUST_KEY" = $1 AND r.deleted_at IS NULL
+            ORDER BY r."READING_DATE" DESC, r.created_at DESC
+            LIMIT 36
+        `;
+        readings = await query(bulkReadingsSql, [resolvedKey]).catch(() => []);
+    }
+
+    // Fallback to legacy meter_readings if needed
+    if (!readings || readings.length === 0) {
+        const legacyReadingsSql = `
+            SELECT mr.id, mr."customerKeyNumber" as customer_key,
+                   mr."currentReading" as current_reading,
+                   mr."previousReading" as previous_reading,
+                   mr.consumption,
+                   mr."readingDate" as reading_date,
+                   mr.month
+            FROM meter_readings mr
+            WHERE mr."customerKeyNumber" = $1
+            ORDER BY mr."readingDate" DESC
+            LIMIT 36
+        `;
+        readings = await query(legacyReadingsSql, [resolvedKey]).catch(() => []);
+    }
+
+    // 5. Support Tickets
+    const custName = customer?.name || bulkMeter?.name || '';
+    const ticketsSql = `
+        SELECT id, ticket_number, customer_name, customer_phone, subject, category_name,
+               priority, status, created_at, resolved_at
+        FROM support_tickets
+        WHERE customer_key = $1
+           OR (customer_phone IS NOT NULL AND $2::text <> '' AND customer_phone = $2)
+           OR ($3::text <> '' AND customer_name ILIKE '%' || $3 || '%')
+        ORDER BY created_at DESC
+        LIMIT 10
+    `;
+    const tickets: any = await query(ticketsSql, [resolvedKey, resolvedPhone, custName]).catch(() => []);
+
+    // 6. Prior Call Logs for this customer
+    const logsSql = `
+        SELECT *
+        FROM call_center_logs
+        WHERE customer_key_number = $1
+           OR (caller_phone IS NOT NULL AND $2::text <> '' AND (caller_phone = $2 OR caller_phone = $3))
+        ORDER BY created_at DESC
+        LIMIT 20
+    `;
+    const priorCalls: any = await query(logsSql, [resolvedKey, resolvedPhone, cleanId]).catch(() => []);
+
+    return {
+        customer: (customer || bulkMeter) ? {
+            customerKey: resolvedKey,
+            name: customer?.name || bulkMeter?.name || 'Customer Account',
+            phone: customer?.phone_number || bulkMeter?.phoneNumber || (digitsOnly.length >= 9 ? cleanId : '') || 'N/A',
+            email: customer?.email || bulkMeter?.email || null,
+            meterNumber: customer?.METER_KEY || bulkMeter?.METER_KEY || 'N/A',
+            meterSize: customer?.meterSize || bulkMeter?.meterSize || null,
+            contractNumber: customer?.contractNumber || bulkMeter?.contractNumber || 'N/A',
+            branchName: customer?.branch_name || bulkMeter?.branch_name || 'Head Office',
+            branchId: customer?.branch_id || bulkMeter?.branch_id || null,
+            subCity: customer?.subCity || 'N/A',
+            woreda: customer?.woreda || 'N/A',
+            specificArea: customer?.specificArea || bulkMeter?.specificArea || 'N/A',
+            status: customer?.status || bulkMeter?.status || 'Active',
+            paymentStatus: customer?.paymentStatus || bulkMeter?.paymentStatus || 'Unpaid',
+            outstandingBill: Number(customer?.outStandingbill || customer?.calculatedBill || bulkMeter?.outStandingbill || 0),
+            previousReading: customer?.previousReading ?? bulkMeter?.previousReading ?? null,
+            currentReading: customer?.currentReading ?? bulkMeter?.currentReading ?? null,
+            customerType: customer?.customerType || bulkMeter?.charge_group || (customer ? 'Domestic' : 'Non-domestic'),
+            routeKey: customer?.ROUTE_KEY || bulkMeter?.ROUTE_KEY || 'N/A',
+            roundKey: customer?.ROUND_KEY || bulkMeter?.ROUND_KEY || null,
+            sewerageConnection: customer?.sewerageConnection || bulkMeter?.sewerage_connection || 'No',
+            type: customer ? 'Individual Customer' : 'Bulk Meter',
+        } : null,
+        recentBills: bills || [],
+        recentReadings: readings || [],
+        associatedCustomers: associatedCustomers || [],
+        parentBulkMeter: parentBulkMeter || null,
+        tickets: tickets || [],
+        priorCalls: priorCalls || [],
+    };
 };
+
+/**
+ * Verify recent live mobile/bank payments for a customer key within the last 72 hours.
+ * Useful for real-time customer reconciliation during an inbound call.
+ */
+export const dbVerifyLivePayment = async (customerKey: string) => {
+    const cleanKey = (customerKey || '').trim();
+    if (!cleanKey) return { found: false, count: 0, payments: [] };
+
+    const sql = `
+        SELECT p.id,
+               p.amount_paid,
+               p.payment_method,
+               p.transaction_reference,
+               p.payment_date,
+               p.bill_month_year,
+               p.notes
+        FROM payments p
+        WHERE (LOWER(TRIM(p.individual_customer_id)) = LOWER($1)
+           OR LOWER(TRIM(p.bulk_meter_id)) = LOWER($1)
+           OR LOWER(TRIM(COALESCE(p.transaction_reference, ''))) ILIKE '%' || LOWER($1) || '%')
+        ORDER BY p.payment_date DESC
+        LIMIT 5
+    `;
+    const rows: any = await query(sql, [cleanKey]).catch((err) => {
+        console.error("Live payment check error:", err);
+        return [];
+    });
+
+    return {
+        found: rows && rows.length > 0,
+        count: rows ? rows.length : 0,
+        payments: rows || [],
+        latestPayment: rows && rows.length > 0 ? rows[0] : null,
+    };
+};
+
+/**
+ * Create a support ticket directly from Call Center Caller 360 with automatic caller linkage.
+ */
+export const dbCreateCallCenterTicket = async (ticketData: {
+    customerKey: string;
+    customerType?: string;
+    customerName?: string;
+    customerPhone?: string;
+    subject: string;
+    description: string;
+    categoryName?: string;
+    priority?: string;
+    branchName?: string;
+    branchId?: string;
+    agentEmail?: string;
+}) => {
+    const sql = `
+        INSERT INTO support_tickets (
+            customer_key, customer_type, customer_name, customer_phone,
+            subject, description, category_name, priority, status,
+            branch_name, branch_id, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Open', $9, $10, NOW(), NOW())
+        RETURNING *
+    `;
+    const params = [
+        ticketData.customerKey,
+        ticketData.customerType || 'individual',
+        ticketData.customerName || null,
+        ticketData.customerPhone || null,
+        ticketData.subject,
+        ticketData.description,
+        ticketData.categoryName || 'General Inquiry',
+        ticketData.priority || 'Medium',
+        ticketData.branchName || null,
+        ticketData.branchId || null,
+    ];
+    const rows: any = await query(sql, params);
+    return rows && rows[0] ? rows[0] : null;
+};
+

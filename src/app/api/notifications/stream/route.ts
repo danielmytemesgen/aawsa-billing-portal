@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server';
 import { notificationEmitter } from '@/lib/notification-emitter';
+import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
+  // AUTH GUARD: reject unauthenticated connections before opening the stream
+  const session = await getSession();
+  if (!session || !session.id) {
+    return new NextResponse('Unauthorized', { status: 401 });
+  }
+
   let controller: ReadableStreamDefaultController;
 
   const stream = new ReadableStream({

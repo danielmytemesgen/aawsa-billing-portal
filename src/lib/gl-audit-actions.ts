@@ -226,6 +226,10 @@ async function authorizeGLReport() {
   } catch {}
 
   if ((!session || !session.id) && process.env.AUDIT_CHECK === '1') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('AUDIT_CHECK backdoor is strictly disabled in production environments');
+    }
+    console.warn('[SECURITY WARNING] AUDIT_CHECK mock admin active for testing/audit env');
     session = { id: 'audit-admin', role: 'admin', permissions: ['*'] };
   }
 

@@ -96,7 +96,9 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
       if (stored && !isNaN(Number(stored))) {
         setConfiguredThreshold(Number(stored));
       }
-    } catch {}
+    } catch (e) {
+      console.warn('Failed to read gps_field_proximity_threshold_meters from localStorage:', e);
+    }
   }, [proximityThreshold]);
 
   const [proximityStatus, setProximityStatus] = React.useState<{ isWithinRange: boolean; distance: number; bypassed?: boolean } | null>(null);
@@ -146,7 +148,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
 
   // Check device health (battery & storage usage) on mount
   React.useEffect(() => {
-    checkDeviceHealth().then(status => setDeviceHealth(status)).catch(() => {});
+    checkDeviceHealth().then(status => setDeviceHealth(status)).catch(() => { });
   }, []);
 
 
@@ -513,8 +515,8 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
                           return m ? `${m.label} — ${m.sub}` : field.value;
                         })()
                         : allMeters.length === 0
-                        ? "No meters available"
-                        : "Search and select a meter…"
+                          ? "No meters available"
+                          : "Search and select a meter…"
                       }
                       <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
@@ -699,9 +701,8 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
                   </p>
                 </div>
                 {liveAccuracy !== null && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    getGpsSignalInfo(liveAccuracy).color
-                  } border border-current bg-white`}>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${getGpsSignalInfo(liveAccuracy).color
+                    } border border-current bg-white`}>
                     {getGpsSignalInfo(liveAccuracy).label}
                   </span>
                 )}
@@ -709,9 +710,8 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
               {/* Live GPS signal strength bar */}
               <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    liveAccuracy !== null ? getGpsSignalInfo(liveAccuracy).bgColor : 'bg-blue-300 animate-pulse'
-                  }`}
+                  className={`h-full rounded-full transition-all duration-500 ${liveAccuracy !== null ? getGpsSignalInfo(liveAccuracy).bgColor : 'bg-blue-300 animate-pulse'
+                    }`}
                   style={{ width: liveAccuracy !== null ? `${getGpsSignalInfo(liveAccuracy).progress}%` : '30%' }}
                 />
               </div>
@@ -744,7 +744,7 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
                   <p className="text-xs font-bold">
                     {proximityStatus.bypassed ? "Bypassed (Offline)" :
                       proximityStatus.isWithinRange ? "Ready to Record" :
-                      `Move ${Math.round(Math.max(0, proximityStatus.distance - 5))}m closer`}
+                        `Move ${Math.round(Math.max(0, proximityStatus.distance - 5))}m closer`}
                   </p>
                   <p className="text-[10px] opacity-70">{proximityStatus.distance.toFixed(1)}m from meter</p>
                 </div>
@@ -934,8 +934,8 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
             photoMissing
               ? "border-2 border-rose-400 bg-rose-50/60"
               : photoRequired && capturedPhoto
-              ? "border-2 border-emerald-400 bg-emerald-50/40"
-              : "border border-transparent"
+                ? "border-2 border-emerald-400 bg-emerald-50/40"
+                : "border border-transparent"
           )}>
             <div className="flex items-center justify-between">
               <FormLabel className="font-semibold text-slate-700">
@@ -1041,3 +1041,4 @@ function AddMeterReadingForm({ onSubmit, customers, bulkMeters, faultCodes, isLo
 }
 
 export { AddMeterReadingForm };
+

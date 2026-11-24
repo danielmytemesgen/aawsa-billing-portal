@@ -10,6 +10,8 @@ import { useToast } from "@/hooks/use-toast";
 import type { StaffMember } from "./staff-types";
 import { StaffFormDialog, type StaffFormValues } from "./staff-form-dialog";
 import { StaffTable } from "./staff-table";
+import { ManageRolesDialog } from "./ManageRolesDialog";
+import { StaffRoleHistoryDialog } from "./StaffRoleHistoryDialog";
 import {
   getStaffMembers,
   addStaffMember as addStaffMemberToStore,
@@ -21,7 +23,8 @@ import {
   useRoles
 } from "@/lib/data-store";
 import { usePermissions } from "@/hooks/use-permissions";
-import { logSecurityEventAction } from "@/lib/actions";
+import { logSecurityEventAction, revokeStaffSessionsAction } from "@/lib/actions";
+import { broadcastPermissionsUpdated } from "@/lib/permissions-sync";
 import Link from "next/link";
 import { TablePagination } from "@/components/ui/table-pagination";
 import {
@@ -39,6 +42,7 @@ export default function StaffManagementPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState("");
   const [isFormOpen, setIsFormOpen] = React.useState(false);
+  const [isManageRolesOpen, setIsManageRolesOpen] = React.useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [selectedStaff, setSelectedStaff] = React.useState<StaffMember | null>(null);
   const [staffToDelete, setStaffToDelete] = React.useState<StaffMember | null>(null);
@@ -47,6 +51,15 @@ export default function StaffManagementPage() {
   const [selectedBranch, setSelectedBranch] = React.useState<string>("all");
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
+
+  // Feature 4: Staff Force Logout / Session Revocation state
+  const [staffToRevoke, setStaffToRevoke] = React.useState<StaffMember | null>(null);
+  const [isRevokeDialogOpen, setIsRevokeDialogOpen] = React.useState(false);
+  const [isRevoking, setIsRevoking] = React.useState(false);
+
+  // Feature 5: Staff Role History Audit Trail state
+  const [historyStaff, setHistoryStaff] = React.useState<StaffMember | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = React.useState(false);
 
   const branches = useBranches();
   const roles = useRoles();
@@ -104,6 +117,46 @@ export default function StaffManagementPage() {
     setIsDeleteDialogOpen(true);
   };
 
+  const handleOpenRevokeDialog = (staff: StaffMember) => {
+    setStaffToRevoke(staff);
+    setIsRevokeDialogOpen(true);
+  };
+
+  const confirmRevokeSessions = async () => {
+    if (!staffToRevoke) return;
+    setIsRevoking(true);
+    try {
+      const res = await revokeStaffSessionsAction(staffToRevoke.email);
+      if (res.success) {
+        toast({
+          title: "Sessions Revoked",
+          description: `All active sessions for ${staffToRevoke.name} (${staffToRevoke.email}) have been terminated.`,
+        });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Revocation Failed",
+          description: res.error || "Could not revoke staff sessions.",
+        });
+      }
+    } catch (e: any) {
+      toast({
+        variant: "destructive",
+        title: "Revocation Failed",
+        description: e?.message || "Could not revoke staff sessions.",
+      });
+    } finally {
+      setIsRevoking(false);
+      setIsRevokeDialogOpen(false);
+      setStaffToRevoke(null);
+    }
+  };
+
+  const handleOpenHistory = (staff: StaffMember) => {
+    setHistoryStaff(staff);
+    setIsHistoryOpen(true);
+  };
+
   const confirmDelete = async () => {
     if (!hasPermission('staff_delete')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to delete staff.' }); setIsDeleteDialogOpen(false); return; }
     if (staffToDelete) {
@@ -131,8 +184,23 @@ export default function StaffManagementPage() {
         if (!hasPermission('staff_update')) { toast({ variant: 'destructive', title: 'Unauthorized', description: 'You do not have permission to update staff.' }); return; }
         const result = await updateStaffMemberInStore(selectedStaff.email, staffPayload);
         if (result.success) {
+          if (selectedStaff.role !== data.role) {
+            logSecurityEventAction({
+              event: `Staff Role Changed: ${data.name} reassigned from ${selectedStaff.role} to ${data.role}`,
+              severity: 'warning',
+              details: {
+                action: 'role_change',
+                staff_email: data.email,
+                old_role: selectedStaff.role,
+                new_role: data.role,
+                changed_by: currentUser?.email
+              }
+            });
+          }
           logSecurityEventAction(`Staff member ${data.name} (${data.email}) updated by ${currentUser?.email}.`);
           toast({ title: "Staff Updated", description: `${data.name} has been updated.` });
+          window.dispatchEvent(new CustomEvent('user-permissions-updated'));
+          broadcastPermissionsUpdated();
         } else {
           toast({ variant: "destructive", title: "Update Failed", description: result.message });
         }
@@ -202,6 +270,15 @@ export default function StaffManagementPage() {
           <p className="text-muted-foreground mt-1 text-base">Manage staff accounts, roles, and branch assignments.</p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
+          {(hasPermission('roles_manage') || hasPermission('staff_create')) && (
+            <Button
+              variant="outline"
+              onClick={() => setIsManageRolesOpen(true)}
+              className="flex-shrink-0 shadow-sm border-slate-200"
+            >
+              <ShieldCheck className="mr-2 h-4 w-4 text-indigo-600" /> Manage Roles
+            </Button>
+          )}
           {hasPermission('staff_create') && (
             <Button onClick={handleAddStaff} className="flex-shrink-0 shadow-sm">
               <PlusCircle className="mr-2 h-4 w-4" /> Add New Staff
@@ -354,6 +431,8 @@ export default function StaffManagementPage() {
                 data={paginatedStaff}
                 onEdit={handleEditStaff}
                 onDelete={handleDeleteStaff}
+                onRevokeSessions={hasPermission('staff_update') ? handleOpenRevokeDialog : undefined}
+                onViewHistory={handleOpenHistory}
                 canEdit={hasPermission('staff_update')}
                 canDelete={hasPermission('staff_delete')}
               />
@@ -424,6 +503,44 @@ export default function StaffManagementPage() {
           </AlertDialogContent>
         </AlertDialog>
       )}
+
+      {/* Feature 4: Force Logout / Session Revocation Confirmation Dialog */}
+      <AlertDialog open={isRevokeDialogOpen} onOpenChange={setIsRevokeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke Active Sessions?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to terminate all active sessions for <strong>{staffToRevoke?.name}</strong> ({staffToRevoke?.email})? This will immediately force a logout across all their logged-in browsers and devices.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRevoking} onClick={() => setStaffToRevoke(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isRevoking}
+              onClick={confirmRevokeSessions}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {isRevoking ? "Revoking..." : "Force Logout"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Feature 5: Staff Role History Audit Trail Dialog */}
+      <StaffRoleHistoryDialog
+        open={isHistoryOpen}
+        onOpenChange={setIsHistoryOpen}
+        staff={historyStaff}
+      />
+
+      <ManageRolesDialog
+        open={isManageRolesOpen}
+        onOpenChange={setIsManageRolesOpen}
+        roles={roles}
+        staffMembers={staffMembers}
+      />
     </div>
   );
 }

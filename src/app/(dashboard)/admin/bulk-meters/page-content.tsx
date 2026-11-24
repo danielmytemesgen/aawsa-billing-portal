@@ -219,7 +219,8 @@ export default function BulkMetersPage() {
         toast({ variant: "destructive", title: "Approval Failed", description: result.message || "Could not approve meter." });
       }
     } catch (err) {
-      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+      console.error('Meter approval error:', err);
+      toast({ variant: "destructive", title: "Error", description: (err as Error)?.message || "An unexpected error occurred." });
     }
   };
 
@@ -235,7 +236,8 @@ export default function BulkMetersPage() {
         toast({ variant: "destructive", title: "Rejection Failed", description: result.message || "Could not reject meter." });
       }
     } catch (err) {
-      toast({ variant: "destructive", title: "Error", description: "An unexpected error occurred." });
+      console.error('Meter rejection error:', err);
+      toast({ variant: "destructive", title: "Error", description: (err as Error)?.message || "An unexpected error occurred." });
     }
   };
 

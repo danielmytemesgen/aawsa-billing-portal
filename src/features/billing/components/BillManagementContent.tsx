@@ -256,6 +256,8 @@ export function BillManagementContent({ basePath }: BillManagementContentProps) 
 
             if (billsRes?.data) {
                 setBills(billsRes.data);
+            } else if (billsRes?.error) {
+                toast({ title: "Failed to load bills", description: billsRes.error.message || "Could not retrieve bills.", variant: "destructive" });
             }
 
             const branchRes = await (async () => {

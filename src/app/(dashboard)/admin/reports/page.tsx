@@ -26,7 +26,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { cn } from "@/lib/utils";
 import { ReportDataView } from './report-data-view';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { calculateBillAction, deleteBillAction, getAllBranchesAction , getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllTariffsAction } from "@/lib/actions";
+import { calculateBillAction, deleteBillAction, getAllBranchesAction, getAllCustomersAction, getAllBulkMetersAction, getAllBillsAction, getAllIndividualCustomerReadingsAction, getAllBulkMeterReadingsAction, getAllPaymentsAction, getAllStaffMembersAction, getAllTariffsAction } from "@/lib/actions";
 import { startBatchPdfGenerationAction, getActivePdfJobsAction, deletePdfJobAction } from "@/lib/pdf-actions";
 import { format as formatDate, parse } from "date-fns";
 import { type CustomerType, type SewerageConnection, customerTypes } from "@/lib/billing-calculations";
@@ -40,6 +40,82 @@ const isBulkReading = (r: any): r is { meterType: string; CUSTOMERKEY?: string }
 
 const isIndividualReading = (r: any): r is { meterType: string; individualCustomerId?: string } => {
   return r && typeof r === 'object' && 'meterType' in r && r.meterType === 'individual_customer_meter';
+};
+
+// Short-term (30s) client-side cache to avoid redundant full-table DB queries across report tabs
+let reportCache: {
+  bills?: { res: any; timestamp: number };
+  bulkMeters?: { res: any; timestamp: number };
+  customers?: { res: any; timestamp: number };
+  branches?: { res: any; timestamp: number };
+  tariffs?: { res: any; timestamp: number };
+  payments?: { res: any; timestamp: number };
+} = {};
+
+const REPORT_CACHE_TTL_MS = 30_000;
+
+export const clearReportsClientCache = () => {
+  reportCache = {};
+};
+
+const getCachedReportBills = async () => {
+  const now = Date.now();
+  if (reportCache.bills && now - reportCache.bills.timestamp < REPORT_CACHE_TTL_MS) {
+    return reportCache.bills.res;
+  }
+  const res = await getAllBillsAction();
+  reportCache.bills = { res, timestamp: now };
+  return res;
+};
+
+const getCachedReportBulkMeters = async () => {
+  const now = Date.now();
+  if (reportCache.bulkMeters && now - reportCache.bulkMeters.timestamp < REPORT_CACHE_TTL_MS) {
+    return reportCache.bulkMeters.res;
+  }
+  const res = await getAllBulkMetersAction();
+  reportCache.bulkMeters = { res, timestamp: now };
+  return res;
+};
+
+const getCachedReportCustomers = async () => {
+  const now = Date.now();
+  if (reportCache.customers && now - reportCache.customers.timestamp < REPORT_CACHE_TTL_MS) {
+    return reportCache.customers.res;
+  }
+  const res = await getAllCustomersAction();
+  reportCache.customers = { res, timestamp: now };
+  return res;
+};
+
+const getCachedReportBranches = async () => {
+  const now = Date.now();
+  if (reportCache.branches && now - reportCache.branches.timestamp < REPORT_CACHE_TTL_MS) {
+    return reportCache.branches.res;
+  }
+  const res = await getAllBranchesAction();
+  reportCache.branches = { res, timestamp: now };
+  return res;
+};
+
+const getCachedReportTariffs = async () => {
+  const now = Date.now();
+  if (reportCache.tariffs && now - reportCache.tariffs.timestamp < REPORT_CACHE_TTL_MS) {
+    return reportCache.tariffs.res;
+  }
+  const res = await getAllTariffsAction();
+  reportCache.tariffs = { res, timestamp: now };
+  return res;
+};
+
+const getCachedReportPayments = async () => {
+  const now = Date.now();
+  if (reportCache.payments && now - reportCache.payments.timestamp < REPORT_CACHE_TTL_MS) {
+    return reportCache.payments.res;
+  }
+  const res = await getAllPaymentsAction();
+  reportCache.payments = { res, timestamp: now };
+  return res;
 };
 
 
@@ -107,8 +183,8 @@ const availableReports: ReportType[] = [
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
-      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
-      const branches = ((await getAllBranchesAction())?.data as any[] ?? []);
+      const rawCustomers = ((await getCachedReportCustomers())?.data as any[] ?? []);
+      const branches = ((await getCachedReportBranches())?.data as any[] ?? []);
 
       const customers = rawCustomers.map(mapCustomer);
       let filteredData = customers;
@@ -176,9 +252,9 @@ const availableReports: ReportType[] = [
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
-      const rawBulkMeters = ((await getAllBulkMetersAction())?.data as any[] ?? []);
-      const branches = ((await getAllBranchesAction())?.data as any[] ?? []);
-      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      const rawBulkMeters = ((await getCachedReportBulkMeters())?.data as any[] ?? []);
+      const branches = ((await getCachedReportBranches())?.data as any[] ?? []);
+      const rawCustomers = ((await getCachedReportCustomers())?.data as any[] ?? []);
 
       const bulkMeters = rawBulkMeters.map(mapBulkMeter);
       const customers = rawCustomers.map(mapCustomer);
@@ -263,31 +339,31 @@ const availableReports: ReportType[] = [
 
       // Fetch all data in parallel from the live database
       const [billsRes, bulkMetersRes, customersRes, branchesRes, tariffsRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllBulkMetersAction(),
-        getAllCustomersAction(),
-        getAllBranchesAction(),
-        getAllTariffsAction(),
+        getCachedReportBills(),
+        getCachedReportBulkMeters(),
+        getCachedReportCustomers(),
+        getCachedReportBranches(),
+        getCachedReportTariffs(),
       ]);
       const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
 
-      const allBills: any[]   = billsRes?.data     ?? [];
+      const allBills: any[] = billsRes?.data ?? [];
       const bulkMeters: any[] = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
-      const customers: any[]  = (customersRes?.data  ?? []).map(mapCustomer);
-      const branches: any[]   = branchesRes?.data   ?? [];
+      const customers: any[] = (customersRes?.data ?? []).map(mapCustomer);
+      const branches: any[] = branchesRes?.data ?? [];
 
       // Fast lookup maps
       const branchMap = new Map(branches.map((br: any) => [br.id, br.name]));
-      const bmMap     = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
-      const custMap   = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
+      const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
+      const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
 
       // Apply branch filter
       let billsList = allBills;
       if (branchId) {
-        const bmInBranch   = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
-        const custInBranch = new Set(customers.filter((c: any)   => c.branchId  === branchId).map((c: any)  => c.customerKeyNumber));
+        const bmInBranch = new Set(bulkMeters.filter((bm: any) => bm.branchId === branchId).map((bm: any) => bm.customerKeyNumber));
+        const custInBranch = new Set(customers.filter((c: any) => c.branchId === branchId).map((c: any) => c.customerKeyNumber));
         billsList = billsList.filter((b: any) =>
-          (b.CUSTOMERKEY            && bmInBranch.has(b.CUSTOMERKEY)) ||
+          (b.CUSTOMERKEY && bmInBranch.has(b.CUSTOMERKEY)) ||
           (b.individual_customer_id && custInBranch.has(b.individual_customer_id))
         );
       }
@@ -310,11 +386,11 @@ const availableReports: ReportType[] = [
       // Apply date filter (DB returns snake_case: bill_period_end_date)
       if (startDate && endDate) {
         const start = startDate.getTime();
-        const end   = endDate.getTime();
+        const end = endDate.getTime();
         billsList = billsList.filter((b: any) => {
           try {
             return new Date(b.bill_period_end_date).getTime() >= start &&
-                   new Date(b.bill_period_end_date).getTime() <= end;
+              new Date(b.bill_period_end_date).getTime() <= end;
           } catch { return false; }
         });
       }
@@ -324,21 +400,21 @@ const availableReports: ReportType[] = [
 
         // Resolve customer info — DB field stored in bill first, then from lookup tables
         let customerName = b.CUSTOMERNAME || "";
-        let customerTin  = b.CUSTOMERTIN  || "";
-        let branchName   = branchMap.get(b.CUSTOMERBRANCH) || b.CUSTOMERBRANCH || "N/A";
+        let customerTin = b.CUSTOMERTIN || "";
+        let branchName = branchMap.get(b.CUSTOMERBRANCH) || b.CUSTOMERBRANCH || "N/A";
 
         if (b.CUSTOMERKEY) {
           const bm = bmMap.get(b.CUSTOMERKEY);
           if (bm) {
-            if (!customerName) customerName = bm.name            || "";
-            if (!customerTin)  customerTin  = bm.contractNumber  || "";
+            if (!customerName) customerName = bm.name || "";
+            if (!customerTin) customerTin = bm.contractNumber || "";
             if (branchName === "N/A") branchName = branchMap.get(bm.branchId) || "N/A";
           }
         } else if (b.individual_customer_id) {
           const cust = custMap.get(b.individual_customer_id);
           if (cust) {
-            if (!customerName) customerName = cust.name           || "";
-            if (!customerTin)  customerTin  = cust.contractNumber || "";
+            if (!customerName) customerName = cust.name || "";
+            if (!customerTin) customerTin = cust.contractNumber || "";
             if (branchName === "N/A") branchName = branchMap.get(cust.branchId) || "N/A";
           }
         }
@@ -346,18 +422,18 @@ const availableReports: ReportType[] = [
         // Generate BILLKEY if missing
         let billKey = b.BILLKEY || "";
         if (!billKey) {
-          const idHex    = (b.id || "").replace(/-/g, '').substring(0, 8);
+          const idHex = (b.id || "").replace(/-/g, '').substring(0, 8);
           const idNumeric = parseInt(idHex, 16);
           billKey = isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
         }
 
         // Use DB-stored financial fields (synced by dbSyncAgingForCustomer)
         const currentBill = parseFloat(Number(b.THISMONTHBILLAMT || b.base_water_charge || 0).toFixed(2));
-        const outstanding = parseFloat(Number(b.OUTSTANDINGAMT   || 0).toFixed(2));
+        const outstanding = parseFloat(Number(b.OUTSTANDINGAMT || 0).toFixed(2));
         const isPenOn = isPenaltyEnabledForPeriod(tariffsRes?.data ?? [], b.month_year || b.monthYear, b.charge_group || b.customerType);
-        const penalty     = parseFloat(getPenaltyValue(Number(b.PENALTYAMT || 0), isPenOn).toFixed(2));
-        const totalBill   = parseFloat(Number(b.TOTALBILLAMOUNT  || (currentBill + outstanding + penalty)).toFixed(2));
-        const amountPaid  = parseFloat(Number(b.amount_paid      || 0).toFixed(2));
+        const penalty = parseFloat(getPenaltyValue(Number(b.PENALTYAMT || 0), isPenOn).toFixed(2));
+        const totalBill = parseFloat(Number(b.TOTALBILLAMOUNT || (currentBill + outstanding + penalty)).toFixed(2));
+        const amountPaid = parseFloat(Number(b.amount_paid || 0).toFixed(2));
 
         // REASON: use stored REASON first, fall back to formatted month_year
         let reason = b.REASON || "";
@@ -367,37 +443,37 @@ const availableReports: ReportType[] = [
         }
 
         return {
-          "Bill ID":           b.id,
-          "Bill Key":          billKey,
-          "Customer Key":      customerKey,
-          "Customer Name":     customerName,
-          "Customer TIN":      customerTin,
-          "Branch":            branchName,
-          "Period Start":      b.bill_period_start_date  || "",
-          "Period End":        b.bill_period_end_date    || "",
-          "Month/Year":        b.month_year              || "",
-          "Previous Reading":  b.PREVREAD  != null ? Number(b.PREVREAD)  : "",
-          "Current Reading":   b.CURRREAD  != null ? Number(b.CURRREAD)  : "",
-          "Consumption":       b.CONS      != null ? Number(b.CONS)      : "",
-          "Reason":            reason,
+          "Bill ID": b.id,
+          "Bill Key": billKey,
+          "Customer Key": customerKey,
+          "Customer Name": customerName,
+          "Customer TIN": customerTin,
+          "Branch": branchName,
+          "Period Start": b.bill_period_start_date || "",
+          "Period End": b.bill_period_end_date || "",
+          "Month/Year": b.month_year || "",
+          "Previous Reading": b.PREVREAD != null ? Number(b.PREVREAD) : "",
+          "Current Reading": b.CURRREAD != null ? Number(b.CURRREAD) : "",
+          "Consumption": b.CONS != null ? Number(b.CONS) : "",
+          "Reason": reason,
           "Base Water Charge": parseFloat(Number(b.base_water_charge || 0).toFixed(2)),
-          "Sewerage Charge":   parseFloat(Number(b.sewerage_charge   || 0).toFixed(2)),
-          "Maintenance Fee":   parseFloat(Number(b.maintenance_fee   || 0).toFixed(2)),
-          "Sanitation Fee":    parseFloat(Number(b.sanitation_fee    || 0).toFixed(2)),
-          "Meter Rent":        parseFloat(Number(b.meter_rent        || 0).toFixed(2)),
-          "Current Bill":      currentBill,
-          "Penalty":           penalty,
-          "Total Bill":        totalBill,
-          "Amount Paid":       amountPaid,
-          "Outstanding":       outstanding,
-          "Due Date":          b.due_date        || "",
-          "Status":            b.payment_status  || b.status || "",
-          "Bill Number":       b.bill_number     || "",
-          "DR Account":        b.DRACCTNO        || "",
-          "CR Account":        b.CRACCTNO        || "",
-          "Notes":             b.notes           || "",
-          "Created At":        b.created_at      || "",
-          "Updated At":        b.updated_at      || "",
+          "Sewerage Charge": parseFloat(Number(b.sewerage_charge || 0).toFixed(2)),
+          "Maintenance Fee": parseFloat(Number(b.maintenance_fee || 0).toFixed(2)),
+          "Sanitation Fee": parseFloat(Number(b.sanitation_fee || 0).toFixed(2)),
+          "Meter Rent": parseFloat(Number(b.meter_rent || 0).toFixed(2)),
+          "Current Bill": currentBill,
+          "Penalty": penalty,
+          "Total Bill": totalBill,
+          "Amount Paid": amountPaid,
+          "Outstanding": outstanding,
+          "Due Date": b.due_date || "",
+          "Status": b.payment_status || b.status || "",
+          "Bill Number": b.bill_number || "",
+          "DR Account": b.DRACCTNO || "",
+          "CR Account": b.CRACCTNO || "",
+          "Notes": b.notes || "",
+          "Created At": b.created_at || "",
+          "Updated At": b.updated_at || "",
         };
       });
     },
@@ -418,9 +494,9 @@ const availableReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
       const [billsRes, bulkMetersRes, customersRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllBulkMetersAction(),
-        getAllCustomersAction(),
+        getCachedReportBills(),
+        getCachedReportBulkMeters(),
+        getCachedReportCustomers(),
       ]);
       const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
       const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
@@ -500,9 +576,9 @@ const availableReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
       const [billsRes, bulkMetersRes, customersRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllBulkMetersAction(),
-        getAllCustomersAction(),
+        getCachedReportBills(),
+        getCachedReportBulkMeters(),
+        getCachedReportCustomers(),
       ]);
       const bulkMeters = (bulkMetersRes?.data as any[] ?? []).map(mapBulkMeter);
       const customers = (customersRes?.data as any[] ?? []).map(mapCustomer);
@@ -582,8 +658,8 @@ const availableReports: ReportType[] = [
       const [indReadingsRes, bulkReadingsRes, bulkMetersRes, customersRes] = await Promise.all([
         getAllIndividualCustomerReadingsAction(),
         getAllBulkMeterReadingsAction(),
-        getAllBulkMetersAction(),
-        getAllCustomersAction(),
+        getCachedReportBulkMeters(),
+        getCachedReportCustomers(),
       ]);
       const indReadings = ((indReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'individual' }));
       const bulkReadings = ((bulkReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'bulk' }));
@@ -653,8 +729,8 @@ const availableReports: ReportType[] = [
     ],
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup } = filters;
-      let payments = ((await getAllPaymentsAction())?.data as any[] ?? []);
-      const rawCustomers = ((await getAllCustomersAction())?.data as any[] ?? []);
+      let payments = ((await getCachedReportPayments())?.data as any[] ?? []);
+      const rawCustomers = ((await getCachedReportCustomers())?.data as any[] ?? []);
       const customersList = rawCustomers.map(mapCustomer);
       const custMap = new Map(customersList.map((c: any) => [c.customerKeyNumber, c]));
 
@@ -708,8 +784,8 @@ const availableReports: ReportType[] = [
       const [indReadingsRes, bulkReadingsRes, bulkMetersRes, customersRes, staffRes] = await Promise.all([
         getAllIndividualCustomerReadingsAction(),
         getAllBulkMeterReadingsAction(),
-        getAllBulkMetersAction(),
-        getAllCustomersAction(),
+        getCachedReportBulkMeters(),
+        getCachedReportCustomers(),
         getAllStaffMembersAction(),
       ]);
       const indReadings = ((indReadingsRes?.data as any[] ?? []) as any[]).map((r: any) => ({ ...r, _readingType: 'individual' }));
@@ -788,7 +864,7 @@ const availableReports: ReportType[] = [
     ],
     getData: async (filters) => {
       const { chargeGroup } = filters;
-      let tariffs = ((await getAllTariffsAction())?.data as any[] ?? []);
+      let tariffs = ((await getCachedReportTariffs())?.data as any[] ?? []);
       if (chargeGroup && chargeGroup !== 'all') {
         tariffs = tariffs.filter(t => t.customer_type === chargeGroup);
       }
@@ -856,10 +932,10 @@ const availableReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
       const [billsRes, customersRes, bulkMetersRes, tariffsRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllCustomersAction(),
-        getAllBulkMetersAction(),
-        getAllTariffsAction(),
+        getCachedReportBills(),
+        getCachedReportCustomers(),
+        getCachedReportBulkMeters(),
+        getCachedReportTariffs(),
       ]);
       const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
       const allBills = (billsRes?.data as any[] ?? []);
@@ -999,10 +1075,10 @@ const availableReports: ReportType[] = [
     getData: async (filters) => {
       const { branchId, startDate, endDate, chargeGroup: filterChargeGroup } = filters;
       const [billsRes, customersRes, bulkMetersRes, tariffsRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllCustomersAction(),
-        getAllBulkMetersAction(),
-        getAllTariffsAction(),
+        getCachedReportBills(),
+        getCachedReportCustomers(),
+        getCachedReportBulkMeters(),
+        getCachedReportTariffs(),
       ]);
       const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
       const allBills = (billsRes?.data as any[] ?? []);
@@ -1145,24 +1221,24 @@ const availableReports: ReportType[] = [
 
       // Fetch all required data in parallel from the live database
       const [billsRes, customersRes, bulkMetersRes, branchesRes, tariffsRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllCustomersAction(),
-        getAllBulkMetersAction(),
-        getAllBranchesAction(),
-        getAllTariffsAction(),
+        getCachedReportBills(),
+        getCachedReportCustomers(),
+        getCachedReportBulkMeters(),
+        getCachedReportBranches(),
+        getCachedReportTariffs(),
       ]);
       const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
 
-      const allBills: any[]      = billsRes?.data ?? [];
-      const customers: any[]     = (customersRes?.data ?? []).map(mapCustomer);
-      const bulkMeters: any[]    = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
-      const branches: any[]      = branchesRes?.data ?? [];
+      const allBills: any[] = billsRes?.data ?? [];
+      const customers: any[] = (customersRes?.data ?? []).map(mapCustomer);
+      const bulkMeters: any[] = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
+      const branches: any[] = branchesRes?.data ?? [];
 
       // Apply branch filter
       let bills = allBills;
       if (branchId) {
         const bulkMetersInBranch = new Set(bulkMeters.filter(bm => bm.branchId === branchId).map(bm => bm.customerKeyNumber));
-        const customersInBranch  = new Set(customers.filter(c => c.branchId === branchId).map(c => c.customerKeyNumber));
+        const customersInBranch = new Set(customers.filter(c => c.branchId === branchId).map(c => c.customerKeyNumber));
         bills = bills.filter(b =>
           (b.CUSTOMERKEY && bulkMetersInBranch.has(b.CUSTOMERKEY)) ||
           (b.individualCustomerId && customersInBranch.has(b.individualCustomerId))
@@ -1172,7 +1248,7 @@ const availableReports: ReportType[] = [
       // Apply date filter
       if (startDate && endDate) {
         const start = startDate.getTime();
-        const end   = endDate.getTime();
+        const end = endDate.getTime();
         bills = bills.filter(b => {
           try {
             const billDate = new Date(b.billPeriodEndDate).getTime();
@@ -1185,8 +1261,8 @@ const availableReports: ReportType[] = [
       const branchMap = new Map(branches.map((br: any) => [br.id, br.name]));
 
       return bills.map(bill => {
-        let customerName   = bill.CUSTOMERNAME || "N/A";
-        let customerTin    = bill.CUSTOMERTIN  || "N/A";
+        let customerName = bill.CUSTOMERNAME || "N/A";
+        let customerTin = bill.CUSTOMERTIN || "N/A";
         let customerBranch = "N/A";
 
         const customerKey = bill.CUSTOMERKEY || bill.individualCustomerId;
@@ -1195,14 +1271,14 @@ const availableReports: ReportType[] = [
           const cust = customers.find((c: any) => c.customerKeyNumber === bill.individualCustomerId);
           if (cust) {
             if (!customerName || customerName === "N/A") customerName = cust.name;
-            if (!customerTin  || customerTin  === "N/A") customerTin  = cust.contractNumber || "N/A";
+            if (!customerTin || customerTin === "N/A") customerTin = cust.contractNumber || "N/A";
             customerBranch = branchMap.get(cust.branchId) || "N/A";
           }
         } else if (bill.CUSTOMERKEY) {
           const bm = bulkMeters.find((b: any) => b.customerKeyNumber === bill.CUSTOMERKEY);
           if (bm) {
             if (!customerName || customerName === "N/A") customerName = bm.name;
-            if (!customerTin  || customerTin  === "N/A") customerTin  = bm.contractNumber || "N/A";
+            if (!customerTin || customerTin === "N/A") customerTin = bm.contractNumber || "N/A";
             customerBranch = branchMap.get(bm.branchId) || "N/A";
           }
         }
@@ -1210,15 +1286,15 @@ const availableReports: ReportType[] = [
         // Use DB-stored values directly — kept accurate by dbSyncAgingForCustomer
         const thisMonthBillAmt = Number(bill.THISMONTHBILLAMT || bill.baseWaterCharge || 0);
         // OUTSTANDINGAMT in the DB is the carry-forward from previous unpaid bills
-        const outstandingAmt   = Number(bill.OUTSTANDINGAMT || 0);
+        const outstandingAmt = Number(bill.OUTSTANDINGAMT || 0);
         const isPenOn = isPenaltyEnabledForPeriod(tariffsRes?.data ?? [], bill.month_year || bill.monthYear, bill.charge_group || bill.customerType);
-        const penaltyAmt       = getPenaltyValue(Number(bill.PENALTYAMT || 0), isPenOn);
-        const totalBillAmount  = Number(bill.TOTALBILLAMOUNT || (thisMonthBillAmt + outstandingAmt + penaltyAmt));
+        const penaltyAmt = getPenaltyValue(Number(bill.PENALTYAMT || 0), isPenOn);
+        const totalBillAmount = Number(bill.TOTALBILLAMOUNT || (thisMonthBillAmt + outstandingAmt + penaltyAmt));
 
         // Generate BILLKEY if missing
         let billKeyFormatted = bill.BILLKEY;
         if (!billKeyFormatted) {
-          const idHex    = (bill.id || "").replace(/-/g, '').substring(0, 8);
+          const idHex = (bill.id || "").replace(/-/g, '').substring(0, 8);
           const idNumeric = parseInt(idHex, 16);
           billKeyFormatted = isNaN(idNumeric) ? "BBPT-0000000000" : `BBPT-${String(idNumeric).padStart(10, '0')}`;
         }
@@ -1254,25 +1330,25 @@ const availableReports: ReportType[] = [
 
         // Resolve branch name: from bill record first, then from customer lookup
         const branchNameFromBill = branchMap.get(bill.CUSTOMERBRANCH) || bill.CUSTOMERBRANCH;
-        const finalBranchName    = branchNameFromBill || customerBranch;
+        const finalBranchName = branchNameFromBill || customerBranch;
 
         return {
-          "BILLKEY":         billKeyFormatted,
-          "CUSTOMERKEY":     customerKey,
-          "CUSTOMERNAME":    customerName,
-          "CUSTOMERTIN":     "",
-          "CUSTOMERBRANCH":  finalBranchName,
-          "REASON":          reasonFormatted,
-          "CURRREAD":        bill.CURRREAD,
-          "PREVREAD":        bill.PREVREAD,
-          "CONS":            bill.CONS || 0,
+          "BILLKEY": billKeyFormatted,
+          "CUSTOMERKEY": customerKey,
+          "CUSTOMERNAME": customerName,
+          "CUSTOMERTIN": "",
+          "CUSTOMERBRANCH": finalBranchName,
+          "REASON": reasonFormatted,
+          "CURRREAD": bill.CURRREAD,
+          "PREVREAD": bill.PREVREAD,
+          "CONS": bill.CONS || 0,
           "TOTALBILLAMOUNT": parseFloat(totalBillAmount.toFixed(2)),
-          "THISMONTHBILLAMT":parseFloat(thisMonthBillAmt.toFixed(2)),
-          "OUTSTANDINGAMT":  parseFloat(outstandingAmt.toFixed(2)),
-          "PENALTYAMT":      parseFloat(penaltyAmt.toFixed(2)),
-          "VAT_AMOUNT":      parseFloat(Number(bill.vat_amount ?? bill.vatAmount ?? 0).toFixed(2)),
-          "DRACCTNO":        bill.DRACCTNO || "",
-          "CRACCTNO":        bill.CRACCTNO || "",
+          "THISMONTHBILLAMT": parseFloat(thisMonthBillAmt.toFixed(2)),
+          "OUTSTANDINGAMT": parseFloat(outstandingAmt.toFixed(2)),
+          "PENALTYAMT": parseFloat(penaltyAmt.toFixed(2)),
+          "VAT_AMOUNT": parseFloat(Number(bill.vat_amount ?? bill.vatAmount ?? 0).toFixed(2)),
+          "DRACCTNO": bill.DRACCTNO || "",
+          "CRACCTNO": bill.CRACCTNO || "",
         };
       });
     },
@@ -1290,21 +1366,21 @@ const availableReports: ReportType[] = [
       const { branchId, startDate, endDate } = filters;
 
       const [billsRes, bulkMetersRes, customersRes, branchesRes, tariffsRes] = await Promise.all([
-        getAllBillsAction(),
-        getAllBulkMetersAction(),
-        getAllCustomersAction(),
-        getAllBranchesAction(),
-        getAllTariffsAction(),
+        getCachedReportBills(),
+        getCachedReportBulkMeters(),
+        getCachedReportCustomers(),
+        getCachedReportBranches(),
+        getCachedReportTariffs(),
       ]);
       const penaltyEnabled = isPenaltyEngineEnabled(tariffsRes?.data ?? []);
 
-      let allBills: any[]      = billsRes?.data ?? [];
-      const bulkMeters: any[]  = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
-      const customers: any[]   = (customersRes?.data ?? []).map(mapCustomer);
-      const branches: any[]    = branchesRes?.data ?? [];
+      let allBills: any[] = billsRes?.data ?? [];
+      const bulkMeters: any[] = (bulkMetersRes?.data ?? []).map(mapBulkMeter);
+      const customers: any[] = (customersRes?.data ?? []).map(mapCustomer);
+      const branches: any[] = branchesRes?.data ?? [];
 
       // Build lookup maps
-      const branchMap  = new Map(branches.map((br: any) => [br.id, br.code || br.short_code || br.name]));
+      const branchMap = new Map(branches.map((br: any) => [br.id, br.code || br.short_code || br.name]));
       const bmMap = new Map(bulkMeters.map((bm: any) => [bm.customerKeyNumber, bm]));
       const custMap = new Map(customers.map((c: any) => [c.customerKeyNumber, c]));
 
@@ -1333,7 +1409,7 @@ const availableReports: ReportType[] = [
       // Apply date / month filter
       if (startDate && endDate) {
         const start = startDate.getTime();
-        const end   = endDate.getTime();
+        const end = endDate.getTime();
         allBills = allBills.filter((b: any) => {
           try {
             const d = new Date(b.bill_period_end_date || b.created_at);
@@ -1420,10 +1496,10 @@ const availableReports: ReportType[] = [
         // When the charge group is missing, infer it from the water GL code already computed above.
         let chargeGroupLabel = (cGroup || '').trim();
         if (!chargeGroupLabel) {
-          if (baseWaterGlCode === 'WDGL')    chargeGroupLabel = 'Domestic';
-          else if (baseWaterGlCode === 'WBORGL')  chargeGroupLabel = 'Borehole';
+          if (baseWaterGlCode === 'WDGL') chargeGroupLabel = 'Domestic';
+          else if (baseWaterGlCode === 'WBORGL') chargeGroupLabel = 'Borehole';
           else if (baseWaterGlCode === 'WPFNTGL') chargeGroupLabel = 'Public Fountain';
-          else                                     chargeGroupLabel = 'Non-domestic'; // default WNDGL
+          else chargeGroupLabel = 'Non-domestic'; // default WNDGL
         }
 
         const addItem = (glCode: string, amount: number, vatAmt: number = 0) => {
@@ -1458,13 +1534,13 @@ const availableReports: ReportType[] = [
       // Convert to flat rows matching the exact All Branch Monthly GL format
       return Object.values(grouped)
         .map(row => ({
-          "COUNT":        row.count,
-          "BRANCH":       row.branch,
-          "GL_CODE":      row.glCode,
+          "COUNT": row.count,
+          "BRANCH": row.branch,
+          "GL_CODE": row.glCode,
           "TOTAL_AMOUNT": parseFloat(row.totalAmount.toFixed(2)),
-          "VAT_AMOUNT":   parseFloat(row.vatAmount.toFixed(2)),
+          "VAT_AMOUNT": parseFloat(row.vatAmount.toFixed(2)),
           "WITH_OUT_VAT": parseFloat(row.withoutVat.toFixed(2)),
-          "PERIOD":       row.period,
+          "PERIOD": row.period,
         }))
         .sort((a: any, b: any) => {
           const pd = (b.PERIOD || '').localeCompare(a.PERIOD || '');
@@ -1523,7 +1599,7 @@ export default function AdminReportsPage() {
     const initializeData = async () => {
       setIsLoading(true);
       // Branches are still loaded for the filter dropdown UI
-      setBranches(((await getAllBranchesAction())?.data as any[] ?? []));
+      setBranches(((await getCachedReportBranches())?.data as any[] ?? []));
 
       const storedUser = localStorage.getItem("user");
       if (storedUser) {
@@ -1546,6 +1622,7 @@ export default function AdminReportsPage() {
   // Auto-refresh: re-fetch active PDF jobs when DataRefreshProvider signals new data
   React.useEffect(() => {
     const handleDataRefreshed = async () => {
+      clearReportsClientCache();
       const pdfRes = await getActivePdfJobsAction();
       if (pdfRes.success && pdfRes.jobs) setPdfJobs(pdfRes.jobs);
     };
@@ -1668,7 +1745,7 @@ export default function AdminReportsPage() {
       return;
     }
 
-    const billsToArchive = ((await getAllBillsAction())?.data as any[] ?? []).filter(b => new Date(b.billPeriodEndDate) < archiveCutoffDate);
+    const billsToArchive = ((await getCachedReportBills())?.data as any[] ?? []).filter(b => new Date(b.billPeriodEndDate) < archiveCutoffDate);
 
     if (billsToArchive.length === 0) {
       toast({ title: "No Data", description: `No bills found before the selected date to archive.` });
@@ -1753,10 +1830,10 @@ export default function AdminReportsPage() {
       {/* ── Quick-Access Cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { icon: FileDown,        label: 'Batch PDF',       color: 'from-violet-500 to-purple-600', desc: 'Generate invoices',    requireAll: true  },
-          { icon: TrendingUp,      label: 'Usage Trend',     color: 'from-cyan-500 to-blue-500',     desc: 'Difference analysis',  requireAll: false },
-          { icon: FileSpreadsheet, label: 'Manual Reports',  color: 'from-indigo-500 to-blue-600',   desc: 'XLSX / CSV export',    requireAll: false },
-          { icon: Archive,         label: 'Data Archiving',  color: 'from-amber-500 to-orange-500',  desc: 'Manage records',       requireAll: true  },
+          { icon: FileDown, label: 'Batch PDF', color: 'from-violet-500 to-purple-600', desc: 'Generate invoices', requireAll: true },
+          { icon: TrendingUp, label: 'Usage Trend', color: 'from-cyan-500 to-blue-500', desc: 'Difference analysis', requireAll: false },
+          { icon: FileSpreadsheet, label: 'Manual Reports', color: 'from-indigo-500 to-blue-600', desc: 'XLSX / CSV export', requireAll: false },
+          { icon: Archive, label: 'Data Archiving', color: 'from-amber-500 to-orange-500', desc: 'Manage records', requireAll: true },
         ].filter(item => !item.requireAll || canGenerateAll).map(({ icon: Icon, label, color, desc }) => (
           <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 text-white shadow-lg cursor-default group transition-transform hover:-translate-y-0.5`}>
             <div className="absolute -right-4 -bottom-4 h-20 w-20 rounded-full bg-white/10 group-hover:bg-white/15 transition-colors" />
@@ -1770,85 +1847,85 @@ export default function AdminReportsPage() {
       {/* Batch PDF Generator Card */}
       {/* ── Section 1: Batch PDF Generator ── */}
       {canGenerateAll && (
-      <div className="relative rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden">
-        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-violet-500 to-purple-600 rounded-l-2xl" />
-        <div className="pl-6 pr-6 pt-6 pb-0 flex items-center gap-4">
-          <div className="h-11 w-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center shadow-sm shrink-0">
-            <FileDown className="h-5 w-5" />
+        <div className="relative rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-violet-500 to-purple-600 rounded-l-2xl" />
+          <div className="pl-6 pr-6 pt-6 pb-0 flex items-center gap-4">
+            <div className="h-11 w-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center shadow-sm shrink-0">
+              <FileDown className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Batch PDF Generator</h2>
+              <p className="text-sm text-slate-500">Generate printable PDF batches for 700k+ monthly invoices.</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-slate-800">Batch PDF Generator</h2>
-            <p className="text-sm text-slate-500">Generate printable PDF batches for 700k+ monthly invoices.</p>
+          <div className="p-6 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="pdf-month" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Month / Year</Label>
+                <DatePicker
+                  date={selectedPdfMonth ? parse(selectedPdfMonth, 'yyyy-MM', new Date()) : undefined}
+                  onSelect={(date) => {
+                    if (date) setSelectedPdfMonth(formatDate(date, 'yyyy-MM'));
+                  }}
+                  placeholder="Select Month"
+                  className="w-full rounded-xl border-slate-200 bg-slate-50"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pdf-branch" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Branch</Label>
+                <Select value={selectedPdfBranch} onValueChange={setSelectedPdfBranch}>
+                  <SelectTrigger id="pdf-branch" className="rounded-xl border-slate-200 bg-slate-50"><SelectValue placeholder="All Branches" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <Button className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md text-white font-semibold" onClick={handleStartPdfBatch} disabled={isStartingPdf}>
+              {isStartingPdf ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
+              {isStartingPdf ? 'Starting…' : 'Start Batch PDF Generation'}
+            </Button>
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Recent PDF Jobs</h3>
+              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                {pdfJobs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    <FileDown className="h-8 w-8 mb-2 opacity-30" />
+                    <p className="text-sm">No recent jobs found</p>
+                  </div>
+                ) : pdfJobs.map((job) => (
+                  <div key={job.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{job.month_year} — {job.branch_id || 'All Branches'}</p>
+                      <p className="text-xs text-slate-400">{job.generated_bills} / {job.total_bills} bills · {formatDate(new Date(job.created_at), 'HH:mm, MMM d')}</p>
+                      {job.error_message && <p className="text-xs text-red-500 mt-0.5 italic">{job.error_message}</p>}
+                      {job.file_paths && job.file_paths.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {job.file_paths.map((path: string, idx: number) => (
+                            <a key={idx} href={path} download className="flex items-center gap-1 text-violet-600 hover:text-violet-800 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-lg text-[10px] font-medium">
+                              <Download className="h-2.5 w-2.5" /> Batch {idx + 1}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide', job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : job.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-600 animate-pulse')}>{job.status}</span>
+                      {(job.status === 'completed' || job.status === 'failed') && (
+                        <button onClick={() => handleDeletePdfJob(job.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-lg hover:bg-red-50" title="Remove"><Trash2 className="h-3.5 w-3.5" /></button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
-        <div className="p-6 space-y-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="pdf-month" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Month / Year</Label>
-              <DatePicker
-                date={selectedPdfMonth ? parse(selectedPdfMonth, 'yyyy-MM', new Date()) : undefined}
-                onSelect={(date) => {
-                  if (date) setSelectedPdfMonth(formatDate(date, 'yyyy-MM'));
-                }}
-                placeholder="Select Month"
-                className="w-full rounded-xl border-slate-200 bg-slate-50"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pdf-branch" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Branch</Label>
-              <Select value={selectedPdfBranch} onValueChange={setSelectedPdfBranch}>
-                <SelectTrigger id="pdf-branch" className="rounded-xl border-slate-200 bg-slate-50"><SelectValue placeholder="All Branches" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches</SelectItem>
-                  {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <Button className="w-full h-11 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md text-white font-semibold" onClick={handleStartPdfBatch} disabled={isStartingPdf}>
-            {isStartingPdf ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="h-4 w-4 mr-2" />}
-            {isStartingPdf ? 'Starting…' : 'Start Batch PDF Generation'}
-          </Button>
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Recent PDF Jobs</h3>
-            <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-              {pdfJobs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  <FileDown className="h-8 w-8 mb-2 opacity-30" />
-                  <p className="text-sm">No recent jobs found</p>
-                </div>
-              ) : pdfJobs.map((job) => (
-                <div key={job.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-700 truncate">{job.month_year} — {job.branch_id || 'All Branches'}</p>
-                    <p className="text-xs text-slate-400">{job.generated_bills} / {job.total_bills} bills · {formatDate(new Date(job.created_at), 'HH:mm, MMM d')}</p>
-                    {job.error_message && <p className="text-xs text-red-500 mt-0.5 italic">{job.error_message}</p>}
-                    {job.file_paths && job.file_paths.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {job.file_paths.map((path: string, idx: number) => (
-                          <a key={idx} href={path} download className="flex items-center gap-1 text-violet-600 hover:text-violet-800 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-lg text-[10px] font-medium">
-                            <Download className="h-2.5 w-2.5" /> Batch {idx + 1}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={cn('px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide', job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : job.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-600 animate-pulse')}>{job.status}</span>
-                    {(job.status === 'completed' || job.status === 'failed') && (
-                      <button onClick={() => handleDeletePdfJob(job.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded-lg hover:bg-red-50" title="Remove"><Trash2 className="h-3.5 w-3.5" /></button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
       )}
 
       {/* ── Section 2: Usage Trend ── */}
-            {/* ── Section: Billing Summary Report (Delivery, Paid & Unsettled) ── */}
+      {/* ── Section: Billing Summary Report (Delivery, Paid & Unsettled) ── */}
       <div className="relative rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
         <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-indigo-500 to-blue-600 rounded-l-2xl" />
         <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -1871,7 +1948,7 @@ export default function AdminReportsPage() {
         </div>
       </div>
 
-<div className="relative rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden">
+      <div className="relative rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden">
         <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-amber-500 to-orange-500 rounded-l-2xl" />
         <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -1914,30 +1991,30 @@ export default function AdminReportsPage() {
 
       {/* ── Section: Monthly Bill Export Report (Admin Only) ── */}
       {(canGenerateAll || hasPermission(PERMISSIONS.REPORT_MONTHLY_BILL_EXPORT)) && (
-      <div className="relative rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
-        <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-emerald-500 to-teal-600 rounded-l-2xl" />
-        <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="h-11 w-11 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-sm shrink-0">
-              <FileDown className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-slate-800">Monthly Bill Export Report</h2>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Admin Only</span>
+        <div className="relative rounded-2xl border border-emerald-200 bg-white shadow-sm overflow-hidden">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-emerald-500 to-teal-600 rounded-l-2xl" />
+          <div className="pl-6 pr-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="h-11 w-11 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-sm shrink-0">
+                <FileDown className="h-5 w-5" />
               </div>
-              <p className="text-sm text-slate-500">
-                Official monthly billing export in standardized CSV/XLSX format for CBE, Telebirr, and banking payment switch integration.
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold text-slate-800">Monthly Bill Export Report</h2>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Admin Only</span>
+                </div>
+                <p className="text-sm text-slate-500">
+                  Official monthly billing export in standardized CSV/XLSX format for CBE, Telebirr, and banking payment switch integration.
+                </p>
+              </div>
             </div>
+            <Link href="/admin/reports/monthly-bill-export" passHref>
+              <Button className="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md font-semibold shrink-0">
+                <FileDown className="h-4 w-4 mr-2" /> View Monthly Bill Export
+              </Button>
+            </Link>
           </div>
-          <Link href="/admin/reports/monthly-bill-export" passHref>
-            <Button className="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md font-semibold shrink-0">
-              <FileDown className="h-4 w-4 mr-2" /> View Monthly Bill Export
-            </Button>
-          </Link>
         </div>
-      </div>
       )}
 
       {/* ── Section 3: Manual Report Generator ── */}
@@ -1954,11 +2031,11 @@ export default function AdminReportsPage() {
           {/* Report-type dropdown picker */}
           <div className="space-y-1.5">
             <Label htmlFor="report-type" className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3 block">Select Report Type</Label>
-            <Select 
-              value={selectedReportId || undefined} 
-              onValueChange={(value) => { 
-                setSelectedReportId(value); 
-                setReportData(null); 
+            <Select
+              value={selectedReportId || undefined}
+              onValueChange={(value) => {
+                setSelectedReportId(value);
+                setReportData(null);
               }}
             >
               <SelectTrigger id="report-type" className="w-full md:w-[400px] rounded-xl border-slate-200 bg-slate-50">
@@ -2100,50 +2177,50 @@ export default function AdminReportsPage() {
 
       {/* ── Section 4: Advanced Data Tools ── */}
       {canGenerateAll && (
-      <div>
-        <div className="flex items-center gap-2 mb-4">
-          <Settings2 className="h-4 w-4 text-slate-400" />
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Advanced Data Tools</h2>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-          {/* Data Archiving */}
-          <div className="relative rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden hover:shadow-md transition-shadow">
-            <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-amber-400 to-orange-500 rounded-l-2xl" />
-            <div className="pl-6 pr-6 pt-5 pb-1 border-b border-slate-100 flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm shrink-0"><Archive className="h-4 w-4" /></div>
-              <div>
-                <h3 className="font-bold text-slate-800">Data Archiving</h3>
-                <p className="text-xs text-slate-500">Free up storage by exporting and purging old records.</p>
-              </div>
-            </div>
-            <div className="p-6 space-y-5">
-              <div className="space-y-2">
-                <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Step 1 — Export Records Before Date</Label>
-                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                  <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
-                  <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate} className="rounded-xl bg-slate-800 hover:bg-slate-900 text-white shadow-sm font-semibold">
-                    <Download className="mr-2 h-4 w-4" /> Export Archive
-                  </Button>
-                </div>
-                <p className="text-xs text-slate-400 bg-amber-50 border border-amber-100 p-2.5 rounded-xl">Downloads an XLSX of all records before the selected date. Save this file before deleting.</p>
-              </div>
-              {archivableBills.length > 0 && (
-                <div className="space-y-3 p-4 border border-red-200 rounded-2xl bg-red-50 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="flex items-center gap-2 text-red-700 font-bold text-sm"><AlertCircle className="h-4 w-4" />Step 2 — Confirm Permanent Deletion</div>
-                  <p className="text-xs text-red-600 leading-relaxed">{archivableBills.length} records exported. Verify your file is saved. <strong>This cannot be undone.</strong></p>
-                  <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating} className="w-full rounded-xl font-semibold">
-                    <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
-                  </Button>
-                </div>
-              )}
-            </div>
+        <div>
+          <div className="flex items-center gap-2 mb-4">
+            <Settings2 className="h-4 w-4 text-slate-400" />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">Advanced Data Tools</h2>
           </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+            {/* Data Archiving */}
+            <div className="relative rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+              <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-amber-400 to-orange-500 rounded-l-2xl" />
+              <div className="pl-6 pr-6 pt-5 pb-1 border-b border-slate-100 flex items-center gap-3">
+                <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shadow-sm shrink-0"><Archive className="h-4 w-4" /></div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Data Archiving</h3>
+                  <p className="text-xs text-slate-500">Free up storage by exporting and purging old records.</p>
+                </div>
+              </div>
+              <div className="p-6 space-y-5">
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Step 1 — Export Records Before Date</Label>
+                  <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                    <DatePicker date={archiveCutoffDate} setDate={setArchiveCutoffDate} />
+                    <Button onClick={handleGenerateArchiveFile} disabled={isGenerating || !archiveCutoffDate} className="rounded-xl bg-slate-800 hover:bg-slate-900 text-white shadow-sm font-semibold">
+                      <Download className="mr-2 h-4 w-4" /> Export Archive
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-400 bg-amber-50 border border-amber-100 p-2.5 rounded-xl">Downloads an XLSX of all records before the selected date. Save this file before deleting.</p>
+                </div>
+                {archivableBills.length > 0 && (
+                  <div className="space-y-3 p-4 border border-red-200 rounded-2xl bg-red-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="flex items-center gap-2 text-red-700 font-bold text-sm"><AlertCircle className="h-4 w-4" />Step 2 — Confirm Permanent Deletion</div>
+                    <p className="text-xs text-red-600 leading-relaxed">{archivableBills.length} records exported. Verify your file is saved. <strong>This cannot be undone.</strong></p>
+                    <Button variant="destructive" onClick={() => setIsArchiveDeleteConfirmationOpen(true)} disabled={isGenerating} className="w-full rounded-xl font-semibold">
+                      <Trash2 className="mr-2 h-4 w-4" /> Permanently Delete {archivableBills.length} Records
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
 
 
 
+          </div>
         </div>
-      </div>
       )}
 
       <AlertDialog open={isArchiveDeleteConfirmationOpen} onOpenChange={setIsArchiveDeleteConfirmationOpen}>

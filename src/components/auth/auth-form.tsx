@@ -148,7 +148,7 @@ export function AuthForm() {
                 title: "Offline Login Successful",
                 description: `Logged in as ${enteredEmail} (Offline Mode)`,
               });
-              
+
               // Restore the user session to localStorage so dashboards can load
               localStorage.setItem("user", JSON.stringify(user));
               sessionStorage.removeItem('kicked_notice_shown');
@@ -158,7 +158,7 @@ export function AuthForm() {
               const isManagement = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL);
               const isHeadOfficeView = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL) && !hasPerm(PERMISSIONS.STAFF_VIEW);
               const isStaffManagementView = (hasPerm(PERMISSIONS.STAFF_VIEW) || hasPerm(PERMISSIONS.STAFF_VIEW_ALL)) && !hasPerm(PERMISSIONS.BILL_VIEW_ALL);
-              
+
               setTimeout(() => {
                 if (isManagement) {
                   if (isHeadOfficeView) router.push("/admin/head-office-dashboard");
@@ -167,7 +167,7 @@ export function AuthForm() {
                 } else if (isStaffManagementView) router.push("/staff/staff-management-dashboard");
                 else router.push("/staff/dashboard");
               }, 500);
-              
+
               return true;
             }
           } else {
@@ -179,8 +179,8 @@ export function AuthForm() {
             return true;
           }
         } else {
-           // Email doesn't match the one stored in offline_creds
-           console.log("Offline login: Email mismatch", { entered: enteredEmail, stored: storedEmail });
+          // Email doesn't match the one stored in offline_creds
+          console.log("Offline login: Email mismatch", { entered: enteredEmail, stored: storedEmail });
         }
       } else {
         console.log("Offline login: No 'offline_creds' found in localStorage");
@@ -196,7 +196,7 @@ export function AuthForm() {
         setSyncState("idle");
         return;
       }
-      
+
       toast({
         variant: "destructive",
         title: "Offline Login Failed",
@@ -223,7 +223,7 @@ export function AuthForm() {
           passwordHash,
           user: result.user // Cache the profile so it survives even if "user" is cleared from LS
         }));
-        
+
         toast({
           title: "Login Successful",
           description: "Welcome back! Redirecting...",
@@ -234,22 +234,6 @@ export function AuthForm() {
         // notice later in this tab.
         sessionStorage.removeItem('kicked_notice_shown');
 
-        // Try to register a device token for background SW uploads
-        (async () => {
-          try {
-            const resp = await fetch('/api/device/register', { method: 'POST' });
-            if (resp && resp.ok) {
-              const body = await resp.json();
-              if (body && body.token) {
-                // Save token along with server-assigned deviceId when available
-                await saveDeviceTokenEncrypted(body.token, body.deviceId);
-              }
-            }
-          } catch (e) {
-            console.warn('Failed to register device token:', e);
-          }
-        })();
-
         const permissions = result.user.permissions || [];
         const hasPerm = (p: string) => permissions.includes('*') || permissions.includes('admin') || permissions.includes('all') || permissions.includes(p);
         const isManagement = hasPerm(PERMISSIONS.DASHBOARD_VIEW_ALL);
@@ -258,11 +242,6 @@ export function AuthForm() {
         const hasFieldReaderPerms = hasPerm('meter_readings_create_bulk') || hasPerm('meter_readings_create_individual') || hasPerm('meter_readings_create') || hasPerm('routes_view_assigned');
 
         if (isManagement) {
-          // Automatically sync billing aging debt in the background for management users
-          syncAllBillsAgingDebtAction().catch(err => {
-            console.error("Background sync failed on login:", err);
-          });
-
           // Route to role-specific dashboard based on permissions
           if (isHeadOfficeView) {
             router.push("/admin/head-office-dashboard");
@@ -279,19 +258,31 @@ export function AuthForm() {
             router.push("/staff/dashboard");
           }
 
-          // Asynchronously prime reader cache in background if applicable
+          // Asynchronously register offline device token & prime reader cache for field staff
           if (hasFieldReaderPerms) {
             (async () => {
               try {
+                const resp = await fetch('/api/device/register', { method: 'POST', credentials: 'include' });
+                if (resp && resp.ok) {
+                  const body = await resp.json();
+                  if (body && body.token) {
+                    await saveDeviceTokenEncrypted(body.token, body.deviceId);
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to register device token:', e);
+              }
+
+              try {
                 await fetchRoutes(true);
                 await Promise.all([
-                  initializeFaultCodes(true).catch(() => {}),
-                  initializeBranches(true).catch(() => {}),
+                  initializeFaultCodes(true).catch(() => { }),
+                  initializeBranches(true).catch(() => { }),
                 ]);
               } catch (initErr) {
                 console.warn("Background cache priming completed with warnings:", initErr);
               }
-            })().catch(() => {});
+            })().catch(() => { });
           }
         }
 
@@ -335,11 +326,10 @@ export function AuthForm() {
       )}
       {/* Offline Status Banner */}
       {isOfflineMode && (
-        <div className={`mx-0 mb-0 flex items-start gap-3 px-5 py-3 text-sm rounded-t-xl ${
-          hasOfflineCreds
-            ? 'bg-emerald-900/80 text-emerald-200 border-b border-emerald-700'
-            : 'bg-amber-900/80 text-amber-200 border-b border-amber-700'
-        }`}>
+        <div className={`mx-0 mb-0 flex items-start gap-3 px-5 py-3 text-sm rounded-t-xl ${hasOfflineCreds
+          ? 'bg-emerald-900/80 text-emerald-200 border-b border-emerald-700'
+          : 'bg-amber-900/80 text-amber-200 border-b border-amber-700'
+          }`}>
           <WifiOff className="h-4 w-4 mt-0.5 flex-shrink-0" />
           <div>
             <span className="font-semibold block">
@@ -361,7 +351,7 @@ export function AuthForm() {
             <h3 className="text-2xl font-bold">Initializing Offline Portal</h3>
             <p className="text-sm text-white/60 mt-1">Preparing reader modules for field use...</p>
           </div>
-          
+
           <div className="space-y-4 max-w-xs mx-auto w-full">
             {/* Step 1: Authentication */}
             <div className="flex items-center gap-3">
@@ -378,10 +368,9 @@ export function AuthForm() {
               ) : (
                 <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
               )}
-              <span className={`text-sm font-medium ${
-                syncState === "caching_routes" ? "text-blue-400 font-semibold" : 
+              <span className={`text-sm font-medium ${syncState === "caching_routes" ? "text-blue-400 font-semibold" :
                 ["caching_meters", "caching_customers", "caching_readings", "caching_faults", "completed"].includes(syncState) ? "text-white/80" : "text-white/40"
-              }`}>
+                }`}>
                 Caching Assigned Routes
               </span>
             </div>
@@ -395,10 +384,9 @@ export function AuthForm() {
               ) : (
                 <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
               )}
-              <span className={`text-sm font-medium ${
-                ["caching_meters", "caching_customers"].includes(syncState) ? "text-blue-400 font-semibold" : 
+              <span className={`text-sm font-medium ${["caching_meters", "caching_customers"].includes(syncState) ? "text-blue-400 font-semibold" :
                 ["caching_readings", "caching_faults", "completed"].includes(syncState) ? "text-white/80" : "text-white/40"
-              }`}>
+                }`}>
                 Caching Customer & Meter Directory
               </span>
             </div>
@@ -412,10 +400,9 @@ export function AuthForm() {
               ) : (
                 <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
               )}
-              <span className={`text-sm font-medium ${
-                syncState === "caching_readings" ? "text-blue-400 font-semibold" : 
+              <span className={`text-sm font-medium ${syncState === "caching_readings" ? "text-blue-400 font-semibold" :
                 ["caching_faults", "completed"].includes(syncState) ? "text-white/80" : "text-white/40"
-              }`}>
+                }`}>
                 Caching Historical Reading Logs
               </span>
             </div>
@@ -429,15 +416,14 @@ export function AuthForm() {
               ) : (
                 <Circle className="h-5 w-5 text-white/30 flex-shrink-0" />
               )}
-              <span className={`text-sm font-medium ${
-                syncState === "caching_faults" ? "text-blue-400 font-semibold" : 
+              <span className={`text-sm font-medium ${syncState === "caching_faults" ? "text-blue-400 font-semibold" :
                 syncState === "completed" ? "text-white/80" : "text-white/40"
-              }`}>
+                }`}>
                 Caching System Codes & Settings
               </span>
             </div>
           </div>
-          
+
           <div className="mt-8 text-center text-xs text-white/40">
             Do not close this tab or disconnect your internet.
           </div>
